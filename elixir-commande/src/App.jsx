@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useCallback } from "react";
 import emailjs from "@emailjs/browser";
 import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
 import { PHARMACIES_DB } from "./pharmaciesDb";
