@@ -1,159 +1,117 @@
-const BASE     = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
-const USERNAME = process.env.PHARMAML_USER || "admin";
-const PASSWORD = process.env.PHARMAML_PASS || "";
+import { authenticate, odooCall, xmlVal, xmlMember, ODOO_COMPANY } from "./odoo.js";
+import https from "https";
 
-function extractCookies(response) {
-  const raw = response.headers.getSetCookie?.() || [];
-  return raw.map(c => c.split(";")[0]).join("; ");
+const ODOO_URL  = process.env.ODOO_URL  || "https://odoo.elixir-pharma.fr";
+const ODOO_DB   = process.env.ODOO_DB   || "healthsoft-sas-lispharma-main-13622653";
+const ODOO_PASS = process.env.ODOO_APIKEY || process.env.ODOO_PASS || "";
+
+function buildCall(method, params) {
+  return `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${
+    params.map(p => `<param>${p}</param>`).join("")
+  }</params></methodCall>`;
 }
-
-function mergeCookies(existing, fresh) {
-  if (!fresh) return existing;
-  const map = {};
-  [...existing.split("; "), ...fresh.split("; ")]
-    .filter(Boolean)
-    .forEach(c => { const [k, ...rest] = c.split("="); if (k) map[k.trim()] = rest.join("="); });
-  return Object.entries(map).map(([k, v]) => `${k}=${v}`).join("; ");
+function xmlPost(path, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(ODOO_URL);
+    const buf = Buffer.from(body, "utf-8");
+    const req = https.request({
+      hostname: u.hostname, path, method: "POST",
+      headers: { "Content-Type": "text/xml", "Content-Length": buf.length },
+    }, res => { let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(d)); });
+    req.on("error", reject); req.write(buf); req.end();
+  });
 }
-
-async function login() {
-  // GET login page — récupère le formulaire et le cookie de session initial
-  const getResp = await fetch(`${BASE}/login`, {
-    redirect: "follow",
-    headers: { "Accept": "text/html", "User-Agent": "Mozilla/5.0" }
-  });
-  console.log(`[login] GET /login → ${getResp.status} (${getResp.url})`);
-  let cookies = extractCookies(getResp);
-  console.log(`[login] cookies initiaux : ${cookies.substring(0, 80)}`);
-
-  const html = await getResp.text().catch(() => "");
-  // Log les champs du formulaire détectés
-  const fields = [...html.matchAll(/name="([^"]+)"/g)].map(m => m[1]);
-  console.log(`[login] champs formulaire détectés : ${fields.join(", ")}`);
-  const csrf = html.match(/name="_token"\s+value="([^"]+)"/)?.[1]
-            || html.match(/value="([a-zA-Z0-9\/+]{40,})"/)?.[1]
-            || null;
-  console.log(`[login] csrf token : ${csrf ? csrf.substring(0,20)+"…" : "aucun"}`);
-
-  // POST avec tous les noms de champs possibles
-  const body = new URLSearchParams();
-  body.append("login",    USERNAME);
-  body.append("password", PASSWORD);
-  body.append("username", USERNAME);
-  body.append("email",    USERNAME);
-  body.append("passwd",   PASSWORD);
-  body.append("pass",     PASSWORD);
-  if (csrf) body.append("_token", csrf);
-
-  const postResp = await fetch(`${BASE}/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "Cookie": cookies,
-      "User-Agent": "Mozilla/5.0",
-      "Referer": `${BASE}/login`,
-    },
-    body: body.toString(),
-    redirect: "manual",
-  });
-  console.log(`[login] POST /login → ${postResp.status} location=${postResp.headers.get("location")}`);
-  const freshCookies = extractCookies(postResp);
-  console.log(`[login] nouveaux cookies : ${freshCookies.substring(0,80)}`);
-  cookies = mergeCookies(cookies, freshCookies);
-
-  // Suit la redirection manuellement si 302
-  let finalUrl = postResp.headers.get("location");
-  if (finalUrl && postResp.status >= 300 && postResp.status < 400) {
-    if (!finalUrl.startsWith("http")) finalUrl = BASE + finalUrl;
-    const redirResp = await fetch(finalUrl, {
-      headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
-      redirect: "manual",
-    });
-    console.log(`[login] Redirect → ${redirResp.status} (${finalUrl})`);
-    cookies = mergeCookies(cookies, extractCookies(redirResp));
+function parseScalar(xml) {
+  if (xml.includes("<fault>")) {
+    const msg = xml.match(/<n(?:ame)?>faultString<\/n(?:ame)?>\s*<value><string>([\s\S]*?)<\/string>/)?.[1] || "Fault";
+    throw new Error(String(msg).substring(0, 300));
   }
-
-  // Vérifie l'accès à la page commandes
-  const check = await fetch(`${BASE}/commandes/saisie`, {
-    headers: { Cookie: cookies, "User-Agent": "Mozilla/5.0" },
-    redirect: "follow",
-  });
-  console.log(`[login] Vérif /commandes/saisie → ${check.status} (${check.url})`);
-  if (check.url?.includes("/login") || check.url?.includes("/401") || check.status === 401) {
-    throw new Error(`Échec d'authentification — status=${check.status} url=${check.url}`);
-  }
-  return cookies;
-}
-
-async function findAdherent(cookies, pharmacyName, pharmacyEmail) {
-  const q = (pharmacyName || "").substring(0, 30);
-  const resp = await fetch(`${BASE}/adherents/api/listeS2?q=${encodeURIComponent(q)}&page=1`, {
-    headers: { Cookie: cookies, Accept: "application/json" },
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json().catch(() => null);
-  if (!data?.results?.length) return null;
-  const emailLower = (pharmacyEmail || "").toLowerCase();
-  const nameLower  = (pharmacyName  || "").toLowerCase();
-  const match = data.results.find(r => r.email?.toLowerCase() === emailLower)
-             || data.results.find(r => r.text?.toLowerCase().includes(nameLower));
-  return match?.id || data.results[0]?.id || null;
-}
-
-async function uploadCsv(cookies, csvContent) {
-  const form = new FormData();
-  const blob = new Blob([csvContent], { type: "text/csv" });
-  form.append("fichierImport", blob, "commande.csv");
-  const resp = await fetch(`${BASE}/commandes/fichierSaisie`, {
-    method:  "POST",
-    headers: { Cookie: cookies },
-    body:    form,
-  });
-  if (!resp.ok) throw new Error(`Upload CSV échoué : HTTP ${resp.status}`);
-  const json = await resp.json();
-  if (json.status !== "success") throw new Error(`Fichier rejeté : ${json.message || JSON.stringify(json)}`);
-  return { commande: json.data, clientFromFile: json.client || null };
-}
-
-async function submitOrder(cookies, commande, idAdherent, ref) {
-  const payload = { commande, referenceCommande: ref || "", codeSpeciale: "", etatCommande: 0 };
-  if (idAdherent) payload.idAdherent = idAdherent;
-  const resp = await fetch(`${BASE}/commandes/api/saisie`, {
-    method:  "POST",
-    headers: { "Content-Type": "application/json", Cookie: cookies, Accept: "application/json" },
-    body:    JSON.stringify(payload),
-  });
-  if (!resp.ok) throw new Error(`Envoi échoué : HTTP ${resp.status}`);
-  const json = await resp.json();
-  if (json.status !== "success") throw new Error(`Commande refusée : ${json.message || (json.erreurs||[]).join(", ")}`);
-  return json;
+  return parseInt(xml.match(/<int>(\d+)<\/int>/)?.[1] || "0");
 }
 
 export const handler = async (event) => {
   const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
-  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: { ...cors, "Access-Control-Allow-Methods": "POST, OPTIONS" }, body: "" };
-  if (event.httpMethod !== "POST") return { statusCode: 405, body: "Method Not Allowed" };
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "Method Not Allowed" };
 
   let payload;
   try { payload = JSON.parse(event.body); }
-  catch { return { statusCode: 400, body: JSON.stringify({ error: "JSON invalide" }) }; }
+  catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-  const { csvContent, pharmacyName, pharmacyEmail, orderId } = payload;
-  if (!csvContent) return { statusCode: 400, body: JSON.stringify({ error: "csvContent manquant" }) };
+  const { items, pharmacyName, pharmacyEmail, orderId } = payload;
+  if (!items?.length) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
 
   try {
-    console.log(`[submit-order] ${orderId} — ${pharmacyName}`);
-    const cookies    = await login();
-    console.log("[submit-order] Auth ✓");
-    const idAdherent = await findAdherent(cookies, pharmacyName, pharmacyEmail);
-    console.log(`[submit-order] idAdherent=${idAdherent}`);
-    const { commande, clientFromFile } = await uploadCsv(cookies, csvContent);
-    console.log(`[submit-order] CSV parsé : ${commande.length} ligne(s)`);
-    await submitOrder(cookies, commande, clientFromFile || idAdherent, String(orderId || ""));
-    console.log("[submit-order] Commande validée ✓");
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, nbLignes: commande.length }) };
+    const uid = await authenticate();
+
+    // 1. Trouve le partenaire (pharmacie)
+    let partnerId = null;
+    if (pharmacyEmail) {
+      const partners = await odooCall(uid, "res.partner", "search_read",
+        [["email", "=", pharmacyEmail], ["company_id", "=", ODOO_COMPANY]],
+        { fields: ["id", "name"], limit: 1 }
+      );
+      if (partners.length > 0) partnerId = parseInt(partners[0].id);
+    }
+    if (!partnerId && pharmacyName) {
+      const partners = await odooCall(uid, "res.partner", "search_read",
+        [["name", "ilike", pharmacyName], ["company_id", "=", ODOO_COMPANY]],
+        { fields: ["id", "name"], limit: 1 }
+      );
+      if (partners.length > 0) partnerId = parseInt(partners[0].id);
+    }
+    if (!partnerId) throw new Error(`Partenaire introuvable : ${pharmacyName} / ${pharmacyEmail}`);
+
+    // 2. Trouve les product.product IDs depuis les CIPs
+    const cips = [...new Set(items.map(i => i.cip).filter(Boolean))];
+    const cipDomain = [];
+    if (cips.length > 1) for (let i = 0; i < cips.length - 1; i++) cipDomain.push("|");
+    cips.forEach(c => cipDomain.push(["barcode", "=", c]));
+    const products = await odooCall(uid, "product.product", "search_read", cipDomain,
+      { fields: ["id", "barcode"], limit: 200 }
+    );
+    const pidByCip = {};
+    products.forEach(p => { pidByCip[p.barcode] = parseInt(p.id); });
+
+    // 3. Crée le bon de commande (sale.order)
+    const orderLines = items
+      .filter(i => pidByCip[i.cip])
+      .map(i => xmlVal("array",
+        xmlVal("int", 0) + xmlVal("int", 0) +
+        xmlVal("struct",
+          xmlMember("product_id", xmlVal("int", pidByCip[i.cip])) +
+          xmlMember("product_uom_qty", xmlVal("int", i.qty))
+        )
+      )).join("");
+
+    const createBody = buildCall("execute_kw", [
+      xmlVal("string", ODOO_DB),
+      xmlVal("int", uid),
+      xmlVal("string", ODOO_PASS),
+      xmlVal("string", "sale.order"),
+      xmlVal("string", "create"),
+      xmlVal("array", xmlVal("array",
+        xmlVal("struct",
+          xmlMember("partner_id", xmlVal("int", partnerId)) +
+          xmlMember("company_id", xmlVal("int", ODOO_COMPANY)) +
+          xmlMember("client_order_ref", xmlVal("string", String(orderId || ""))) +
+          xmlMember("order_line", xmlVal("array", orderLines))
+        )
+      )),
+      xmlVal("struct", ""),
+    ]);
+
+    const createXml = await xmlPost("/xmlrpc/2/object", createBody);
+    const newOrderId = parseScalar(createXml);
+    if (!newOrderId) throw new Error("Création commande Odoo échouée");
+
+    console.log(`[submit-order] ✓ sale.order créé id=${newOrderId} pour ${pharmacyName}`);
+    return {
+      statusCode: 200, headers: cors,
+      body: JSON.stringify({ success: true, odooOrderId: newOrderId })
+    };
   } catch (err) {
-    console.error("[submit-order] Erreur :", err.message);
+    console.error("[submit-order]", err.message);
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };
