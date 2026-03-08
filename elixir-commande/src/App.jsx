@@ -526,23 +526,28 @@ export default function App() {
   const [stockData, setStockData] = useState({}); // { [cip]: { dispo, stock } }
   const [stockUpdatedAt, setStockUpdatedAt] = useState(null);
 
-  // Fetch stock data from Netlify (poussé par l'agent local toutes les 5 min)
+  // Stock : chargement et actualisation manuelle
+  const [stockLoading, setStockLoading] = useState(false);
+
+  const fetchStock = useCallback(async () => {
+    setStockLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(15000) });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.stocks && Object.keys(data.stocks).length > 0) {
+        setStockData(data.stocks);
+        setStockUpdatedAt(data.updatedAt);
+      }
+    } catch(e) { /* silently ignore */ }
+    finally { setStockLoading(false); }
+  }, []);
+
   useEffect(() => {
-    const fetchStock = async () => {
-      try {
-        const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(5000) });
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.stocks && Object.keys(data.stocks).length > 0) {
-          setStockData(data.stocks);
-          setStockUpdatedAt(data.updatedAt);
-        }
-      } catch(e) { /* silently ignore */ }
-    };
     fetchStock();
     const interval = setInterval(fetchStock, 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, []);
+  }, [fetchStock]);
 
   const CATALOG_WITH_ADMIN = useMemo(() => {
     const merged = {};
@@ -1039,7 +1044,15 @@ export default function App() {
               <div style={{ fontSize: 13, opacity: 0.7, letterSpacing: 1 }}>PHARMA</div>
               <div style={{ fontSize: 11, opacity: 0.5 }}>
                 Bon de commande – Catalogue Février 2026
-                {stockUpdatedAt && <span style={{ marginLeft: 8, opacity: 0.7 }}>· stocks mis à jour {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>}
+                {stockUpdatedAt && (
+                  <span style={{ marginLeft: 8, opacity: 0.7 }}>· stocks mis à jour {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                )}
+                <button
+                  onClick={fetchStock}
+                  disabled={stockLoading}
+                  title="Actualiser les stocks"
+                  style={{ marginLeft: 8, background: "none", border: "none", cursor: stockLoading ? "default" : "pointer", padding: "0 2px", opacity: stockLoading ? 0.4 : 0.8, fontSize: 13, color: "inherit" }}
+                >{stockLoading ? "⏳" : "🔄"}</button>
               </div>
             </div>
           </div>
