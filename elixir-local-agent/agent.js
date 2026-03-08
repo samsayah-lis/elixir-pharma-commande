@@ -5,7 +5,7 @@ import { readFileSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
-// Charge .env manuellement (pas de dépendance externe)
+// Charge .env
 const __dir = dirname(fileURLToPath(import.meta.url));
 try {
   const envContent = readFileSync(resolve(__dir, ".env"), "utf8");
@@ -22,12 +22,17 @@ const CONFIG = {
   netlify_url:    process.env.NETLIFY_URL   || "https://commandes-elixir.netlify.app",
   stock_interval: 5 * 60 * 1000,
   port:           parseInt(process.env.PORT || "3001"),
+  odoo_url:       process.env.ODOO_URL      || "https://odoo.elixir-pharma.fr",
+  odoo_db:        process.env.ODOO_DB       || "healthsoft-sas-lispharma-main-13622653",
+  odoo_user:      process.env.ODOO_USER     || "pharmacien@elixirpharma.fr",
+  odoo_pass:      process.env.ODOO_APIKEY   || process.env.ODOO_PASS || "A_CHANGER",
+  odoo_company:   parseInt(process.env.ODOO_COMPANY || "2"),
+  odoo_location_prefix: process.env.ODOO_LOCATION_PREFIX || "EP/Stock/",
+  odoo_location_from:   process.env.ODOO_LOCATION_FROM   || "D",
+  odoo_location_to:     process.env.ODOO_LOCATION_TO     || "U",
 };
 
-// CIPs du catalogue à surveiller (extraits du catalogue Elixir)
-// L'agent va checker le dispo de chacun sur PharmaML
 const CATALOG_CIPS = [
-  // Expert
   "3400930083048","3400930260494","3400930073537","3400930073544","3400930067314",
   "3400930167267","3400930229385","3400926783501","3400930283325","3400930076279",
   "3400930141434","3400930141441","3400930075296","3400930075302","3400930075272",
@@ -35,303 +40,275 @@ const CATALOG_CIPS = [
   "3400930091753","3400930108765","3400930091777","3400930108772","3400930091791",
   "3400930091807","3400930091814","3400930256527","3400930256534","3400930256541",
   "3400930256558","3400930138939","3400930175484","3400930175491","3400930064382",
-  // Obeso
   "3400930258620","3400930317815","3400930258644","3400930260241","3400930258668",
   "3400930292907","3400930292914","3400930292938","3400930292945","3400930292952","3400930292976",
-  // NR
   "3400930141861","3400930198087","3400930021972","3400930056296","3400930122044",
   "3400930139905","3400930179123","3400930150405","3400930164259","3400930177459",
   "3400930180644","3400930168332",
 ];
 
-// ── HTTP helper avec suivi de redirections et collecte de cookies ─────────────
 
-function httpsGet(urlStr, cookieJar = {}) {
-  return new Promise((resolve, reject) => {
-    const doRequest = (url, jar, redirects = 0) => {
-      if (redirects > 10) return reject(new Error("Trop de redirections"));
-      const u = new URL(url);
-      const options = {
-        hostname: u.hostname,
-        path:     u.pathname + u.search,
-        method:   "GET",
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept":     "text/html,application/json",
-          "Cookie":     Object.entries(jar).map(([k,v]) => `${k}=${v}`).join("; "),
-        },
-      };
-      const req = https.request(options, res => {
-        // Collecte les cookies
-        (res.headers["set-cookie"] || []).forEach(c => {
-          const [kv] = c.split(";");
-          const [k, ...rest] = kv.split("=");
-          if (k) jar[k.trim()] = rest.join("=");
-        });
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          let loc = res.headers.location;
-          if (!loc.startsWith("http")) loc = CONFIG.pharmaml_url + loc;
-          res.resume();
-          return doRequest(loc, jar, redirects + 1);
-        }
-        let body = "";
-        res.on("data", d => body += d);
-        res.on("end", () => resolve({ status: res.statusCode, url, headers: res.headers, body, jar }));
-      });
-      req.on("error", reject);
-      req.end();
-    };
-    doRequest(urlStr, cookieJar, 0);
-  });
+
+// ── Odoo XML-RPC ─────────────────────────────────────────────────────────────
+// Utilise xmlrpc natif via https direct
+
+function xmlVal(type, val) {
+  if (type === "int")    return `<value><int>${val}</int></value>`;
+  if (type === "string") return `<value><string>${String(val).replace(/&/g,"&amp;").replace(/</g,"&lt;")}</string></value>`;
+  if (type === "bool")   return `<value><boolean>${val ? 1 : 0}</boolean></value>`;
+  if (type === "array")  return `<value><array><data>${val}</data></array></value>`;
+  if (type === "struct") return `<value><struct>${val}</struct></value>`;
+  return `<value>${val}</value>`;
+}
+function xmlMember(name, val) { return `<member><name>${name}</name>${val}</member>`; }
+function xmlTuple(...items) { return xmlVal("array", items.join("")); }
+
+function buildXmlrpcCall(method, params) {
+  return `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${
+    params.map(p => `<param>${p}</param>`).join("")
+  }</params></methodCall>`;
 }
 
-function httpsPost(urlStr, body, extraHeaders = {}, cookieJar = {}) {
+function xmlrpcPost(url, body) {
   return new Promise((resolve, reject) => {
-    const u = new URL(urlStr);
-    const bodyBuf = Buffer.isBuffer(body) ? body : Buffer.from(body);
-    const options = {
-      hostname: u.hostname,
-      path:     u.pathname + u.search,
-      method:   "POST",
-      headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Cookie":     Object.entries(cookieJar).map(([k,v]) => `${k}=${v}`).join("; "),
-        "Content-Length": bodyBuf.length,
-        ...extraHeaders,
-      },
-    };
-    const req = https.request(options, res => {
-      (res.headers["set-cookie"] || []).forEach(c => {
-        const [kv] = c.split(";");
-        const [k, ...rest] = kv.split("=");
-        if (k) cookieJar[k.trim()] = rest.join("=");
-      });
-      let data = "";
-      res.on("data", d => data += d);
-      res.on("end", () => resolve({ status: res.statusCode, headers: res.headers, body: data, jar: cookieJar }));
+    const u = new URL(url);
+    const buf = Buffer.from(body, "utf-8");
+    const req = https.request({
+      hostname: u.hostname, path: u.pathname, method: "POST",
+      headers: { "Content-Type": "text/xml", "Content-Length": buf.length },
+    }, res => {
+      let data = ""; res.on("data", d => data += d);
+      res.on("end", () => resolve(data));
     });
     req.on("error", reject);
-    req.write(bodyBuf);
-    req.end();
+    req.write(buf); req.end();
   });
 }
 
-// ── Login ─────────────────────────────────────────────────────────────────────
-
-async function login() {
-  const jar = {};
-
-  // 1. GET /login — récupère page + cookies initiaux
-  const getResp = await httpsGet(`${CONFIG.pharmaml_url}/login`, jar);
-  console.log(`  [login] GET → ${getResp.status}, cookies: ${Object.keys(jar).join(", ")}`);
-
-  // Détecte tous les champs name="..." et value="..." dans la page
-  const fields = [...getResp.body.matchAll(/name="([^"]+)"/g)].map(m => m[1]);
-  console.log(`  [login] champs: ${fields.join(", ")}`);
-
-  // Cherche le token CSRF quel que soit son nom (_csrf_token, _token, csrf_token…)
-  const csrfFieldMatch = getResp.body.match(/name="([^"]*csrf[^"]*)"[^>]*value="([^"]+)"/i)
-                      || getResp.body.match(/value="([^"]+)"[^>]*name="([^"]*csrf[^"]*)"/i);
-  const csrfName  = csrfFieldMatch ? csrfFieldMatch[1] : null;
-  const csrfValue = csrfFieldMatch ? csrfFieldMatch[2] : null;
-  console.log(`  [login] csrf: ${csrfName || "non"} = ${csrfValue ? csrfValue.substring(0,20)+"…" : "—"}`);
-
-  // 2. POST credentials avec tous les noms de champs détectés
-  const formBody = new URLSearchParams({
-    login:    CONFIG.username,
-    username: CONFIG.username,
-    email:    CONFIG.username,
-    password: CONFIG.password,
-    passwd:   CONFIG.password,
-  });
-  if (csrfName && csrfValue) formBody.append(csrfName, csrfValue);
-
-  const postResp = await httpsPost(
-    `${CONFIG.pharmaml_url}/login`,
-    formBody.toString(),
-    { "Content-Type": "application/x-www-form-urlencoded", "Referer": `${CONFIG.pharmaml_url}/login`, "Accept": "text/html" },
-    jar
-  );
-  console.log(`  [login] POST → ${postResp.status}, location: ${postResp.headers.location || "—"}, cookies: ${Object.keys(jar).join(", ")}`);
-
-  // 3. Suit la redirection si 302
-  if (postResp.status >= 300 && postResp.status < 400) {
-    let loc = postResp.headers.location || "/";
-    if (!loc.startsWith("http")) loc = CONFIG.pharmaml_url + loc;
-    const redirResp = await httpsGet(loc, jar);
-    console.log(`  [login] Redir → ${redirResp.status} (${loc}), cookies: ${Object.keys(jar).join(", ")}`);
+// Parse Odoo XML-RPC response — retourne tableau d'objets
+function parseOdooResponse(xml) {
+  if (xml.includes("<fault>")) {
+    const msg = xml.match(/<n(?:ame)?>faultString<\/n(?:ame)?>/) && 
+                xml.match(/<n(?:ame)?>faultString<\/n(?:ame)?>\s*<value><string>([\s\S]*?)<\/string>/)?.[1]
+              || xml.match(/<string>([\s\S]{5,200}?)<\/string>/)?.[1]
+              || "Fault";
+    throw new Error(String(msg).substring(0, 200));
   }
-
-  // 4. Vérifie l'accès à /commandes/saisie
-  const check = await httpsGet(`${CONFIG.pharmaml_url}/commandes/saisie`, jar);
-  console.log(`  [login] Vérif commandes → ${check.status} (url finale: ${check.url})`);
-
-  if (check.url.includes("/401") || check.url.includes("/login") || check.status === 401) {
-    throw new Error(`Login échoué — url finale: ${check.url}`);
+  const results = [];
+  // Match each <struct>...</struct> block
+  let sIdx = 0;
+  while (true) {
+    const sStart = xml.indexOf("<struct>", sIdx);
+    if (sStart === -1) break;
+    const sEnd = xml.indexOf("</struct>", sStart);
+    if (sEnd === -1) break;
+    const block = xml.slice(sStart + 8, sEnd);
+    sIdx = sEnd + 9;
+    const obj = {};
+    // Match members: <member><n[ame]>key</n[ame]><value>val</value></member>
+    let mIdx = 0;
+    while (true) {
+      const mStart = block.indexOf("<member>", mIdx);
+      if (mStart === -1) break;
+      const mEnd = block.indexOf("</member>", mStart);
+      if (mEnd === -1) break;
+      const member = block.slice(mStart + 8, mEnd);
+      mIdx = mEnd + 9;
+      // Extract key from <n>key</n> or <n>key</n>
+      const keyMatch = member.match(/<n(?:ame)?>([^<]+)<\/n(?:ame)?>/);
+      const valMatch = member.match(/<value>([\s\S]*?)<\/value>/);
+      if (keyMatch && valMatch) {
+        const key = keyMatch[1].trim();
+        const val = valMatch[1].replace(/<[^>]+>/g, "").trim();
+        obj[key] = val;
+      }
+    }
+    if (Object.keys(obj).length > 0) results.push(obj);
   }
-
-  console.log("  ✓ Authentifié sur PharmaML");
-  return jar;
+  return results;
 }
 
-// ── Upload CSV ────────────────────────────────────────────────────────────────
+// Parse une valeur scalaire (int, bool, string) depuis une réponse XML-RPC
+function parseScalar(xml) {
+  const i = xml.match(/<int>(\d+)<\/int>/)?.[1];
+  if (i) return parseInt(i);
+  const s = xml.match(/<string>([\s\S]*?)<\/string>/)?.[1];
+  if (s) return s;
+  return null;
+}
 
-async function uploadCsv(jar, csvContent) {
-  const boundary = "----ElixirBoundary" + Date.now();
-  const CRLF = "\r\n";
-  const bodyBuf = Buffer.concat([
-    Buffer.from(`--${boundary}${CRLF}`),
-    Buffer.from(`Content-Disposition: form-data; name="fichierImport"; filename="commande.csv"${CRLF}`),
-    Buffer.from(`Content-Type: text/csv${CRLF}`),
-    Buffer.from(CRLF),
-    Buffer.from(csvContent, "utf-8"),
-    Buffer.from(`${CRLF}--${boundary}--${CRLF}`),
+function encodeDomainItem(d) {
+  if (d === "|" || d === "&" || d === "!") return xmlVal("string", d);
+  if (!Array.isArray(d)) return "";
+  const [f, op, v] = d;
+  let vXml;
+  if (Array.isArray(v)) {
+    vXml = xmlVal("array", v.map(x => typeof x === "number" ? xmlVal("int", x) : xmlVal("string", String(x))).join(""));
+  } else if (typeof v === "number") { vXml = xmlVal("int", v); }
+  else if (typeof v === "boolean")  { vXml = xmlVal("bool", v); }
+  else { vXml = xmlVal("string", String(v)); }
+  return xmlVal("array", [xmlVal("string", f), xmlVal("string", op), vXml].join(""));
+}
+
+async function odooCall(uid, model, method, domain, kwargs = {}) {
+  // args = [[domain]] — un tableau contenant le domain comme premier argument
+  const domainItems = domain.map(encodeDomainItem).join("");
+  const argsXml = xmlVal("array", xmlVal("array", domainItems));
+
+  // kwargs struct
+  const kwargsMembers = Object.entries(kwargs).map(([k, v]) => {
+    let vXml;
+    if (Array.isArray(v))        vXml = xmlVal("array", v.map(x => xmlVal("string", String(x))).join(""));
+    else if (typeof v === "number") vXml = xmlVal("int", v);
+    else                         vXml = xmlVal("string", String(v));
+    return xmlMember(k, vXml);
+  }).join("");
+  const kwargsXml = xmlVal("struct", kwargsMembers);
+
+  const body = buildXmlrpcCall("execute_kw", [
+    xmlVal("string", CONFIG.odoo_db),
+    xmlVal("int", uid),
+    xmlVal("string", CONFIG.odoo_pass),
+    xmlVal("string", model),
+    xmlVal("string", method),
+    argsXml,
+    kwargsXml,
   ]);
 
-  const resp = await httpsPost(
-    `${CONFIG.pharmaml_url}/commandes/fichierSaisie`,
-    bodyBuf,
-    {
-      "Content-Type":     `multipart/form-data; boundary=${boundary}`,
-      "Accept":           "application/json",
-      "X-Requested-With": "XMLHttpRequest",
-      "Referer":          `${CONFIG.pharmaml_url}/commandes/saisie`,
-    },
-    jar
-  );
+  const xml = await xmlrpcPost(`${CONFIG.odoo_url}/xmlrpc/2/object`, body);
+  return parseOdooResponse(xml);
+}
 
-  console.log(`  [upload] → ${resp.status}, body: ${resp.body.substring(0, 100)}`);
+async function odooListDbs() {
+  const body = buildXmlrpcCall("list", []);
+  const xml = await xmlrpcPost(`${CONFIG.odoo_url}/xmlrpc/2/db`, body);
+  const dbs = [...xml.matchAll(/<string>([^<]+)<\/string>/g)].map(m => m[1]);
+  return dbs;
+}
 
-  if (resp.status >= 300 && resp.status < 400) {
-    throw new Error(`Upload redirigé vers ${resp.headers.location} — session invalide`);
+async function odooAuthenticate() {
+  // Auto-découverte de la base si celle configurée échoue
+  const body = buildXmlrpcCall("authenticate", [
+    xmlVal("string", CONFIG.odoo_db),
+    xmlVal("string", CONFIG.odoo_user),
+    xmlVal("string", CONFIG.odoo_pass),
+    xmlVal("struct", ""),
+  ]);
+  const xml = await xmlrpcPost(`${CONFIG.odoo_url}/xmlrpc/2/common`, body);
+  const uid = parseScalar(xml);
+  if (!uid || uid === 0) {
+    // Essaie de lister les bases disponibles
+    try {
+      const dbs = await odooListDbs();
+      console.log(`  [odoo] Bases disponibles : ${dbs.join(", ")}`);
+      if (dbs.length === 1) {
+        console.log(`  [odoo] → Tentative avec "${dbs[0]}"...`);
+        CONFIG.odoo_db = dbs[0];
+        const body2 = buildXmlrpcCall("authenticate", [
+          xmlVal("string", CONFIG.odoo_db),
+          xmlVal("string", CONFIG.odoo_user),
+          xmlVal("string", CONFIG.odoo_pass),
+          xmlVal("struct", ""),
+        ]);
+        const xml2 = await xmlrpcPost(`${CONFIG.odoo_url}/xmlrpc/2/common`, body2);
+        const uid2 = parseScalar(xml2);
+        if (uid2 && uid2 > 0) { console.log(`  ✓ Odoo auth OK (uid=${uid2}, db=${dbs[0]})`); return uid2; }
+      }
+    } catch(e) { console.log(`  [odoo] List DB: ${e.message}`); }
+    throw new Error("Odoo auth échouée — vérifiez ODOO_USER et ODOO_PASS dans .env");
   }
-  if (resp.status !== 200) throw new Error(`Upload CSV échoué : HTTP ${resp.status}`);
-
-  const json = JSON.parse(resp.body);
-  if (json.status !== "success") throw new Error(`Fichier rejeté : ${json.message || resp.body}`);
-  return { commande: json.data, clientFromFile: json.client || null };
-}
-
-// ── Find adherent ────────────────────────────────────────────────────────────
-
-async function findAdherent(jar, pharmacyName, pharmacyEmail) {
-  const q = encodeURIComponent((pharmacyName || "").substring(0, 30));
-  const u = new URL(`${CONFIG.pharmaml_url}/adherents/api/listeS2?q=${q}&page=1`);
-  const cookieStr = Object.entries(jar).map(([k,v]) => `${k}=${v}`).join("; ");
-
-  const resp = await new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname: u.hostname, path: u.pathname + u.search, method: "GET",
-      headers: { Cookie: cookieStr, Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-    }, res => {
-      let body = "";
-      res.on("data", d => body += d);
-      res.on("end", () => resolve({ status: res.statusCode, body }));
-    });
-    req.on("error", reject);
-    req.end();
-  });
-
-  console.log(`  [adherent] → ${resp.status}, body: ${resp.body.substring(0, 150)}`);
-  if (resp.status !== 200) return null;
-  const data = JSON.parse(resp.body);
-  const results = data.results || data.items || [];
-  if (!results.length) return null;
-
-  const emailLower = (pharmacyEmail || "").toLowerCase();
-  const nameLower  = (pharmacyName  || "").toLowerCase();
-  const match = results.find(r => (r.email||"").toLowerCase() === emailLower)
-             || results.find(r => (r.text||r.nom||"").toLowerCase().includes(nameLower))
-             || results[0];
-  console.log(`  [adherent] trouvé: ${match?.text || match?.id} (id=${match?.id})`);
-  return match?.id || null;
-}
-
-// ── Submit order ──────────────────────────────────────────────────────────────
-
-async function submitOrder(jar, commande, idAdherent, ref) {
-  const payload = { commande, referenceCommande: ref || "", codeSpeciale: "", etatCommande: 0 };
-  if (idAdherent) payload.idAdherent = idAdherent;
-
-  const body = JSON.stringify(payload);
-  const resp = await httpsPost(
-    `${CONFIG.pharmaml_url}/commandes/api/saisie`,
-    body,
-    { "Content-Type": "application/json", "Accept": "application/json", "X-Requested-With": "XMLHttpRequest" },
-    jar
-  );
-
-  console.log(`  [submit] → ${resp.status}, body: ${resp.body.substring(0, 300)}`);
-  if (resp.status !== 200) throw new Error(`Envoi échoué : HTTP ${resp.status} — ${resp.body.substring(0,300)}`);
-  const json = JSON.parse(resp.body);
-  if (json.status !== "success") throw new Error(`Commande refusée : ${json.message || (json.erreurs||[]).join(", ")}`);
-  return json;
+  console.log(`  ✓ Odoo auth OK (uid=${uid}, db=${CONFIG.odoo_db})`);
+  return uid;
 }
 
 // ── Stock checker ────────────────────────────────────────────────────────────
 
-let currentStocks = {};  // stocké en mémoire, servi via GET /stock
+let currentStocks = {};
 let stocksUpdatedAt = null;
-let stockJar = null;
 
-async function discoverStockApi(jar) {
-  const host = new URL(CONFIG.pharmaml_url).hostname;
-  const cookieStr = Object.entries(jar).map(([k,v]) => `${k}=${v}`).join("; ");
-  const testCip = CATALOG_CIPS[0]; // 3400930083048
+async function checkStock() {
+  const uid = await odooAuthenticate();
 
-  const endpoints = [
-    `/articles/api/search?q=${testCip}&page=1`,
-    `/articles/api/search?q=${testCip}`,
-    `/articles/api/listeS2?q=${testCip}&page=1`,
-    `/commandes/api/articles?q=${testCip}`,
-    `/commandes/api/search?q=${testCip}`,
-    `/articles/search?q=${testCip}`,
-    `/api/articles?cip=${testCip}`,
-    `/api/search?q=${testCip}`,
-    `/commandes/fichierSaisie?cip=${testCip}`,
-    `/articles?q=${testCip}`,
-  ];
+  // 1. Cherche directement les produits dont le barcode = CIP du catalogue
+  const cipDomain = [];
+  if (CATALOG_CIPS.length > 1)
+    for (let i = 0; i < CATALOG_CIPS.length - 1; i++) cipDomain.push("|");
+  CATALOG_CIPS.forEach(cip => cipDomain.push(["barcode", "=", cip]));
 
-  console.log("  [stock] Découverte de l'API stock...");
-  for (const path of endpoints) {
-    const resp = await new Promise((resolve, reject) => {
-      const req = https.request({
-        hostname: host, path, method: "GET",
-        headers: { Cookie: cookieStr, Accept: "application/json", "User-Agent": "Mozilla/5.0" },
-      }, res => {
-        let body = "";
-        res.on("data", d => body += d);
-        res.on("end", () => resolve({ status: res.statusCode, body }));
-      });
-      req.on("error", reject);
-      req.end();
-    });
-    const preview = resp.body.substring(0, 120).replace(/\n/g, " ");
-    console.log(`  [stock] ${path} → HTTP ${resp.status} | ${preview}`);
-    await new Promise(r => setTimeout(r, 100));
+  const products = await odooCall(uid, "product.product", "search_read", cipDomain, {
+    fields: ["id", "barcode", "name"], limit: 200
+  });
+  console.log(`  [odoo] ${products.length} produits trouvés par CIP sur ${CATALOG_CIPS.length} recherchés`);
+  if (products.length > 0)
+    console.log(`  [odoo] ex: ${products[0].name} (barcode=${products[0].barcode})`);
+
+  if (products.length === 0) {
+    console.warn("  [odoo] ⚠ Aucun produit ne correspond aux CIPs — vérifie que le barcode = CIP13 dans Odoo");
+    return {};
   }
-  console.log("  [stock] Fin découverte — analyse les résultats ci-dessus");
-  return {};
+
+  const productIds = products.map(p => parseInt(p.id)).filter(Boolean);
+  const barcodeByPid = {};
+  products.forEach(p => { barcodeByPid[parseInt(p.id)] = p.barcode; });
+
+  // 3. stock.quant : tous les emplacements internes de la société
+  const quants = await odooCall(uid, "stock.quant", "search_read", [
+    ["product_id", "in", productIds],
+    ["company_id", "=", CONFIG.odoo_company],
+    ["location_id.usage", "=", "internal"],
+  ], { fields: ["product_id", "quantity", "reserved_quantity"], limit: 2000 });
+  console.log(`  [odoo] ${quants.length} lignes de stock`);
+
+  // 4. Agrège stock disponible par barcode (CIP)
+  const stockByCip = {};
+  quants.forEach(q => {
+    const barcode = barcodeByPid[parseInt(q.product_id)];
+    if (!barcode) return;
+    const dispo = parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
+    stockByCip[barcode] = (stockByCip[barcode] || 0) + dispo;
+  });
+
+  // 5. Résultat pour tous les CIPs
+  const stocks = {};
+  CATALOG_CIPS.forEach(cip => {
+    if (stockByCip[cip] !== undefined) {
+      const s = stockByCip[cip];
+      stocks[cip] = { dispo: s > 0 ? 1 : 0, stock: Math.round(s) };
+    } else {
+      // Produit connu dans Odoo mais pas dans ces emplacements = rupture
+      const isKnown = products.some(p => p.barcode === cip);
+      stocks[cip] = { dispo: isKnown ? 0 : 1, stock: 0 };
+    }
+  });
+
+  const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
+  console.log(`  [odoo] ✓ ${products.length} produits matchés · ${ruptures} rupture(s)`);
+  return stocks;
 }
 
-async function checkStock(jar) {
-  // Pour l'instant : mode découverte — remplacé une fois l'API connue
-  return await discoverStockApi(jar);
-}
 
 async function runStockCheck() {
+  const ts = new Date().toLocaleTimeString("fr-FR");
   try {
-    if (!stockJar) stockJar = await login();
-    const stocks = await checkStock(stockJar);
+    // Debug: liste les bases disponibles
+    try {
+      const dbs = await odooListDbs();
+      console.log(`  [odoo] Bases disponibles sur ${CONFIG.odoo_url} : [${dbs.join(", ")}]`);
+      if (dbs.length > 0 && !dbs.includes(CONFIG.odoo_db) && dbs[0] !== "Access Denied") {
+        console.log(`  [odoo] ⚠ "${CONFIG.odoo_db}" introuvable → utilise "${dbs[0]}"`);
+        CONFIG.odoo_db = dbs[0];
+      }
+    } catch(e) { console.log(`  [odoo] List DB erreur: ${e.message}`); }
+
+    console.log(`[${ts}] 📦 Vérification stock Odoo (db=${CONFIG.odoo_db})...`);
+    const stocks = await checkStock();
     currentStocks = stocks;
     stocksUpdatedAt = new Date().toISOString();
-    const count = Object.keys(stocks).length;
+    const count = Object.values(stocks).filter(s => s.stock > 0).length;
     const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
-    const ts = new Date().toLocaleTimeString("fr-FR");
-    console.log(`[${ts}] 📦 Stocks : ${count} produits vérifiés, ${ruptures} rupture(s)`);
+    console.log(`[${ts}] ✓ ${count} produits en stock · ${ruptures} rupture(s)`);
   } catch (err) {
-    console.warn(`[stock] Erreur : ${err.message}`);
-    stockJar = null;
+    console.warn(`[${ts}] ✗ Stock Odoo : ${err.message}`);
   }
 }
 
