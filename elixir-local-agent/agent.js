@@ -287,6 +287,23 @@ async function checkStock() {
 }
 
 
+async function pushStockToNetlify(stocks) {
+  const url = new URL("/.netlify/functions/stock-push", CONFIG.netlify_url);
+  const body = JSON.stringify({ stocks });
+  const buf = Buffer.from(body);
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: url.hostname, path: url.pathname, method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": buf.length },
+    }, res => {
+      let data = ""; res.on("data", d => data += d);
+      res.on("end", () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on("error", reject);
+    req.write(buf); req.end();
+  });
+}
+
 async function runStockCheck() {
   const ts = new Date().toLocaleTimeString("fr-FR");
   try {
@@ -307,6 +324,11 @@ async function runStockCheck() {
     const count = Object.values(stocks).filter(s => s.stock > 0).length;
     const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
     console.log(`[${ts}] ✓ ${count} produits en stock · ${ruptures} rupture(s)`);
+    // Pousse vers Netlify
+    try {
+      const pushResp = await pushStockToNetlify(stocks);
+      console.log(`[${ts}] → Netlify ${pushResp.status === 200 ? "✓" : "⚠ HTTP " + pushResp.status}`);
+    } catch(e) { console.warn(`[${ts}] → Netlify ✗ ${e.message}`); }
   } catch (err) {
     console.warn(`[${ts}] ✗ Stock Odoo : ${err.message}`);
   }

@@ -526,18 +526,18 @@ export default function App() {
   const [stockData, setStockData] = useState({}); // { [cip]: { dispo, stock } }
   const [stockUpdatedAt, setStockUpdatedAt] = useState(null);
 
-  // Fetch stock data from local agent, every 5 min
+  // Fetch stock data from Netlify (poussé par l'agent local toutes les 5 min)
   useEffect(() => {
     const fetchStock = async () => {
       try {
-        const res = await fetch("http://localhost:3001/stock", { signal: AbortSignal.timeout(3000) });
+        const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(5000) });
         if (!res.ok) return;
         const data = await res.json();
         if (data.stocks && Object.keys(data.stocks).length > 0) {
           setStockData(data.stocks);
           setStockUpdatedAt(data.updatedAt);
         }
-      } catch(e) { /* agent non démarré — silently ignore */ }
+      } catch(e) { /* silently ignore */ }
     };
     fetchStock();
     const interval = setInterval(fetchStock, 5 * 60 * 1000);
