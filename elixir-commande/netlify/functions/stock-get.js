@@ -25,7 +25,9 @@ export const handler = async () => {
       const qOrIds = [];
       for (let i = 0; i < productIds.length - 1; i++) qOrIds.push("|");
       productIds.forEach(id => qOrIds.push(["product_id", "=", id]));
-      quants = await odooCall(uid, "stock.quant", "search_read", qOrIds, {
+      // Filtre emplacement interne uniquement (exclut virtuel/ajustements/clients)
+      const qDomain = ["&", ["location_id.usage", "=", "internal"], ...qOrIds];
+      quants = await odooCall(uid, "stock.quant", "search_read", qDomain, {
         fields: ["product_id", "quantity", "reserved_quantity"], limit: 5000
       });
     }
