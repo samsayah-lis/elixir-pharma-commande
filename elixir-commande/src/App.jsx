@@ -875,7 +875,9 @@ export default function App() {
         // Essaie d'abord l'agent local (port 3001), sinon fallback Netlify Function
         (async () => {
           const payload = JSON.stringify({
-            csvContent, pharmacyName, pharmacyEmail, orderId: order.id,
+            csvContent,
+            items: order.items, // { cip, name, qty, pn }
+            pharmacyName, pharmacyEmail, orderId: order.id,
           });
           const endpoints = [
             { url: "http://localhost:3001", label: "agent local" },

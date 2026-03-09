@@ -48,14 +48,14 @@ export const handler = async (event) => {
     let partnerId = null;
     if (pharmacyEmail) {
       const partners = await odooCall(uid, "res.partner", "search_read",
-        [["email", "=", pharmacyEmail], ["company_id", "=", ODOO_COMPANY]],
+        [["email", "=", pharmacyEmail]],
         { fields: ["id", "name"], limit: 1 }
       );
       if (partners.length > 0) partnerId = parseInt(partners[0].id);
     }
     if (!partnerId && pharmacyName) {
       const partners = await odooCall(uid, "res.partner", "search_read",
-        [["name", "ilike", pharmacyName], ["company_id", "=", ODOO_COMPANY]],
+        [["name", "ilike", pharmacyName]],
         { fields: ["id", "name"], limit: 1 }
       );
       if (partners.length > 0) partnerId = parseInt(partners[0].id);
