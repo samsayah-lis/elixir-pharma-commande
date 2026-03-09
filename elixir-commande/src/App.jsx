@@ -859,13 +859,14 @@ export default function App() {
         EMAILJS_CONFIG.PUBLIC_KEY
       );
       setSendStatus("success");
-      // Save order to localStorage for admin panel
+      // Save order to Supabase via Netlify Function
       try {
         const order = {
           id: Date.now(),
           date: new Date().toISOString(),
           pharmacyName,
           pharmacyEmail,
+          pharmacyCip: pharmacyCip || null,
           isClient,
           items: cartItems.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total })),
           totalHt: cartTotal,
@@ -873,15 +874,23 @@ export default function App() {
           csv: csvContent,
           processed: false,
         };
-        const existing = JSON.parse(localStorage.getItem("admin_orders") || "[]");
-        localStorage.setItem("admin_orders", JSON.stringify([order, ...existing]));
+
+        // Sauvegarde dans Supabase
+        fetch("/.netlify/functions/order-save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(order),
+        }).then(r => r.json()).then(j => {
+          if (j.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
+          else console.warn("[order-save] ✗", j.error);
+        }).catch(e => console.warn("[order-save] erreur réseau:", e.message));
 
         // ── Auto-submit vers PharmaML ──
         // Essaie d'abord l'agent local (port 3001), sinon fallback Netlify Function
         (async () => {
           const payload = JSON.stringify({
             csvContent,
-            items: order.items, // { cip, name, qty, pn }
+            items: order.items,
             pharmacyName, pharmacyEmail, pharmacyCip, orderId: order.id,
           });
           const endpoints = [

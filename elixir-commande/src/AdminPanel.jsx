@@ -34,9 +34,8 @@ export default function AdminPanel({ onClose, catalog }) {
   const [overrides, setOverrides] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_overrides") || "{}"); } catch { return {}; }
   });
-  const [orders, setOrders] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("admin_orders") || "[]"); } catch { return []; }
-  });
+  const [orders, setOrders] = useState([]);
+  const [ordersLoading, setOrdersLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({}); // orderId → "pending"|"ok"|"error"|message
   const [promos, setPromos] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
@@ -86,7 +85,7 @@ export default function AdminPanel({ onClose, catalog }) {
   }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
   const handleLogin = () => {
-    if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); }
+    if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); refreshOrders(); }
     else setPwdError(true);
   };
 
@@ -277,16 +276,19 @@ export default function AdminPanel({ onClose, catalog }) {
       const res = await fetch("http://localhost:3001", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvContent, pharmacyName: order.pharmacyName, pharmacyEmail: order.pharmacyEmail, orderId: order.id }),
+        body: JSON.stringify({ csvContent: order.csv, items: order.items, pharmacyName: order.pharmacyName, pharmacyEmail: order.pharmacyEmail, pharmacyCip: order.pharmacyCip, orderId: order.id }),
         signal: AbortSignal.timeout(15000),
       });
       const json = await res.json().catch(() => ({}));
       if (res.ok && json.success) {
         setSyncStatus(s => ({ ...s, [order.id]: "ok" }));
-        // Auto-mark as processed
-        const updated = orders.map(o => o.id===order.id ? {...o, processed:true} : o);
-        setOrders(updated);
-        localStorage.setItem("admin_orders", JSON.stringify(updated));
+        // Auto-mark as processed dans Supabase
+        setOrders(orders.map(o => o.id===order.id ? {...o, processed:true} : o));
+        fetch("/.netlify/functions/order-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: order.id, processed: true })
+        });
       } else {
         setSyncStatus(s => ({ ...s, [order.id]: json.error || "Erreur inconnue" }));
       }
@@ -303,8 +305,14 @@ export default function AdminPanel({ onClose, catalog }) {
   const flash = (msg) => { setSaved(msg); setTimeout(()=>setSaved(""), 2500); };
   const fmt = (n) => n!=null&&!isNaN(n) ? Number(n).toFixed(2)+" €" : "—";
 
-  const refreshOrders = () => {
-    try { setOrders(JSON.parse(localStorage.getItem("admin_orders") || "[]")); } catch {}
+  const refreshOrders = async () => {
+    setOrdersLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/order-list");
+      const json = await res.json();
+      if (json.orders) setOrders(json.orders);
+    } catch(e) { console.warn("[order-list] erreur:", e.message); }
+    setOrdersLoading(false);
   };
 
   const downloadCsv = (order) => {
@@ -337,16 +345,24 @@ export default function AdminPanel({ onClose, catalog }) {
     document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  const toggleProcessed = (id) => {
-    const updated = orders.map(o => o.id===id ? {...o, processed: !o.processed} : o);
-    setOrders(updated);
-    localStorage.setItem("admin_orders", JSON.stringify(updated));
+  const toggleProcessed = async (id) => {
+    const order = orders.find(o => o.id === id);
+    const newVal = !order?.processed;
+    setOrders(orders.map(o => o.id===id ? {...o, processed: newVal} : o));
+    await fetch("/.netlify/functions/order-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, processed: newVal })
+    });
   };
 
-  const deleteOrder = (id) => {
-    const updated = orders.filter(o => o.id!==id);
-    setOrders(updated);
-    localStorage.setItem("admin_orders", JSON.stringify(updated));
+  const deleteOrder = async (id) => {
+    setOrders(orders.filter(o => o.id!==id));
+    await fetch("/.netlify/functions/order-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, action: "delete" })
+    });
   };
 
   // LOGIN
