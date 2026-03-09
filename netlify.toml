@@ -9,5 +9,7 @@
 [functions]
   node_bundler = "esbuild"
 
-[functions."stock-get"]
-  timeout = 30
+# Cron toutes les 30min pour rafraîchir les stocks Odoo → Supabase
+[[crons]]
+  schedule = "*/30 * * * *"
+  function = "stock-refresh"
