@@ -624,6 +624,16 @@ export default function App() {
   const [foundPharmacy, setFoundPharmacy] = useState(null);
   const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
+
+  const handleLogout = () => {
+    localStorage.removeItem("session_name");
+    localStorage.removeItem("session_email");
+    setPharmacyName("");
+    setPharmacyEmail("");
+    setOnboardingDone(false);
+    setQuantities({});
+    setCartOpen(false);
+  };
   const [isClient, setIsClient] = useState(null);
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
@@ -1084,11 +1094,16 @@ export default function App() {
             </div>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{
+            <div style={{ display: "flex", alignItems: "center", gap: 6,
               background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: 8, color: "rgba(255,255,255,0.9)", padding: "6px 14px", fontSize: 13, fontWeight: 600
+              borderRadius: 8, padding: "4px 4px 4px 14px"
             }}>
-              🏥 {pharmacyName}
+              <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.9)" }}>🏥 {pharmacyName}</span>
+              <button onClick={handleLogout} title="Se déconnecter" style={{
+                background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)",
+                borderRadius: 6, color: "rgba(255,255,255,0.7)", cursor: "pointer",
+                padding: "3px 8px", fontSize: 11, lineHeight: 1
+              }}>⎋ Déco</button>
             </div>
             <button onClick={handlePrint} style={{
               background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
