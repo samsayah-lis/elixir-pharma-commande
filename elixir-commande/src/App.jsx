@@ -1,7 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback } from "react";
 import emailjs from "@emailjs/browser";
 import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
-import { PHARMACIES_DB } from "./pharmaciesDb";
 import AdminPanel from "./AdminPanel";
 
 const CATALOG = {
@@ -754,16 +753,27 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  const handleEmailLookup = () => {
+  const handleEmailLookup = async () => {
     const email = emailInput.trim().toLowerCase();
     if (!email || !email.includes("@")) { setOnboardingError("Veuillez saisir une adresse e-mail valide."); return; }
     setOnboardingError("");
-    const found = PHARMACIES_DB[email] || null;
-    if (found) {
-      setFoundPharmacy(found);
-      setObStep("confirm");
-    } else {
-      setObStep("new_client");
+    setObStep("loading");
+    try {
+      const res = await fetch("/.netlify/functions/pharmacy-lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+      const json = await res.json();
+      if (json.found && json.pharmacy) {
+        setFoundPharmacy(json.pharmacy);
+        setObStep("confirm");
+      } else {
+        setObStep("new_client");
+      }
+    } catch (err) {
+      setOnboardingError("Erreur de connexion. Veuillez reessayer.");
+      setObStep("email");
     }
   };
 
@@ -957,6 +967,18 @@ export default function App() {
 
   if (!onboardingDone) return (
     <div style={obBg}>
+
+      {/* ── STEP LOADING ── */}
+      {obStep === "loading" && (
+        <div style={obCard}>
+          {obLogo}
+          <div style={{ textAlign:"center", padding:"20px 0" }}>
+            <div style={{ fontSize:32, marginBottom:12 }}>⏳</div>
+            <div style={{ fontWeight:700, fontSize:15, color:"#0f2d3d" }}>Recherche en cours…</div>
+            <div style={{ fontSize:13, color:"#888", marginTop:6 }}>Vérification dans notre système</div>
+          </div>
+        </div>
+      )}
 
       {/* ── STEP 1 : EMAIL ── */}
       {obStep === "email" && (
