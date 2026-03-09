@@ -1,0 +1,10 @@
+{
+  "name": "elixir-local-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Agent local PharmaML — Elixir Pharma",
+  "main": "agent.js",
+  "scripts": {
+    "start": "node agent.js"
+  }
+}

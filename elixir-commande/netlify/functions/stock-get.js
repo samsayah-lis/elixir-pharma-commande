@@ -1,4 +1,4 @@
-import { authenticate, odooCall, ODOO_COMPANY } from "./odoo.js";
+import { authenticate, odooCall } from "./odoo.js";
 
 const CATALOG_CIPS = [
   "3400930083048","3400930260494","3400930073537","3400930073544","3400930067314",
@@ -20,53 +20,54 @@ export const handler = async () => {
   try {
     const uid = await authenticate();
 
-    // 1. Produits dont le barcode est un CIP du catalogue
-    const cipDomain = [];
-    if (CATALOG_CIPS.length > 1)
-      for (let i = 0; i < CATALOG_CIPS.length - 1; i++) cipDomain.push("|");
-    CATALOG_CIPS.forEach(cip => cipDomain.push(["barcode", "=", cip]));
+    const domain = [];
+    for (let i = 0; i < CATALOG_CIPS.length - 1; i++) domain.push("|");
+    CATALOG_CIPS.forEach(cip => domain.push(["default_code", "=", cip]));
 
-    const products = await odooCall(uid, "product.product", "search_read", cipDomain, {
-      fields: ["id", "barcode"], limit: 200
+    const products = await odooCall(uid, "product.product", "search_read", domain, {
+      fields: ["id", "default_code"], limit: 200
     });
 
     const productIds = products.map(p => parseInt(p.id)).filter(Boolean);
-    const barcodeByPid = {};
-    products.forEach(p => { barcodeByPid[parseInt(p.id)] = p.barcode; });
+    const cipByPid = {};
+    products.forEach(p => { cipByPid[parseInt(p.id)] = p.default_code; });
 
-    // 2. Stock disponible (tous emplacements internes de la société)
-    const quants = productIds.length > 0
-      ? await odooCall(uid, "stock.quant", "search_read", [
-          ["product_id", "in", productIds],
-          ["company_id", "=", ODOO_COMPANY],
-          ["location_id.usage", "=", "internal"],
-        ], { fields: ["product_id", "quantity", "reserved_quantity"], limit: 2000 })
-      : [];
+    let quants = [];
+    if (productIds.length > 0) {
+      const qDomain = [];
+      for (let i = 0; i < productIds.length - 1; i++) qDomain.push("|");
+      productIds.forEach(id => qDomain.push(["product_id", "=", id]));
+      quants = await odooCall(uid, "stock.quant", "search_read", qDomain, {
+        fields: ["product_id", "quantity", "reserved_quantity"], limit: 2000
+      });
+    }
 
-    // 3. Agrège par CIP
     const stockByCip = {};
     quants.forEach(q => {
-      const barcode = barcodeByPid[parseInt(q.product_id)];
-      if (!barcode) return;
-      const dispo = parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
-      stockByCip[barcode] = (stockByCip[barcode] || 0) + dispo;
+      const pid = typeof q.product_id === "number" ? q.product_id : parseInt(q.product_id);
+      const cip = cipByPid[pid];
+      if (!cip) return;
+      const net = parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
+      stockByCip[cip] = (stockByCip[cip] || 0) + net;
     });
 
     const stocks = {};
     CATALOG_CIPS.forEach(cip => {
-      const isKnown = products.some(p => p.barcode === cip);
+      const isKnown = products.some(p => p.default_code === cip);
       const s = stockByCip[cip];
-      stocks[cip] = s !== undefined
-        ? { dispo: s > 0 ? 1 : 0, stock: Math.round(s) }
-        : { dispo: isKnown ? 0 : 1, stock: 0 };
+      if (s !== undefined) {
+        stocks[cip] = { dispo: s > 0 ? 1 : 0, stock: Math.round(s) };
+      } else {
+        stocks[cip] = { dispo: isKnown ? 0 : 1, stock: 0 };
+      }
     });
 
-    return {
-      statusCode: 200, headers: cors,
-      body: JSON.stringify({ stocks, updatedAt: new Date().toISOString() })
-    };
+    const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
+    console.log("[stock-get] ✓ " + (CATALOG_CIPS.length - ruptures) + " en stock · " + ruptures + " rupture(s)");
+
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ stocks, updatedAt: new Date().toISOString() }) };
   } catch (err) {
-    console.error("[stock-get]", err.message);
+    console.error("[stock-get] ERREUR:", err.message);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ stocks: {}, updatedAt: null, error: err.message }) };
   }
 };

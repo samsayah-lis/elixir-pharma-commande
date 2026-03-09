@@ -11,7 +11,7 @@ const CATALOG = {
     color: "#1a3a4a",
     accent: "#2d7d9a",
     icon: "💊",
-    columns: ["CIP13", "Désignation", "Prix Vente", "Abandon €", "Prix net"],
+    columns: ["CIP13", "Désignation", "Prix Vente", "Remise %", "Remise €", "Prix net"],
     products: [
       { cip: "3400930083048", name: "ALECENSA 150MG GELU BT 224",                      pv:  3660.04, remise: 30,    pn:  3630.04, note: "Limité" },
       { cip: "3400930260494", name: "AMVUTTRA 25MG INJ SRG 0,5ML BT 1",               pv: 65128.84, remise: 30,    pn: 65098.84, note: "Sur commande" },
@@ -56,7 +56,7 @@ const CATALOG = {
     color: "#2d5a27",
     accent: "#4a9e42",
     icon: "📦",
-    columns: ["CIP", "Désignation", "Colis", "Prix", "Remise %", "Prix net", "Prix carton"],
+    columns: ["CIP", "Désignation", "Colis", "Prix", "Remise %", "Remise €", "Prix net", "Prix carton"],
     products: [
       { cip: "3400933640620", name: "ADVILMED ENF/BB SUSP FL 200ML",                    colis:  24, prix: 2.38, pct:  9.24, pn: 2.16, carton:  51.84 },
       { cip: "3400931499787", name: "BETADINE DERMIQUE 10% SOL LOC FL 125ML BT 1",      colis:  60, prix: 1.66, pct: 15.06, pn: 1.41, carton:  84.60 },
@@ -105,7 +105,7 @@ const CATALOG = {
     color: "#4a2070",
     accent: "#8b5cf6",
     icon: "⭐",
-    columns: ["CIP13", "Désignation", "Palier", "Prix brut", "Remise %", "Prix remisé"],
+    columns: ["CIP13", "Désignation", "Palier", "Prix brut", "Remise %", "Remise €", "Prix remisé"],
     products: [
       { cip: "3400935766052", name: "ACIDE FOLIQUE CCD 5MG CPR BT 20",              palier:  20, pb: 1.20, pct: 18.33, pn: 0.98 },
       { cip: "3400935845856", name: "ACIDE FOLIQUE CCD 0,40MG CPR BT 30",           palier:  30, pb: 2.59, pct:  8.49, pn: 2.37 },
@@ -532,14 +532,16 @@ export default function App() {
   const fetchStock = useCallback(async () => {
     setStockLoading(true);
     try {
-      const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(15000) });
-      if (!res.ok) return;
+      const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(20000) });
       const data = await res.json();
-      if (data.stocks && Object.keys(data.stocks).length > 0) {
+      if (data.error) console.warn("[stock] Erreur Odoo:", data.error);
+      if (data.stocks) {
+        const count = Object.values(data.stocks).filter(s => s.dispo === 0).length;
+        console.log(`[stock] ${Object.keys(data.stocks).length} produits, ${count} rupture(s)`);
         setStockData(data.stocks);
-        setStockUpdatedAt(data.updatedAt);
+        setStockUpdatedAt(data.updatedAt || new Date().toISOString());
       }
-    } catch(e) { /* silently ignore */ }
+    } catch(e) { console.warn("[stock] fetch error:", e.message); }
     finally { setStockLoading(false); }
   }, []);
 
@@ -591,14 +593,14 @@ export default function App() {
   }, [adminProducts, adminOverrides, promoSections]);
 
   // Onboarding
-  const [onboardingDone, setOnboardingDone] = useState(false);
+  const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
   const [showAdminLogin, setShowAdminLogin] = useState(false);
   // Onboarding flow: "email" | "confirm" | "new_client"
   const [obStep, setObStep] = useState("email");
   const [emailInput, setEmailInput] = useState("");
   const [foundPharmacy, setFoundPharmacy] = useState(null);
-  const [pharmacyName, setPharmacyName] = useState("");
-  const [pharmacyEmail, setPharmacyEmail] = useState("");
+  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
+  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
   const [isClient, setIsClient] = useState(null);
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
@@ -732,6 +734,8 @@ export default function App() {
   const handleConfirmPharmacy = () => {
     setPharmacyName(foundPharmacy.name);
     setPharmacyEmail(foundPharmacy.email);
+    localStorage.setItem("session_name", foundPharmacy.name);
+    localStorage.setItem("session_email", foundPharmacy.email);
     setIsClient(true);
     setOnboardingDone(true);
     // Show promo popup if active promos exist
@@ -1262,26 +1266,38 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 300 }}>
                             {p.name}
                             {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                            {ruptureBadge}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmt(p.remise)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                            {p.pv && p.remise ? (p.remise/p.pv*100).toFixed(1)+"%" : p.pct ? p.pct : "—"}
+                          </td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                            {p.remise ? fmt(p.remise) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
+                          </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "center" }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.prix)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct}%</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                            {p.prix && p.pct ? fmt((p.prix * p.pct / 100)) : "—"}
+                          </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: "#666" }}>{fmt(p.carton)}</td>
                         </>}
                         {activeTab === "master" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "center", color: cat.accent, fontWeight: 700 }}>×{p.palier}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pb)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct}%</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                            {p.pb && p.pct ? fmt((p.pb * p.pct / 100)) : "—"}
+                          </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
                         </>}
                         {activeTab === "obeso" && <>

@@ -15,7 +15,7 @@ const SECTIONS = [
   { key: "otc",       label: "🛒 Centrale OTC / Para" },
 ];
 
-const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", pn:"", section:"otc", hasPalier:false, palier:"", note:"" };
+const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", section:"otc", hasPalier:false, palier:"", note:"" };
 
 const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 
@@ -57,14 +57,33 @@ export default function AdminPanel({ onClose, catalog }) {
   const [editForm, setEditForm]   = useState({});
 
   useEffect(() => {
-    const pv = parseFloat(form.pv), pct = parseFloat(form.pct);
-    if (!isNaN(pv) && !isNaN(pct)) setForm(f => ({ ...f, pn: (pv*(1-pct/100)).toFixed(2) }));
-  }, [form.pv, form.pct]);
+    const pv = parseFloat(form.pv);
+    if (isNaN(pv) || pv === 0) return;
+    const pct = parseFloat(form.pct);
+    const eur = parseFloat(form.remise_eur);
+    if (!isNaN(pct) && form._lastEdited !== "eur") {
+      const e = (pv * pct / 100).toFixed(2);
+      const pn = (pv - pv*pct/100).toFixed(2);
+      setForm(f => ({ ...f, remise_eur: e, pn }));
+    } else if (!isNaN(eur) && form._lastEdited === "eur") {
+      const p = (eur / pv * 100).toFixed(2);
+      const pn = (pv - eur).toFixed(2);
+      setForm(f => ({ ...f, pct: p, pn }));
+    }
+  }, [form.pv, form.pct, form.remise_eur]);
 
   useEffect(() => {
-    const pv = parseFloat(editForm.pv), pct = parseFloat(editForm.pct);
-    if (!isNaN(pv) && !isNaN(pct)) setEditForm(f => ({ ...f, pn: (pv*(1-pct/100)).toFixed(2) }));
-  }, [editForm.pv, editForm.pct]);
+    const pv = parseFloat(editForm.pv);
+    if (isNaN(pv) || pv === 0) return;
+    const pct = parseFloat(editForm.pct);
+    const eur = parseFloat(editForm.remise_eur);
+    if (!isNaN(pct) && editForm._lastEdited !== "eur") {
+      const e = (pv * pct / 100).toFixed(2);
+      setEditForm(f => ({ ...f, remise_eur: e, pn: (pv - pv*pct/100).toFixed(2) }));
+    } else if (!isNaN(eur) && editForm._lastEdited === "eur") {
+      setEditForm(f => ({ ...f, pct: (eur/pv*100).toFixed(2), pn: (pv - eur).toFixed(2) }));
+    }
+  }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
   const handleLogin = () => {
     if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); }
@@ -476,8 +495,16 @@ export default function AdminPanel({ onClose, catalog }) {
                 <input type="number" step="0.01" value={form.pv} onChange={e=>handleField("pv",e.target.value)} placeholder="5.90" style={IS}/>
               </div>
               <div>
-                <label style={LS}>Remise (%)</label>
-                <input type="number" step="0.1" value={form.pct} onChange={e=>handleField("pct",e.target.value)} placeholder="20" style={IS}/>
+                <label style={LS}>Remise %</label>
+                <input type="number" step="0.01" value={form.pct}
+                  onChange={e=>setForm(f=>({...f, pct:e.target.value, _lastEdited:"pct"}))}
+                  placeholder="20.00" style={IS}/>
+              </div>
+              <div>
+                <label style={LS}>Remise €</label>
+                <input type="number" step="0.01" value={form.remise_eur}
+                  onChange={e=>setForm(f=>({...f, remise_eur:e.target.value, _lastEdited:"eur"}))}
+                  placeholder="1.18" style={IS}/>
               </div>
               <div style={{gridColumn:"1 / -1"}}>
                 <label style={LS}>Prix remisé (€) – calculé auto *</label>
