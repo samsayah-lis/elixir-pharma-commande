@@ -40,11 +40,12 @@ export const handler = async () => {
 
     const stocks = {};
     CATALOG_CIPS.forEach(cip => {
-      const isKnown = products.some(p => p.default_code === cip);
       const s = stockByCip[cip];
+      // Rupture seulement si quant explicite ≤ 0
+      // Pas de quant = disponible par défaut (produit sur commande)
       stocks[cip] = s !== undefined
         ? { dispo: s > 0 ? 1 : 0, stock: Math.round(s) }
-        : { dispo: isKnown ? 0 : 1, stock: 0 };
+        : { dispo: 1, stock: 0 };
     });
 
     const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
