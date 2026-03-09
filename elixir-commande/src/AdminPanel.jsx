@@ -265,7 +265,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             cip: String(get("cip","code","reference","ref")).trim() || null,
             name: String(get("nom","designation","name","produit","libelle")).trim(),
             pv,
-            pct: pct ? `-${pct}%` : null,
+            pct: pct ?? null,
             pn,
             palier,
             _valid: !!String(get("nom","designation","name","produit","libelle")).trim() && pn != null,

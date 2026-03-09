@@ -1104,6 +1104,12 @@ export default function App() {
                         </div>
                         <span style={{ fontWeight: 800, color: "#1a2a3a", fontSize: 13 }}>{fmt(item.total)}</span>
                       </div>
+                      {/* Avertissement rupture */}
+                      {item.cip && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
+                        <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", background: "#fff5f5", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
+                          ⚠️ <strong>Rupture de stock</strong> — ce produit peut ne pas être disponible à la livraison
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -1111,6 +1117,28 @@ export default function App() {
 
               {cartItems.length > 0 && (
                 <div style={{ padding: "16px 20px", borderTop: "2px solid #f0f2f5" }}>
+
+                  {/* Bouton envoi rapide juste sous le panier */}
+                  <button
+                    onClick={handleSend}
+                    disabled={sendStatus === "sending"}
+                    style={{
+                      width: "100%",
+                      background: sendStatus === "success"
+                        ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
+                        : sendStatus === "error"
+                        ? "linear-gradient(135deg, #e53e3e 0%, #c53030 100%)"
+                        : "linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)",
+                      color: "white", border: "none", borderRadius: 10, padding: "12px",
+                      fontWeight: 700, fontSize: 14, cursor: sendStatus === "sending" ? "not-allowed" : "pointer",
+                      opacity: sendStatus === "sending" ? 0.7 : 1, marginBottom: 12
+                    }}>
+                    {sendStatus === "sending" ? "⏳ Envoi en cours..." :
+                     sendStatus === "success" ? "✅ Commande envoyée !" :
+                     sendStatus === "error" ? "❌ Erreur – Réessayez" :
+                     "📧 Envoyer la commande"}
+                  </button>
+
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                     <span style={{ color: "#666", fontSize: 13 }}>Total HT estimé</span>
                     <span style={{ fontWeight: 800, fontSize: 20, color: "#0f2d3d" }}>{fmt(cartTotal)}</span>
@@ -1146,7 +1174,7 @@ export default function App() {
                     {sendStatus === "sending" ? "⏳ Envoi en cours..." :
                      sendStatus === "success" ? "✅ Commande envoyée !" :
                      sendStatus === "error" ? "❌ Erreur – Réessayez" :
-                     "📧 Envoyer la commande par e-mail"}
+                     "📧 Envoyer la commande"}
                   </button>
 
                   <button onClick={handlePrint} style={{
