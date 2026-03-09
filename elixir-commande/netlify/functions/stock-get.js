@@ -1,14 +1,12 @@
 import { authenticate, odooCall } from "./odoo.js";
 import { CATALOG_CIPS } from "./cips.js";
 
-const COMPANY_ID = parseInt(process.env.ODOO_COMPANY || "2");
-
 export const handler = async () => {
   const cors = { "Access-Control-Allow-Origin": "*" };
   try {
     const uid = await authenticate();
 
-    // Produits par CIP (pas de filtre company — les produits sont partagés)
+    // Recherche produits par CIP (default_code)
     const orCips = [];
     for (let i = 0; i < CATALOG_CIPS.length - 1; i++) orCips.push("|");
     CATALOG_CIPS.forEach(cip => orCips.push(["default_code", "=", cip]));
@@ -24,17 +22,14 @@ export const handler = async () => {
 
     let quants = [];
     if (productIds.length > 0) {
-      // Filtre company_id uniquement sur les quants (stock réel par société)
       const qOrIds = [];
       for (let i = 0; i < productIds.length - 1; i++) qOrIds.push("|");
       productIds.forEach(id => qOrIds.push(["product_id", "=", id]));
-      // location_id.usage=internal : uniquement stock physique (pas transit/clients/fournisseurs)
-      const qDomain = ["&", "&", ["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"], ...qOrIds];
-      quants = await odooCall(uid, "stock.quant", "search_read", qDomain, {
+      quants = await odooCall(uid, "stock.quant", "search_read", qOrIds, {
         fields: ["product_id", "quantity", "reserved_quantity"], limit: 5000
       });
     }
-    console.log("[stock-get] " + quants.length + " lignes stock company=" + COMPANY_ID);
+    console.log("[stock-get] " + quants.length + " lignes stock");
 
     const stockByCip = {};
     quants.forEach(q => {
