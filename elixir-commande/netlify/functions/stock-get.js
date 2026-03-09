@@ -25,7 +25,7 @@ export const handler = async () => {
       if (!updatedAt || r.updated_at > updatedAt) updatedAt = r.updated_at;
     });
 
-    const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
+    const ruptures = Object.values(stocks).filter(s => s.dispo === 0 || s.dispo === false).length;
     console.log("[stock-get] ✓ " + rows.length + " produits · " + ruptures + " rupture(s) depuis Supabase");
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ stocks, updatedAt }) };

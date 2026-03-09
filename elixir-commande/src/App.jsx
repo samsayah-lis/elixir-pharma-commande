@@ -538,7 +538,7 @@ export default function App() {
       const data = await res.json();
       if (data.error) console.warn("[stock] Erreur Odoo:", data.error);
       if (data.stocks) {
-        const count = Object.values(data.stocks).filter(s => s.dispo === 0).length;
+        const count = Object.values(data.stocks).filter(s => s.dispo === 0 || s.dispo === false).length;
         console.log(`[stock] ${Object.keys(data.stocks).length} produits, ${count} rupture(s)`);
         setStockData(data.stocks);
         setStockUpdatedAt(data.updatedAt || new Date().toISOString());
@@ -1272,7 +1272,7 @@ export default function App() {
                     const qty = quantities[key] || 0;
                     const subtotal = p.pn != null ? p.pn * qty : null;
 
-                    const isRupture = p.cip && stockData[p.cip]?.dispo === 0;
+                    const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const ruptureBadge = isRupture ? <span style={{ marginLeft: 6, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span> : null;
                     return (
                       <tr key={key} style={{
