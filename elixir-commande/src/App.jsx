@@ -59,9 +59,9 @@ const nextBusinessDay = () => {
 
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
-  const n = parseFloat(String(pct).replace(/[^0-9.-]/g, ""));
-  if (isNaN(n)) return "–";
-  return `-${n.toFixed(2).replace(/\.?0+$/, "")} %`;
+  const n = Math.abs(parseFloat(String(pct).replace(/[^0-9.-]/g, "")));
+  if (isNaN(n) || n === 0) return "–";
+  return `-${n % 1 === 0 ? n : n.toFixed(2)} %`;
 };
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
@@ -1101,7 +1101,7 @@ export default function App() {
                 </div>
               </div>
 
-              <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
+              <div style={{ overflowY: "auto", padding: "12px 16px" }}>
                 {cartItems.length === 0 ? (
                   <div style={{ textAlign: "center", color: "#bbb", padding: 40, fontSize: 14 }}>
                     <div style={{ fontSize: 40, marginBottom: 12 }}>🛒</div>
@@ -1155,31 +1155,9 @@ export default function App() {
                     </div>
                   ))
                 )}
-              </div>
 
-              {cartItems.length > 0 && (
-                <div style={{ padding: "16px 20px", borderTop: "2px solid #f0f2f5" }}>
-
-                  {/* Bouton envoi rapide juste sous le panier */}
-                  <button
-                    onClick={handleSend}
-                    disabled={sendStatus === "sending"}
-                    style={{
-                      width: "100%",
-                      background: sendStatus === "success"
-                        ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
-                        : sendStatus === "error"
-                        ? "linear-gradient(135deg, #e53e3e 0%, #c53030 100%)"
-                        : "linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)",
-                      color: "white", border: "none", borderRadius: 10, padding: "12px",
-                      fontWeight: 700, fontSize: 14, cursor: sendStatus === "sending" ? "not-allowed" : "pointer",
-                      opacity: sendStatus === "sending" ? 0.7 : 1, marginBottom: 12
-                    }}>
-                    {sendStatus === "sending" ? "⏳ Envoi en cours..." :
-                     sendStatus === "success" ? "✅ Commande envoyée !" :
-                     sendStatus === "error" ? "❌ Erreur – Réessayez" :
-                     "📧 Envoyer la commande"}
-                  </button>
+                {cartItems.length > 0 && (
+                <div style={{ padding: "8px 0 16px 0", borderTop: "2px solid #f0f2f5", marginTop: 8 }}>
 
                   <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                     <span style={{ color: "#666", fontSize: 13 }}>Total HT estimé</span>
@@ -1242,7 +1220,8 @@ export default function App() {
                     fontWeight: 600, fontSize: 12, cursor: "pointer"
                   }}>🗑 Vider le panier</button>
                 </div>
-              )}
+                )}
+              </div>
             </>
           )}
         </aside>
