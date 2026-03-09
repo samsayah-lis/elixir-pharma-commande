@@ -63,7 +63,11 @@ const refreshHandler = async () => {
     console.log("[stock-refresh] " + products.length + " produits");
 
     const cipByPid = {};
-    products.forEach(p => { cipByPid[parseInt(p.id)] = p.default_code; });
+    const cipFoundInOdoo = new Set(); // CIPs effectivement trouvés dans Odoo
+    products.forEach(p => {
+      cipByPid[parseInt(p.id)] = p.default_code;
+      cipFoundInOdoo.add(p.default_code);
+    });
     const productIds = products.map(p => parseInt(p.id));
 
     // Quants
@@ -93,9 +97,16 @@ const refreshHandler = async () => {
     const stocks = {};
     CATALOG_CIPS.forEach(cip => {
       const s = stockByCip[cip];
-      stocks[cip] = s !== undefined
-        ? { dispo: s > 0 ? 1 : 0, stock: Math.round(s) }
-        : { dispo: 1, stock: 0 };
+      if (s !== undefined) {
+        // Produit trouvé dans les emplacements internes
+        stocks[cip] = { dispo: s > 0 ? 1 : 0, stock: Math.round(s) };
+      } else if (cipFoundInOdoo.has(cip)) {
+        // Produit dans Odoo mais 0 stock en interne → rupture
+        stocks[cip] = { dispo: 0, stock: 0 };
+      } else {
+        // Produit absent d'Odoo → on ne sait pas, on laisse disponible par défaut
+        stocks[cip] = { dispo: 1, stock: 0 };
+      }
     });
 
     const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
