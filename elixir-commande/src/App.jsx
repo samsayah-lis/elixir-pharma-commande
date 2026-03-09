@@ -15,6 +15,12 @@ const SECTION_META = {
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+const fmtPct = (pct) => {
+  if (pct == null || pct === "" || pct === "–") return "–";
+  const n = parseFloat(String(pct).replace(/[^0-9.-]/g, ""));
+  if (isNaN(n)) return "–";
+  return `-${n.toFixed(2).replace(/\.?0+$/, "")} %`;
+};
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCell({ cip }) {
@@ -883,10 +889,10 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {p.pv && p.remise ? (p.remise/p.pv*100).toFixed(1)+"%" : p.pct ? p.pct : "—"}
+                            {fmtPct(p.pct)}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {p.remise ? fmt(p.remise) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
+                            {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
                         </>}
@@ -895,9 +901,9 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "center" }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.prix)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct}%</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {p.prix && p.pct ? fmt((p.prix * p.pct / 100)) : "—"}
+                            {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: "#666" }}>{fmt(p.carton)}</td>
@@ -907,9 +913,9 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "center", color: cat.accent, fontWeight: 700 }}>×{p.palier}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pb)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct}%</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {p.pb && p.pct ? fmt((p.pb * p.pct / 100)) : "—"}
+                            {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
                         </>}
@@ -923,7 +929,7 @@ export default function App() {
                             {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#3b82f6", fontWeight: 700 }}>{p.pct}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: "#3b82f6", fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
                         </>}
                         {activeTab === "nr" && <>
@@ -933,7 +939,7 @@ export default function App() {
                             {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
                         </>}
                         {activeTab === "molnlycke" && <>
@@ -953,14 +959,14 @@ export default function App() {
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 320 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct || "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
                         </>}
                         {activeTab === "otc" && <>
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 260 }}>{p.name}{ruptureBadge}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct || "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
                         </>}
                         {cat.isPromo && <>
@@ -971,7 +977,7 @@ export default function App() {
                             {ruptureBadge}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.pct || "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
                         </>}
 
