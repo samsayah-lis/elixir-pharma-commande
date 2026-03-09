@@ -788,7 +788,6 @@ export default function AdminPanel({ onClose, catalog }) {
                       </div>
                     ))}
                   </div>
-                  </div>
                 </div>
               </div>
             ))}
