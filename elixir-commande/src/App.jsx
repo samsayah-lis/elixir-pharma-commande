@@ -15,6 +15,48 @@ const SECTION_META = {
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+// Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
+const getFrenchHolidays = (year) => {
+  // Pâques (algorithme de Meeus/Jones/Butcher)
+  const a = year % 19, b = Math.floor(year/100), c = year % 100;
+  const d = Math.floor(b/4), e = b % 4, f = Math.floor((b+8)/25);
+  const g = Math.floor((b-f+1)/3), h = (19*a+b-d-g+15) % 30;
+  const i = Math.floor(c/4), k = c % 4;
+  const l = (32+2*e+2*i-h-k) % 7;
+  const m = Math.floor((a+11*h+22*l)/451);
+  const month = Math.floor((h+l-7*m+114)/31);
+  const day = ((h+l-7*m+114) % 31) + 1;
+  const easter = new Date(year, month-1, day);
+  const d1 = (dt, dd) => { const x = new Date(dt); x.setDate(x.getDate()+dd); return x; };
+  return [
+    `${year}-01-01`, `${year}-05-01`, `${year}-05-08`,
+    `${year}-07-14`, `${year}-08-15`, `${year}-11-01`,
+    `${year}-11-11`, `${year}-12-25`,
+    // Pâques + lundi, Ascension, Pentecôte + lundi
+    d1(easter,1).toISOString().slice(0,10),
+    d1(easter,39).toISOString().slice(0,10),
+    d1(easter,49).toISOString().slice(0,10),
+    d1(easter,50).toISOString().slice(0,10),
+  ];
+};
+
+const nextBusinessDay = () => {
+  const d = new Date();
+  // Si après 14h, on passe au lendemain d'emblée
+  if (d.getHours() >= 14) d.setDate(d.getDate() + 1);
+  else d.setDate(d.getDate() + 1);
+  const holidays = getFrenchHolidays(d.getFullYear());
+  let safety = 0;
+  while (safety++ < 10) {
+    const day = d.getDay();
+    const iso = d.toISOString().slice(0,10);
+    if (day !== 0 && day !== 6 && !holidays.includes(iso)) break;
+    d.setDate(d.getDate() + 1);
+    if (!holidays.includes(d.toISOString().slice(0,10)) && getFrenchHolidays(d.getFullYear())) {}
+  }
+  return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
+};
+
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
   const n = parseFloat(String(pct).replace(/[^0-9.-]/g, ""));
@@ -1143,8 +1185,12 @@ export default function App() {
                     <span style={{ color: "#666", fontSize: 13 }}>Total HT estimé</span>
                     <span style={{ fontWeight: 800, fontSize: 20, color: "#0f2d3d" }}>{fmt(cartTotal)}</span>
                   </div>
-                  <div style={{ fontSize: 10, color: "#aaa", marginBottom: 14 }}>
+                  <div style={{ fontSize: 10, color: "#aaa", marginBottom: 8 }}>
                     * Prix nets remisés – Hors conditions spéciales
+                  </div>
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12 }}>
+                    <span style={{ color: "#15803d", fontWeight: 700 }}>🚚 Livraison estimée : </span>
+                    <span style={{ color: "#166534", fontWeight: 800 }}>{nextBusinessDay()}</span>
                   </div>
 
                   {/* Pharmacy recap */}
