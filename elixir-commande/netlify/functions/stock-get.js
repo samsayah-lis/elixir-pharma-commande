@@ -8,13 +8,13 @@ export const handler = async () => {
   try {
     const uid = await authenticate();
 
-    // 1. Emplacements internes de la société Elixir (company_id=2)
+    // 1. Emplacements internes Elixir
     const locations = await odooCall(uid, "stock.location", "search_read",
       [["usage", "=", "internal"], ["company_id", "=", COMPANY_ID]],
-      { fields: ["id", "complete_name"], limit: 200 }
+      { fields: ["id"], limit: 200 }
     );
-    const locationIds = locations.map(l => parseInt(l.id));
-    console.log("[stock-get] " + locationIds.length + " emplacements internes company=" + COMPANY_ID);
+    const locationIds = new Set(locations.map(l => parseInt(l.id)));
+    console.log("[stock-get] " + locationIds.size + " emplacements internes company=" + COMPANY_ID);
 
     // 2. Produits par CIP
     const orCips = [];
@@ -29,27 +29,23 @@ export const handler = async () => {
     products.forEach(p => { cipByPid[parseInt(p.id)] = p.default_code; });
     const productIds = products.map(p => parseInt(p.id));
 
-    // 3. Quants filtrés sur emplacements internes Elixir uniquement
+    // 3. Quants filtrés sur produits seulement → filtre location en JS
     let quants = [];
-    if (productIds.length > 0 && locationIds.length > 0) {
+    if (productIds.length > 0) {
       const orPids = [];
       for (let i = 0; i < productIds.length - 1; i++) orPids.push("|");
       productIds.forEach(id => orPids.push(["product_id", "=", id]));
-
-      const orLocs = [];
-      for (let i = 0; i < locationIds.length - 1; i++) orLocs.push("|");
-      locationIds.forEach(id => orLocs.push(["location_id", "=", id]));
-
-      const qDomain = ["&", ...orLocs, ...orPids];
-      quants = await odooCall(uid, "stock.quant", "search_read", qDomain, {
+      quants = await odooCall(uid, "stock.quant", "search_read", orPids, {
         fields: ["product_id", "location_id", "quantity", "reserved_quantity"], limit: 5000
       });
     }
-    console.log("[stock-get] " + quants.length + " lignes quant");
+    console.log("[stock-get] " + quants.length + " quants total");
 
-    // 4. Agrège stock net par CIP
+    // 4. Filtre location en JS + agrège
     const stockByCip = {};
     quants.forEach(q => {
+      const locId = typeof q.location_id === "number" ? q.location_id : parseInt(q.location_id);
+      if (!locationIds.has(locId)) return; // exclut emplacements hors Elixir
       const pid = typeof q.product_id === "number" ? q.product_id : parseInt(q.product_id);
       const cip = cipByPid[pid];
       if (!cip) return;
@@ -57,9 +53,8 @@ export const handler = async () => {
       stockByCip[cip] = (stockByCip[cip] || 0) + net;
     });
 
-    // Debug Angispray
     const angispray = "3400930425657";
-    console.log("[stock-get] Angispray stock net=" + (stockByCip[angispray] ?? "non trouvé"));
+    console.log("[stock-get] Angispray=" + (stockByCip[angispray] ?? "non trouvé"));
 
     const stocks = {};
     CATALOG_CIPS.forEach(cip => {
