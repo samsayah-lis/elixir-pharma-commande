@@ -1,5 +1,6 @@
-// Recherche une pharmacie dans Odoo par email
-import { authenticate, odooCall } from "./odoo.js";
+// Recherche une pharmacie dans Supabase (cache Odoo)
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -17,40 +18,42 @@ export const handler = async (event) => {
   const { email } = body;
   if (!email) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "email manquant" }) };
 
-  try {
-    const uid = await authenticate();
+  const emailNorm = email.trim().toLowerCase();
 
-    // Cherche le partenaire par email dans Odoo
-    const partners = await odooCall(uid, "res.partner", "search_read",
-      [["email", "=ilike", email.trim()]],
-      {
-        fields: ["id", "name", "email", "ref", "street", "zip", "city", "phone", "mobile", "customer_rank"],
-        limit: 5
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(emailNorm)}&limit=1`,
+    {
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
       }
-    );
-
-    if (!partners || partners.length === 0) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ found: false }) };
     }
+  );
 
-    // Prend le premier résultat (ou le client si plusieurs)
-    const p = partners.find(p => parseInt(p.customer_rank) > 0) || partners[0];
-
-    const pharmacy = {
-      name: p.name || "",
-      email: p.email || email,
-      cip: p.ref || "",           // Le CIP7 est stocké dans la référence interne Odoo
-      street: p.street || "",
-      cp: p.zip || "",
-      ville: p.city || "",
-      tel: p.phone || p.mobile || "",
-    };
-
-    console.log(`[pharmacy-lookup] ✓ Trouvé : ${pharmacy.name} (ref=${pharmacy.cip})`);
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ found: true, pharmacy }) };
-
-  } catch (err) {
-    console.error("[pharmacy-lookup] ERREUR:", err.message);
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
+  if (!res.ok) {
+    const err = await res.text();
+    console.error("[pharmacy-lookup] Supabase error:", err);
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
   }
+
+  const rows = await res.json();
+
+  if (!rows || rows.length === 0) {
+    console.log(`[pharmacy-lookup] Aucun résultat pour : ${emailNorm}`);
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ found: false }) };
+  }
+
+  const p = rows[0];
+  const pharmacy = {
+    name: p.name,
+    email: p.email,
+    cip: p.cip || "",
+    street: p.street || "",
+    cp: p.cp || "",
+    ville: p.ville || "",
+    tel: p.tel || "",
+  };
+
+  console.log(`[pharmacy-lookup] ✓ ${pharmacy.name} (CIP7=${pharmacy.cip})`);
+  return { statusCode: 200, headers: cors, body: JSON.stringify({ found: true, pharmacy }) };
 };
