@@ -1,36 +1,17 @@
-import { authenticate, odooCall, xmlVal, xmlMember, ODOO_COMPANY } from "./odoo.js";
-import https from "https";
+// Soumet une commande au frontal PharmaML via l'API INFOSOFT
+// POST https://pharmaml.elixirpharma.fr/commandes.php?U=admin&P=xxxx
+// Format JSON : [{ identifiantPML, referenceCommande, lignes: [{ CIP, libelle, quantiteCommandee, quantiteLivree, prix }] }]
 
-const ODOO_URL  = process.env.ODOO_URL  || "https://odoo.elixir-pharma.fr";
-const ODOO_DB   = process.env.ODOO_DB   || "healthsoft-sas-lispharma-main-13622653";
-const ODOO_PASS = process.env.ODOO_APIKEY || process.env.ODOO_PASS || "";
-
-function buildCall(method, params) {
-  return `<?xml version="1.0"?><methodCall><methodName>${method}</methodName><params>${
-    params.map(p => `<param>${p}</param>`).join("")
-  }</params></methodCall>`;
-}
-function xmlPost(path, body) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(ODOO_URL);
-    const buf = Buffer.from(body, "utf-8");
-    const req = https.request({
-      hostname: u.hostname, path, method: "POST",
-      headers: { "Content-Type": "text/xml", "Content-Length": buf.length },
-    }, res => { let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(d)); });
-    req.on("error", reject); req.write(buf); req.end();
-  });
-}
-function parseScalar(xml) {
-  if (xml.includes("<fault>")) {
-    const msg = xml.match(/<n(?:ame)?>faultString<\/n(?:ame)?>\s*<value><string>([\s\S]*?)<\/string>/)?.[1] || "Fault";
-    throw new Error(String(msg).substring(0, 300));
-  }
-  return parseInt(xml.match(/<int>(\d+)<\/int>/)?.[1] || "0");
-}
+const PHARMAML_URL  = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
+const PHARMAML_USER = process.env.PHARMAML_USER || "admin";
+const PHARMAML_PASS = process.env.PHARMAML_PASS || "";
 
 export const handler = async (event) => {
-  const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
+  const cors = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers": "Content-Type"
+  };
+
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "Method Not Allowed" };
 
@@ -38,80 +19,61 @@ export const handler = async (event) => {
   try { payload = JSON.parse(event.body); }
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-  const { items, pharmacyName, pharmacyEmail, orderId } = payload;
-  if (!items?.length) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
+  const { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
+
+  if (!items?.length) {
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
+  }
+  if (!pharmacyCip) {
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "identifiantPML (pharmacyCip) manquant" }) };
+  }
+
+  // Construction du payload PharmaML JSON
+  const body = [
+    {
+      identifiantPML: String(pharmacyCip),
+      referenceCommande: String(orderId || Date.now()),
+      lignes: items.map(i => ({
+        CIP: i.cip || "",
+        libelle: (i.name || "").substring(0, 50),
+        quantiteCommandee: i.qty,
+        quantiteLivree: i.qty, // à la commande, qté livrée = qté commandée
+        prix: i.pn != null ? parseFloat(i.pn.toFixed(2)) : 0
+      }))
+    }
+  ];
 
   try {
-    const uid = await authenticate();
+    const url = `${PHARMAML_URL}/commandes.php?U=${encodeURIComponent(PHARMAML_USER)}&P=${encodeURIComponent(PHARMAML_PASS)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
 
-    // 1. Trouve le partenaire (pharmacie)
-    let partnerId = null;
-    if (pharmacyEmail) {
-      const partners = await odooCall(uid, "res.partner", "search_read",
-        [["email", "=", pharmacyEmail]],
-        { fields: ["id", "name"], limit: 1 }
-      );
-      if (partners.length > 0) partnerId = parseInt(partners[0].id);
+    const text = await res.text();
+    let result;
+    try { result = JSON.parse(text); }
+    catch { result = { raw: text }; }
+
+    console.log(`[submit-order] PharmaML réponse (${res.status}):`, JSON.stringify(result));
+
+    if (!res.ok || result?.status === "error") {
+      const msg = result?.message || result?.errors?.[0]?.message || `HTTP ${res.status}`;
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: msg, detail: result }) };
     }
-    if (!partnerId && pharmacyName) {
-      const partners = await odooCall(uid, "res.partner", "search_read",
-        [["name", "ilike", pharmacyName]],
-        { fields: ["id", "name"], limit: 1 }
-      );
-      if (partners.length > 0) partnerId = parseInt(partners[0].id);
-    }
-    if (!partnerId) throw new Error(`Partenaire introuvable : ${pharmacyName} / ${pharmacyEmail}`);
 
-    // 2. Trouve les product.product IDs depuis les CIPs
-    const cips = [...new Set(items.map(i => i.cip).filter(Boolean))];
-    const cipDomain = [];
-    if (cips.length > 1) for (let i = 0; i < cips.length - 1; i++) cipDomain.push("|");
-    cips.forEach(c => cipDomain.push(["barcode", "=", c]));
-    const products = await odooCall(uid, "product.product", "search_read", cipDomain,
-      { fields: ["id", "barcode"], limit: 200 }
-    );
-    const pidByCip = {};
-    products.forEach(p => { pidByCip[p.barcode] = parseInt(p.id); });
-
-    // 3. Crée le bon de commande (sale.order)
-    const orderLines = items
-      .filter(i => pidByCip[i.cip])
-      .map(i => xmlVal("array",
-        xmlVal("int", 0) + xmlVal("int", 0) +
-        xmlVal("struct",
-          xmlMember("product_id", xmlVal("int", pidByCip[i.cip])) +
-          xmlMember("product_uom_qty", xmlVal("int", i.qty))
-        )
-      )).join("");
-
-    const createBody = buildCall("execute_kw", [
-      xmlVal("string", ODOO_DB),
-      xmlVal("int", uid),
-      xmlVal("string", ODOO_PASS),
-      xmlVal("string", "sale.order"),
-      xmlVal("string", "create"),
-      xmlVal("array", xmlVal("array",
-        xmlVal("struct",
-          xmlMember("partner_id", xmlVal("int", partnerId)) +
-          xmlMember("company_id", xmlVal("int", ODOO_COMPANY)) +
-          xmlMember("client_order_ref", xmlVal("string", String(orderId || ""))) +
-          xmlMember("order_line", xmlVal("array", orderLines))
-        )
-      )),
-      xmlVal("struct", ""),
-    ]);
-
-    const createXml = await xmlPost("/xmlrpc/2/object", createBody);
-    const newOrderId = parseScalar(createXml);
-    if (!newOrderId) throw new Error("Création commande Odoo échouée");
-
-    console.log(`[submit-order] ✓ sale.order créé id=${newOrderId} pour ${pharmacyName}`);
+    console.log(`[submit-order] ✓ Commande ${orderId} transmise à PharmaML pour ${pharmacyName} (${pharmacyCip})`);
     return {
       statusCode: 200, headers: cors,
-      body: JSON.stringify({ success: true, odooOrderId: newOrderId })
+      body: JSON.stringify({ success: true, commandes: result?.commandes || 1, pharmaml: result })
     };
+
   } catch (err) {
-    console.error("[submit-order]", err.message);
+    console.error("[submit-order] ERREUR:", err.message);
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };

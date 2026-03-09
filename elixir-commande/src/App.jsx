@@ -624,12 +624,15 @@ export default function App() {
   const [foundPharmacy, setFoundPharmacy] = useState(null);
   const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
+  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
 
   const handleLogout = () => {
     localStorage.removeItem("session_name");
     localStorage.removeItem("session_email");
+    localStorage.removeItem("session_cip");
     setPharmacyName("");
     setPharmacyEmail("");
+    setPharmacyCip("");
     setOnboardingDone(false);
     setQuantities({});
     setCartOpen(false);
@@ -769,6 +772,8 @@ export default function App() {
     setPharmacyEmail(foundPharmacy.email);
     localStorage.setItem("session_name", foundPharmacy.name);
     localStorage.setItem("session_email", foundPharmacy.email);
+    localStorage.setItem("session_cip", foundPharmacy.cip || "");
+    setPharmacyCip(foundPharmacy.cip || "");
     setIsClient(true);
     setOnboardingDone(true);
     // Show promo popup if active promos exist
@@ -877,7 +882,7 @@ export default function App() {
           const payload = JSON.stringify({
             csvContent,
             items: order.items, // { cip, name, qty, pn }
-            pharmacyName, pharmacyEmail, orderId: order.id,
+            pharmacyName, pharmacyEmail, pharmacyCip, orderId: order.id,
           });
           const endpoints = [
             { url: "http://localhost:3001", label: "agent local" },
