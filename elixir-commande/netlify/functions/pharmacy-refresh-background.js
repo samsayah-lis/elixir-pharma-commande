@@ -51,7 +51,7 @@ async function saveToSupabase(pharmacies) {
   return rows.length;
 }
 
-const handler = async () => {
+const refreshHandler = async () => {
   console.log("[pharmacy-refresh] Démarrage sync pharmacies Odoo → Supabase");
   try {
     const uid = await authenticate();
@@ -66,6 +66,4 @@ const handler = async () => {
   }
 };
 
-// Sync toutes les heures
-export { handler };
-export const config = { schedule: "0 * * * *" };
+export const handler = schedule("0 * * * *", refreshHandler);
