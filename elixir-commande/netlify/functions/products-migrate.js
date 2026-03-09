@@ -35,10 +35,17 @@ export const handler = async (event) => {
     }
   }
 
+  // Déduplique par CIP
+  const seen = new Map();
+  for (const r of rows) { if (!seen.has(r.cip)) seen.set(r.cip, r); }
+  const deduped = Array.from(seen.values());
+  console.log(`[migrate] ${rows.length} produits → ${deduped.length} après déduplication`);
+
   // Insère par batch de 50
   let inserted = 0;
-  for (let i = 0; i < rows.length; i += 50) {
-    const batch = rows.slice(i, i + 50);
+  const rowsToInsert = deduped;
+  for (let i = 0; i < rowsToInsert.length; i += 50) {
+    const batch = rowsToInsert.slice(i, i + 50);
     const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products`, {
       method: "POST",
       headers: {
