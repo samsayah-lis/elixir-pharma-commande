@@ -157,13 +157,18 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   }, [allProducts, search, filterSection]);
 
   const startEdit = (p) => {
+    const pv  = parseFloat(p.pv) || 0;
+    const pct = parseFloat(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")) || 0;
+    const remise_eur = pv && pct ? (pv * pct / 100).toFixed(2) : "";
     setEditForm({
-      cip:    String(p.cip   ?? ""),
-      pv:     String(p.pv    ?? ""),
-      pct:    String(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")),
-      pn:     String(p.pn    ?? ""),
-      palier: String(p.colis ?? ""),
-      note:   String(p.note  ?? ""),
+      cip:       String(p.cip  ?? ""),
+      pv:        String(p.pv   ?? ""),
+      pct:       String(pct || ""),
+      remise_eur: String(p.remise_eur ?? remise_eur),
+      pn:        String(p.pn   ?? ""),
+      palier:    String(p.colis ?? ""),
+      note:      String(p.note ?? ""),
+      _lastEdited: "",
     });
     setEditingKey(p._key);
   };
@@ -177,6 +182,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       pv:  !isNaN(pv)  ? pv  : p.pv,
       pct: !isNaN(pct) ? pct : p.pct,
       pn:  !isNaN(pn)  ? pn  : p.pn,
+      remise_eur: parseFloat(editForm.remise_eur) || null,
       colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
       note:  editForm.note   !== "" ? editForm.note : p.note,
       source: p.source || "catalog",
@@ -903,16 +909,28 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <input value={editForm.cip} onChange={e=>setEditForm(f=>({...f,cip:e.target.value}))}
                           placeholder="3400930000000" style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                       </div>
-                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:10,marginBottom:12}}>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:8}}>
                         {[
                           {key:"pv",  label:"Prix brut (€)"},
                           {key:"pct", label:"Remise (%)"},
-                          {key:"pn",  label:"Prix net (€) ★", green:true},
-                          {key:"palier",label:"Palier / Colis"},
+                          {key:"remise_eur", label:"Remise (€)"},
+                        ].map(({key,label})=>(
+                          <div key={key}>
+                            <label style={{...LS,fontSize:10}}>{label}</label>
+                            <input type="number" step="0.01" value={editForm[key]||""}
+                              onChange={e=>setEditForm(f=>({...f,[key]:e.target.value,_lastEdited:key==="remise_eur"?"eur":"pct"}))}
+                              style={{...IS,fontSize:12,padding:"7px 10px"}}/>
+                          </div>
+                        ))}
+                      </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:12}}>
+                        {[
+                          {key:"pn",     label:"Prix net (€) ★", green:true},
+                          {key:"palier", label:"Palier / Colis"},
                         ].map(({key,label,green})=>(
                           <div key={key}>
                             <label style={{...LS,fontSize:10,color:green?"#059669":undefined}}>{label}</label>
-                            <input type="number" step="0.01" value={editForm[key]}
+                            <input type="number" step="0.01" value={editForm[key]||""}
                               onChange={e=>setEditForm(f=>({...f,[key]:e.target.value}))}
                               style={{...IS,fontSize:12,padding:"7px 10px",
                                 borderColor:green?"#86efac":"#e2e8f0",
