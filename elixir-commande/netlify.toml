@@ -12,3 +12,11 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Cron : actualisation automatique toutes les 30 minutes
+[[plugins]]
+  package = "@netlify/plugin-cron"
+  [plugins.inputs]
+    jobs = [
+      { schedule = "*/30 * * * *", function = "stock-refresh-background" }
+    ]

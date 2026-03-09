@@ -528,7 +528,9 @@ export default function App() {
 
   // Stock : chargement et actualisation manuelle
   const [stockLoading, setStockLoading] = useState(false);
+  const [stockRefreshing, setStockRefreshing] = useState(false); // true = refresh Odoo en cours
 
+  // Lit les stocks depuis Supabase (rapide)
   const fetchStock = useCallback(async () => {
     setStockLoading(true);
     try {
@@ -544,6 +546,27 @@ export default function App() {
     } catch(e) { console.warn("[stock] fetch error:", e.message); }
     finally { setStockLoading(false); }
   }, []);
+
+  // Déclenche la mise à jour Odoo → Supabase (background, ~35s), puis relit depuis Supabase
+  const handleRefresh = useCallback(async () => {
+    if (stockRefreshing) return;
+    setStockRefreshing(true);
+    try {
+      // Lance le refresh Odoo en background (retourne 202 immédiatement)
+      await fetch("/.netlify/functions/stock-refresh-background", { signal: AbortSignal.timeout(5000) });
+      console.log("[stock] Refresh Odoo lancé en background, attente 40s…");
+      // Attend 40s que la fonction background ait fini d'écrire dans Supabase
+      await new Promise(r => setTimeout(r, 40000));
+      // Relit les stocks depuis Supabase
+      await fetchStock();
+    } catch(e) {
+      console.warn("[stock] refresh error:", e.message);
+      // En cas d'erreur réseau, on relit quand même
+      await fetchStock();
+    } finally {
+      setStockRefreshing(false);
+    }
+  }, [stockRefreshing, fetchStock]);
 
   useEffect(() => {
     fetchStock();
@@ -1052,11 +1075,11 @@ export default function App() {
                   <span style={{ marginLeft: 8, opacity: 0.7 }}>· stocks mis à jour {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
                 )}
                 <button
-                  onClick={fetchStock}
-                  disabled={stockLoading}
-                  title="Actualiser les stocks"
-                  style={{ marginLeft: 8, background: "none", border: "none", cursor: stockLoading ? "default" : "pointer", padding: "0 2px", opacity: stockLoading ? 0.4 : 0.8, fontSize: 13, color: "inherit" }}
-                >{stockLoading ? "⏳" : "🔄"}</button>
+                  onClick={handleRefresh}
+                  disabled={stockRefreshing || stockLoading}
+                  title={stockRefreshing ? "Actualisation Odoo en cours (~40s)…" : "Forcer la mise à jour depuis Odoo"}
+                  style={{ marginLeft: 8, background: "none", border: "none", cursor: (stockRefreshing || stockLoading) ? "default" : "pointer", padding: "0 2px", opacity: (stockRefreshing || stockLoading) ? 0.4 : 0.8, fontSize: 13, color: "inherit" }}
+                >{stockRefreshing ? "⏳ Actualisation…" : "🔄"}</button>
               </div>
             </div>
           </div>
