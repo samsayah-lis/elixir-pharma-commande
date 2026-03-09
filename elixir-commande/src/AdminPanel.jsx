@@ -112,15 +112,22 @@ export default function AdminPanel({ onClose, catalog }) {
   };
 
   const allProducts = useMemo(() => {
-    if (!catalog) return [];
-    return Object.entries(catalog).flatMap(([sk, cat]) =>
+    const fromCatalog = !catalog ? [] : Object.entries(catalog).flatMap(([sk, cat]) =>
       (cat.products||[]).map(p => ({
         ...p, _section: sk,
         _sectionLabel: SECTIONS.find(s=>s.key===sk)?.label||sk,
         _key: overrideKey(sk, p),
       }))
     );
-  }, [catalog]);
+    // Ajoute aussi les produits créés via l'onglet Ajouter
+    const fromAdmin = products.map(p => ({
+      ...p, _section: p.section,
+      _sectionLabel: SECTIONS.find(s=>s.key===p.section)?.label||p.section,
+      _key: overrideKey(p.section, p),
+      _isAdminProduct: true,
+    }));
+    return [...fromCatalog, ...fromAdmin];
+  }, [catalog, products]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
