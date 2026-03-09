@@ -770,14 +770,24 @@ export default function AdminPanel({ onClose, catalog }) {
                     </div>
                   </div>
                   {/* Items preview */}
-                  <div style={{marginTop:10,background:"white",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#555",maxHeight:120,overflowY:"auto"}}>
+                  <div style={{marginTop:10,background:"white",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#555",maxHeight:140,overflowY:"auto"}}>
+                    <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
+                      <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
+                      <span style={{flex:1}}>Désignation</span>
+                      <span style={{width:30,textAlign:"right"}}>Qté</span>
+                      <span style={{width:55,textAlign:"right",marginLeft:10}}>PU HT</span>
+                      <span style={{width:60,textAlign:"right",marginLeft:10}}>Total HT</span>
+                    </div>
                     {o.items?.map((item,i)=>(
-                      <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"2px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
-                        <span style={{fontFamily:"monospace",color:"#888",marginRight:8}}>{item.cip}</span>
-                        <span style={{flex:1}}>{item.name}</span>
-                        <span style={{fontWeight:700,marginLeft:8}}>×{item.qty}</span>
+                      <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
+                        <span style={{fontFamily:"monospace",color:"#888",width:110,flexShrink:0}}>{item.cip||"—"}</span>
+                        <span style={{flex:1,paddingRight:8}}>{item.name}</span>
+                        <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
+                        <span style={{color:"#555",width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
+                        <span style={{fontWeight:700,color:"#0f2d3d",width:60,textAlign:"right",marginLeft:10}}>{item.total!=null?item.total.toFixed(2)+" €":"—"}</span>
                       </div>
                     ))}
+                  </div>
                   </div>
                 </div>
               </div>
