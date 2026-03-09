@@ -85,7 +85,7 @@ function CipCell({ cip }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
-  const [quantities, setQuantities] = useState({});
+  const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [globalSearch, setGlobalSearch] = useState("");
@@ -107,6 +107,11 @@ export default function App() {
   }, []);
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
+
+  // Persiste le panier dans localStorage
+  useEffect(() => {
+    localStorage.setItem("cart_quantities", JSON.stringify(quantities));
+  }, [quantities]);
   const [promoSections, setPromoSections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
