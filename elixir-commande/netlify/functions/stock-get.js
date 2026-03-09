@@ -8,18 +8,15 @@ export const handler = async () => {
   try {
     const uid = await authenticate();
 
-    // Filtre company_id=2 (Elixir Pharma) ET CIPs du catalogue
-    // Domain: company_id=2 AND (cip1 OR cip2 OR ...)
+    // Produits par CIP (pas de filtre company — les produits sont partagés)
     const orCips = [];
     for (let i = 0; i < CATALOG_CIPS.length - 1; i++) orCips.push("|");
     CATALOG_CIPS.forEach(cip => orCips.push(["default_code", "=", cip]));
 
-    const domain = ["&", ["company_id", "=", COMPANY_ID], ...orCips];
-
-    const products = await odooCall(uid, "product.product", "search_read", domain, {
+    const products = await odooCall(uid, "product.product", "search_read", orCips, {
       fields: ["id", "default_code"], limit: 500
     });
-    console.log("[stock-get] company_id=" + COMPANY_ID + " → " + products.length + " produits sur " + CATALOG_CIPS.length + " CIPs");
+    console.log("[stock-get] " + products.length + " produits trouvés sur " + CATALOG_CIPS.length + " CIPs");
 
     const cipByPid = {};
     products.forEach(p => { cipByPid[parseInt(p.id)] = p.default_code; });
@@ -27,15 +24,17 @@ export const handler = async () => {
 
     let quants = [];
     if (productIds.length > 0) {
+      // Filtre company_id uniquement sur les quants (stock réel par société)
       const qOrIds = [];
       for (let i = 0; i < productIds.length - 1; i++) qOrIds.push("|");
       productIds.forEach(id => qOrIds.push(["product_id", "=", id]));
-      const qDomain = ["&", ["company_id", "=", COMPANY_ID], ...qOrIds];
+      // location_id.usage=internal : uniquement stock physique (pas transit/clients/fournisseurs)
+      const qDomain = ["&", "&", ["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"], ...qOrIds];
       quants = await odooCall(uid, "stock.quant", "search_read", qDomain, {
         fields: ["product_id", "quantity", "reserved_quantity"], limit: 5000
       });
     }
-    console.log("[stock-get] " + quants.length + " lignes stock (company " + COMPANY_ID + ")");
+    console.log("[stock-get] " + quants.length + " lignes stock company=" + COMPANY_ID);
 
     const stockByCip = {};
     quants.forEach(q => {
@@ -51,7 +50,7 @@ export const handler = async () => {
       const s = stockByCip[cip];
       stocks[cip] = s !== undefined
         ? { dispo: s > 0 ? 1 : 0, stock: Math.round(s) }
-        : { dispo: 1, stock: 0 }; // pas de quant = dispo par défaut
+        : { dispo: 1, stock: 0 };
     });
 
     const ruptures = Object.values(stocks).filter(s => s.dispo === 0).length;
