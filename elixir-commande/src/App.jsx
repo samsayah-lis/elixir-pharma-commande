@@ -1198,11 +1198,10 @@ export default function App() {
       {/* Admin Panel */}
       {showAdmin && (
         <AdminPanel
-          catalog={CATALOG}
+          sectionMeta={SECTION_META}
           onClose={() => {
             setShowAdmin(false);
-            try { setAdminProducts(JSON.parse(localStorage.getItem("admin_products") || "[]")); } catch {}
-            try { setAdminOverrides(JSON.parse(localStorage.getItem("admin_overrides") || "{}")); } catch {}
+            fetchProducts();
             try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
           }}
         />
