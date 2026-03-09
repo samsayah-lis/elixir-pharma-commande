@@ -26,7 +26,13 @@ export const handler = async (event) => {
       offset += 500;
     }
 
-    const rows = results.map(p => ({
+    // Déduplique par email (Odoo peut avoir des doublons)
+    const seen = new Map();
+    for (const p of results) {
+      const email = p.email.trim().toLowerCase();
+      if (!seen.has(email)) seen.set(email, p);
+    }
+    const rows = Array.from(seen.values()).map(p => ({
       email: p.email.trim().toLowerCase(),
       name: p.name || "",
       cip: p.ref || "",

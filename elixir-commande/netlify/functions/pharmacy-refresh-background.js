@@ -25,7 +25,13 @@ async function fetchAllCustomers(uid) {
 }
 
 async function saveToSupabase(pharmacies) {
-  const rows = pharmacies.map(p => ({
+  // Déduplique par email
+  const seen = new Map();
+  for (const p of pharmacies) {
+    const email = p.email.trim().toLowerCase();
+    if (!seen.has(email)) seen.set(email, p);
+  }
+  const rows = Array.from(seen.values()).map(p => ({
     email: p.email.trim().toLowerCase(),
     name: p.name || "",
     cip: p.ref || "",
