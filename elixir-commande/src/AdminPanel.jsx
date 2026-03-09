@@ -19,7 +19,7 @@ const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", secti
 
 const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 
-export default function AdminPanel({ onClose, catalog }) {
+export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(false);
   const [pwd, setPwd]           = useState("");
   const [pwdError, setPwdError] = useState(false);
@@ -27,13 +27,18 @@ export default function AdminPanel({ onClose, catalog }) {
   const [saved, setSaved]       = useState("");
 
   const [form, setForm]         = useState(EMPTY_FORM);
-  const [products, setProducts] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("admin_products") || "[]"); } catch { return []; }
-  });
+  const [products, setProducts] = useState([]);
+  const [productsLoading, setProductsLoading] = useState(false);
 
-  const [overrides, setOverrides] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("admin_overrides") || "{}"); } catch { return {}; }
-  });
+  const fetchProducts = async () => {
+    setProductsLoading(true);
+    try {
+      const res = await fetch("/.netlify/functions/products-get");
+      const data = await res.json();
+      if (data.products) setProducts(data.products);
+    } catch(e) { console.warn("[products] fetch error:", e.message); }
+    setProductsLoading(false);
+  };
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({}); // orderId → "pending"|"ok"|"error"|message
@@ -85,49 +90,62 @@ export default function AdminPanel({ onClose, catalog }) {
   }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
   const handleLogin = () => {
-    if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); refreshOrders(); }
+    if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); refreshOrders(); fetchProducts(); }
     else setPwdError(true);
   };
 
   const handleField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  const handleAdd = () => {
+  const handleAdd = async () => {
     if (!form.name.trim()) return alert("Le nom du produit est requis.");
     if (!form.pn) return alert("Le prix remisé est requis.");
-    const np = {
-      id: Date.now(), section: form.section, name: form.name.trim(),
-      cip: form.cip.trim() || null, pv: parseFloat(form.pv)||null,
-      pct: form.pct ? `-${form.pct}%` : null, pn: parseFloat(form.pn),
-      palier: form.hasPalier ? parseInt(form.palier)||null : null,
-      note: form.note.trim()||null, addedAt: new Date().toLocaleDateString("fr-FR"),
+    const product = {
+      cip: form.cip.trim() || `admin_${Date.now()}`,
+      name: form.name.trim(),
+      section: form.section,
+      pv: parseFloat(form.pv) || null,
+      pct: parseFloat(form.pct) || null,
+      pn: parseFloat(form.pn),
+      colis: form.hasPalier ? parseInt(form.palier) || null : null,
+      note: form.note.trim() || null,
+      source: "admin",
+      active: true,
     };
-    const upd = [...products, np];
-    setProducts(upd); localStorage.setItem("admin_products", JSON.stringify(upd));
-    setForm(EMPTY_FORM); flash("✅ Produit ajouté !");
+    try {
+      const res = await fetch("/.netlify/functions/products-upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product, action: "create", author: "admin" }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      await fetchProducts();
+      setForm(EMPTY_FORM);
+      flash("✅ Produit ajouté !");
+    } catch(e) { alert("Erreur : " + e.message); }
   };
 
-  const handleDelete = (id) => {
-    const upd = products.filter(p => p.id !== id);
-    setProducts(upd); localStorage.setItem("admin_products", JSON.stringify(upd));
+  const handleDelete = async (cip) => {
+    if (!window.confirm("Désactiver ce produit ?")) return;
+    try {
+      await fetch("/.netlify/functions/products-upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product: { cip, active: false }, action: "delete", author: "admin" }),
+      });
+      await fetchProducts();
+      flash("🗑️ Produit désactivé");
+    } catch(e) { alert("Erreur : " + e.message); }
   };
 
   const allProducts = useMemo(() => {
-    const fromCatalog = !catalog ? [] : Object.entries(catalog).flatMap(([sk, cat]) =>
-      (cat.products||[]).map(p => ({
-        ...p, _section: sk,
-        _sectionLabel: SECTIONS.find(s=>s.key===sk)?.label||sk,
-        _key: overrideKey(sk, p),
-      }))
-    );
-    // Ajoute aussi les produits créés via l'onglet Ajouter
-    const fromAdmin = products.map(p => ({
-      ...p, _section: p.section,
-      _sectionLabel: SECTIONS.find(s=>s.key===p.section)?.label||p.section,
+    return products.map(p => ({
+      ...p,
+      _section: p.section,
+      _sectionLabel: SECTIONS.find(s=>s.key===p.section)?.label || p.section,
       _key: overrideKey(p.section, p),
-      _isAdminProduct: true,
     }));
-    return [...fromCatalog, ...fromAdmin];
-  }, [catalog, products]);
+  }, [products]);
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
@@ -139,36 +157,49 @@ export default function AdminPanel({ onClose, catalog }) {
   }, [allProducts, search, filterSection]);
 
   const startEdit = (p) => {
-    const ov = overrides[p._key]||{};
     setEditForm({
-      cip:    String(ov.cip   ?? p.cip   ?? ""),
-      pv:     String(ov.pv    ?? p.pv   ?? p.pb   ?? ""),
-      pct:    String(ov.pct   ?? (typeof p.pct==="string" ? p.pct.replace(/[-% ]/g,"") : (p.remise||""))),
-      pn:     String(ov.pn    ?? p.pn   ?? ""),
-      palier: String(ov.palier ?? p.palier ?? p.colis ?? ""),
-      note:   String(ov.note  ?? p.note  ?? ""),
+      cip:    String(p.cip   ?? ""),
+      pv:     String(p.pv    ?? ""),
+      pct:    String(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")),
+      pn:     String(p.pn    ?? ""),
+      palier: String(p.colis ?? ""),
+      note:   String(p.note  ?? ""),
     });
     setEditingKey(p._key);
   };
 
-  const saveEdit = (p) => {
-    const patch = {};
+  const saveEdit = async (p) => {
     const pv=parseFloat(editForm.pv), pct=parseFloat(editForm.pct), pn=parseFloat(editForm.pn);
-    if (editForm.cip.trim()!=="") patch.cip = editForm.cip.trim();
-    if (!isNaN(pv))  patch.pv  = pv;
-    if (!isNaN(pct)) patch.pct = pct;
-    if (!isNaN(pn))  patch.pn  = pn;
-    if (editForm.palier!=="") patch.palier = parseInt(editForm.palier)||null;
-    if (editForm.note!=="")   patch.note   = editForm.note;
-    const upd = { ...overrides, [p._key]: patch };
-    setOverrides(upd); localStorage.setItem("admin_overrides", JSON.stringify(upd));
-    setEditingKey(null); flash("✅ Modification enregistrée !");
+    const product = {
+      cip: p.cip,
+      name: p.name,
+      section: p._section,
+      pv:  !isNaN(pv)  ? pv  : p.pv,
+      pct: !isNaN(pct) ? pct : p.pct,
+      pn:  !isNaN(pn)  ? pn  : p.pn,
+      colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
+      note:  editForm.note   !== "" ? editForm.note : p.note,
+      source: p.source || "catalog",
+      active: true,
+      _changes: { pv, pct, pn, note: editForm.note },
+    };
+    try {
+      const res = await fetch("/.netlify/functions/products-upsert", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product, action: "update", author: "admin" }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      await fetchProducts();
+      setEditingKey(null);
+      flash("✅ Modification enregistrée !");
+    } catch(e) { alert("Erreur : " + e.message); }
   };
 
-  const clearEdit = (key) => {
-    const upd = {...overrides}; delete upd[key];
-    setOverrides(upd); localStorage.setItem("admin_overrides", JSON.stringify(upd));
-    flash("↩️ Réinitialisation effectuée");
+  const clearEdit = async (p) => {
+    // Remet les valeurs d'origine (supprime les overrides = recharge depuis catalog-data)
+    flash("↩️ Fonctionnalité disponible via re-migration");
   };
 
   // ── PROMO helpers ──
@@ -243,7 +274,7 @@ export default function AdminPanel({ onClose, catalog }) {
     reader.readAsArrayBuffer(file);
   };
 
-  const confirmImport = () => {
+  const confirmImport = async () => {
     if (!importPreview) return;
     const valid = importPreview.filter(r => r._valid);
     const newProducts = valid.map(r => ({
@@ -259,13 +290,20 @@ export default function AdminPanel({ onClose, catalog }) {
       note: null,
       addedAt: new Date().toLocaleDateString("fr-FR"),
     }));
-    const updated = [...products, ...newProducts];
-    setProducts(updated);
-    localStorage.setItem("admin_products", JSON.stringify(updated));
-    setImportCount(valid.length);
-    setImportPreview(null);
-    if (fileInputRef.current) fileInputRef.current.value = "";
-    flash(`✅ ${valid.length} produit(s) importé(s) dans ${SECTIONS.find(s=>s.key===importSection)?.label} !`);
+    try {
+      await Promise.all(newProducts.map(p =>
+        fetch("/.netlify/functions/products-upsert", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ product: p, action: "create", author: "import" }),
+        })
+      ));
+      await fetchProducts();
+      setImportCount(valid.length);
+      setImportPreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      flash(`✅ ${valid.length} produit(s) importé(s) dans ${SECTIONS.find(s=>s.key===importSection)?.label} !`);
+    } catch(e) { alert("Erreur import : " + e.message); }
   };
 
   // ── SYNC helpers ──
@@ -273,7 +311,7 @@ export default function AdminPanel({ onClose, catalog }) {
     setSyncStatus(s => ({ ...s, [order.id]: "pending" }));
     // Build CSV
     const cipLookup = {};
-    if (catalog) Object.values(catalog).forEach(sec => (sec.products||[]).forEach(p => { if(p.cip && p.name) cipLookup[p.name.trim().toLowerCase()] = p.cip; }));
+    products.forEach(p => { if(p.cip && p.name) cipLookup[p.name.trim().toLowerCase()] = p.cip; });
     const lines = (order.items||[]).map(i => {
       let cip = i.cip && i.cip !== "—" ? i.cip : cipLookup[i.name?.trim().toLowerCase()] || "—";
       return `${cip.replace(/;/g,"")};${i.qty}`;
@@ -325,16 +363,12 @@ export default function AdminPanel({ onClose, catalog }) {
   const downloadCsv = (order) => {
     // Build a CIP lookup from all catalog sections (name → cip, and cip → cip)
     const cipLookup = {};
-    if (catalog) {
-      Object.values(catalog).forEach(section => {
-        (section.products || []).forEach(p => {
-          if (p.cip) {
-            cipLookup[p.name?.trim().toLowerCase()] = p.cip;
-            cipLookup[p.cip] = p.cip;
-          }
-        });
-      });
-    }
+    products.forEach(p => {
+      if (p.cip) {
+        cipLookup[p.name?.trim().toLowerCase()] = p.cip;
+        cipLookup[p.cip] = p.cip;
+      }
+    });
     // Regenerate CSV from items, resolving CIP if stored value is missing
     const lines = ["CIP;Quantité"];
     (order.items || []).forEach(i => {
@@ -401,7 +435,7 @@ export default function AdminPanel({ onClose, catalog }) {
           <div>
             <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d"}}>⚙️ Administration catalogue</div>
             <div style={{fontSize:11,color:"#aaa",marginTop:2}}>
-              {products.length} ajouté(s) · {Object.keys(overrides).length} modifié(s) · {promos.length} promo(s) · {orders.length} commande(s)
+              {products.filter(p=>p.source==="admin").length} ajouté(s) · {products.length} total · {promos.length} promo(s) · {orders.length} commande(s)
             </div>
           </div>
           <button onClick={onClose} style={CB}>✕</button>
@@ -569,7 +603,7 @@ export default function AdminPanel({ onClose, catalog }) {
                       <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d"}}>{p.name}</div>
                       <div style={{fontSize:11,color:"#888",marginTop:2}}>{SECTIONS.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip?` · ${p.cip}`:""}</div>
                     </div>
-                    <button onClick={()=>handleDelete(p.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
+                    <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
                   </div>
                 ))}
               </div>
@@ -813,11 +847,11 @@ export default function AdminPanel({ onClose, catalog }) {
               </select>
             </div>
             <div style={{fontSize:11,color:"#999",marginBottom:12}}>
-              {filtered.length} produit(s) · {Object.keys(overrides).length} modification(s) active(s)
-              {Object.keys(overrides).length>0&&(
+              {filtered.length} produit(s) dans Supabase
+              {false&&(
                 <button onClick={()=>{
                   if(!window.confirm("Réinitialiser TOUTES les modifications ?")) return;
-                  setOverrides({}); localStorage.removeItem("admin_overrides"); flash("↩️ Tout réinitialisé");
+                  flash("↩️ Les modifications sont dans Supabase — utilisez l'onglet Modifier pour réinitialiser.");
                 }} style={{marginLeft:12,background:"#fee2e2",border:"none",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:11,color:"#b91c1c",fontWeight:700}}>
                   Tout réinitialiser
                 </button>
@@ -825,7 +859,7 @@ export default function AdminPanel({ onClose, catalog }) {
             </div>
 
             {filtered.slice(0,80).map(p=>{
-              const ov=overrides[p._key];
+              const ov={};
               const isEditing=editingKey===p._key;
               const hasOv=!!ov;
               return (
