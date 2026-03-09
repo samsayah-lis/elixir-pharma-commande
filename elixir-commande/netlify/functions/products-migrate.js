@@ -20,7 +20,7 @@ export const handler = async (event) => {
         name: p.name,
         section: sectionKey,
         pv: p.pv ?? p.prix ?? null,
-        pct: p.pct ?? p.remise ?? null,
+        pct: parseFloat(String(p.pct ?? p.remise ?? "").replace(/[^0-9.-]/g, "")) || null,
         pn: p.pn ?? null,
         remise_eur: p.remise_eur ?? null,
         colis: p.colis ?? null,
