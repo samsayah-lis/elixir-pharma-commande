@@ -1,0 +1,13 @@
+[build]
+  base    = "elixir-commande"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "18"
+
+[functions]
+  node_bundler = "esbuild"
+
+[functions."stock-get"]
+  timeout = 30
