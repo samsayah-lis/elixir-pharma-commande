@@ -1,5 +1,6 @@
-// Fonction background (timeout 15min) — appelée par le cron toutes les 30min
+// Fonction background + scheduled (timeout 15min) — toutes les 30min
 // Lit les stocks Odoo et les stocke dans Supabase
+import { schedule } from "@netlify/functions";
 import { authenticate, odooCall } from "./odoo.js";
 import { CATALOG_CIPS } from "./cips.js";
 
@@ -42,7 +43,7 @@ async function saveToSupabase(stocks) {
   return rows.length;
 }
 
-export const handler = async () => {
+const refreshHandler = async () => {
   const cors = { "Access-Control-Allow-Origin": "*" };
   try {
     const uid = await authenticate();
@@ -109,3 +110,6 @@ export const handler = async () => {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };
+
+// Scheduled: toutes les 30 minutes
+export const handler = schedule("*/30 * * * *", refreshHandler);
