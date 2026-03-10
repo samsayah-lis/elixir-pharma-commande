@@ -186,6 +186,7 @@ export default function App() {
           carton: p.carton,
           note: p.note,
           source: p.source,
+          image_url: p.image_url || null,
           _dbId: p.cip,
         }));
       merged[k] = { ...meta, products: sectionProducts };
