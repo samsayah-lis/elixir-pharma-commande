@@ -12,50 +12,45 @@ export const handler = async (event) => {
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "POST only" };
 
   let body;
-  try { body = JSON.parse(event.body); } 
+  try { body = JSON.parse(event.body); }
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
   const { cip, imageBase64, mimeType, image_url: remoteUrl } = body;
   if (!cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
 
-  let imageBuffer, detectedMime;
+  let image_url;
 
   if (remoteUrl) {
-    // Télécharge l'image directement côté serveur (évite CORS navigateur)
-    const imgRes = await fetch(remoteUrl);
-    if (!imgRes.ok) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Impossible de télécharger l'image: " + imgRes.status }) };
-    const arrayBuf = await imgRes.arrayBuffer();
-    imageBuffer = Buffer.from(arrayBuf);
-    detectedMime = imgRes.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+    // URL Medipim distante → stocke directement sans re-upload (images publiques)
+    image_url = remoteUrl;
+
   } else if (imageBase64) {
-    imageBuffer = Buffer.from(imageBase64, "base64");
-    detectedMime = mimeType || "image/jpeg";
+    // Upload manuel base64 → Supabase Storage
+    const buf = Buffer.from(imageBase64, "base64");
+    const mime = mimeType || "image/jpeg";
+    const ext = mime === "image/png" ? "png" : mime === "image/webp" ? "webp" : "jpg";
+    const filename = `products/${cip}.${ext}`;
+
+    const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/elixir-images/${filename}`, {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY,
+        "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": mime,
+        "x-upsert": "true",
+      },
+      body: buf,
+    });
+
+    if (!uploadRes.ok) {
+      const err = await uploadRes.text();
+      return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "Storage: " + err }) };
+    }
+    image_url = `${SUPABASE_URL}/storage/v1/object/public/elixir-images/${filename}`;
+
   } else {
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "image_url ou imageBase64 requis" }) };
   }
-
-  const resolvedMime = detectedMime;
-  const ext = resolvedMime === "image/png" ? "png" : resolvedMime === "image/webp" ? "webp" : "jpg";
-  const filename = `products/${cip}.${ext}`;
-
-  // Upload dans Supabase Storage bucket "elixir-images"
-  const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/elixir-images/${filename}`, {
-    method: "POST",
-    headers: {
-      "apikey": SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": resolvedMime,
-      "x-upsert": "true",
-    },
-    body: imageBuffer,
-  });
-
-  if (!uploadRes.ok) {
-    const err = await uploadRes.text();
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "Storage: " + err }) };
-  }
-
-  const image_url = `${SUPABASE_URL}/storage/v1/object/public/elixir-images/${filename}`;
 
   // Met à jour image_url dans elixir_products
   const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${cip}`, {
