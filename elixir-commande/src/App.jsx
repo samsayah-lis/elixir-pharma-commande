@@ -902,6 +902,9 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           <>
+              <div style={{background:"#fef9c3",padding:"6px 12px",fontSize:11,color:"#92400e",borderRadius:8,marginBottom:8}}>
+                DEBUG: isGrid={String(isGridSection)} withPhoto={gridWithPhoto.length} withoutPhoto={gridWithoutPhoto.length}
+              </div>
               {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
                   {gridWithPhoto.map((p) => {
