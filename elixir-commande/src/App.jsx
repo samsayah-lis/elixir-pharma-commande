@@ -306,8 +306,8 @@ export default function App() {
 
   // Split grille/tableau
   const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
-  const gridWithPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
-  const gridWithoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
+  const gridWithPhoto = isGridSection ? filteredProducts : [];
+  const gridWithoutPhoto = isGridSection ? [] : filteredProducts;
 
   const handlePrint = () => {
     window.print();
@@ -902,10 +902,7 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           <>
-              <div style={{background:"#fef9c3",padding:"6px 12px",fontSize:11,color:"#92400e",borderRadius:8,marginBottom:8}}>
-                DEBUG: isGrid={String(isGridSection)} withPhoto={gridWithPhoto.length} withoutPhoto={gridWithoutPhoto.length}
-              </div>
-              {gridWithPhoto.length > 0 && (
+{gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
                   {gridWithPhoto.map((p) => {
                     const realIdx = cat.products.indexOf(p);
@@ -922,11 +919,16 @@ export default function App() {
                         overflow: "hidden", transition: "box-shadow 0.2s, border 0.2s"
                       }}>
                         {/* Photo */}
-                        <div style={{ flexShrink: 0, width: 120, height: 120, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                          <img src={p.image_url} alt={p.name}
-                            style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10 }}/>
+                        <div style={{ flexShrink: 0, width: 110, height: 110, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #f0f2f5" }}>
+                          {p.image_url
+                            ? <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
+                            : <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#d1d5db", gap: 4 }}>
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
+                                <span style={{ fontSize: 9, color: "#d1d5db" }}>Pas de photo</span>
+                              </div>
+                          }
                           {isRupture && (
-                            <div style={{ position: "absolute", top: 6, left: 6, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
+                            <div style={{ position: "absolute", top: 4, left: 4, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
                           )}
                         </div>
                         {/* Info centrale */}
