@@ -922,10 +922,7 @@ export default function App() {
                         <div style={{ flexShrink: 0, width: 110, height: 110, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #f0f2f5" }}>
                           {p.image_url
                             ? <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
-                            : <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#d1d5db", gap: 4 }}>
-                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>
-                                <span style={{ fontSize: 9, color: "#d1d5db" }}>Pas de photo</span>
-                              </div>
+                            : null
                           }
                           {isRupture && (
                             <div style={{ position: "absolute", top: 4, left: 4, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
