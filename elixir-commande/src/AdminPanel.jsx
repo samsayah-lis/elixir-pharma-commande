@@ -45,7 +45,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [promos, setPromos] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
-  const [promoForm, setPromoForm] = useState({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"" });
+  const [promoForm, setPromoForm] = useState({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"", withPhotos:false });
   const [editingPromoId, setEditingPromoId] = useState(null);
   const [addingProductToPromo, setAddingProductToPromo] = useState(null); // promoId
   const [promoProductForm, setPromoProductForm] = useState({ name:"", cip:"", pv:"", pct:"", pn:"", note:"" });
@@ -286,7 +286,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (!promoForm.name.trim()) return alert("Nom requis");
     const newPromo = { id: Date.now(), ...promoForm, active: false, products: [] };
     savePromos([...promos, newPromo]);
-    setPromoForm({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"" });
+    setPromoForm({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"", withPhotos:false });
     flash("✅ Section promo créée !");
   };
   const togglePromoActive = (id) => savePromos(promos.map(p => p.id===id ? {...p, active:!p.active} : p));
@@ -751,6 +751,19 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   </div>
                 </div>
               </div>
+              <div style={{marginBottom:12}}>
+                <label style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",userSelect:"none"}}>
+                  <input type="checkbox" checked={promoForm.withPhotos}
+                    onChange={e=>setPromoForm(f=>({...f,withPhotos:e.target.checked}))}
+                    style={{width:16,height:16,cursor:"pointer"}}/>
+                  <span style={{fontSize:13,fontWeight:600,color:"#0f2d3d"}}>
+                    🖼️ Affichage avec photos (présentation horizontale)
+                  </span>
+                </label>
+                <div style={{fontSize:11,color:"#999",marginTop:3,marginLeft:26}}>
+                  Les produits avec image_url seront affichés en mode visuel, les autres en tableau.
+                </div>
+              </div>
               <button onClick={createPromo} style={{...PB,padding:"9px",fontSize:13}}>✨ Créer cette section</button>
             </div>
 
@@ -1097,6 +1110,42 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               );
             })}
             {filtered.length>80&&<div style={{textAlign:"center",fontSize:12,color:"#999",padding:10}}>Affichage limité à 80 résultats – affinez la recherche.</div>}
+            {filtered.length>0&&(
+              <div style={{textAlign:"center",padding:"10px 0 4px"}}>
+                <button onClick={async()=>{
+                  const toFetch = filtered.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url).slice(0,30);
+                  if(toFetch.length===0){flash("Tous les produits filtrés ont déjà une photo (ou pas de CIP).");return;}
+                  if(!window.confirm(`Importer les photos Medipim pour ${toFetch.length} produits (sans photo) ?`))return;
+                  let ok=0,ko=0;
+                  for(const p of toFetch){
+                    try{
+                      const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}`);
+                      const d=await r.json();
+                      if(d.image_url){
+                        const imgRes=await fetch(d.image_url);
+                        const blob=await imgRes.blob();
+                        await new Promise((res)=>{
+                          const reader=new FileReader();
+                          reader.onload=async(ev)=>{
+                            const base64=ev.target.result.split(",")[1];
+                            await fetch("/.netlify/functions/product-upload-image",{
+                              method:"POST",headers:{"Content-Type":"application/json"},
+                              body:JSON.stringify({cip:p.cip,imageBase64:base64,mimeType:blob.type})
+                            });
+                            ok++;res();
+                          };
+                          reader.readAsDataURL(blob);
+                        });
+                      }else{ko++;}
+                    }catch(e){ko++;}
+                  }
+                  await fetchProducts();
+                  flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}`)
+                }} style={{fontSize:12,background:"#0ea5e9",color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
+                  🔄 Importer photos Medipim pour les produits filtrés sans photo
+                </button>
+              </div>
+            )}
             {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:"#999",padding:24}}>Aucun produit trouvé pour « {search} »</div>}
           </>
         )}

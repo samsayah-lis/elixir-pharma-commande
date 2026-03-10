@@ -57,7 +57,7 @@ const nextBusinessDay = () => {
   return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
 };
 
-const GRID_SECTIONS = ["otc", "molnlycke", "obeso"];
+const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr"];
 
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
@@ -896,7 +896,7 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           {(() => {
-            const isGridSection = GRID_SECTIONS.includes(activeTab);
+            const isGridSection = GRID_SECTIONS.includes(activeTab) || cat.withPhotos;
             const withPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
             const withoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
             return (<>
