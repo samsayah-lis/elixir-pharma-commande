@@ -15,12 +15,28 @@ export const handler = async (event) => {
   try { body = JSON.parse(event.body); } 
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-  const { cip, imageBase64, mimeType } = body;
-  if (!cip || !imageBase64) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip et imageBase64 requis" }) };
+  const { cip, imageBase64, mimeType, image_url: remoteUrl } = body;
+  if (!cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
 
-  const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg";
+  let imageBuffer, detectedMime;
+
+  if (remoteUrl) {
+    // Télécharge l'image directement côté serveur (évite CORS navigateur)
+    const imgRes = await fetch(remoteUrl);
+    if (!imgRes.ok) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Impossible de télécharger l'image: " + imgRes.status }) };
+    const arrayBuf = await imgRes.arrayBuffer();
+    imageBuffer = Buffer.from(arrayBuf);
+    detectedMime = imgRes.headers.get("content-type")?.split(";")[0] || "image/jpeg";
+  } else if (imageBase64) {
+    imageBuffer = Buffer.from(imageBase64, "base64");
+    detectedMime = mimeType || "image/jpeg";
+  } else {
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "image_url ou imageBase64 requis" }) };
+  }
+
+  const resolvedMime = detectedMime;
+  const ext = resolvedMime === "image/png" ? "png" : resolvedMime === "image/webp" ? "webp" : "jpg";
   const filename = `products/${cip}.${ext}`;
-  const imageBuffer = Buffer.from(imageBase64, "base64");
 
   // Upload dans Supabase Storage bucket "elixir-images"
   const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/elixir-images/${filename}`, {
@@ -28,7 +44,7 @@ export const handler = async (event) => {
     headers: {
       "apikey": SUPABASE_KEY,
       "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": mimeType || "image/jpeg",
+      "Content-Type": resolvedMime,
       "x-upsert": "true",
     },
     body: imageBuffer,

@@ -176,19 +176,12 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       // Upload image Medipim si disponible
       if (form._medipim_image && product.cip) {
         try {
-          const imgRes = await fetch(form._medipim_image);
-          const blob = await imgRes.blob();
-          const reader = new FileReader();
-          reader.onload = async (ev) => {
-            const base64 = ev.target.result.split(",")[1];
-            await fetch("/.netlify/functions/product-upload-image", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ cip: product.cip, imageBase64: base64, mimeType: blob.type }),
-            });
-            await fetchProducts();
-          };
-          reader.readAsDataURL(blob);
+          await fetch("/.netlify/functions/product-upload-image", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ cip: product.cip, image_url: form._medipim_image }),
+          });
+          await fetchProducts();
         } catch(imgErr) { console.warn("Image Medipim non importée:", imgErr.message); }
       }
     } catch(e) { alert("Erreur : " + e.message); }
@@ -1074,20 +1067,13 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                               <button onClick={async()=>{
                                 setUploadingImg(p.cip);
                                 try {
-                                  const imgRes = await fetch(medipimLookup[p.cip].image_url);
-                                  const blob = await imgRes.blob();
-                                  const reader = new FileReader();
-                                  reader.onload = async(ev)=>{
-                                    const base64=ev.target.result.split(",")[1];
-                                    const r=await fetch("/.netlify/functions/product-upload-image",{
-                                      method:"POST",headers:{"Content-Type":"application/json"},
-                                      body:JSON.stringify({cip:p.cip,imageBase64:base64,mimeType:blob.type})
-                                    });
-                                    const j=await r.json();
-                                    if(j.success){setUploadedImgs(prev=>({...prev,[p.cip]:j.image_url}));flash("🖼️ Photo Medipim importée !");await fetchProducts();}
-                                    setUploadingImg(null);
-                                  };
-                                  reader.readAsDataURL(blob);
+                                  const r=await fetch("/.netlify/functions/product-upload-image",{
+                                    method:"POST",headers:{"Content-Type":"application/json"},
+                                    body:JSON.stringify({cip:p.cip,image_url:medipimLookup[p.cip].image_url})
+                                  });
+                                  const j=await r.json();
+                                  if(j.success){setUploadedImgs(prev=>({...prev,[p.cip]:j.image_url}));flash("🖼️ Photo Medipim importée !");await fetchProducts();}
+                                  setUploadingImg(null);
                                 }catch(e){alert(e.message);setUploadingImg(null);}
                               }} style={{fontSize:11,background:"#0ea5e9",color:"white",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
                                 🔄 Photo Medipim
@@ -1122,22 +1108,15 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}`);
                       const d=await r.json();
                       if(d.image_url){
-                        const imgRes=await fetch(d.image_url);
-                        const blob=await imgRes.blob();
-                        await new Promise((res)=>{
-                          const reader=new FileReader();
-                          reader.onload=async(ev)=>{
-                            const base64=ev.target.result.split(",")[1];
-                            await fetch("/.netlify/functions/product-upload-image",{
-                              method:"POST",headers:{"Content-Type":"application/json"},
-                              body:JSON.stringify({cip:p.cip,imageBase64:base64,mimeType:blob.type})
-                            });
-                            ok++;res();
-                          };
-                          reader.readAsDataURL(blob);
+                        // La fonction Netlify télécharge l'image côté serveur (évite CORS)
+                        const up=await fetch("/.netlify/functions/product-upload-image",{
+                          method:"POST",headers:{"Content-Type":"application/json"},
+                          body:JSON.stringify({cip:p.cip,image_url:d.image_url})
                         });
+                        const uj=await up.json();
+                        if(uj.success) ok++; else ko++;
                       }else{ko++;}
-                    }catch(e){ko++;}
+                    }catch(e){console.warn(p.cip,e);ko++;}
                   }
                   await fetchProducts();
                   flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}`)
