@@ -45,23 +45,32 @@ export const handler = async (event) => {
 };
 
 function extractProduct(data) {
-  // Extrait les champs utiles : nom, marque, image principale
-  const name = data.name?.fr || data.name?.en || data.name || null;
-  const brand = data.brand?.name || null;
-  
-  // Image principale : cherche la première image de type "product" ou la première media disponible
+  // La réponse est enveloppée dans data.product
+  const p = data.product || data;
+
+  const name = p.name?.fr || p.name?.en || null;
+  const brand = p.brands?.[0]?.name || null;
+
+  // Photos : data.product.photos[] → formats.medium (jpeg) ou frontals[0]
   let image_url = null;
-  const medias = data.medias || data.media || [];
-  const mainImg = medias.find(m => m.type === "PRODUCT_IMAGE" || m.type === "image") || medias[0];
-  if (mainImg) {
-    image_url = mainImg.url || mainImg.src || null;
+  const frontals = p.frontals || [];
+  const photos = p.photos || [];
+
+  // Préfère le frontal (face avant) s'il existe
+  const mainPhoto = frontals[0] || photos.find(ph => ph.photoType === "packshot") || photos[0];
+  if (mainPhoto?.formats) {
+    image_url = mainPhoto.formats.mediumWebp
+      || mainPhoto.formats.medium
+      || mainPhoto.formats.mediumJpeg
+      || mainPhoto.formats.large
+      || null;
   }
 
   return {
     name,
     brand,
     image_url,
-    medipim_id: data.id || null,
-    description: data.descriptions?.[0]?.content?.fr || null,
+    medipim_id: p.id || null,
+    description: p.descriptions?.[0]?.content?.fr || null,
   };
 }
