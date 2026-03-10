@@ -900,7 +900,6 @@ export default function App() {
             const isGridSection = GRID_SECTIONS.includes(activeTab) || cat.withPhotos;
             const withPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
             const withoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
-            if (isGridSection) console.log("[GRID DEBUG]", activeTab, "total:", filteredProducts.length, "withPhoto:", withPhoto.length, "sample image_url:", filteredProducts[0]?.image_url);
             return (<>
               {withPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
