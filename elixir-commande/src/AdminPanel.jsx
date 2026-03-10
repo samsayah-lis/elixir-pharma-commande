@@ -58,6 +58,40 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [search, setSearch]       = useState("");
   const [filterSection, setFilterSection] = useState("all");
   const [editingKey, setEditingKey] = useState(null);
+  const [uploadingImg, setUploadingImg] = useState(null); // cip en cours d'upload
+  const [uploadedImgs, setUploadedImgs] = useState({}); // cip → url (preview local)
+
+  const GRID_SECTIONS = ["otc", "molnlycke", "obeso"];
+
+  const handleImageUpload = async (cip, file) => {
+    if (!file) return;
+    setUploadingImg(cip);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        const mimeType = file.type;
+        const res = await fetch("/.netlify/functions/product-upload-image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cip, imageBase64: base64, mimeType }),
+        });
+        const json = await res.json();
+        if (json.success) {
+          setUploadedImgs(prev => ({ ...prev, [cip]: json.image_url }));
+          flash("🖼️ Photo uploadée !");
+          await fetchProducts();
+        } else {
+          alert("Erreur upload : " + json.error);
+        }
+        setUploadingImg(null);
+      };
+      reader.readAsDataURL(file);
+    } catch(e) {
+      alert("Erreur : " + e.message);
+      setUploadingImg(null);
+    }
+  };
   const [editForm, setEditForm]   = useState({});
 
   useEffect(() => {
@@ -943,6 +977,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <input value={editForm.note} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))}
                           placeholder="Stock limité, Promo..." style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                       </div>
+                      {GRID_SECTIONS.includes(p._section) && (
+                        <div style={{marginBottom:12}}>
+                          <label style={{...LS,fontSize:10}}>📸 Photo produit</label>
+                          <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
+                            {(uploadedImgs[p.cip] || p.image_url) && (
+                              <img src={uploadedImgs[p.cip] || p.image_url} alt=""
+                                style={{width:48,height:48,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0"}}/>
+                            )}
+                            <label style={{
+                              display:"inline-block",padding:"6px 12px",borderRadius:8,
+                              background:"#f0f2f5",border:"1px solid #e2e8f0",cursor:"pointer",
+                              fontSize:11,fontWeight:600,color:"#555"
+                            }}>
+                              {uploadingImg===p.cip ? "⏳ Upload..." : "📂 Choisir une photo"}
+                              <input type="file" accept="image/*" style={{display:"none"}}
+                                onChange={e=>handleImageUpload(p.cip, e.target.files[0])}
+                                disabled={uploadingImg===p.cip}/>
+                            </label>
+                          </div>
+                        </div>
+                      )}
                       <button onClick={()=>saveEdit(p)} style={{...PB,padding:"9px",fontSize:13}}>
                         💾 Enregistrer les modifications
                       </button>

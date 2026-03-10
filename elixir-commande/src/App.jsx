@@ -57,6 +57,8 @@ const nextBusinessDay = () => {
   return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
 };
 
+const GRID_SECTIONS = ["otc", "molnlycke", "obeso"];
+
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
   const n = Math.abs(parseFloat(String(pct).replace(/[^0-9.-]/g, "")));
@@ -892,7 +894,79 @@ export default function App() {
             </div>
           </div>
 
-          {/* Products table */}
+          {/* Products grid (photos) + table */}
+          {(() => {
+            const isGridSection = GRID_SECTIONS.includes(activeTab);
+            const withPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
+            const withoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
+            return (<>
+              {withPhoto.length > 0 && (
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+                  {withPhoto.map((p) => {
+                    const realIdx = cat.products.indexOf(p);
+                    const key = `${activeTab}-${realIdx}`;
+                    const qty = quantities[key] || 0;
+                    const step = getStep(activeTab, p);
+                    const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                    return (
+                      <div key={key} style={{
+                        background: "white", borderRadius: 14,
+                        boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 4px 16px rgba(0,0,0,0.10)` : "0 2px 12px rgba(0,0,0,0.08)",
+                        border: `1px solid ${qty > 0 ? cat.accent : "#f0f2f5"}`,
+                        overflow: "hidden", display: "flex", flexDirection: "column",
+                        transition: "box-shadow 0.2s, border 0.2s"
+                      }}>
+                        {/* Image */}
+                        <div style={{ position: "relative", paddingTop: "70%", background: "#f8fafc", overflow: "hidden" }}>
+                          <img src={p.image_url} alt={p.name}
+                            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
+                          {isRupture && (
+                            <div style={{ position: "absolute", top: 6, left: 6, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 6px" }}>⚠️ RUPTURE</div>
+                          )}
+                          {p.pct && (
+                            <div style={{ position: "absolute", top: 6, right: 6, background: cat.accent, color: "white", fontSize: 10, fontWeight: 800, borderRadius: 4, padding: "2px 6px" }}>{fmtPct(p.pct)}</div>
+                          )}
+                        </div>
+                        {/* Info */}
+                        <div style={{ padding: "10px 12px", flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1a2a3a", lineHeight: 1.3, flex: 1 }}>{p.name}</div>
+                          {p.note && <div style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px", alignSelf: "flex-start" }}>{p.note}</div>}
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+                            {p.pv && <div style={{ fontSize: 11, color: "#999", textDecoration: "line-through" }}>{fmt(p.pv)}</div>}
+                            <div style={{ fontSize: 15, fontWeight: 800, color: cat.color }}>{p.pn != null ? fmt(p.pn) : "–"}</div>
+                          </div>
+                          {/* Qty controls */}
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, justifyContent: "center" }}>
+                            <button onClick={() => setQty(key, qty - step, step)} style={{
+                              background: cat.accent + "20", border: `1px solid ${cat.accent}40`,
+                              color: cat.accent, borderRadius: 6, width: 28, height: 28,
+                              cursor: "pointer", fontWeight: 800, fontSize: 16
+                            }}>−</button>
+                            <input type="number" min="0" step={step} value={quantities[key] || ""}
+                              onChange={e => setQty(key, e.target.value, step)}
+                              placeholder="0"
+                              style={{
+                                width: 44, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
+                                borderRadius: 6, padding: "4px 2px", fontSize: 13,
+                                fontWeight: qty > 0 ? 700 : 400, outline: "none"
+                              }}/>
+                            <button onClick={() => setQty(key, qty + step, step)} style={{
+                              background: qty > 0 ? cat.accent : "#0f2d3d", border: "none",
+                              color: "white", borderRadius: 6, width: 28, height: 28,
+                              cursor: "pointer", fontWeight: 800, fontSize: 16
+                            }}>+</button>
+                          </div>
+                          {step > 1 && <div style={{ textAlign: "center", fontSize: 9, color: "#aaa" }}>par {step}</div>}
+                          {qty > 0 && p.pn != null && (
+                            <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 0", marginTop: 2 }}>{fmt(p.pn * qty)}</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+              {withoutPhoto.length > 0 && (
           <div style={{ background: "white", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -1072,6 +1146,9 @@ export default function App() {
               <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>Aucun produit trouvé</div>
             )}
           </div>
+              )}
+            </>);
+          })()}
         </main>
 
         {/* Cart panel */}
