@@ -304,6 +304,11 @@ export default function App() {
     return filtered;
   })();
 
+  // Split grille/tableau
+  const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
+  const gridWithPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
+  const gridWithoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
+
   const handlePrint = () => {
     window.print();
   };
@@ -896,14 +901,10 @@ export default function App() {
           </div>
 
           {/* Products grid (photos) + table */}
-          {(() => {
-            const isGridSection = GRID_SECTIONS.includes(activeTab) || cat.withPhotos;
-            const withPhoto = isGridSection ? filteredProducts.filter(p => p.image_url) : [];
-            const withoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
-            return (<>
-              {withPhoto.length > 0 && (
+          <>
+              {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
-                  {withPhoto.map((p) => {
+                  {gridWithPhoto.map((p) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
                     const qty = quantities[key] || 0;
@@ -971,7 +972,7 @@ export default function App() {
                   })}
                 </div>
               )}
-              {withoutPhoto.length > 0 && (
+              {gridWithoutPhoto.length > 0 && (
           <div style={{ background: "white", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -988,7 +989,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {withoutPhoto.map((p, idx) => {
+                  {gridWithoutPhoto.map((p, idx) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
                     const qty = quantities[key] || 0;
@@ -1147,13 +1148,12 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            {withoutPhoto.length === 0 && withPhoto.length === 0 && (
+            {gridWithoutPhoto.length === 0 && gridWithPhoto.length === 0 && (
               <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>Aucun produit trouvé</div>
             )}
           </div>
               )}
-            </>);
-          })()}
+          </>
         </main>
 
         {/* Cart panel */}
