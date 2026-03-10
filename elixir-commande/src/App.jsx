@@ -988,7 +988,7 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredProducts.map((p, idx) => {
+                  {withoutPhoto.map((p, idx) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
                     const qty = quantities[key] || 0;
@@ -1147,7 +1147,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            {filteredProducts.length === 0 && (
+            {withoutPhoto.length === 0 && withPhoto.length === 0 && (
               <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>Aucun produit trouvé</div>
             )}
           </div>
