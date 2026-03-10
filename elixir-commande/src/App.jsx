@@ -901,7 +901,7 @@ export default function App() {
             const withoutPhoto = isGridSection ? filteredProducts.filter(p => !p.image_url) : filteredProducts;
             return (<>
               {withPhoto.length > 0 && (
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 16, marginBottom: 24 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
                   {withPhoto.map((p) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
@@ -911,54 +911,58 @@ export default function App() {
                     return (
                       <div key={key} style={{
                         background: "white", borderRadius: 14,
-                        boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 4px 16px rgba(0,0,0,0.10)` : "0 2px 12px rgba(0,0,0,0.08)",
-                        border: `1px solid ${qty > 0 ? cat.accent : "#f0f2f5"}`,
-                        overflow: "hidden", display: "flex", flexDirection: "column",
-                        transition: "box-shadow 0.2s, border 0.2s"
+                        boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 2px 12px rgba(0,0,0,0.08)` : "0 1px 6px rgba(0,0,0,0.06)",
+                        border: `1px solid ${qty > 0 ? cat.accent : "#eef0f3"}`,
+                        display: "flex", alignItems: "center", gap: 0,
+                        overflow: "hidden", transition: "box-shadow 0.2s, border 0.2s"
                       }}>
-                        {/* Image */}
-                        <div style={{ position: "relative", paddingTop: "70%", background: "#f8fafc", overflow: "hidden" }}>
+                        {/* Photo */}
+                        <div style={{ flexShrink: 0, width: 120, height: 120, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center" }}>
                           <img src={p.image_url} alt={p.name}
-                            style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
+                            style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10 }}/>
                           {isRupture && (
-                            <div style={{ position: "absolute", top: 6, left: 6, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 6px" }}>⚠️ RUPTURE</div>
-                          )}
-                          {p.pct && (
-                            <div style={{ position: "absolute", top: 6, right: 6, background: cat.accent, color: "white", fontSize: 10, fontWeight: 800, borderRadius: 4, padding: "2px 6px" }}>{fmtPct(p.pct)}</div>
+                            <div style={{ position: "absolute", top: 6, left: 6, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
                           )}
                         </div>
-                        {/* Info */}
-                        <div style={{ padding: "10px 12px", flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: "#1a2a3a", lineHeight: 1.3, flex: 1 }}>{p.name}</div>
-                          {p.note && <div style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px", alignSelf: "flex-start" }}>{p.note}</div>}
-                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-                            {p.pv && <div style={{ fontSize: 11, color: "#999", textDecoration: "line-through" }}>{fmt(p.pv)}</div>}
-                            <div style={{ fontSize: 15, fontWeight: 800, color: cat.color }}>{p.pn != null ? fmt(p.pn) : "–"}</div>
-                          </div>
-                          {/* Qty controls */}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6, justifyContent: "center" }}>
+                        {/* Info centrale */}
+                        <div style={{ flex: 1, padding: "14px 16px", minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
+                          {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : {p.cip}</div>}
+                          {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
+                          {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
+                        </div>
+                        {/* Prix + remise + qté */}
+                        <div style={{ flexShrink: 0, padding: "14px 20px", textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, borderLeft: "1px solid #f0f2f5", minWidth: 160 }}>
+                          {p.pv && p.pct && (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <span style={{ fontSize: 12, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.pv)}</span>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: cat.accent, borderRadius: 4, padding: "1px 6px" }}>{fmtPct(p.pct)}</span>
+                            </div>
+                          )}
+                          <div style={{ fontSize: 20, fontWeight: 800, color: cat.color }}>{p.pn != null ? fmt(p.pn) : "–"}</div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => setQty(key, qty - step, step)} style={{
-                              background: cat.accent + "20", border: `1px solid ${cat.accent}40`,
-                              color: cat.accent, borderRadius: 6, width: 28, height: 28,
-                              cursor: "pointer", fontWeight: 800, fontSize: 16
+                              background: cat.accent + "15", border: `1px solid ${cat.accent}40`,
+                              color: cat.accent, borderRadius: 7, width: 32, height: 32,
+                              cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>−</button>
                             <input type="number" min="0" step={step} value={quantities[key] || ""}
                               onChange={e => setQty(key, e.target.value, step)}
                               placeholder="0"
                               style={{
-                                width: 44, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
-                                borderRadius: 6, padding: "4px 2px", fontSize: 13,
+                                width: 50, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
+                                borderRadius: 7, padding: "5px 4px", fontSize: 14,
                                 fontWeight: qty > 0 ? 700 : 400, outline: "none"
                               }}/>
                             <button onClick={() => setQty(key, qty + step, step)} style={{
                               background: qty > 0 ? cat.accent : "#0f2d3d", border: "none",
-                              color: "white", borderRadius: 6, width: 28, height: 28,
-                              cursor: "pointer", fontWeight: 800, fontSize: 16
+                              color: "white", borderRadius: 7, width: 32, height: 32,
+                              cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>+</button>
                           </div>
-                          {step > 1 && <div style={{ textAlign: "center", fontSize: 9, color: "#aaa" }}>par {step}</div>}
+                          {step > 1 && <div style={{ fontSize: 9, color: "#aaa" }}>par {step}</div>}
                           {qty > 0 && p.pn != null && (
-                            <div style={{ textAlign: "center", fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 0", marginTop: 2 }}>{fmt(p.pn * qty)}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>= {fmt(p.pn * qty)}</div>
                           )}
                         </div>
                       </div>

@@ -60,6 +60,23 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [editingKey, setEditingKey] = useState(null);
   const [uploadingImg, setUploadingImg] = useState(null); // cip en cours d'upload
   const [uploadedImgs, setUploadedImgs] = useState({}); // cip → url (preview local)
+  const [medipimLookup, setMedipimLookup] = useState({}); // cip → {loading, name, image_url, brand, error}
+
+  const lookupMedipim = async (cip) => {
+    if (!cip || cip.length < 7) return;
+    setMedipimLookup(prev => ({ ...prev, [cip]: { loading: true } }));
+    try {
+      const res = await fetch(`/.netlify/functions/medipim-lookup?cip=${cip}`);
+      const data = await res.json();
+      if (data.error) {
+        setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: data.error } }));
+      } else {
+        setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, ...data } }));
+      }
+    } catch(e) {
+      setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: e.message } }));
+    }
+  };
 
   const GRID_SECTIONS = ["otc", "molnlycke", "obeso"];
 
@@ -156,6 +173,24 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       await fetchProducts();
       setForm(EMPTY_FORM);
       flash("✅ Produit ajouté !");
+      // Upload image Medipim si disponible
+      if (form._medipim_image && product.cip) {
+        try {
+          const imgRes = await fetch(form._medipim_image);
+          const blob = await imgRes.blob();
+          const reader = new FileReader();
+          reader.onload = async (ev) => {
+            const base64 = ev.target.result.split(",")[1];
+            await fetch("/.netlify/functions/product-upload-image", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ cip: product.cip, imageBase64: base64, mimeType: blob.type }),
+            });
+            await fetchProducts();
+          };
+          reader.readAsDataURL(blob);
+        } catch(imgErr) { console.warn("Image Medipim non importée:", imgErr.message); }
+      }
     } catch(e) { alert("Erreur : " + e.message); }
   };
 
@@ -579,7 +614,34 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               </div>
               <div>
                 <label style={LS}>Code CIP</label>
-                <input value={form.cip} onChange={e=>handleField("cip",e.target.value)} placeholder="3400930000000" style={IS}/>
+                <input value={form.cip}
+                  onChange={e=>handleField("cip",e.target.value)}
+                  onBlur={e=>{ if(e.target.value.length>=7) lookupMedipim(e.target.value); }}
+                  placeholder="3400930000000" style={IS}/>
+                {form.cip && medipimLookup[form.cip] && (() => {
+                  const m = medipimLookup[form.cip];
+                  if (m.loading) return <div style={{fontSize:11,color:"#3b82f6",marginTop:4}}>🔍 Recherche Medipim...</div>;
+                  if (m.error) return <div style={{fontSize:11,color:"#dc2626",marginTop:4}}>⚠️ Medipim : {m.error}</div>;
+                  return (
+                    <div style={{marginTop:8,padding:"10px 12px",background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:8,display:"flex",gap:10,alignItems:"center"}}>
+                      {m.image_url && <img src={m.image_url} alt="" style={{width:48,height:48,objectFit:"contain",borderRadius:6,background:"white",border:"1px solid #e2e8f0"}}/>}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:11,fontWeight:700,color:"#0369a1"}}>✅ Trouvé dans Medipim</div>
+                        {m.brand && <div style={{fontSize:11,color:"#666"}}>{m.brand}</div>}
+                        {m.name && <div style={{fontSize:12,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>}
+                      </div>
+                      <button onClick={()=>{
+                        if(m.name && !form.name) setForm(f=>({...f, name: m.name}));
+                        if(m.image_url) setForm(f=>({...f, _medipim_image: m.image_url}));
+                      }} style={{fontSize:11,background:"#0ea5e9",color:"white",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:700}}>
+                        ⬇️ Importer
+                      </button>
+                    </div>
+                  );
+                })()}
+                {form._medipim_image && (
+                  <div style={{marginTop:6,fontSize:11,color:"#059669"}}>📸 Photo Medipim prête à être enregistrée</div>
+                )}
               </div>
               <div>
                 <label style={LS}>Section *</label>
@@ -995,6 +1057,34 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                                 onChange={e=>handleImageUpload(p.cip, e.target.files[0])}
                                 disabled={uploadingImg===p.cip}/>
                             </label>
+                            {p.cip && medipimLookup[p.cip]?.image_url && (
+                              <button onClick={async()=>{
+                                setUploadingImg(p.cip);
+                                try {
+                                  const imgRes = await fetch(medipimLookup[p.cip].image_url);
+                                  const blob = await imgRes.blob();
+                                  const reader = new FileReader();
+                                  reader.onload = async(ev)=>{
+                                    const base64=ev.target.result.split(",")[1];
+                                    const r=await fetch("/.netlify/functions/product-upload-image",{
+                                      method:"POST",headers:{"Content-Type":"application/json"},
+                                      body:JSON.stringify({cip:p.cip,imageBase64:base64,mimeType:blob.type})
+                                    });
+                                    const j=await r.json();
+                                    if(j.success){setUploadedImgs(prev=>({...prev,[p.cip]:j.image_url}));flash("🖼️ Photo Medipim importée !");await fetchProducts();}
+                                    setUploadingImg(null);
+                                  };
+                                  reader.readAsDataURL(blob);
+                                }catch(e){alert(e.message);setUploadingImg(null);}
+                              }} style={{fontSize:11,background:"#0ea5e9",color:"white",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
+                                🔄 Photo Medipim
+                              </button>
+                            )}
+                            {p.cip && !medipimLookup[p.cip] && !p.image_url && (
+                              <button onClick={()=>lookupMedipim(p.cip)} style={{fontSize:11,background:"#f0f2f5",border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:"#555"}}>
+                                🔍 Chercher Medipim
+                              </button>
+                            )}
                           </div>
                         </div>
                       )}
