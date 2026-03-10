@@ -1099,7 +1099,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {filtered.length>0&&(
               <div style={{textAlign:"center",padding:"10px 0 4px"}}>
                 <button onClick={async()=>{
-                  const toFetch = filtered.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url);
+                  // Utilise allProducts (pas filtered qui est limité à 80 dans l'affichage)
+                  const base = filterSection==="all" ? allProducts : allProducts.filter(p=>p._section===filterSection);
+                  const toFetch = base.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url);
                   if(toFetch.length===0){flash("Tous les produits filtrés ont déjà une photo (ou pas de CIP).");return;}
                   if(!window.confirm(`Importer les photos Medipim pour ${toFetch.length} produits (sans photo) ?`))return;
                   let ok=0,ko=0;
