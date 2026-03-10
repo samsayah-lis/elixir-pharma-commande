@@ -1099,24 +1099,29 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {filtered.length>0&&(
               <div style={{textAlign:"center",padding:"10px 0 4px"}}>
                 <button onClick={async()=>{
-                  const toFetch = filtered.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url).slice(0,30);
+                  const toFetch = filtered.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url);
                   if(toFetch.length===0){flash("Tous les produits filtrés ont déjà une photo (ou pas de CIP).");return;}
                   if(!window.confirm(`Importer les photos Medipim pour ${toFetch.length} produits (sans photo) ?`))return;
                   let ok=0,ko=0;
-                  for(const p of toFetch){
-                    try{
-                      const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}`);
-                      const d=await r.json();
-                      if(d.image_url){
-                        // La fonction Netlify télécharge l'image côté serveur (évite CORS)
-                        const up=await fetch("/.netlify/functions/product-upload-image",{
-                          method:"POST",headers:{"Content-Type":"application/json"},
-                          body:JSON.stringify({cip:p.cip,image_url:d.image_url})
-                        });
-                        const uj=await up.json();
-                        if(uj.success) ok++; else ko++;
-                      }else{ko++;}
-                    }catch(e){console.warn(p.cip,e);ko++;}
+                  // Traitement par batches de 5 en parallèle
+                  const BATCH = 5;
+                  for(let i=0; i<toFetch.length; i+=BATCH){
+                    const batch = toFetch.slice(i, i+BATCH);
+                    await Promise.all(batch.map(async p => {
+                      try{
+                        const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}`);
+                        const d=await r.json();
+                        if(d.image_url){
+                          const up=await fetch("/.netlify/functions/product-upload-image",{
+                            method:"POST",headers:{"Content-Type":"application/json"},
+                            body:JSON.stringify({cip:p.cip,image_url:d.image_url})
+                          });
+                          const uj=await up.json();
+                          if(uj.success) ok++; else ko++;
+                        }else{ko++;}
+                      }catch(e){console.warn(p.cip,e);ko++;}
+                    }));
+                    flash(`⏳ ${ok+ko}/${toFetch.length} traités...`);
                   }
                   await fetchProducts();
                   flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}`)
