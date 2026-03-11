@@ -396,8 +396,6 @@ export default function App() {
   const [ncSending, setNcSending] = useState(false);
   const [ncSent, setNcSent] = useState(false);
 
-  const getStep = (catKey, p) => getStepMin(catKey, p).step;
-
   const getStepMin = (catKey, p) => {
     if (catKey === "stratege") return { step: p.colis||1, min: p.colis||1, multiple: p.colis||1 };
     if (catKey === "master")   return { step: p.palier||1, min: p.palier||1, multiple: p.palier||1 };
@@ -413,6 +411,8 @@ export default function App() {
     }
     return { step: 1, min: 0, multiple: 1 };
   };
+
+  const getStep = (catKey, p) => getStepMin(catKey, p).step;
 
   const setQty = (key, val, step = 1, min = 0, multiple = 1) => {
     const raw = Math.max(0, parseInt(val) || 0);
