@@ -1,11 +1,19 @@
-const { createClient } = require("@supabase/supabase-js");
-const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Content-Type": "application/json" };
+const H = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
 
-exports.handler = async (event) => {
+export const handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const { id } = event.queryStringParameters || {};
-  let query = supabase.from("elixir_campaigns").select("*").eq("active", true).order("created_at");
-  if (id) query = supabase.from("elixir_campaigns").select("*").eq("id", id).single();
-  const { data, error } = await query;
-  if (error) return { statusCode: 500, body: JSON.stringify({ error: error.message }) };
-  return { statusCode: 200, headers: { "Content-Type": "application/json" }, body: JSON.stringify(id ? data : (data || [])) };
+  let url;
+  if (id) {
+    url = `${SUPABASE_URL}/rest/v1/elixir_campaigns?id=eq.${encodeURIComponent(id)}&limit=1`;
+  } else {
+    url = `${SUPABASE_URL}/rest/v1/elixir_campaigns?active=eq.true&order=created_at`;
+  }
+  const res = await fetch(url, { headers: H });
+  const data = await res.json();
+  if (!res.ok) return { statusCode: 500, headers: cors, body: JSON.stringify({ error: data }) };
+  return { statusCode: 200, headers: cors, body: JSON.stringify(id ? (data[0] || null) : (data || [])) };
 };
