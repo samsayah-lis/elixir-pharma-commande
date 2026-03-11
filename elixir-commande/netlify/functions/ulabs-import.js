@@ -1,17 +1,12 @@
-// Import U-Labs (Fluocaril / Parogencyl / Regenerate)
-// GET /.netlify/functions/ulabs-import?token=elixir2026
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
 const PRODUCTS = [
   {
-    "ean": "3400935008497",
     "cip7": "8710604763493",
     "name": "Fluocaril Bi-fluoré 250mg Pâte dentifrice Menthe 75ml",
     "pv": 5.62,
-    "tva": 10,
     "colis": 10,
-    "marque": "Fluocaril",
     "cip": "3400935008497",
     "section": "ulabs",
     "active": true,
@@ -21,13 +16,10 @@ const PRODUCTS = [
     "note": "Min 10 u · TVA 10%"
   },
   {
-    "ean": "3400936273955",
     "cip7": "8710604763486",
     "name": "Fluocaril Bi-fluoré 250mg Pâte dentifrice Menthe 2x75ml",
     "pv": 10.11,
-    "tva": 10,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "3400936273955",
     "section": "ulabs",
     "active": true,
@@ -37,13 +29,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 10%"
   },
   {
-    "ean": "3400935008619",
     "cip7": "8710604763431",
     "name": "Fluocaril Bi-fluoré 250mg Pâte dentifrice Menthe 125ml",
     "pv": 7.32,
-    "tva": 10,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "3400935008619",
     "section": "ulabs",
     "active": true,
@@ -53,13 +42,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 10%"
   },
   {
-    "ean": "3400936273894",
     "cip7": "8710604763479",
     "name": "Fluocaril Bi-fluoré 250mg Pâte dentifrice Menthe 2x125ml",
     "pv": 12.57,
-    "tva": 10,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "3400936273894",
     "section": "ulabs",
     "active": true,
@@ -69,13 +55,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 10%"
   },
   {
-    "ean": "3400936256118",
     "cip7": "8710604763509",
     "name": "Fluocaril Bi-fluoré 250mg Gel dentifrice Menthe 75ml",
     "pv": 5.89,
-    "tva": 10,
     "colis": 10,
-    "marque": "Fluocaril",
     "cip": "3400936256118",
     "section": "ulabs",
     "active": true,
@@ -85,13 +68,10 @@ const PRODUCTS = [
     "note": "Min 10 u · TVA 10%"
   },
   {
-    "ean": "3400936256286",
     "cip7": "8710604763448",
     "name": "Fluocaril Bi-fluoré 250mg Gel dentifrice Menthe 125ml",
     "pv": 7.32,
-    "tva": 10,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "3400936256286",
     "section": "ulabs",
     "active": true,
@@ -101,13 +81,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 10%"
   },
   {
-    "ean": "8710604763233",
     "cip7": "6249526",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Menthe 75ml",
     "pv": 4.62,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8710604763233",
     "section": "ulabs",
     "active": true,
@@ -117,13 +94,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763172",
     "cip7": "6249525",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Menthe 2x75ml",
     "pv": 7.92,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763172",
     "section": "ulabs",
     "active": true,
@@ -133,13 +107,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763202",
     "cip7": "6249520",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Gencives 2x75ml",
     "pv": 7.92,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763202",
     "section": "ulabs",
     "active": true,
@@ -149,13 +120,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763196",
     "cip7": "6249518",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Dents Sensibles 2x75ml",
     "pv": 7.92,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763196",
     "section": "ulabs",
     "active": true,
@@ -165,13 +133,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763219",
     "cip7": "6249524",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Blancheur 75ml",
     "pv": 4.62,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8710604763219",
     "section": "ulabs",
     "active": true,
@@ -181,13 +146,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763189",
     "cip7": "6249523",
     "name": "Fluocaril Bi-fluoré 145mg Dentifrice Blancheur 2x75ml",
     "pv": 7.92,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763189",
     "section": "ulabs",
     "active": true,
@@ -197,13 +159,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720182020741",
     "cip7": "6285182",
     "name": "Fluocaril Natur'Essence Original 75ml",
     "pv": 4.78,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720182020741",
     "section": "ulabs",
     "active": true,
@@ -213,13 +172,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720182505255",
     "cip7": "6332759",
     "name": "Fluocaril Natur'Essence Original 2x75ml",
     "pv": 8.19,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8720182505255",
     "section": "ulabs",
     "active": true,
@@ -229,13 +185,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720182015464",
     "cip7": "6285184",
     "name": "Fluocaril Natur'Essence Blancheur 75ml",
     "pv": 4.78,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720182015464",
     "section": "ulabs",
     "active": true,
@@ -245,13 +198,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720182505569",
     "cip7": "6332760",
     "name": "Fluocaril Natur'Essence Blancheur 2x75ml",
     "pv": 8.19,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8720182505569",
     "section": "ulabs",
     "active": true,
@@ -261,13 +211,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181512490",
     "cip7": "6377798",
     "name": "Fluocaril Protection Complète Dentifrice 75ml",
     "pv": 4.94,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181512490",
     "section": "ulabs",
     "active": true,
@@ -277,13 +224,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720182881533",
     "cip7": "6378837",
     "name": "Fluocaril Protection Complète Dentifrice 2x75ml",
     "pv": 8.46,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8720182881533",
     "section": "ulabs",
     "active": true,
@@ -293,13 +237,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181512506",
     "cip7": "6377797",
     "name": "Fluocaril Protection Complète Dentifrice Blancheur 75ml",
     "pv": 4.94,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181512506",
     "section": "ulabs",
     "active": true,
@@ -309,13 +250,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181490866",
     "cip7": "6377799",
     "name": "Fluocaril Kids Dentifrice 0-6ans Fraise 75ml",
     "pv": 4.13,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181490866",
     "section": "ulabs",
     "active": true,
@@ -325,13 +263,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181491542",
     "cip7": "6377868",
     "name": "Fluocaril Kids Dentifrice 0-6ans Fraise 2x75ml",
     "pv": 7.09,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8720181491542",
     "section": "ulabs",
     "active": true,
@@ -341,13 +276,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763295",
     "cip7": "6249517",
     "name": "Fluocaril Junior Dentifrice 6-13ans Fruits Rouges 75ml",
     "pv": 4.36,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8710604763295",
     "section": "ulabs",
     "active": true,
@@ -357,13 +289,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763271",
     "cip7": "6249515",
     "name": "Fluocaril Junior Dentifrice 6-13ans Fruits Rouges 2x75ml",
     "pv": 7.47,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763271",
     "section": "ulabs",
     "active": true,
@@ -373,13 +302,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763301",
     "cip7": "6249514",
     "name": "Fluocaril Junior Dentifrice 6-13ans Bubble Gum 75ml",
     "pv": 4.36,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8710604763301",
     "section": "ulabs",
     "active": true,
@@ -389,13 +315,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763288",
     "cip7": "6249513",
     "name": "Fluocaril Junior Dentifrice 6-13ans Bubble Gum 2x75ml",
     "pv": 7.47,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763288",
     "section": "ulabs",
     "active": true,
@@ -405,13 +328,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181491559",
     "cip7": "6377801",
     "name": "Fluocaril Junior Dentifrice 6-13ans Menthe Douce 75ml",
     "pv": 4.36,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181491559",
     "section": "ulabs",
     "active": true,
@@ -421,13 +341,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181509803",
     "cip7": "6377871",
     "name": "Fluocaril Junior Dentifrice 6-13ans Menthe Douce 2x75ml",
     "pv": 7.47,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8720181509803",
     "section": "ulabs",
     "active": true,
@@ -437,13 +354,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181502798",
     "cip7": "6382193",
     "name": "Fluocaril Brosse à dents Kids Extra-Souple",
     "pv": 1.89,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181502798",
     "section": "ulabs",
     "active": true,
@@ -453,13 +367,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181502781",
     "cip7": "6382194",
     "name": "Fluocaril Brosse à dents Junior Extra-Souple",
     "pv": 2.02,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181502781",
     "section": "ulabs",
     "active": true,
@@ -469,13 +380,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181361913",
     "cip7": "6341582",
     "name": "Fluocaril Brosse à dents Sensibilité Extra-Souple 15/100",
     "pv": 3.47,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181361913",
     "section": "ulabs",
     "active": true,
@@ -485,13 +393,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181361920",
     "cip7": "6341572",
     "name": "Fluocaril Brosse à dents Précision Interdentaire Souple 20/100",
     "pv": 3.47,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181361920",
     "section": "ulabs",
     "active": true,
@@ -501,13 +406,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181361937",
     "cip7": "6341583",
     "name": "Fluocaril Brosse à dents Précision Interdentaire Médium 23/100",
     "pv": 3.47,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8720181361937",
     "section": "ulabs",
     "active": true,
@@ -517,13 +419,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710522965665",
     "cip7": "6287791",
     "name": "Fluocaril Spray buccal sans gaz propulseur 15ml",
     "pv": 4.44,
-    "tva": 20,
     "colis": 12,
-    "marque": "Fluocaril",
     "cip": "8710522965665",
     "section": "ulabs",
     "active": true,
@@ -533,13 +432,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763578",
     "cip7": "6249503",
     "name": "Fluocaril Bain de bouche Bi-Fluoré 300ml",
     "pv": 4.39,
-    "tva": 20,
     "colis": 6,
-    "marque": "Fluocaril",
     "cip": "8710604763578",
     "section": "ulabs",
     "active": true,
@@ -549,13 +445,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181397233",
     "cip7": "6347798",
     "name": "Parogencyl Dentifrice Soin Intensif Gencives 75ml",
     "pv": 5.04,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8720181397233",
     "section": "ulabs",
     "active": true,
@@ -565,13 +458,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181369605",
     "cip7": "6347799",
     "name": "Parogencyl Dentifrice Soin Intensif Gencives 2x75ml",
     "pv": 8.64,
-    "tva": 20,
     "colis": 6,
-    "marque": "Parogencyl",
     "cip": "8720181369605",
     "section": "ulabs",
     "active": true,
@@ -581,13 +471,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710604763363",
     "cip7": "6249445",
     "name": "Parogencyl Dentifrice Prévention Gencives 75ml",
     "pv": 4.57,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8710604763363",
     "section": "ulabs",
     "active": true,
@@ -597,13 +484,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710604763356",
     "cip7": "6249639",
     "name": "Parogencyl Dentifrice Prévention Gencives 2x75ml",
     "pv": 7.62,
-    "tva": 20,
     "colis": 6,
-    "marque": "Parogencyl",
     "cip": "8710604763356",
     "section": "ulabs",
     "active": true,
@@ -613,13 +497,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720182034410",
     "cip7": "6287143",
     "name": "Parogencyl Dentifrice Prévention Gencives Blancheur 75ml",
     "pv": 4.67,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8720182034410",
     "section": "ulabs",
     "active": true,
@@ -629,13 +510,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720182034380",
     "cip7": "6287144",
     "name": "Parogencyl Dentifrice Prévention Gencives Blancheur 2x75ml",
     "pv": 8.17,
-    "tva": 20,
     "colis": 6,
-    "marque": "Parogencyl",
     "cip": "8720182034380",
     "section": "ulabs",
     "active": true,
@@ -645,13 +523,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720181361944",
     "cip7": "6341567",
     "name": "Parogencyl Brosse à dents Chirurgicale Post-Opératoire 8/100",
     "pv": 3.85,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8720181361944",
     "section": "ulabs",
     "active": true,
@@ -661,13 +536,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181361951",
     "cip7": "6341560",
     "name": "Parogencyl Brosse à dents Parodontie 15/100",
     "pv": 3.5,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8720181361951",
     "section": "ulabs",
     "active": true,
@@ -677,13 +549,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8720181361968",
     "cip7": "6341562",
     "name": "Parogencyl Brosse à dents Soin Gencives 20/100",
     "pv": 3.45,
-    "tva": 20,
     "colis": 12,
-    "marque": "Parogencyl",
     "cip": "8720181361968",
     "section": "ulabs",
     "active": true,
@@ -693,13 +562,10 @@ const PRODUCTS = [
     "note": "Min 12 u · TVA 20%"
   },
   {
-    "ean": "8710522798164",
     "cip7": "6265594",
     "name": "Parogencyl Bain de Bouche Gencives 300ml",
     "pv": 4.4,
-    "tva": 20,
     "colis": 6,
-    "marque": "Parogencyl",
     "cip": "8710522798164",
     "section": "ulabs",
     "active": true,
@@ -709,13 +575,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8720182039217",
     "cip7": "6287142",
     "name": "Parogencyl Bain de bouche Intensif Chlorhexidine 300ml",
     "pv": 4.54,
-    "tva": 20,
     "colis": 6,
-    "marque": "Parogencyl",
     "cip": "8720182039217",
     "section": "ulabs",
     "active": true,
@@ -725,13 +588,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8712561170277",
     "cip7": "6290891",
     "name": "Regenerate Dentifrice Expert 75ml",
     "pv": 10.5,
-    "tva": 20,
     "colis": 6,
-    "marque": "Regenerate",
     "cip": "8712561170277",
     "section": "ulabs",
     "active": true,
@@ -741,13 +601,10 @@ const PRODUCTS = [
     "note": "Min 6 u · TVA 20%"
   },
   {
-    "ean": "8710447492130",
     "cip7": "6104882",
     "name": "Regenerate Bain de Bouche Expert 50ml",
     "pv": 8.5,
-    "tva": 20,
     "colis": 6,
-    "marque": "Regenerate",
     "cip": "8710447492130",
     "section": "ulabs",
     "active": true,
@@ -762,17 +619,13 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const { token } = event.queryStringParameters || {};
   if (token !== "elixir2026") return { statusCode: 403, headers: cors, body: "Forbidden" };
-
   const now = new Date().toISOString();
   let upserted = 0, errors = [];
-
-  // Désactiver anciens produits ulabs
   await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?section=eq.ulabs`, {
     method: "PATCH",
     headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
     body: JSON.stringify({ active: false, updated_at: now })
   });
-
   for (const p of PRODUCTS) {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products`, {
       method: "POST",
@@ -782,9 +635,5 @@ export const handler = async (event) => {
     if (res.ok) upserted++;
     else errors.push({ cip: p.cip, err: await res.text() });
   }
-
-  return {
-    statusCode: 200, headers: cors,
-    body: JSON.stringify({ success: true, total: PRODUCTS.length, upserted, errors: errors.length, details: errors.slice(0,5) })
-  };
+  return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, total: PRODUCTS.length, upserted, errors: errors.length, details: errors.slice(0,5) }) };
 };
