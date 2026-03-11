@@ -982,6 +982,45 @@ export default function App() {
               )}
               {gridWithoutPhoto.length > 0 && (
           <div style={{ background: "white", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}>
+            {isMobile ? (
+              /* ── VUE MOBILE : liste simplifiée nom + PN + quantité ── */
+              <div>
+                <div style={{ background: cat.color, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ color: "white", fontWeight: 700, fontSize: 12 }}>DÉSIGNATION</span>
+                  <span style={{ color: "white", fontWeight: 700, fontSize: 12 }}>PN · QTÉ</span>
+                </div>
+                {gridWithoutPhoto.map((p, idx) => {
+                  const realIdx = cat.products.indexOf(p);
+                  const key = `${activeTab}-${realIdx}`;
+                  const qty = quantities[key] || 0;
+                  const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                  const step = getStep(activeTab, p);
+                  return (
+                    <div key={key} style={{
+                      padding: "10px 14px", borderBottom: "1px solid #f0f2f5",
+                      background: isRupture ? "#fff8f8" : idx % 2 === 0 ? "white" : "#fafbfc",
+                      display: "flex", alignItems: "center", gap: 10
+                    }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: "#0f2d3d", lineHeight: 1.3 }}>
+                          {p.name}
+                          {p.note && <span style={{ marginLeft: 5, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                          {isRupture && <span style={{ marginLeft: 5, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{fmt(p.pn)} {p.pct ? <span style={{ color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</span> : null}</div>
+                      </div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                        <button onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
+                          style={{ background: cat.accent+"20", border: `1px solid ${cat.accent}40`, color: cat.accent, borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                        <span style={{ width: 28, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{qty}</span>
+                        <button onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
+                          style={{ background: cat.accent, border: "none", color: "white", borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
@@ -1156,9 +1195,7 @@ export default function App() {
                 </tbody>
               </table>
             </div>
-            {gridWithoutPhoto.length === 0 && gridWithPhoto.length === 0 && (
-              <div style={{ textAlign: "center", padding: "40px", color: "#999" }}>Aucun produit trouvé</div>
-            )}
+            ) /* fin ternaire desktop */}
           </div>
               )}
           </>
