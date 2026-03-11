@@ -411,20 +411,29 @@ export default function App() {
   const cartItems = useMemo(() => {
     const items = [];
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, cat]) => {
+      const camp = getCampaign(catKey);
+      const groupes = camp ? buildGroupes(camp) : [];
       (cat.products || []).forEach((p, idx) => {
         const key = `${catKey}-${idx}`;
         const qty = quantities[key] || 0;
         if (qty > 0 && p.pn != null) {
+          const remisePct = camp ? (camp.palier_remise ?? 33) : 0;
+          const pnNet = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
+          const grat = camp ? campGratuite(p, qty, cat.products, quantities, catKey, groupes) : { livrées: 0 };
+          const qtyUG = grat.livrées || 0;
           items.push({
             key,
             cat: cat.label,
+            catKey,
             name: p.name,
             cip: p.cip || null,
-            pn: p.pn,
+            pn: pnNet ?? p.pn,
             qty,
-            total: p.pn * qty,
+            qtyUG,
+            total: (pnNet ?? p.pn) * qty,
             color: cat.accent,
             step: getStep(catKey, p),
+            isCampaign: !!camp,
           });
         }
       });
@@ -1069,21 +1078,24 @@ export default function App() {
             </div>
             {/* Bloc groupement U-Labs */}
             {activeTab === "ulabs" && (() => {
-              // Total hybride : quantités locales pour moi + Supabase pour les autres
-              const myLocalQty = (cat?.products || []).reduce((s, p, idx) => {
-                return s + (parseInt(quantities[`ulabs-${idx}`]) || 0);
-              }, 0);
-              const othersQty = groupOrders
-                .filter(r => r.pharmacy_cip !== pharmacyCip)
-                .reduce((s,r) => s + (parseInt(r.qty) || 0), 0);
-              const totalUnites = myLocalQty + othersQty;
-              const nbPharm = new Set([
-                ...groupOrders.map(r => r.pharmacy_cip),
-                ...(myLocalQty > 0 ? [pharmacyCip] : [])
-              ]).size;
+              // Nb de références distinctes (locales + autres pharmacies)
               const activeCamp = getCampaign(activeTab);
-              const PALIER_EXPERT = activeCamp?.palier_qty ?? 500;
+              const PALIER_EXPERT = activeCamp?.palier_qty ?? 12;
               const PALIER_REMISE = activeCamp?.palier_remise ?? 33;
+              // Mes refs locales commandées (qty > 0)
+              const myLocalCips = new Set(
+                (cat?.products || []).filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0).map(p => p.cip)
+              );
+              // Refs des autres pharmacies (depuis Supabase)
+              const othersCips = new Set(
+                groupOrders.filter(r => r.pharmacy_cip !== pharmacyCip && (parseInt(r.qty)||0) > 0).map(r => r.cip)
+              );
+              const allCips = new Set([...myLocalCips, ...othersCips]);
+              const totalUnites = allCips.size; // nb de refs distinctes
+              const nbPharm = new Set([
+                ...groupOrders.filter(r=>(parseInt(r.qty)||0)>0).map(r => r.pharmacy_cip),
+                ...(myLocalCips.size > 0 ? [pharmacyCip] : [])
+              ]).size;
               const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
               const palierAtteint = totalUnites >= PALIER_EXPERT;
               return (
@@ -1121,7 +1133,7 @@ export default function App() {
                     <div style={{ display: "flex", gap: 16 }}>
                       <div style={{ textAlign: "center" }}>
                         <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{totalUnites}</div>
-                        <div style={{ fontSize: 10, opacity: 0.7 }}>unités groupées</div>
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>réf. différentes</div>
                       </div>
                       <div style={{ textAlign: "center" }}>
                         <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{nbPharm}</div>
@@ -1768,6 +1780,14 @@ export default function App() {
                       </div>
                       {/* Product name */}
                       <div style={{ fontWeight: 600, fontSize: 12, color: "#1a2a3a", lineHeight: 1.3, marginBottom: 8 }}>{item.name}</div>
+                      {/* UG badge pour campagnes */}
+                      {item.qtyUG > 0 && (
+                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
+                          <span style={{ fontSize:11, color:"#065f46", background:"#d1fae5", borderRadius:5, padding:"2px 8px", fontWeight:700, border:"1px solid #6ee7b7" }}>
+                            🎁 + {item.qtyUG} unité{item.qtyUG>1?"s":""} offerte{item.qtyUG>1?"s":""} → {item.qty + item.qtyUG} livrées au total
+                          </span>
+                        </div>
+                      )}
                       {/* Qty controls + subtotal */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
