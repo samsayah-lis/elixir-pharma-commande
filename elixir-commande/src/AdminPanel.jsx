@@ -21,23 +21,20 @@ function CipCopy({ cip }) {
 
 const ADMIN_PASSWORD = "elixir2026";
 
-// ── Helpers campagne (identiques à App.jsx) ──────────────────────────────────
-const buildGroupes = (campaign) => {
-  if (!campaign?.groupes?.length) return [];
-  return campaign.groupes.map(g => ({
-    ...g,
-    match: (p) => { try { return g.match_regex ? new RegExp(g.match_regex,"i").test(p.name) : false; } catch(e){ return false; } },
-    gratuite: g.gratuite_type && g.gratuite_type !== "aucune" ? { type: g.gratuite_type } : null,
-  }));
-};
-const campGetGroupe = (p, groupes) => { for (const g of groupes) { if(g.match(p)) return g; } return null; };
-const campGratuiteAdmin = (item, qty, groupes) => {
-  const g = campGetGroupe({name: item.name}, groupes);
-  if (!g?.gratuite) return 0;
-  if (g.gratuite.type === "6+2" && qty >= 6) return Math.floor(qty/6)*2;
-  if (g.gratuite.type === "3+1" && qty >= 3) return Math.floor(qty/3);
+// ── Helper UG campagne ───────────────────────────────────────────────────────
+function calcUgAdmin(itemName, qty, campaign) {
+  if (!campaign?.groupes?.length || qty < 1) return 0;
+  for (const g of campaign.groupes) {
+    try {
+      if (g.match_regex && new RegExp(g.match_regex, "i").test(itemName)) {
+        if (g.gratuite_type === "6+2" && qty >= 6) return Math.floor(qty/6)*2;
+        if (g.gratuite_type === "3+1" && qty >= 3) return Math.floor(qty/3);
+        return 0;
+      }
+    } catch(e) {}
+  }
   return 0;
-};
+}
 
 const SECTIONS = [
   { key: "expert",    label: "💊 Sélection Expert" },
@@ -1057,8 +1054,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   <div style={{marginTop:10,background:"white",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#555",maxHeight:140,overflowY:"auto"}}>
                     {(() => {
                       const campAdmin = campaigns.find(cp => cp.id === o.source);
-                      const groupesAdmin = campAdmin ? buildGroupes(campAdmin) : [];
-                      const hasUG = campAdmin && o.items?.some(item => campGratuiteAdmin(item, item.qty||0, groupesAdmin) > 0);
+                      const hasUG = campAdmin && o.items?.some(item => calcUgAdmin(item.name||'', item.qty||0, campAdmin) > 0);
                       return (<>
                         <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
                           <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
@@ -1069,7 +1065,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                           <span style={{width:60,textAlign:"right",marginLeft:10}}>Total HT</span>
                         </div>
                         {o.items?.map((item,i)=>{
-                          const ug = campAdmin ? campGratuiteAdmin(item, item.qty||0, groupesAdmin) : 0;
+                          const ug = campAdmin ? calcUgAdmin(item.name||'', item.qty||0, campAdmin) : 0;
                           return (
                             <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
                               <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
@@ -1083,7 +1079,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         })}
                         {hasUG && (
                           <div style={{marginTop:6,padding:"4px 6px",background:"#d1fae5",borderRadius:6,fontSize:10,color:"#065f46",fontWeight:700}}>
-                            🎁 Total UG : {o.items.reduce((s,item)=>s+campGratuiteAdmin(item,item.qty||0,groupesAdmin),0)} unités offertes
+                            🎁 Total UG : {o.items.reduce((s,item)=>s+calcUgAdmin(item.name||'',item.qty||0,campAdmin),0)} unités offertes
                           </div>
                         )}
                       </>);
