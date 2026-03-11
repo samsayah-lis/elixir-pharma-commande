@@ -1159,7 +1159,7 @@ export default function App() {
                           {qty > 0 && p.pn != null && (
                             <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>
                               = {fmt((pnAffiche ?? p.pn) * qty)}
-                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}> → {qtyLivrée} u. livrées ({fmt(pnEffectif)}/u)</span>}
+                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
                             </div>
                           )}
                         </div>
