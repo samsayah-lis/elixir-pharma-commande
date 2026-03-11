@@ -455,7 +455,7 @@ const PRODUCTS = [
     "source": "import_ulabs_2025",
     "pn": 5.04,
     "pct": 0.0,
-    "note": "Min 12 u · TVA 20%"
+    "note": "Min 2 u · TVA 20%"
   },
   {
     "cip7": "6347799",
@@ -481,7 +481,7 @@ const PRODUCTS = [
     "source": "import_ulabs_2025",
     "pn": 4.57,
     "pct": 0.0,
-    "note": "Min 12 u · TVA 20%"
+    "note": "Min 2 u · TVA 20%"
   },
   {
     "cip7": "6249639",
@@ -494,7 +494,7 @@ const PRODUCTS = [
     "source": "import_ulabs_2025",
     "pn": 7.62,
     "pct": 0.0,
-    "note": "Min 6 u · TVA 20%"
+    "note": "Min 2 u · TVA 20%"
   },
   {
     "cip7": "6287143",
