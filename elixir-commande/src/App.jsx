@@ -13,6 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
+  ulabs:    { label: "Groupement U-Labs",       subtitle: "Commandes groupées · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: ["CIP","Désignation","Tarif HT","Min","QTÉ"], isGroupOrder: true },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -57,7 +58,7 @@ const nextBusinessDay = () => {
   return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
 };
 
-const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr"];
+const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
 
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
@@ -908,7 +909,17 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           <>
-{gridWithPhoto.length > 0 && (
+          {activeTab === "ulabs" ? (
+            <GroupOrderTab
+              products={cat?.products || []}
+              pharmacyCip={sessionCip}
+              pharmacyName={pharmacyName}
+              accent="#059669"
+              color="#0d4f3c"
+            />
+          ) : (
+              <>
+              {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
                   {gridWithPhoto.map((p) => {
                     const realIdx = cat.products.indexOf(p);
@@ -1198,6 +1209,8 @@ export default function App() {
             ) /* fin ternaire desktop */}
           </div>
               )}
+              </>
+          )}
           </>
         </main>
 
