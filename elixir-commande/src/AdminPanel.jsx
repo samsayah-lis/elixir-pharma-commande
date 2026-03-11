@@ -145,6 +145,45 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     flash("🗑️ Campagne supprimée");
     fetchCampaigns();
   };
+
+  // ── Pharmacies ────────────────────────────────────────────────────────────
+  const [pharmSearch, setPharmSearch] = useState("");
+  const [pharmResults, setPharmResults] = useState([]);
+  const [pharmSearching, setPharmSearching] = useState(false);
+  const [pharmSyncing, setPharmSyncing] = useState(false);
+  const [pharmManual, setPharmManual] = useState({ email:"", name:"", cip:"", street:"", cp:"", ville:"", tel:"" });
+  const [pharmSaving, setPharmSaving] = useState(false);
+
+  const searchPharm = async (q) => {
+    if (!q.trim()) return;
+    setPharmSearching(true);
+    const url = `${process.env.REACT_APP_SUPABASE_URL || ""}`; // will use netlify fn instead
+    const r = await fetch(`/.netlify/functions/pharmacy-search?q=${encodeURIComponent(q.trim())}`);
+    const d = await r.json();
+    setPharmResults(Array.isArray(d) ? d : []);
+    setPharmSearching(false);
+  };
+
+  const syncPharmacies = async () => {
+    setPharmSyncing(true);
+    flash("⏳ Synchronisation Odoo en cours…");
+    const r = await fetch("/.netlify/functions/pharmacy-sync-now?token=elixir2026");
+    const d = await r.json();
+    setPharmSyncing(false);
+    flash(d.inserted != null ? `✅ Sync terminée — ${d.inserted} pharmacies mises à jour` : "✅ Sync terminée");
+  };
+
+  const savePharmManual = async () => {
+    if (!pharmManual.email || !pharmManual.name) { flash("❌ Email et nom obligatoires"); return; }
+    setPharmSaving(true);
+    const row = { ...pharmManual, email: pharmManual.email.trim().toLowerCase() };
+    const r = await fetch("/.netlify/functions/pharmacy-upsert", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(row) });
+    const d = await r.json();
+    setPharmSaving(false);
+    if (d.error) { flash("❌ " + d.error); return; }
+    flash("✅ Pharmacie ajoutée/mise à jour");
+    setPharmManual({ email:"", name:"", cip:"", street:"", cp:"", ville:"", tel:"" });
+  };
   const [selectedCampaign, setSelectedCampaign] = useState("ulabs");
 
   const fetchGroupCampaignOrders = async (fournisseur) => {
@@ -607,7 +646,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
         {/* Tabs */}
         <div style={{display:"flex",gap:8,marginBottom:24}}>
-          {[{k:"add",label:"➕ Ajouter"},{k:"edit",label:"✏️ Modifier"},{k:"promos",label:`🎯 Promos${promos.length>0?" ("+promos.length+")":""}` },{k:"orders",label:`📋 Commandes${orders.filter(o=>!o.processed).length>0?" ("+orders.filter(o=>!o.processed).length+")":"" }` },{k:"grouporders",label:"🤝 Groupements"},{k:"campaigns",label:"🏗️ Campagnes"}].map(t=>(
+          {[{k:"add",label:"➕ Ajouter"},{k:"edit",label:"✏️ Modifier"},{k:"promos",label:`🎯 Promos${promos.length>0?" ("+promos.length+")":""}` },{k:"orders",label:`📋 Commandes${orders.filter(o=>!o.processed).length>0?" ("+orders.filter(o=>!o.processed).length+")":"" }` },{k:"grouporders",label:"🤝 Groupements"},{k:"campaigns",label:"🏗️ Campagnes"},{k:"pharmacies",label:"🏥 Pharmacies"}].map(t=>(
             <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }} style={{
               flex:1, padding:"10px", borderRadius:10, fontWeight:700, fontSize:13, cursor:"pointer",
               border: tab===t.k?"2px solid #0f2d3d":"2px solid #e2e8f0",
@@ -1655,6 +1694,89 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 </div>
               );
             })()}
+          </div>
+        {tab==="pharmacies"&&(
+          <div style={{padding:"0 4px"}}>
+            {/* ── Sync Odoo ── */}
+            <div style={{background:"#f0fdf4",borderRadius:12,padding:16,marginBottom:16,border:"1px solid #86efac",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:14,color:"#065f46"}}>🔄 Synchronisation depuis Odoo</div>
+                <div style={{fontSize:11,color:"#059669",marginTop:2}}>Met à jour toutes les pharmacies depuis Odoo (partenaires actifs avec email)</div>
+              </div>
+              <button onClick={syncPharmacies} disabled={pharmSyncing} style={{background:"#059669",color:"white",border:"none",borderRadius:10,padding:"9px 18px",fontWeight:800,fontSize:13,cursor:"pointer",opacity:pharmSyncing?0.6:1}}>
+                {pharmSyncing?"⏳ Sync…":"🔄 Lancer la sync"}
+              </button>
+            </div>
+
+            {/* ── Recherche ── */}
+            <div style={{background:"white",borderRadius:12,padding:16,marginBottom:16,border:"1.5px solid #e2e8f0"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2a3a",marginBottom:10}}>🔍 Rechercher une pharmacie</div>
+              <div style={{display:"flex",gap:8}}>
+                <input value={pharmSearch} onChange={e=>setPharmSearch(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&searchPharm(pharmSearch)}
+                  placeholder="Email ou nom…" style={{...IS,flex:1}}/>
+                <button onClick={()=>searchPharm(pharmSearch)} disabled={pharmSearching} style={{background:"#0ea5e9",color:"white",border:"none",borderRadius:10,padding:"9px 16px",fontWeight:700,cursor:"pointer"}}>
+                  {pharmSearching?"…":"Chercher"}
+                </button>
+              </div>
+              {pharmResults.length > 0 && (
+                <div style={{marginTop:10}}>
+                  {pharmResults.map((p,i)=>(
+                    <div key={i} style={{padding:"8px 12px",borderBottom:"1px solid #f0f2f5",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div>
+                        <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
+                        <div style={{fontSize:11,color:"#888"}}>{p.email} · CIP : {p.cip||"—"} · {p.ville||"—"}</div>
+                      </div>
+                      <button onClick={()=>setPharmManual({...p})} style={{fontSize:11,background:"#f0f2f5",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Éditer</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {pharmResults.length === 0 && pharmSearch && !pharmSearching && (
+                <div style={{marginTop:8,fontSize:12,color:"#dc2626"}}>Aucun résultat — ajoutez-la manuellement ci-dessous</div>
+              )}
+            </div>
+
+            {/* ── Ajout / édition manuel ── */}
+            <div style={{background:"white",borderRadius:12,padding:16,border:"1.5px solid #e2e8f0"}}>
+              <div style={{fontWeight:700,fontSize:14,color:"#1a2a3a",marginBottom:12}}>➕ Ajouter / modifier manuellement</div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                <div>
+                  <label style={LS}>Email *</label>
+                  <input value={pharmManual.email} onChange={e=>setPharmManual(p=>({...p,email:e.target.value}))} placeholder="pharmacie@example.com" style={{...IS,fontFamily:"monospace"}}/>
+                </div>
+                <div>
+                  <label style={LS}>Nom *</label>
+                  <input value={pharmManual.name} onChange={e=>setPharmManual(p=>({...p,name:e.target.value}))} placeholder="Pharmacie du Centre" style={IS}/>
+                </div>
+                <div>
+                  <label style={LS}>CIP7 (référence Odoo)</label>
+                  <input value={pharmManual.cip} onChange={e=>setPharmManual(p=>({...p,cip:e.target.value}))} placeholder="2012345" style={{...IS,fontFamily:"monospace"}}/>
+                </div>
+                <div>
+                  <label style={LS}>Téléphone</label>
+                  <input value={pharmManual.tel} onChange={e=>setPharmManual(p=>({...p,tel:e.target.value}))} style={IS}/>
+                </div>
+                <div>
+                  <label style={LS}>Adresse</label>
+                  <input value={pharmManual.street} onChange={e=>setPharmManual(p=>({...p,street:e.target.value}))} style={IS}/>
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"90px 1fr",gap:8}}>
+                  <div>
+                    <label style={LS}>CP</label>
+                    <input value={pharmManual.cp} onChange={e=>setPharmManual(p=>({...p,cp:e.target.value}))} style={IS}/>
+                  </div>
+                  <div>
+                    <label style={LS}>Ville</label>
+                    <input value={pharmManual.ville} onChange={e=>setPharmManual(p=>({...p,ville:e.target.value}))} style={IS}/>
+                  </div>
+                </div>
+              </div>
+              <button onClick={savePharmManual} disabled={pharmSaving||!pharmManual.email||!pharmManual.name}
+                style={{...PB,opacity:pharmSaving||!pharmManual.email||!pharmManual.name?0.5:1}}>
+                {pharmSaving?"⏳ Sauvegarde…":"💾 Sauvegarder"}
+              </button>
+            </div>
           </div>
         )}
       </div>
