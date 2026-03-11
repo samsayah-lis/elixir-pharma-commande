@@ -1,42 +1,47 @@
-// Debug : teste tous les paramètres possibles pour un EAN
 const MEDIPIM_BASE = "https://api.medipim.fr/v4";
-const MEDIPIM_ID  = "288";
-const MEDIPIM_KEY = "094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696";
-const AUTH = "Basic " + Buffer.from(`${MEDIPIM_ID}:${MEDIPIM_KEY}`).toString("base64");
+const AUTH = "Basic " + Buffer.from("288:094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696").toString("base64");
+const H = { Authorization: AUTH };
 
 export const handler = async (event) => {
   const { cip, token } = event.queryStringParameters || {};
   if (token !== "elixir2026") return { statusCode: 403, body: "Forbidden" };
 
-  const params = ["cip13", "barcode", "ean13", "barcode13", "code"];
+  // Teste tous les noms de paramètres possibles
+  const params = ["cip13", "cip7", "cip", "acl", "acl7", "barcode", "ean13", "code7", "reference"];
   const results = {};
 
   for (const param of params) {
-    const url = `${MEDIPIM_BASE}/products/find?${param}=${cip}`;
     try {
-      const res = await fetch(url, { headers: { Authorization: AUTH } });
+      const res = await fetch(`${MEDIPIM_BASE}/products/find?${param}=${cip}`, { headers: H });
       const text = await res.text();
       let parsed = null;
       try { parsed = JSON.parse(text); } catch {}
+      const p = parsed?.product;
+      const mainPhoto = (p?.frontals || [])[0] || (p?.photos || [])[0];
       results[param] = {
         status: res.status,
-        image_url: parsed?.product?.frontals?.[0]?.formats?.medium
-          || parsed?.product?.photos?.[0]?.formats?.medium
-          || null,
-        has_product: !!parsed?.product,
-        name: parsed?.product?.name?.fr || null,
+        has_product: !!p,
+        name: p?.name?.fr || null,
+        image_url: mainPhoto?.formats?.medium || mainPhoto?.formats?.mediumJpeg || null,
+        raw: !p ? text.slice(0, 100) : undefined,
       };
     } catch (e) {
       results[param] = { error: e.message };
     }
   }
 
-  // Essai search par nom de marque
-  const searchUrl = `${MEDIPIM_BASE}/products/search?q=${encodeURIComponent(cip)}&limit=1`;
+  // Aussi tester le endpoint /products/{id} avec l'ID Medipim si connu
+  // Et tenter une liste paginée filtrée
   try {
-    const res = await fetch(searchUrl, { headers: { Authorization: AUTH } });
-    results["search"] = { status: res.status, body: await res.text() };
-  } catch(e) { results["search"] = { error: e.message }; }
+    const res = await fetch(`${MEDIPIM_BASE}/products?limit=1&q=${cip}`, { headers: H });
+    const text = await res.text();
+    results["list_q"] = { status: res.status, raw: text.slice(0, 200) };
+  } catch(e) { results["list_q"] = { error: e.message }; }
+
+  try {
+    const res = await fetch(`${MEDIPIM_BASE}/products?limit=1&filter[acl]=${cip}`, { headers: H });
+    results["list_filter_acl"] = { status: res.status, raw: (await res.text()).slice(0, 200) };
+  } catch(e) { results["list_filter_acl"] = { error: e.message }; }
 
   return {
     statusCode: 200,
