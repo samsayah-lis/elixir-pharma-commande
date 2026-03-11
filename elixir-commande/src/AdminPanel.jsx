@@ -78,6 +78,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [editingKey, setEditingKey] = useState(null);
   const [uploadingImg, setUploadingImg] = useState(null); // cip en cours d'upload
   const [uploadedImgs, setUploadedImgs] = useState({}); // cip → url (preview local)
+  // Commandes groupées
+  const [groupCampaigns, setGroupCampaigns] = useState([]);
+  const [gcLoading, setGcLoading] = useState(false);
+  const [gcForm, setGcForm] = useState({
+    fournisseur: "", label: "", subtitle: "", color: "#0d4f3c", accent: "#059669",
+    icon: "🤝", palier: 500, deadline: "", restricted_email: "",
+    mandatory_cips: "", free_units_cips: "", free_units_ratio: "6+2"
+  });
+  const [gcOrders, setGcOrders] = useState([]);
+  const [gcOrdersLoading, setGcOrdersLoading] = useState(false);
+  const [selectedCampaign, setSelectedCampaign] = useState("ulabs");
+
+  const fetchGroupCampaignOrders = async (fournisseur) => {
+    setGcOrdersLoading(true);
+    try {
+      const res = await fetch(\`/.netlify/functions/group-order?fournisseur=\${fournisseur}\`);
+      const rows = await res.json();
+      setGcOrders(Array.isArray(rows) ? rows : []);
+    } catch(e) { console.error(e); }
+    setGcOrdersLoading(false);
+  };
   const [medipimLookup, setMedipimLookup] = useState({}); // cip → {loading, name, image_url, brand, error}
 
   const lookupMedipim = async (cip) => {
@@ -1152,6 +1173,148 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             )}
             {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:"#999",padding:24}}>Aucun produit trouvé pour « {search} »</div>}
           </>
+        )}
+
+        {/* ── GROUPEMENTS TAB ── */}
+        {tab==="grouporders"&&(
+          <div>
+            {/* Sélecteur campagne */}
+            <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
+              <div style={{fontWeight:700,fontSize:13,color:"#444"}}>Campagne :</div>
+              <input value={selectedCampaign} onChange={e=>setSelectedCampaign(e.target.value)}
+                placeholder="ex: ulabs"
+                style={{...IS,width:140,display:"inline-block"}}/>
+              <button onClick={()=>fetchGroupCampaignOrders(selectedCampaign)} style={{
+                background:"#0f2d3d",color:"white",border:"none",borderRadius:8,
+                padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13
+              }}>🔄 Charger</button>
+              {gcOrders.length>0&&(
+                <button onClick={()=>{
+                  const pharmacies = [...new Set(gcOrders.map(r=>r.pharmacy_cip))];
+                  const header = "Pharmacie;CIP produit;Nom pharmacie;Quantité";
+                  const rows = gcOrders.map(r=>`${r.pharmacy_cip};${r.cip};${r.pharmacy_name||""};${r.qty}`);
+                  const csv = [header,...rows].join("\n");
+                  const blob = new Blob([csv],{type:"text/csv"});
+                  const a = document.createElement("a");
+                  a.href = URL.createObjectURL(blob);
+                  a.download = `groupement_${selectedCampaign}_${new Date().toISOString().slice(0,10)}.csv`;
+                  a.click();
+                }} style={{background:"#059669",color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                  ⬇️ Exporter CSV
+                </button>
+              )}
+              {gcOrders.length>0&&(
+                <button onClick={async()=>{
+                  if(!confirm(`Vider toutes les commandes de la campagne "${selectedCampaign}" ?`)) return;
+                  const pharmacies = [...new Set(gcOrders.map(r=>r.pharmacy_cip))];
+                  for(const pc of pharmacies){
+                    await fetch(`/.netlify/functions/group-order?fournisseur=${selectedCampaign}&pharmacy_cip=${pc}`,{method:"DELETE"});
+                  }
+                  fetchGroupCampaignOrders(selectedCampaign);
+                }} style={{background:"#dc2626",color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                  🗑️ Vider la campagne
+                </button>
+              )}
+            </div>
+
+            {gcOrdersLoading&&<div style={{textAlign:"center",padding:24,color:"#888"}}>Chargement…</div>}
+
+            {!gcOrdersLoading&&gcOrders.length>0&&(()=>{
+              // Agréger par pharmacie
+              const byPharm = {};
+              gcOrders.forEach(r=>{
+                if(!byPharm[r.pharmacy_cip]) byPharm[r.pharmacy_cip]={name:r.pharmacy_name||r.pharmacy_cip,cip:r.pharmacy_cip,lines:[]};
+                byPharm[r.pharmacy_cip].lines.push(r);
+              });
+              const pharmacies = Object.values(byPharm);
+              const totalUnites = gcOrders.reduce((s,r)=>s+(parseInt(r.qty)||0),0);
+              const totalPharm = pharmacies.length;
+
+              return(
+                <div>
+                  {/* Résumé */}
+                  <div style={{display:"flex",gap:16,marginBottom:20,flexWrap:"wrap"}}>
+                    {[
+                      {label:"Pharmacies",val:totalPharm,bg:"#eff6ff",color:"#1d4ed8"},
+                      {label:"Unités commandées",val:totalUnites,bg:"#f0fdf4",color:"#166534"},
+                      {label:"Références",val:new Set(gcOrders.map(r=>r.cip)).size,bg:"#fefce8",color:"#92400e"},
+                    ].map(s=>(
+                      <div key={s.label} style={{background:s.bg,borderRadius:12,padding:"12px 20px",flex:1,minWidth:120,textAlign:"center"}}>
+                        <div style={{fontWeight:800,fontSize:24,color:s.color}}>{s.val}</div>
+                        <div style={{fontSize:11,color:"#666"}}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Vue par pharmacie */}
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    {pharmacies.map(ph=>(
+                      <div key={ph.cip} style={{border:"1px solid #e2e8f0",borderRadius:12,overflow:"hidden"}}>
+                        <div style={{background:"#0f2d3d",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                          <div style={{fontWeight:700,color:"white",fontSize:14}}>{ph.name}</div>
+                          <div style={{color:"rgba(255,255,255,0.6)",fontSize:12}}>
+                            {ph.lines.length} réf. · {ph.lines.reduce((s,r)=>s+(parseInt(r.qty)||0),0)} unités
+                          </div>
+                        </div>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead>
+                            <tr style={{background:"#f8fafc"}}>
+                              {["CIP","Quantité","Modifié le"].map(h=>(
+                                <th key={h} style={{padding:"7px 12px",textAlign:"left",fontSize:11,color:"#666",fontWeight:700,borderBottom:"1px solid #e2e8f0"}}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {ph.lines.sort((a,b)=>b.qty-a.qty).map(r=>(
+                              <tr key={r.cip} style={{borderBottom:"1px solid #f0f2f5"}}>
+                                <td style={{padding:"7px 12px",fontSize:12,fontFamily:"monospace",color:"#555"}}>{r.cip}</td>
+                                <td style={{padding:"7px 12px",fontSize:13,fontWeight:700,color:"#0f2d3d"}}>{r.qty}</td>
+                                <td style={{padding:"7px 12px",fontSize:11,color:"#999"}}>{r.updated_at?new Date(r.updated_at).toLocaleString("fr-FR"):"-"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Récap par produit */}
+                  <div style={{marginTop:20}}>
+                    <div style={{fontWeight:700,fontSize:14,color:"#0f2d3d",marginBottom:10}}>Récapitulatif par produit</div>
+                    <table style={{width:"100%",borderCollapse:"collapse",background:"white",borderRadius:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                      <thead>
+                        <tr style={{background:"#0f2d3d"}}>
+                          {["CIP","Total unités","Nb pharmacies"].map(h=>(
+                            <th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,color:"rgba(255,255,255,0.8)",fontWeight:700}}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...new Set(gcOrders.map(r=>r.cip))].map(cip=>{
+                          const lines = gcOrders.filter(r=>r.cip===cip);
+                          const total = lines.reduce((s,r)=>s+(parseInt(r.qty)||0),0);
+                          const nbP = new Set(lines.map(r=>r.pharmacy_cip)).size;
+                          return(
+                            <tr key={cip} style={{borderBottom:"1px solid #f0f2f5"}}>
+                              <td style={{padding:"8px 14px",fontSize:12,fontFamily:"monospace",color:"#555"}}>{cip}</td>
+                              <td style={{padding:"8px 14px",fontSize:14,fontWeight:800,color:"#059669"}}>{total}</td>
+                              <td style={{padding:"8px 14px",fontSize:12,color:"#888"}}>{nbP}</td>
+                            </tr>
+                          );
+                        }).sort((a,b)=>0)}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {!gcOrdersLoading&&gcOrders.length===0&&(
+              <div style={{textAlign:"center",padding:40,color:"#aaa",fontSize:14}}>
+                Aucune commande pour cette campagne. Cliquez sur "Charger" pour voir les données.
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>
