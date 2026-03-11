@@ -265,7 +265,7 @@ export default function App() {
   const cartItems = useMemo(() => {
     const items = [];
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, cat]) => {
-      cat.products.forEach((p, idx) => {
+      (cat.products || []).forEach((p, idx) => {
         const key = `${catKey}-${idx}`;
         const qty = quantities[key] || 0;
         if (qty > 0 && p.pn != null) {
@@ -293,15 +293,15 @@ export default function App() {
 
   const globalResults = globalSearch.trim().length >= 2
     ? Object.entries(CATALOG_WITH_ADMIN).flatMap(([catKey, c]) =>
-        c.products
-          .filter(p => p.name.toLowerCase().includes(globalSearch.toLowerCase()) || (p.cip||"").includes(globalSearch))
+        (c.products || [])
+          .filter(p => p.name?.toLowerCase().includes(globalSearch.toLowerCase()) || (p.cip||"").includes(globalSearch))
           .map(p => ({ ...p, _catKey: catKey, _catLabel: c.label, _catIcon: c.icon, _catAccent: c.accent,
             _idx: c.products.indexOf(p) }))
       )
     : [];
 
   const filteredProducts = (() => {
-    const filtered = cat.products.filter(p =>
+    const filtered = (cat?.products || []).filter(p =>
       search === "" || p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.cip && p.cip.includes(search))
     );
@@ -889,7 +889,7 @@ export default function App() {
               </div>
               <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
                 <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Lignes dans cette gamme</div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>{cat.products.length}</div>
+                <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
               </div>
             </div>
             {/* Search */}
