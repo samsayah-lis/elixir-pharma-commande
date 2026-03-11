@@ -975,26 +975,37 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  {/* Barres de progression */}
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {/* Marché Engagé */}
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>✅ Marché Engagé — 2 marques — <strong style={{color:"#67e8f9"}}>−25%</strong></span>
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{totalUnites} / {PALIER_ENGAGE} unités</span>
-                      </div>
-                      <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 10, overflow: "hidden" }}>
-                        <div style={{ width: `${pctEngage}%`, height: "100%", background: pctEngage >= 100 ? "#06b6d4" : "linear-gradient(90deg,#06b6d4,#67e8f9)", borderRadius: 99, transition: "width 0.5s ease" }}/>
+                  {/* Barre de progression unique avec jalons */}
+                  <div style={{ marginTop: 4 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
+                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", fontWeight: 700 }}>
+                        {totalUnites} unité{totalUnites > 1 ? "s" : ""} commandée{totalUnites > 1 ? "s" : ""}
+                      </span>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} unités</span>
+                    </div>
+                    {/* Barre */}
+                    <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 14 }}>
+                      {/* Remplissage */}
+                      <div style={{
+                        width: `${pctExpert}%`, height: "100%", borderRadius: 99, transition: "width 0.6s ease",
+                        background: palierAtteint === "expert" ? "linear-gradient(90deg,#06b6d4,#f59e0b)" : palierAtteint === "engage" ? "linear-gradient(90deg,#06b6d4,#67e8f9)" : "linear-gradient(90deg,#059669,#34d399)"
+                      }}/>
+                      {/* Jalon Engagé */}
+                      <div style={{ position: "absolute", left: `${PALIER_ENGAGE/PALIER_EXPERT*100}%`, top: -2, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
+                        <div style={{ width: 3, height: 18, background: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.4)", borderRadius: 2 }}/>
                       </div>
                     </div>
-                    {/* Marché Expert */}
-                    <div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>⭐ Marché Expert — 3 marques — <strong style={{color:"#fcd34d"}}>−33%</strong></span>
-                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{totalUnites} / {PALIER_EXPERT} unités</span>
+                    {/* Légende jalons */}
+                    <div style={{ position: "relative", height: 36, marginTop: 2 }}>
+                      {/* Jalon Engagé */}
+                      <div style={{ position: "absolute", left: `${PALIER_ENGAGE/PALIER_EXPERT*100}%`, transform: "translateX(-50%)", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.45)", fontWeight: 700, whiteSpace: "nowrap" }}>{PALIER_ENGAGE} u.</div>
+                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>✅ −25%</div>
                       </div>
-                      <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 10, overflow: "hidden" }}>
-                        <div style={{ width: `${pctExpert}%`, height: "100%", background: pctExpert >= 100 ? "#f59e0b" : "linear-gradient(90deg,#f59e0b,#fcd34d)", borderRadius: 99, transition: "width 0.5s ease" }}/>
+                      {/* Jalon Expert */}
+                      <div style={{ position: "absolute", right: 0, textAlign: "right" }}>
+                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_EXPERT ? "#fcd34d" : "rgba(255,255,255,0.45)", fontWeight: 700 }}>{PALIER_EXPERT} u.</div>
+                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_EXPERT ? "#fcd34d" : "rgba(255,255,255,0.4)" }}>⭐ −33%</div>
                       </div>
                     </div>
                   </div>
