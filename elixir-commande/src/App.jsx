@@ -910,7 +910,7 @@ export default function App() {
           {/* Products grid (photos) + table */}
           <>
           {activeTab === "ulabs" ? (
-            <GroupOrderTab products={cat?.products || []} pharmacyCip={pharmacyCip} pharmacyName={pharmacyName} accent="#059669" color="#0d4f3c" />
+            <GroupOrderTabWrapper products={cat?.products || []} pharmacyCip={pharmacyCip} pharmacyName={pharmacyName} />
           ) : (<>
 {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
