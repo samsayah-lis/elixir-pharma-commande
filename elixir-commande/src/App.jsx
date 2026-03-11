@@ -1158,21 +1158,6 @@ export default function App() {
                         </div>
                       );
                     })()}
-                    <div style={{ display: "flex", gap: 16 }}>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{totalUnites}</div>
-                        <div style={{ fontSize: 10, opacity: 0.7 }}>réf. différentes</div>
-                      </div>
-                      <div style={{ textAlign: "center" }}>
-                        <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{nbPharm}</div>
-                        <div style={{ fontSize: 10, opacity: 0.7 }}>pharmacie(s)</div>
-                      </div>
-                      {palierAtteint && (
-                        <div style={{ background: "#f59e0b", borderRadius: 8, padding: "4px 12px", display: "flex", alignItems: "center" }}>
-                          <span style={{ fontWeight: 800, fontSize: 13, color: "white" }}>⭐ Objectif −33% atteint !</span>
-                        </div>
-                      )}
-                    </div>
                     <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 16 }}>⏱️</span>
                       <div>
@@ -1181,29 +1166,34 @@ export default function App() {
                       </div>
                     </div>
                   </div>
-                  {/* Barre de progression unique avec jalons */}
+                  {/* Barre de progression — nb de références distinctes tous clients */}
                   <div style={{ marginTop: 4 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
-                      <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", fontWeight: 700 }}>
-                        {totalUnites} réf. différentes
+                      <span style={{ fontSize: 13, color: "white", fontWeight: 800 }}>
+                        {totalUnites} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.8 }}>/ {PALIER_EXPERT} références différentes</span>
                       </span>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>sur {PALIER_EXPERT} pour −{PALIER_REMISE}%</span>
+                      {palierAtteint
+                        ? <span style={{ fontSize: 12, color: "#fcd34d", fontWeight: 800 }}>⭐ −{PALIER_REMISE}% atteint !</span>
+                        : <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>encore {PALIER_EXPERT - totalUnites} réf. pour −{PALIER_REMISE}%</span>
+                      }
                     </div>
-                    {/* Barre */}
-                    <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 14 }}>
-                      {/* Remplissage */}
+                    <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 16 }}>
                       <div style={{
                         width: `${pctExpert}%`, height: "100%", borderRadius: 99, transition: "width 0.6s ease",
                         background: palierAtteint ? "linear-gradient(90deg,#f59e0b,#fcd34d)" : "linear-gradient(90deg,#059669,#34d399)"
                       }}/>
+                      {!palierAtteint && totalUnites > 0 && (
+                        <div style={{ position: "absolute", top: "50%", left: `${pctExpert}%`, transform: "translateY(-50%) translateX(-50%)", background: "white", borderRadius: 99, width: 8, height: 8 }}/>
+                      )}
                     </div>
-                    {/* Légende */}
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>0</span>
-                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} réf. commandées = −{PALIER_REMISE}% sur facture</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                        {nbPharm > 0 ? `${nbPharm} pharmacie${nbPharm>1?"s":""} participante${nbPharm>1?"s":""}` : "Soyez le premier !"}
+                      </span>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>dont commandes validées incluses</span>
                     </div>
                   </div>
-                  {/* Sélection palier prix */}
+                  {/* Prix */}
                   <div style={{ marginTop: 6 }}>
                     <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· Prix affichés avec remise −33% sur facture incluse</span>
                   </div>
