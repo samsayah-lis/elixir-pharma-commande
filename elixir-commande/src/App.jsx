@@ -90,6 +90,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   const [groupSaving, setGroupSaving] = useState({});
+  const [ulabsPalier, setUlabsPalier] = useState(null); // null | "engage" | "expert"
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -913,6 +914,27 @@ export default function App() {
                 </>)}
               </div>
             </div>
+            {/* Paliers remise U-Labs */}
+            {activeTab === "ulabs" && (
+              <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, display: "flex", alignItems: "center", marginRight: 4 }}>
+                  Votre marché :
+                </div>
+                <button onClick={() => setUlabsPalier(ulabsPalier === "expert" ? null : "expert")} style={{
+                  background: ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.12)",
+                  border: ulabsPalier === "expert" ? "2px solid #f59e0b" : "2px solid rgba(255,255,255,0.2)",
+                  color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 12
+                }}>⭐ Marché Expert — 3 marques — <strong>−33%</strong></button>
+                <button onClick={() => setUlabsPalier(ulabsPalier === "engage" ? null : "engage")} style={{
+                  background: ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.12)",
+                  border: ulabsPalier === "engage" ? "2px solid #06b6d4" : "2px solid rgba(255,255,255,0.2)",
+                  color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 12
+                }}>✅ Marché Engagé — 2 marques — <strong>−25%</strong></button>
+                {ulabsPalier && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, display: "flex", alignItems: "center" }}>
+                  · Les prix affichés incluent la remise sur facture
+                </div>}
+              </div>
+            )}
             {/* Search */}
             <div style={{ marginTop: 16 }}>
               <input
@@ -941,6 +963,8 @@ export default function App() {
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s+r.qty, 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
+                    const remisePct = activeTab === "ulabs" ? (ulabsPalier === "expert" ? 33 : ulabsPalier === "engage" ? 25 : 0) : 0;
+                    const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
                     return (
                       <div key={key} style={{
                         background: "white", borderRadius: 14,
@@ -974,13 +998,15 @@ export default function App() {
                         </div>
                         {/* Prix + remise + qté */}
                         <div style={{ flexShrink: 0, padding: "14px 20px", textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, borderLeft: "1px solid #f0f2f5", minWidth: 160 }}>
-                          {p.pv && p.pct && (
+                          {(p.pv && p.pct || remisePct > 0) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ fontSize: 12, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.pv)}</span>
-                              <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: cat.accent, borderRadius: 4, padding: "1px 6px" }}>{fmtPct(p.pct)}</span>
+                              <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: remisePct > 0 ? (ulabsPalier === "expert" ? "#f59e0b" : "#06b6d4") : cat.accent, borderRadius: 4, padding: "1px 6px" }}>
+                                {remisePct > 0 ? `-${remisePct}%` : fmtPct(p.pct)}
+                              </span>
                             </div>
                           )}
-                          <div style={{ fontSize: 20, fontWeight: 800, color: cat.color }}>{p.pn != null ? fmt(p.pn) : "–"}</div>
+                          <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? (ulabsPalier === "expert" ? "#d97706" : "#0891b2") : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={async () => {
                               const nq = Math.max(0, qty - step);
@@ -1019,7 +1045,7 @@ export default function App() {
                           </div>
                           {step > 1 && <div style={{ fontSize: 9, color: "#aaa" }}>par {step}</div>}
                           {qty > 0 && p.pn != null && (
-                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>= {fmt(p.pn * qty)}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>= {fmt((pnAffiche ?? p.pn) * qty)}</div>
                           )}
                         </div>
                       </div>
