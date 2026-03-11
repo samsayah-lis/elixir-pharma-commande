@@ -13,7 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "dont 3 références Parogencyl obligatoires · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "dont 3 références Parogencyl obligatoires · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: ["pharmaclichyavenir@gmail.com"] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -1047,6 +1047,10 @@ export default function App() {
                       p.name?.toLowerCase().includes("kids")
                     );
                     const livrées6plus2 = has6plus2 && qty >= 6 ? Math.floor(qty / 6) * 2 : 0;
+                    const qtyLivrée = qty + livrées6plus2;
+                    const pnEffectif = has6plus2 && livrées6plus2 > 0
+                      ? Math.round((pnAffiche ?? p.pn) * qty / qtyLivrée * 100) / 100
+                      : (pnAffiche ?? p.pn);
                     return (
                       <div key={key} style={{
                         background: "white", borderRadius: 14,
@@ -1094,7 +1098,12 @@ export default function App() {
                               </span>
                             </div>
                           )}
-                          <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? (ulabsPalier === "expert" ? "#d97706" : "#0891b2") : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
+                          <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? "#d97706" : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
+                          {has6plus2 && qty >= 6 && (
+                            <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>
+                              soit {fmt(pnEffectif)}/u livré
+                            </div>
+                          )}
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => {
                               const nq = Math.max(0, qty - step);
@@ -1146,7 +1155,7 @@ export default function App() {
                           {qty > 0 && p.pn != null && (
                             <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>
                               = {fmt((pnAffiche ?? p.pn) * qty)}
-                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}>+{livrées6plus2} offertes</span>}
+                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}> → {qtyLivrée} u. livrées ({fmt(pnEffectif)}/u)</span>}
                             </div>
                           )}
                         </div>
