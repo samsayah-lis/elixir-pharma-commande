@@ -91,6 +91,28 @@ export default function App() {
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsPalier, setUlabsPalier] = useState(null); // null | "engage" | "expert"
+  const [countdown, setCountdown] = useState("");
+  useEffect(() => {
+    const tick = () => {
+      // Fin dimanche 23:59:59
+      const now = new Date();
+      const end = new Date(now);
+      const day = now.getDay(); // 0=dim
+      const daysUntilSun = day === 0 ? 7 : 7 - day;
+      end.setDate(now.getDate() + daysUntilSun);
+      end.setHours(23, 59, 59, 0);
+      const diff = end - now;
+      if (diff <= 0) { setCountdown("Terminé"); return; }
+      const d = Math.floor(diff / 86400000);
+      const h = Math.floor((diff % 86400000) / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setCountdown(`${d}j ${String(h).padStart(2,"0")}h ${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, []);
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -914,27 +936,86 @@ export default function App() {
                 </>)}
               </div>
             </div>
-            {/* Paliers remise U-Labs */}
-            {activeTab === "ulabs" && (
-              <div style={{ marginTop: 14, display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 12, display: "flex", alignItems: "center", marginRight: 4 }}>
-                  Votre marché :
+            {/* Bloc groupement U-Labs */}
+            {activeTab === "ulabs" && (() => {
+              const totalUnites = groupOrders.reduce((s,r) => s+r.qty, 0);
+              const nbPharm = new Set(groupOrders.map(r => r.pharmacy_cip)).size;
+              // Paliers : Engagé = 200 unités, Expert = 500 unités (objectifs indicatifs)
+              const PALIER_ENGAGE = 200;
+              const PALIER_EXPERT = 500;
+              const pctEngage = Math.min(100, Math.round(totalUnites / PALIER_ENGAGE * 100));
+              const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
+              const palierAtteint = totalUnites >= PALIER_EXPERT ? "expert" : totalUnites >= PALIER_ENGAGE ? "engage" : null;
+              return (
+                <div style={{ marginTop: 16 }}>
+                  {/* Countdown + stats */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 16 }}>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{totalUnites}</div>
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>unités groupées</div>
+                      </div>
+                      <div style={{ textAlign: "center" }}>
+                        <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{nbPharm}</div>
+                        <div style={{ fontSize: 10, opacity: 0.7 }}>pharmacie(s)</div>
+                      </div>
+                      {palierAtteint && (
+                        <div style={{ background: palierAtteint === "expert" ? "#f59e0b" : "#06b6d4", borderRadius: 8, padding: "4px 12px", display: "flex", alignItems: "center" }}>
+                          <span style={{ fontWeight: 800, fontSize: 13, color: "white" }}>
+                            {palierAtteint === "expert" ? "⭐ Marché Expert −33% atteint !" : "✅ Marché Engagé −25% atteint !"}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>⏱️</span>
+                      <div>
+                        <div style={{ fontSize: 9, opacity: 0.6, textTransform: "uppercase", letterSpacing: 1 }}>Fermeture dimanche 23h59</div>
+                        <div style={{ fontWeight: 800, fontSize: 15, color: "white", fontVariantNumeric: "tabular-nums" }}>{countdown}</div>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Barres de progression */}
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {/* Marché Engagé */}
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>✅ Marché Engagé — 2 marques — <strong style={{color:"#67e8f9"}}>−25%</strong></span>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{totalUnites} / {PALIER_ENGAGE} unités</span>
+                      </div>
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 10, overflow: "hidden" }}>
+                        <div style={{ width: `${pctEngage}%`, height: "100%", background: pctEngage >= 100 ? "#06b6d4" : "linear-gradient(90deg,#06b6d4,#67e8f9)", borderRadius: 99, transition: "width 0.5s ease" }}/>
+                      </div>
+                    </div>
+                    {/* Marché Expert */}
+                    <div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.8)", fontWeight: 600 }}>⭐ Marché Expert — 3 marques — <strong style={{color:"#fcd34d"}}>−33%</strong></span>
+                        <span style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>{totalUnites} / {PALIER_EXPERT} unités</span>
+                      </div>
+                      <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 10, overflow: "hidden" }}>
+                        <div style={{ width: `${pctExpert}%`, height: "100%", background: pctExpert >= 100 ? "#f59e0b" : "linear-gradient(90deg,#f59e0b,#fcd34d)", borderRadius: 99, transition: "width 0.5s ease" }}/>
+                      </div>
+                    </div>
+                  </div>
+                  {/* Sélection palier prix */}
+                  <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Simuler les prix avec remise :</span>
+                    <button onClick={() => setUlabsPalier(ulabsPalier === "engage" ? null : "engage")} style={{
+                      background: ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.1)",
+                      border: `1px solid ${ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.2)"}`,
+                      color: "white", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700
+                    }}>−25%</button>
+                    <button onClick={() => setUlabsPalier(ulabsPalier === "expert" ? null : "expert")} style={{
+                      background: ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.1)",
+                      border: `1px solid ${ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.2)"}`,
+                      color: "white", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700
+                    }}>−33%</button>
+                    {ulabsPalier && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· prix simulés sur les cartes produit</span>}
+                  </div>
                 </div>
-                <button onClick={() => setUlabsPalier(ulabsPalier === "expert" ? null : "expert")} style={{
-                  background: ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.12)",
-                  border: ulabsPalier === "expert" ? "2px solid #f59e0b" : "2px solid rgba(255,255,255,0.2)",
-                  color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 12
-                }}>⭐ Marché Expert — 3 marques — <strong>−33%</strong></button>
-                <button onClick={() => setUlabsPalier(ulabsPalier === "engage" ? null : "engage")} style={{
-                  background: ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.12)",
-                  border: ulabsPalier === "engage" ? "2px solid #06b6d4" : "2px solid rgba(255,255,255,0.2)",
-                  color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontWeight: 700, fontSize: 12
-                }}>✅ Marché Engagé — 2 marques — <strong>−25%</strong></button>
-                {ulabsPalier && <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, display: "flex", alignItems: "center" }}>
-                  · Les prix affichés incluent la remise sur facture
-                </div>}
-              </div>
-            )}
+              );
+            })()}
             {/* Search */}
             <div style={{ marginTop: 16 }}>
               <input
