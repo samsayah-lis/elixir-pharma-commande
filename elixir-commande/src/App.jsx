@@ -90,6 +90,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   const [groupSaving, setGroupSaving] = useState({});
+  const [ulabsConfirming, setUlabsConfirming] = useState(false);
+  const [ulabsConfirmed, setUlabsConfirmed] = useState(false);
   const [ulabsPalier, setUlabsPalier] = useState(null); // null | "engage" | "expert"
   const [countdown, setCountdown] = useState("");
   useEffect(() => {
@@ -994,14 +996,8 @@ export default function App() {
                     </div>
                   </div>
                   {/* Sélection palier prix */}
-                  <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Simuler les prix avec −33% :</span>
-                    <button onClick={() => setUlabsPalier(ulabsPalier === "expert" ? null : "expert")} style={{
-                      background: ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.1)",
-                      border: `1px solid ${ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.2)"}`,
-                      color: "white", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700
-                    }}>{ulabsPalier === "expert" ? "✓ Activé" : "Activer"}</button>
-                    {ulabsPalier && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· prix simulés sur les cartes produit</span>}
+                  <div style={{ marginTop: 6 }}>
+                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· Prix affichés avec remise −33% sur facture incluse</span>
                   </div>
                 </div>
               );
@@ -1034,7 +1030,7 @@ export default function App() {
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s+r.qty, 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
-                    const remisePct = activeTab === "ulabs" && ulabsPalier === "expert" ? 33 : 0;
+                    const remisePct = activeTab === "ulabs" ? 33 : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
                     return (
                       <div key={key} style={{
@@ -1357,6 +1353,61 @@ export default function App() {
           </div>
               )}
           </>}
+
+          {/* Bouton confirmation commande groupée U-Labs */}
+          {activeTab === "ulabs" && (() => {
+            const myItems = (cat?.products || [])
+              .map((p, idx) => ({ p, qty: quantities[`ulabs-${idx}`] || 0, idx }))
+              .filter(({ qty }) => qty > 0);
+            if (myItems.length === 0) return null;
+            const myTotal = myItems.reduce((s, { p, qty }) => {
+              const pn = p.pv ? Math.round(p.pv * 0.67 * 100) / 100 : p.pn;
+              return s + (pn || 0) * qty;
+            }, 0);
+            const confirmOrder = async () => {
+              if (ulabsConfirming || ulabsConfirmed) return;
+              setUlabsConfirming(true);
+              const orderId = `UL-${Date.now()}`;
+              const items = myItems.map(({ p, qty }) => {
+                const pn = p.pv ? Math.round(p.pv * 0.67 * 100) / 100 : p.pn;
+                return { cip: p.cip, name: p.name, qty, pn, total: Math.round((pn||0) * qty * 100) / 100 };
+              });
+              const csv = ["CIP;Désignation;Qté;Prix net HT;Total HT",
+                ...items.map(i => `${i.cip};${i.name};${i.qty};${(i.pn||0).toFixed(2)};${(i.total||0).toFixed(2)}`)
+              ].join("
+");
+              try {
+                await fetch("/.netlify/functions/order-save", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    id: orderId, pharmacyName, pharmacyEmail, pharmacyCip,
+                    isClient: true, items, totalHt: myTotal, nbLignes: items.length, csv,
+                    source: "ulabs"
+                  })
+                });
+                setUlabsConfirmed(true);
+              } catch(e) { console.error(e); }
+              setUlabsConfirming(false);
+            };
+            return (
+              <div style={{ position: "sticky", bottom: 20, display: "flex", justifyContent: "center", zIndex: 50, marginTop: 16 }}>
+                <div style={{ background: ulabsConfirmed ? "#059669" : "#0d4f3c", borderRadius: 16, padding: "16px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 20, border: "1px solid #059669" }}>
+                  <div>
+                    <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{myItems.length} référence(s) · {myItems.reduce((s,{qty})=>s+qty,0)} unités</div>
+                    <div style={{ color: "white", fontWeight: 800, fontSize: 18 }}>{fmt(myTotal)} HT <span style={{ fontSize: 11, color: "#34d399", fontWeight: 400 }}>remise −33% incluse</span></div>
+                  </div>
+                  <button onClick={confirmOrder} disabled={ulabsConfirming || ulabsConfirmed} style={{
+                    background: ulabsConfirmed ? "rgba(255,255,255,0.2)" : "#059669",
+                    color: "white", border: "none", borderRadius: 10, padding: "10px 22px",
+                    fontWeight: 800, fontSize: 14, cursor: ulabsConfirmed ? "default" : "pointer",
+                    opacity: ulabsConfirming ? 0.7 : 1
+                  }}>
+                    {ulabsConfirmed ? "✓ Commande confirmée !" : ulabsConfirming ? "Envoi…" : "✅ Confirmer ma commande"}
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
           </>
         </main>
 
