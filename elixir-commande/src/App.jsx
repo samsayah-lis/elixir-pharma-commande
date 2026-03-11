@@ -1221,7 +1221,6 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           <>
-          <>
 {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
                   {gridWithPhoto.map((p, mapIdx) => {
@@ -1659,7 +1658,6 @@ export default function App() {
             ) /* fin ternaire desktop */}
           </div>
               )}
-          </>}
 
           {/* Bouton confirmation commande groupée U-Labs */}
           {activeTab === "ulabs" && (() => {
