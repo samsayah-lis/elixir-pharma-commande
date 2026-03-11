@@ -1695,6 +1695,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               );
             })()}
           </div>
+        )}
         {tab==="pharmacies"&&(
           <div style={{padding:"0 4px"}}>
             {/* ── Sync Odoo ── */}
