@@ -4,15 +4,14 @@ const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
-  const q = (event.queryStringParameters?.q || "").trim().toLowerCase();
+  const q = (event.queryStringParameters?.q || "").trim();
   if (!q) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "q manquant" }) };
 
-  const isEmail = q.includes("@");
-  const field = isEmail ? "email" : "name";
+  const field = q.includes("@") ? "email" : "name";
   const res = await fetch(
     `${SUPABASE_URL}/rest/v1/elixir_pharmacies?${field}=ilike.*${encodeURIComponent(q)}*&limit=20`,
-    { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
+    { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
   );
   const data = await res.json();
-  return { statusCode: 200, headers: { ...cors, "Content-Type": "application/json" }, body: JSON.stringify(Array.isArray(data) ? data : []) };
+  return { statusCode: 200, headers: cors, body: JSON.stringify(Array.isArray(data) ? data : []) };
 };
