@@ -202,12 +202,12 @@ export default function App() {
       { label: "Regenerate",  match_regex: "regenerate.*dentifrice", count: 1 },
     ],
     groupes: [
-      { key:"bbouche",  label:"🧴 Bains de bouche",           match_regex:"bain de bouche",                                          step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
-      { key:"fluoc250", label:"💧 Fluocaril 250mg",            match_regex:"fluocaril.*250",                                           step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
-      { key:"fluoc145", label:"🦷 Fluocaril 145mg",            match_regex:"fluocaril.*145(?!.*junior|.*kids)",                        step:6, min_qty:6, multiple:6, gratuite_type:"6+2",     gratuite_condition:"" },
-      { key:"parorege", label:"⚠️ Parogencyl & Regenerate",   match_regex:"parogencyl.*dentifrice|regenerate.*dentifrice",            step:6, min_qty:6, multiple:6, gratuite_type:"6+2",     gratuite_condition:"" },
-      { key:"brosses",  label:"🪥 Brosses à dents",            match_regex:"brosse(?!.*junior|.*kids)",                                step:3, min_qty:3, multiple:3, gratuite_type:"3+1",     gratuite_condition:"bain de bouche" },
-      { key:"junior",   label:"👶 Junior & Kids",              match_regex:"junior|kids",                                              step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
+      { key:"bbouche",  label:"🧴 Bains de bouche",          color:"#1e3a5f", accent:"#3b82f6", match_regex:"bain de bouche",                               step:6, min_qty:6, multiple:6, gratuite_type:"aucune", gratuite_condition:"", desc:"" },
+      { key:"fluoc250", label:"💧 Fluocaril 250mg",           color:"#0c4a6e", accent:"#0ea5e9", match_regex:"fluocaril.*250",                                step:6, min_qty:6, multiple:6, gratuite_type:"aucune", gratuite_condition:"", desc:"" },
+      { key:"fluoc145", label:"🦷 Fluocaril 145mg",           color:"#065f46", accent:"#10b981", match_regex:"fluocaril.*145",                                step:6, min_qty:6, multiple:6, gratuite_type:"6+2",    gratuite_condition:"", desc:"🎁 6 achetées = 2 offertes" },
+      { key:"parorege", label:"⚠️ Parogencyl & Regenerate",  color:"#7c2d12", accent:"#f97316", match_regex:"parogencyl.*dentifrice|regenerate.*dentifrice", step:6, min_qty:6, multiple:6, gratuite_type:"6+2",    gratuite_condition:"", desc:"🎁 6 achetées = 2 offertes" },
+      { key:"brosses",  label:"🪥 Brosses à dents",           color:"#4c1d95", accent:"#8b5cf6", match_regex:"brosse",                                        step:3, min_qty:3, multiple:3, gratuite_type:"3+1",    gratuite_condition:"bain de bouche", desc:"🎁 3 achetées = 1 offerte (avec bain de bouche)" },
+      { key:"junior",   label:"👶 Junior & Kids",             color:"#831843", accent:"#ec4899", match_regex:"junior|kids",                                   step:6, min_qty:6, multiple:6, gratuite_type:"aucune", gratuite_condition:"", desc:"" },
     ],
   };
 
@@ -1289,7 +1289,7 @@ export default function App() {
                         return (
                           <div style={{ marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: 12, overflow: "hidden", border: `1px solid ${gInfo.accent}40` }}>
                             {/* Titre groupe */}
-                            <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${gInfo.color} 0%, ${gInfo.accent}33 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                            <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${gInfo.color||"#0d4f3c"} 0%, ${gInfo.accent||"#059669"}55 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <div>
                                 <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>{gInfo.label}</div>
                                 <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", marginTop: 2 }}>{groupProds.length} référence{groupProds.length>1?"s":""}</div>
