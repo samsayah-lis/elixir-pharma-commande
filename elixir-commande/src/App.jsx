@@ -193,8 +193,31 @@ export default function App() {
   }, []);
   useEffect(() => { fetchCampaigns(); }, [fetchCampaigns]);
 
+  // Campagne U-Labs de secours (si absent de Supabase)
+  const ULABS_FALLBACK = {
+    id: "ulabs", label: "Commande groupée U-Labs", active: true,
+    palier_qty: 12, palier_remise: 33, min_refs: 12,
+    conditions: [
+      { label: "Parogencyl", match_regex: "parogencyl.*dentifrice", count: 3 },
+      { label: "Regenerate",  match_regex: "regenerate.*dentifrice", count: 1 },
+    ],
+    groupes: [
+      { key:"bbouche",  label:"🧴 Bains de bouche",           match_regex:"bain de bouche",                                          step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
+      { key:"fluoc250", label:"💧 Fluocaril 250mg",            match_regex:"fluocaril.*250",                                           step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
+      { key:"fluoc145", label:"🦷 Fluocaril 145mg",            match_regex:"fluocaril.*145(?!.*junior|.*kids)",                        step:6, min_qty:6, multiple:6, gratuite_type:"6+2",     gratuite_condition:"" },
+      { key:"parorege", label:"⚠️ Parogencyl & Regenerate",   match_regex:"parogencyl.*dentifrice|regenerate.*dentifrice",            step:6, min_qty:6, multiple:6, gratuite_type:"6+2",     gratuite_condition:"" },
+      { key:"brosses",  label:"🪥 Brosses à dents",            match_regex:"brosse(?!.*junior|.*kids)",                                step:3, min_qty:3, multiple:3, gratuite_type:"3+1",     gratuite_condition:"bain de bouche" },
+      { key:"junior",   label:"👶 Junior & Kids",              match_regex:"junior|kids",                                              step:6, min_qty:6, multiple:6, gratuite_type:"aucune",  gratuite_condition:"" },
+    ],
+  };
+
   // Helper : retourne la config de campagne pour un tab donné (ou null)
-  const getCampaign = (tabKey) => campaigns.find(c => c.id === tabKey && c.active) || null;
+  const getCampaign = (tabKey) => {
+    const fromDB = campaigns.find(c => c.id === tabKey && c.active);
+    if (fromDB) return fromDB;
+    if (tabKey === "ulabs") return ULABS_FALLBACK;
+    return null;
+  };
 
   // Produits chargés depuis Supabase (source unique de vérité)
   const [dbProducts, setDbProducts] = useState([]);
