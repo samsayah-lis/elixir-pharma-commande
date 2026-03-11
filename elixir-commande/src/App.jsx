@@ -348,6 +348,13 @@ export default function App() {
     if (activeTab === "otc" || activeTab === "nr") {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
+    if (activeTab === "ulabs") {
+      return [...filtered].sort((a, b) => {
+        const aP = a.name?.toLowerCase().includes("parogencyl") ? 0 : 1;
+        const bP = b.name?.toLowerCase().includes("parogencyl") ? 0 : 1;
+        return aP - bP || a.name.localeCompare(b.name, "fr");
+      });
+    }
     return filtered;
   })();
 
@@ -941,7 +948,7 @@ export default function App() {
             </div>
             {/* Bloc groupement U-Labs */}
             {activeTab === "ulabs" && (() => {
-              const totalUnites = groupOrders.reduce((s,r) => s+r.qty, 0);
+              const totalUnites = groupOrders.reduce((s,r) => s + (parseInt(r.qty) || 0), 0);
               const nbPharm = new Set(groupOrders.map(r => r.pharmacy_cip)).size;
               const PALIER_EXPERT = 500;
               const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
@@ -1028,7 +1035,7 @@ export default function App() {
                     const qty = quantities[key] || 0;
                     const step = getStep(activeTab, p);
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
-                    const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s+r.qty, 0) : 0;
+                    const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s + (parseInt(r.qty)||0), 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
                     const remisePct = activeTab === "ulabs" ? 33 : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
