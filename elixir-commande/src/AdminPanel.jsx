@@ -608,52 +608,70 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   // LOGIN
   if (!authed) return (
-    <div style={OV}>
-      <div style={MO}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:24 }}>
+    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+      <div style={{background:"white",borderRadius:20,padding:"40px 44px",maxWidth:420,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.12)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
           <div>
-            <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d" }}>🔐 Espace Admin</div>
-            <div style={{ fontSize:12, color:"#aaa", marginTop:2 }}>Elixir Pharma – Gestion du catalogue</div>
+            <div style={{fontWeight:800,fontSize:22,color:"#0f2d3d"}}>🔐 Espace Admin</div>
+            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Gestion du catalogue</div>
           </div>
           <button onClick={onClose} style={CB}>✕</button>
         </div>
         <label style={LS}>Mot de passe administrateur</label>
         <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••"
-          style={{ ...IS, borderColor: pwdError?"#f87171":"#e2e8f0" }} />
+          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} autoFocus />
         {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>Mot de passe incorrect.</div>}
         <button onClick={handleLogin} style={{...PB,marginTop:16}}>Accéder →</button>
       </div>
     </div>
   );
 
+  const TABS = [
+    {k:"add",      label:"➕ Ajouter",    icon:"➕"},
+    {k:"edit",     label:"✏️ Modifier",   icon:"✏️"},
+    {k:"promos",   label:"🎯 Promos",     icon:"🎯", badge: promos.length||null},
+    {k:"orders",   label:"📋 Commandes",  icon:"📋", badge: orders.filter(o=>!o.processed).length||null},
+    {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
+    {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
+    {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
+  ];
+
   return (
-    <div style={OV}>
-      <div style={{...MO, maxWidth:700, maxHeight:"92vh", overflowY:"auto", padding:"28px 32px"}}>
+    <div style={{position:"fixed",inset:0,zIndex:1000,background:"#f1f5f9",display:"flex",flexDirection:"column",fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
 
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div>
-            <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d"}}>⚙️ Administration catalogue</div>
-            <div style={{fontSize:11,color:"#aaa",marginTop:2}}>
-              {products.filter(p=>p.source==="admin").length} ajouté(s) · {products.length} total · {promos.length} promo(s) · {orders.length} commande(s)
-            </div>
+      {/* ── Top bar ── */}
+      <div style={{background:"#0f2d3d",color:"white",padding:"0 24px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,boxShadow:"0 2px 8px rgba(0,0,0,0.25)"}}>
+        <div style={{display:"flex",alignItems:"center",gap:16}}>
+          <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.3px"}}>⚙️ Administration Elixir Pharma</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",paddingLeft:16,borderLeft:"1px solid rgba(255,255,255,0.15)"}}>
+            {products.filter(p=>p.source==="admin").length} ajoutés · {products.length} produits · {orders.length} commandes
           </div>
-          <button onClick={onClose} style={CB}>✕</button>
         </div>
+        <button onClick={onClose} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+          ← Retour au catalogue
+        </button>
+      </div>
 
-        {/* Tabs */}
-        <div style={{display:"flex",gap:8,marginBottom:24}}>
-          {[{k:"add",label:"➕ Ajouter"},{k:"edit",label:"✏️ Modifier"},{k:"promos",label:`🎯 Promos${promos.length>0?" ("+promos.length+")":""}` },{k:"orders",label:`📋 Commandes${orders.filter(o=>!o.processed).length>0?" ("+orders.filter(o=>!o.processed).length+")":"" }` },{k:"grouporders",label:"🤝 Groupements"},{k:"campaigns",label:"🏗️ Campagnes"},{k:"pharmacies",label:"🏥 Pharmacies"}].map(t=>(
-            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }} style={{
-              flex:1, padding:"10px", borderRadius:10, fontWeight:700, fontSize:13, cursor:"pointer",
-              border: tab===t.k?"2px solid #0f2d3d":"2px solid #e2e8f0",
-              background: tab===t.k?"#0f2d3d":"white",
-              color: tab===t.k?"white":"#555",
-            }}>{t.label}</button>
+      {/* ── Body : sidebar + content ── */}
+      <div style={{display:"flex",flex:1,overflow:"hidden"}}>
+
+        {/* Sidebar */}
+        <div style={{width:200,background:"white",borderRight:"1px solid #e2e8f0",display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
+          {TABS.map(t=>(
+            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?"#f0f9ff":"transparent",color:tab===t.k?"#0f2d3d":"#555",fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?"3px solid #0ea5e9":"3px solid transparent",position:"relative"}}>
+              <span style={{fontSize:16}}>{t.icon}</span>
+              <span style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
+              {t.badge ? <span style={{background:"#ef4444",color:"white",borderRadius:99,fontSize:10,fontWeight:800,padding:"1px 6px",minWidth:18,textAlign:"center"}}>{t.badge}</span> : null}
+            </button>
           ))}
         </div>
 
-        {saved&&<div style={{background:"#f0fdf4",border:"1px solid #86efac",borderRadius:10,padding:"10px 14px",marginBottom:16,color:"#166534",fontWeight:600,fontSize:13}}>{saved}</div>}
+        {/* Main content */}
+        <div style={{flex:1,overflowY:"auto",padding:"24px 32px"}}>
+
+
 
         {/* ── ADD TAB ── */}
         {tab==="add"&&(
@@ -1776,7 +1794,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             </div>
           </div>
         )}
+        </div>
       </div>
+      {saved&&<div style={{position:"fixed",bottom:24,right:24,background:"#0f2d3d",color:"white",borderRadius:12,padding:"12px 20px",fontWeight:700,fontSize:13,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",zIndex:2000}}>{saved}</div>}
     </div>
   );
 }
