@@ -291,15 +291,18 @@ export default function App() {
     if (catKey === "stratege") return p.colis || 1;
     if (catKey === "master") return p.palier || 1;
     if (catKey === "blanche") return p.colis || 1;
-    if (catKey === "ulabs") return 6;
+    if (catKey === "ulabs") {
+      const OBL = ["8710604763356","8720181397233","8710604763363"];
+      return OBL.includes(p.cip) ? 1 : 6;
+    }
     return 1;
   };
 
-  const setQty = (key, val, step = 1) => {
+  const setQty = (key, val, step = 1, min = 0) => {
     const raw = Math.max(0, parseInt(val) || 0);
-    // Snap to nearest multiple of step
     const snapped = step > 1 ? Math.round(raw / step) * step : raw;
-    setQuantities(prev => ({ ...prev, [key]: snapped }));
+    const final = snapped > 0 && min > 0 ? Math.max(min, snapped) : snapped;
+    setQuantities(prev => ({ ...prev, [key]: final }));
   };
 
   const cartItems = useMemo(() => {
@@ -1106,7 +1109,8 @@ export default function App() {
                           )}
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => {
-                              const nq = Math.max(0, qty - step);
+                              const oblMin = activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) ? 2 : 0;
+                              const nq = qty - step <= 0 ? 0 : Math.max(oblMin || step, qty - step);
                               setQty(key, nq, step);
                               if (activeTab === "ulabs") {
                                 const snapped = step > 1 ? Math.round(nq / step) * step : nq;
@@ -1119,7 +1123,7 @@ export default function App() {
                               color: cat.accent, borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>−</button>
-                            <input type="number" min="0" step={step} value={quantities[key] || ""}
+                            <input type="number" min={activeTab === "ulabs" ? (["8710604763356","8720181397233","8710604763363"].includes(p.cip) ? 2 : 6) : 0} step={step} value={quantities[key] || ""}
                               onChange={e => setQty(key, e.target.value, step)}
                               onBlur={e => {
                                 if (activeTab === "ulabs") {
