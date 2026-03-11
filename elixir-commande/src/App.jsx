@@ -13,7 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Groupement U-Labs",       subtitle: "Commandes groupées · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "Commandes groupées · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
