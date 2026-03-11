@@ -1,76 +1,48 @@
-// Proxy Medipim API — cherche un produit par CIP13 et retourne nom + image
 const MEDIPIM_BASE = "https://api.medipim.fr/v4";
-const MEDIPIM_ID  = "288";
-const MEDIPIM_KEY = "094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696";
-const AUTH = "Basic " + Buffer.from(`${MEDIPIM_ID}:${MEDIPIM_KEY}`).toString("base64");
+const AUTH = "Basic " + Buffer.from("288:094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696").toString("base64");
+const H = { Authorization: AUTH, "Content-Type": "application/json" };
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+async function tryFind(param, value) {
+  if (!value) return null;
+  const res = await fetch(`${MEDIPIM_BASE}/products/find?${param}=${value}`, { headers: H });
+  if (!res.ok) return null;
+  const data = await res.json();
+  if (!data?.product) return null;
+  return extractProduct(data);
+}
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
-
-  const { cip } = event.queryStringParameters || {};
-  if (!cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
+  const { cip, cip7 } = event.queryStringParameters || {};
+  if (!cip && !cip7) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
 
   try {
-    // Cherche par cip13 (CIP13) ou barcode13
-    const res = await fetch(`${MEDIPIM_BASE}/products/find?cip13=${cip}`, {
-      headers: { Authorization: AUTH, "Content-Type": "application/json" },
-    });
+    // Ordre de priorité : cip7 (ACL) → cip13 → heuristique
+    const attempts = [];
+    if (cip7) attempts.push(["cip7", cip7]);
+    if (cip && cip.length === 13 && cip.startsWith("34")) attempts.push(["cip13", cip]);
+    if (cip && cip.length === 13 && !cip.startsWith("34")) attempts.push(["cip7", cip.slice(-7)]);
+    if (cip && cip.length === 13) attempts.push(["cip13", cip]);
 
-    if (res.status === 404) {
-      // Essaie aussi avec barcode
-      const res2 = await fetch(`${MEDIPIM_BASE}/products/find?barcode=${cip}`, {
-        headers: { Authorization: AUTH, "Content-Type": "application/json" },
-      });
-      if (!res2.ok) return { statusCode: 404, headers: cors, body: JSON.stringify({ error: "Produit non trouvé dans Medipim" }) };
-      const data2 = await res2.json();
-      return { statusCode: 200, headers: cors, body: JSON.stringify(extractProduct(data2)) };
+    for (const [param, val] of attempts) {
+      const result = await tryFind(param, val);
+      if (result?.image_url) return { statusCode: 200, headers: cors, body: JSON.stringify(result) };
     }
-
-    if (!res.ok) {
-      const err = await res.text();
-      return { statusCode: res.status, headers: cors, body: JSON.stringify({ error: err }) };
-    }
-
-    const data = await res.json();
-    return { statusCode: 200, headers: cors, body: JSON.stringify(extractProduct(data)) };
-
+    return { statusCode: 404, headers: cors, body: JSON.stringify({ error: "Produit non trouvé" }) };
   } catch (e) {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
   }
 };
 
 function extractProduct(data) {
-  // La réponse est enveloppée dans data.product
   const p = data.product || data;
-
   const name = p.name?.fr || p.name?.en || null;
   const brand = p.brands?.[0]?.name || null;
-
-  // Photos : data.product.photos[] → formats.medium (jpeg) ou frontals[0]
   let image_url = null;
-  const frontals = p.frontals || [];
-  const photos = p.photos || [];
-
-  // Préfère le frontal (face avant) s'il existe
-  const mainPhoto = frontals[0] || photos.find(ph => ph.photoType === "packshot") || photos[0];
+  const mainPhoto = (p.frontals || [])[0] || (p.photos || [])[0];
   if (mainPhoto?.formats) {
-    image_url = mainPhoto.formats.mediumWebp
-      || mainPhoto.formats.medium
-      || mainPhoto.formats.mediumJpeg
-      || mainPhoto.formats.large
-      || null;
+    image_url = mainPhoto.formats.mediumWebp || mainPhoto.formats.medium || mainPhoto.formats.mediumJpeg || mainPhoto.formats.large || null;
   }
-
-  return {
-    name,
-    brand,
-    image_url,
-    medipim_id: p.id || null,
-    description: p.descriptions?.[0]?.content?.fr || null,
-  };
+  return { name, brand, image_url, medipim_id: p.id || null };
 }

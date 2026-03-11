@@ -1129,7 +1129,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                     const batch = toFetch.slice(i, i+BATCH);
                     await Promise.all(batch.map(async p => {
                       try{
-                        const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}`);
+                        const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
                         const d=await r.json();
                         if(d.image_url){
                           const up=await fetch("/.netlify/functions/product-upload-image",{

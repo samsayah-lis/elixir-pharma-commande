@@ -708,9 +708,9 @@ export default function App() {
         color: "white", padding: "0", position: "sticky", top: 0, zIndex: 100,
         boxShadow: "0 4px 20px rgba(0,0,0,0.3)"
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 24px" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "8px 12px" : "12px 24px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ background: "#2d9cbc", borderRadius: 10, padding: "6px 12px", fontWeight: 800, fontSize: 20, letterSpacing: 2 }}>
+            <div style={{ background: "#2d9cbc", borderRadius: 10, padding: isMobile ? "4px 8px" : "6px 12px", fontWeight: 800, fontSize: isMobile ? 15 : 20, letterSpacing: 2 }}>
               ELIXIR
             </div>
             <div>
@@ -734,22 +734,22 @@ export default function App() {
               background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
               borderRadius: 8, padding: "4px 4px 4px 14px"
             }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: "rgba(255,255,255,0.9)" }}>🏥 {pharmacyName}</span>
+              <span style={{ fontSize: isMobile ? 11 : 13, fontWeight: 600, color: "rgba(255,255,255,0.9)", maxWidth: isMobile ? 100 : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
               <button onClick={handleLogout} title="Se déconnecter" style={{
                 background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)",
                 borderRadius: 6, color: "rgba(255,255,255,0.7)", cursor: "pointer",
                 padding: "3px 8px", fontSize: 11, lineHeight: 1
               }}>⎋ Déco</button>
             </div>
-            <button onClick={handlePrint} style={{
+            {!isMobile && <button onClick={handlePrint} style={{
               background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
               color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12
-            }}>🖨 Imprimer</button>
+            }}>🖨 Imprimer</button>}
             <button onClick={() => setShowAdmin(true)} style={{
               background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
               color: "rgba(255,255,255,0.5)", borderRadius: 8, padding: "6px 10px",
               cursor: "pointer", fontSize: 12, title: "Administration"
-            }} title="Administration">⚙️</button>
+            }} title="Administration">{isMobile ? "" : "⚙️"}</button>
             <button onClick={() => setCartOpen(!cartOpen)} style={{
               background: cartCount > 0 ? "#10b981" : "rgba(255,255,255,0.15)",
               border: "none", color: "white", borderRadius: 10, padding: "8px 16px",
@@ -765,8 +765,8 @@ export default function App() {
         </div>
 
         {/* Global search bar */}
-        <div style={{ padding: "8px 24px 0", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-          <div style={{ position: "relative", maxWidth: 480 }}>
+        <div style={{ padding: isMobile ? "6px 12px 0" : "8px 24px 0", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+          <div style={{ position: "relative", maxWidth: isMobile ? "100%" : 480 }}>
             <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, opacity:0.6 }}>🔍</span>
             <input
               value={globalSearch}
@@ -802,7 +802,7 @@ export default function App() {
 
       <div style={{ display: "flex", flex: 1, position: "relative" }}>
         {/* Main content */}
-        <main style={{ flex: 1, padding: "20px 24px", minWidth: 0 }}>
+        <main style={{ flex: 1, padding: isMobile ? "12px 10px" : "20px 24px", minWidth: 0 }}>
 
           {/* ── GLOBAL SEARCH RESULTS ── */}
           {globalSearch.trim().length >= 2 && (
@@ -919,7 +919,7 @@ export default function App() {
                         overflow: "hidden", transition: "box-shadow 0.2s, border 0.2s"
                       }}>
                         {/* Photo */}
-                        <div style={{ flexShrink: 0, width: 110, height: 110, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #f0f2f5" }}>
+                        <div style={{ flexShrink: 0, width: isMobile ? 72 : 110, height: isMobile ? 72 : 110, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #f0f2f5" }}>
                           {p.image_url
                             ? <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
                             : null
@@ -1159,7 +1159,11 @@ export default function App() {
         </main>
 
         {/* Cart panel */}
-        <aside style={{
+        <aside style={isMobile ? {
+          position: "fixed", inset: 0, zIndex: 200,
+          background: "white", display: cartOpen ? "flex" : "none",
+          flexDirection: "column", overflowY: "auto"
+        } : {
           width: cartOpen ? 360 : 0, minWidth: cartOpen ? 360 : 0,
           background: "white", borderLeft: cartOpen ? "1px solid #e8edf2" : "none",
           overflow: "hidden", transition: "all 0.3s ease",
@@ -1334,6 +1338,11 @@ export default function App() {
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
         * { box-sizing: border-box; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+        @media (max-width: 767px) {
+          table { font-size: 11px !important; }
+          table td, table th { padding: 6px 6px !important; }
+          .tab-label { display: none; }
+        }
         @media print {
           header button, aside button { display: none !important; }
           aside { display: block !important; width: 100% !important; min-width: 100% !important; }
