@@ -13,7 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "12 références min · dont 3 Parogencyl + 1 Regenerate · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: ["pharmaclichyavenir@gmail.com"] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: [] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -59,106 +59,57 @@ const nextBusinessDay = () => {
 };
 
 // ── Constantes U-Labs ────────────────────────────────────────────────────────
-const ULABS_GROUPES = {
-  bdm: {
-    label: "🧴 Bains de bouche", color: "#1e3a5f", accent: "#3b82f6",
-    desc: "Requis pour les gratuités brosses à dents",
-    note: null,
-    match: p => /bain de bouche/i.test(p.name),
-  },
-  fluoc250: {
-    label: "💧 Dentifrices Fluocaril 250mg", color: "#065f46", accent: "#059669",
-    desc: "Pas de gratuité sur ce groupe",    
-    note: null,
-    match: p => /fluocaril/i.test(p.name) && /250/i.test(p.name),
-    cips_declenchants: ["3400936256286","3400936256118","3400935008619","3400935008497"],
-  },
-  fluoc145: {
-    label: "🦷 Dentifrices Fluocaril Bi-Fluoré 145mg", color: "#065f46", accent: "#10b981",
-    desc: "🎁 6 achetées = 2 offertes — sans condition",                               
-    note: "🎁 6+2 avec cond.",
-    match: p => /fluocaril/i.test(p.name) && /145/i.test(p.name) && !/junior|kids/i.test(p.name),
-    gratuite: { type: "6+2" },
-  },
-  paro_regen: {
-    label: "⚠️ Dentifrices Parogencyl & Regenerate", color: "#7c3aed", accent: "#8b5cf6",
-    desc: "Obligatoire : 3 Parogencyl + 1 Regenerate minimum · 🎁 6 achetées = 2 offertes",
-    note: "🎁 6+2 offertes",
-    match: p => (/parogencyl/i.test(p.name) || /regenerate/i.test(p.name)) && /dentifrice/i.test(p.name),
-    gratuite: { type: "6+2" },
-  },
-  brosses: {
-    label: "🪥 Brosses à dents", color: "#1e3a5f", accent: "#0ea5e9",
-    desc: "🎁 3 achetées = 1 offerte — si ≥1 brosse Parogencyl + bains de bouche Fluocaril & Parogencyl",
-    note: "🎁 3+1 avec cond.",
-    match: p => /brosse/i.test(p.name) && !/junior|kids/i.test(p.name),
-    gratuite: { type: "3+1", conditionBrosse: true },
-  },
-  junior_kids: {
-    label: "👶 Junior & Kids", color: "#92400e", accent: "#f59e0b",
-    desc: "Pas de gratuité",
-    note: null,
-    match: p => /junior|kids/i.test(p.name),
-  },
-  autres: {
-    label: "✨ Autres références", color: "#374151", accent: "#6b7280",
-    desc: "Natur'Essence · Protection Complète · Spray",
-    note: null,
-    match: p => true,
-  },
+// ── Helpers campagne dynamique ────────────────────────────────────────────────
+// Construit le tableau de groupes depuis la config Supabase avec fallback vide
+const buildGroupes = (campaign) => {
+  if (!campaign?.groupes?.length) return [];
+  return campaign.groupes.map(g => ({
+    ...g,
+    match: (p) => {
+      if (!g.match_regex) return false;
+      try { return new RegExp(g.match_regex, "i").test(p.name); }
+      catch(e) { return false; }
+    },
+    gratuite: g.gratuite_type && g.gratuite_type !== "aucune"
+      ? { type: g.gratuite_type, condition: g.gratuite_condition || "" }
+      : null,
+  }));
 };
 
-const ULABS_GROUP_ORDER = ["bdm","fluoc250","fluoc145","paro_regen","brosses","junior_kids","autres"];
-
-const ulabsGetGroupe = (p) => {
-  for (const key of ULABS_GROUP_ORDER) {
-    if (ULABS_GROUPES[key].match(p)) return key;
-  }
-  return "autres";
+// Trouve le groupe d'un produit (renvoie l'objet groupe ou null)
+const campGetGroupe = (p, groupes) => {
+  for (const g of groupes) { if (g.match(p)) return g; }
+  return null;
 };
 
-// Calcule les gratuités pour un produit selon le panier complet
-const ulabsGratuite = (p, qty, allProducts, quantities, activeTabKey) => {
-  if (activeTabKey !== "ulabs" || qty < 1) return { livrées: 0, type: null };
-  const groupe = ulabsGetGroupe(p);
-  const g = ULABS_GROUPES[groupe];
-  if (!g?.gratuite) return { livrées: 0, type: null };
+// Calcule les gratuités dynamiquement depuis la config campagne
+const campGratuite = (p, qty, allProducts, quantities, tabKey, groupes) => {
+  if (qty < 1) return { livrées: 0, type: null };
+  const groupe = campGetGroupe(p, groupes);
+  if (!groupe?.gratuite) return { livrées: 0, type: null };
 
-  // Vérifie les conditions
-  if (g.gratuite.conditionGroupe === "fluoc250") {
-    // Faut au moins 1 ref Fluocaril 250mg
-    const has250 = (allProducts || []).some((ap, idx) => {
-      const apGroupe = ulabsGetGroupe(ap);
-      return apGroupe === "fluoc250" && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0;
-    });
-    if (!has250) return { livrées: 0, type: null, hint: "Commandez au moins 1 réf. Fluocaril 250mg" };
-  }
-  if (g.gratuite.conditionBrosse) {
-    const prods = allProducts || [];
-    // Faut ≥1 brosse Parogencyl
-    const hasBrosseP = prods.some((ap, idx) =>
-      /parogencyl/i.test(ap.name) && /brosse/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
-    );
-    // Faut bain de bouche Fluocaril
-    const hasBdmF = prods.some((ap, idx) =>
-      /fluocaril/i.test(ap.name) && /bain de bouche/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
-    );
-    // Faut bain de bouche Parogencyl
-    const hasBdmP = prods.some((ap, idx) =>
-      /parogencyl/i.test(ap.name) && /bain de bouche/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
-    );
-    if (!hasBrosseP || !hasBdmF || !hasBdmP) {
-      const manque = [];
-      if (!hasBrosseP) manque.push("brosse Parogencyl");
-      if (!hasBdmF) manque.push("bain de bouche Fluocaril");
-      if (!hasBdmP) manque.push("bain de bouche Parogencyl");
-      return { livrées: 0, type: null, hint: `Ajoutez : ${manque.join(", ")}` };
-    }
+  // Condition optionnelle : regex sur les produits déjà commandés
+  if (groupe.gratuite.condition) {
+    try {
+      const condRegex = new RegExp(groupe.gratuite.condition, "i");
+      const condOk = (allProducts || []).some((ap, idx) =>
+        condRegex.test(ap.name) && (parseInt(quantities[`${tabKey}-${idx}`]) || 0) > 0
+      );
+      if (!condOk) return { livrées: 0, type: null, hint: `Commandez d'abord : ${groupe.gratuite.condition}` };
+    } catch(e) {}
   }
 
-  if (g.gratuite.type === "6+2" && qty >= 6) return { livrées: Math.floor(qty / 6) * 2, type: "6+2" };
-  if (g.gratuite.type === "3+1" && qty >= 3) return { livrées: Math.floor(qty / 3), type: "3+1" };
-  return { livrées: 0, type: g.gratuite.type };
+  if (groupe.gratuite.type === "6+2" && qty >= 6) return { livrées: Math.floor(qty / 6) * 2, type: "6+2" };
+  if (groupe.gratuite.type === "3+1" && qty >= 3) return { livrées: Math.floor(qty / 3), type: "3+1" };
+  return { livrées: 0, type: groupe.gratuite.type };
+};
+
+// Couleurs de conditions affichées dans le header de groupe
+const COND_COLORS = {
+  "aucune": ["#f3f4f6","#374151"],
+  "6+2":    ["#d1fae5","#065f46"],
+  "3+1":    ["#dbeafe","#1e40af"],
+  "oblig":  ["#ede9fe","#4c1d95"],
 };
 
 const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
@@ -225,6 +176,20 @@ export default function App() {
   const [globalSearch, setGlobalSearch] = useState("");
   const [sendStatus, setSendStatus] = useState(null);
   const [showAdmin, setShowAdmin] = useState(false);
+
+  // Campagnes groupement (config dynamique depuis Supabase)
+  const [campaigns, setCampaigns] = useState([]);
+  const fetchCampaigns = useCallback(async () => {
+    try {
+      const res = await fetch("/.netlify/functions/campaign-get");
+      const data = await res.json();
+      if (Array.isArray(data)) setCampaigns(data);
+    } catch(e) { console.warn("[campaigns] fetch error:", e.message); }
+  }, []);
+  useEffect(() => { fetchCampaigns(); }, [fetchCampaigns]);
+
+  // Helper : retourne la config de campagne pour un tab donné (ou null)
+  const getCampaign = (tabKey) => campaigns.find(c => c.id === tabKey && c.active) || null;
 
   // Produits chargés depuis Supabase (source unique de vérité)
   const [dbProducts, setDbProducts] = useState([]);
@@ -396,9 +361,10 @@ export default function App() {
     if (catKey === "master") return p.palier || 1;
     if (catKey === "blanche") return p.colis || 1;
     if (catKey === "ulabs") {
-      const g = ulabsGetGroupe(p);
-      if (g === "paro_regen" || g === "brosses" || g === "bdm") return 1;
-      return 6;
+      const camp = getCampaign("ulabs");
+      const groupes = buildGroupes(camp);
+      const g = campGetGroupe(p, groupes);
+      return g?.step ?? 6;
     }
     return 1;
   };
@@ -438,6 +404,17 @@ export default function App() {
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
 
   const cat = CATALOG_WITH_ADMIN[activeTab];
+  // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
+  const activeCampMeta = getCampaign(activeTab);
+  const catEffective = cat && activeCampMeta ? {
+    ...cat,
+    label:    activeCampMeta.label    || cat.label,
+    subtitle: activeCampMeta.subtitle || cat.subtitle,
+    color:    activeCampMeta.color    || cat.color,
+    accent:   activeCampMeta.accent   || cat.accent,
+    icon:     activeCampMeta.icon     || cat.icon,
+  } : cat;
+
 
   const globalResults = globalSearch.trim().length >= 2
     ? Object.entries(CATALOG_WITH_ADMIN).flatMap(([catKey, c]) =>
@@ -457,10 +434,14 @@ export default function App() {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
     if (activeTab === "ulabs") {
+      const camp = getCampaign("ulabs");
+      const groupes = buildGroupes(camp);
       return [...filtered].sort((a, b) => {
-        const ai = ULABS_GROUP_ORDER.indexOf(ulabsGetGroupe(a));
-        const bi = ULABS_GROUP_ORDER.indexOf(ulabsGetGroupe(b));
-        return ai - bi || a.name.localeCompare(b.name, "fr");
+        const ai = groupes.findIndex(g => g.match(a));
+        const bi = groupes.findIndex(g => g.match(b));
+        const anorm = ai < 0 ? 9999 : ai;
+        const bnorm = bi < 0 ? 9999 : bi;
+        return anorm - bnorm || a.name.localeCompare(b.name, "fr");
       });
     }
     return filtered;
@@ -1031,16 +1012,16 @@ export default function App() {
 
           {/* Category header */}
           <div style={{
-            background: `linear-gradient(135deg, ${cat.color} 0%, ${cat.accent}33 100%)`,
+            background: `linear-gradient(135deg, ${catEffective.color} 0%, ${catEffective.accent}33 100%)`,
             borderRadius: 16, padding: "20px 28px", marginBottom: 20,
-            border: `1px solid ${cat.accent}40`
+            border: `1px solid ${catEffective.accent}40`
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
                 <div style={{ fontSize: 26, fontWeight: 800, color: "white", display: "flex", alignItems: "center", gap: 12 }}>
-                  <span>{cat.icon}</span> {cat.label}
+                  <span>{catEffective.icon}</span> {catEffective.label}
                 </div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, marginTop: 4 }}>{cat.subtitle}</div>
+                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, marginTop: 4 }}>{catEffective.subtitle}</div>
               </div>
               <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
                 {activeTab === "ulabs" ? (<>
@@ -1068,7 +1049,9 @@ export default function App() {
                 ...groupOrders.map(r => r.pharmacy_cip),
                 ...(myLocalQty > 0 ? [pharmacyCip] : [])
               ]).size;
-              const PALIER_EXPERT = 500;
+              const activeCamp = getCampaign(activeTab);
+              const PALIER_EXPERT = activeCamp?.palier_qty ?? 500;
+              const PALIER_REMISE = activeCamp?.palier_remise ?? 33;
               const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
               const palierAtteint = totalUnites >= PALIER_EXPERT;
               return (
@@ -1077,17 +1060,24 @@ export default function App() {
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
                     {/* Compteurs refs commandées */}
                     {(() => {
-                      const prods = cat?.products || [];
-                      const cmdRefs = prods.filter((p, idx) => (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0);
-                      const nbParo = cmdRefs.filter(p => /parogencyl/i.test(p.name) && /dentifrice/i.test(p.name)).length;
-                      const nbRegen = cmdRefs.filter(p => /regenerate/i.test(p.name) && /dentifrice/i.test(p.name)).length;
-                      return (
+                      const campHdr = getCampaign(activeTab);
+                      const prodsHdr = cat?.products || [];
+                      const cmdRefsHdr = prodsHdr.filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0);
+                      const minRefsHdr = campHdr?.min_refs ?? 0;
+                      const condStats = (campHdr?.conditions || []).map(cond => {
+                        try {
+                          const rx = new RegExp(cond.match_regex, "i");
+                          const nb = cmdRefsHdr.filter(p => rx.test(p.name)).length;
+                          return { val: nb, total: cond.count, label: cond.label, ok: nb >= cond.count };
+                        } catch(e) { return null; }
+                      }).filter(Boolean);
+                      const allStats = [
+                        ...(minRefsHdr > 0 ? [{ val: cmdRefsHdr.length, total: minRefsHdr, label: "réf. min", ok: cmdRefsHdr.length >= minRefsHdr }] : []),
+                        ...condStats,
+                      ];
+                      return allStats.length === 0 ? null : (
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-                          {[
-                            { val: cmdRefs.length, total: 12, label: "réf. min", ok: cmdRefs.length >= 12 },
-                            { val: nbParo, total: 3, label: "Parogencyl", ok: nbParo >= 3 },
-                            { val: nbRegen, total: 1, label: "Regenerate", ok: nbRegen >= 1 },
-                          ].map(s => (
+                          {allStats.map(s => (
                             <div key={s.label} style={{ background: s.ok ? "rgba(5,150,105,0.3)" : "rgba(220,38,38,0.3)", borderRadius: 8, padding: "5px 12px", border: `1px solid ${s.ok ? "#059669" : "#dc2626"}` }}>
                               <span style={{ fontWeight: 800, color: "white", fontSize: 16 }}>{s.val}</span>
                               <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 10 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
@@ -1125,7 +1115,7 @@ export default function App() {
                       <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", fontWeight: 700 }}>
                         {totalUnites} unité{totalUnites > 1 ? "s" : ""} commandée{totalUnites > 1 ? "s" : ""}
                       </span>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} unités</span>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} unités = −{PALIER_REMISE}%</span>
                     </div>
                     {/* Barre */}
                     <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 14 }}>
@@ -1138,7 +1128,7 @@ export default function App() {
                     {/* Légende */}
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
                       <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>0</span>
-                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} unités = −33% sur facture</span>
+                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} unités = −{PALIER_REMISE}% sur facture</span>
                     </div>
                   </div>
                   {/* Sélection palier prix */}
@@ -1172,19 +1162,20 @@ export default function App() {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
                     const prevP = mapIdx > 0 ? gridWithPhoto[mapIdx - 1] : null;
-                    const currentGroupe = activeTab === "ulabs" ? ulabsGetGroupe(p) : null;
-                    const prevGroupe = activeTab === "ulabs" && prevP ? ulabsGetGroupe(prevP) : null;
-                    const showGroupHeader = activeTab === "ulabs" && currentGroupe !== prevGroupe;
+                    const _campActive = activeTab === "ulabs" ? getCampaign("ulabs") : null;
+                    const _groupes = buildGroupes(_campActive);
+                    const currentGroupe = activeTab === "ulabs" ? campGetGroupe(p, _groupes) : null;
+                    const prevGroupe = activeTab === "ulabs" && prevP ? campGetGroupe(prevP, _groupes) : null;
+                    const showGroupHeader = activeTab === "ulabs" && currentGroupe?.key !== prevGroupe?.key;
                     const qty = quantities[key] || 0;
                     const step = getStep(activeTab, p);
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s + (parseInt(r.qty)||0), 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
-                    const remisePct = activeTab === "ulabs" ? 33 : 0;
+                    const remisePct = activeTab === "ulabs" ? (PALIER_REMISE ?? 33) : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
-                    const ulabsG = activeTab === "ulabs" ? ulabsGetGroupe(p) : null;
-                    const ulabsGInfo = ulabsG ? ULABS_GROUPES[ulabsG] : null;
-                    const ulabsGrat = ulabsGratuite(p, qty, cat?.products, quantities, activeTab);
+                    const ulabsGInfo = currentGroupe;
+                    const ulabsGrat = activeTab === "ulabs" ? campGratuite(p, qty, cat?.products, quantities, activeTab, _groupes) : { livrées: 0, type: null };
                     const has6plus2 = !!ulabsGInfo?.gratuite;
                     const livrées6plus2 = ulabsGrat.livrées || 0;
                     const qtyLivrée = qty + livrées6plus2;
@@ -1194,9 +1185,9 @@ export default function App() {
                     return (
                       <React.Fragment key={key}>
                       {showGroupHeader && currentGroupe && (() => {
-                        const gInfo = ULABS_GROUPES[currentGroupe];
+                        const gInfo = currentGroupe;
                         // Compter les refs commandées dans ce groupe
-                        const groupProds = gridWithPhoto.filter(gp => ulabsGetGroupe(gp) === currentGroupe);
+                        const groupProds = gridWithPhoto.filter(gp => campGetGroupe(gp, _groupes)?.key === currentGroupe?.key);
                         const groupQty = groupProds.reduce((s, gp) => {
                           const gi = cat.products.indexOf(gp);
                           return s + (parseInt(quantities[`ulabs-${gi}`]) || 0);
@@ -1220,15 +1211,15 @@ export default function App() {
                                 </div>
                               )}
                             </div>
-                            {/* Conditions */}
-                            {({
-                              bdm: [[" 💡 Requis pour les gratuités brosses à dents","Commandez ≥ 1 bain de bouche Fluocaril ET ≥ 1 Parogencyl","#fef9c3","#92400e"]],
-                              fluoc250: [["ℹ️ Aucune gratuité sur ce groupe","Ces références ne bénéficient pas d'offre de gratuité","#f3f4f6","#374151"]],
-                              fluoc145: [["🎁 6 achetées → 2 offertes","Gratuité automatique — sans condition supplémentaire","#d1fae5","#065f46"]],
-                              paro_regen: [["⚠️ Obligatoire dans votre commande","Minimum 3 dentifrices Parogencyl + 1 dentifrice Regenerate dans vos 12 références","#ede9fe","#4c1d95"],["🎁 6 achetées → 2 offertes","Gratuité automatique — sans condition supplémentaire","#d1fae5","#065f46"]],
-                              brosses: [["🎁 3 achetées → 1 offerte","Condition : ≥ 1 brosse Parogencyl + 1 bain de bouche Fluocaril + 1 bain de bouche Parogencyl","#d1fae5","#065f46"]],
-                              junior_kids: [["ℹ️ Aucune gratuité sur cette gamme","Pas d'offre promotionnelle","#f3f4f6","#374151"]],
-                            }[currentGroupe] || []).map(([titre, detail, bg, color], ci) => (
+                            {/* Conditions depuis la config campagne */}
+                            {(()=>{
+                              const rows = [];
+                              if (gInfo?.desc) {
+                                const [bg, col] = !gInfo.gratuite ? ["#f3f4f6","#374151"] : gInfo.gratuite?.type==="6+2" ? ["#d1fae5","#065f46"] : ["#dbeafe","#1e40af"];
+                                rows.push([gInfo.label, gInfo.desc, bg, col]);
+                              }
+                              return rows;
+                            })().map(([titre, detail, bg, color], ci) => (
                               <div key={ci} style={{ padding: "10px 18px", background: bg, borderTop: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 10, alignItems: "flex-start" }}>
                                 <div>
                                   <div style={{ fontWeight: 800, fontSize: 13, color }}>{titre}</div>
@@ -1261,7 +1252,7 @@ export default function App() {
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
-                          {activeTab === "ulabs" && ulabsG === "paro_regen" && (
+                          {activeTab === "ulabs" && ulabsGInfo?.key === "paro_regen" && (
                             <span style={{ fontSize: 10, color: "white", background: "#7c3aed", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Obligatoire</span>
                           )}
                           {has6plus2 && ulabsGInfo?.note && (
@@ -1309,7 +1300,7 @@ export default function App() {
                                   .then(() => fetchGroupOrders());
                               }
                             }} style={{
-                              background: cat.accent + "15", border: `1px solid ${cat.accent}40`,
+                              background: cat.accent + "15", border: `1px solid ${catEffective.accent}40`,
                               color: cat.accent, borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>−</button>
@@ -1400,7 +1391,7 @@ export default function App() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <button onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
-                          style={{ background: cat.accent+"20", border: `1px solid ${cat.accent}40`, color: cat.accent, borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
+                          style={{ background: cat.accent+"20", border: `1px solid ${catEffective.accent}40`, color: cat.accent, borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
                         <span style={{ width: 28, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{qty}</span>
                         <button onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
                           style={{ background: cat.accent, border: "none", color: "white", borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
@@ -1601,15 +1592,20 @@ export default function App() {
             }, 0);
             const confirmOrder = async () => {
               if (ulabsConfirming || ulabsConfirmed) return;
-              // Vérifier les conditions : 12 refs min, 3 Parogencyl, 1 Regenerate
+              // Vérifier les conditions depuis la config campagne
+              const activeCampConf = getCampaign("ulabs");
               const prods = cat?.products || [];
               const cmdRefs = prods.filter((p, idx) => (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0);
               const errors = [];
-              if (cmdRefs.length < 12) errors.push(`• Minimum 12 références (${cmdRefs.length} actuellement)`);
-              const nbParo = cmdRefs.filter(p => /parogencyl/i.test(p.name) && /dentifrice/i.test(p.name)).length;
-              if (nbParo < 3) errors.push(`• 3 dentifrices Parogencyl minimum (${nbParo} actuellement)`);
-              const nbRegen = cmdRefs.filter(p => /regenerate/i.test(p.name) && /dentifrice/i.test(p.name)).length;
-              if (nbRegen < 1) errors.push(`• 1 dentifrice Regenerate minimum (${nbRegen} actuellement)`);
+              const minRefs = activeCampConf?.min_refs ?? 12;
+              if (cmdRefs.length < minRefs) errors.push(`• Minimum ${minRefs} références (${cmdRefs.length} actuellement)`);
+              for (const cond of (activeCampConf?.conditions || [])) {
+                try {
+                  const rx = new RegExp(cond.match_regex, "i");
+                  const nb = cmdRefs.filter(p => rx.test(p.name)).length;
+                  if (nb < cond.count) errors.push(`• ${cond.count} ${cond.label} minimum (${nb} actuellement)`);
+                } catch(e) {}
+              }
               if (errors.length > 0) {
                 setUlabsError("⚠️ Conditions non remplies :\n" + errors.join("\n"));
                 setTimeout(() => setUlabsError(null), 8000);
