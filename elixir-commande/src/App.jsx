@@ -68,17 +68,17 @@ const ULABS_GROUPES = {
   },
   fluoc250: {
     label: "💧 Dentifrices Fluocaril 250mg", color: "#065f46", accent: "#059669",
-    desc: "⚡ Déclencheurs — leur achat active les gratuités Fluocaril 145mg",
-    note: "⚡ Déclencheur gratuité 145mg",
+    desc: "Pas de gratuité sur ce groupe",    
+    note: null,
     match: p => /fluocaril/i.test(p.name) && /250/i.test(p.name),
     cips_declenchants: ["3400936256286","3400936256118","3400935008619","3400935008497"],
   },
   fluoc145: {
     label: "🦷 Dentifrices Fluocaril Bi-Fluoré 145mg", color: "#065f46", accent: "#10b981",
-    desc: "🎁 6 achetées = 2 offertes — si au moins 1 réf. Fluocaril 250mg commandée",
+    desc: "🎁 6 achetées = 2 offertes — sans condition",                               
     note: "🎁 6+2 avec cond.",
     match: p => /fluocaril/i.test(p.name) && /145/i.test(p.name) && !/junior|kids/i.test(p.name),
-    gratuite: { type: "6+2", conditionGroupe: "fluoc250" },
+    gratuite: { type: "6+2" },
   },
   paro_regen: {
     label: "⚠️ Dentifrices Parogencyl & Regenerate", color: "#7c3aed", accent: "#8b5cf6",
@@ -1223,8 +1223,8 @@ export default function App() {
                             {/* Conditions */}
                             {({
                               bdm: [[" 💡 Requis pour les gratuités brosses à dents","Commandez ≥ 1 bain de bouche Fluocaril ET ≥ 1 Parogencyl","#fef9c3","#92400e"]],
-                              fluoc250: [["⚡ Déclencheur de gratuité","Achetez ≥ 1 de ces 4 références pour activer les gratuités sur les Fluocaril 145mg","#dbeafe","#1e40af"]],
-                              fluoc145: [["🎁 6 achetées → 2 offertes","Condition : avoir commandé ≥ 1 référence Fluocaril 250mg","#d1fae5","#065f46"]],
+                              fluoc250: [["ℹ️ Aucune gratuité sur ce groupe","Ces références ne bénéficient pas d'offre de gratuité","#f3f4f6","#374151"]],
+                              fluoc145: [["🎁 6 achetées → 2 offertes","Gratuité automatique — sans condition supplémentaire","#d1fae5","#065f46"]],
                               paro_regen: [["⚠️ Obligatoire dans votre commande","Minimum 3 dentifrices Parogencyl + 1 dentifrice Regenerate dans vos 12 références","#ede9fe","#4c1d95"],["🎁 6 achetées → 2 offertes","Gratuité automatique — sans condition supplémentaire","#d1fae5","#065f46"]],
                               brosses: [["🎁 3 achetées → 1 offerte","Condition : ≥ 1 brosse Parogencyl + 1 bain de bouche Fluocaril + 1 bain de bouche Parogencyl","#d1fae5","#065f46"]],
                               junior_kids: [["ℹ️ Aucune gratuité sur cette gamme","Pas d'offre promotionnelle","#f3f4f6","#374151"]],
