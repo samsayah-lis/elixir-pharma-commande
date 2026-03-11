@@ -142,8 +142,12 @@ function CipCell({ cip }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
+  // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
+  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
+  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
+  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
-  const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: Set<cip>} commandes déjà validées
+  const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: cip[]} commandes déjà validées
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsConfirming, setUlabsConfirming] = useState(false);
   const [ulabsConfirmed, setUlabsConfirmed] = useState(false);
@@ -240,9 +244,9 @@ export default function App() {
           // Toutes les commandes validées de la campagne (toutes pharmacies)
           const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
             .filter(o => o.source === activeTab);
-          const cipSet = new Set();
-          campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip) cipSet.add(it.cip); }); });
-          setValidatedCampOrders(prev => ({...prev, [activeTab]: cipSet}));
+          const cipArr = [];
+          campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip && !cipArr.includes(it.cip)) cipArr.push(it.cip); }); });
+          setValidatedCampOrders(prev => ({...prev, [activeTab]: cipArr}));
         }).catch(() => {});
     }
   }, [activeTab, fetchGroupOrders]);
@@ -299,10 +303,6 @@ export default function App() {
   }, [fetchStock]);
 
   // ── Pharmacy session state — MUST be before CATALOG_WITH_ADMIN useMemo ──
-  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
-  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
-  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
-
   const CATALOG_WITH_ADMIN = useMemo(() => {
     const merged = {};
     // Construit chaque section depuis les produits Supabase
@@ -1115,7 +1115,7 @@ export default function App() {
               const myLocalCips = new Set(
                 (cat?.products || []).filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0).map(p => p.cip)
               );
-              const myValidatedCips = validatedCampOrders[activeTab] || new Set();
+              const myValidatedCips = validatedCampOrders[activeTab] || [];
               // Toutes les refs Supabase group_orders (TOUTES pharmacies, y compris la courante)
               const allGroupCips = new Set(
                 groupOrders.filter(r => (parseInt(r.qty)||0) > 0).map(r => r.cip)
