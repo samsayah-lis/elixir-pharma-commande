@@ -93,7 +93,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const fetchGroupCampaignOrders = async (fournisseur) => {
     setGcOrdersLoading(true);
     try {
-      const res = await fetch(\`/.netlify/functions/group-order?fournisseur=\${fournisseur}\`);
+      const res = await fetch(`/.netlify/functions/group-order?fournisseur=${fournisseur}`);
       const rows = await res.json();
       setGcOrders(Array.isArray(rows) ? rows : []);
     } catch(e) { console.error(e); }
