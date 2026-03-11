@@ -552,7 +552,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* Tabs */}
         <div style={{display:"flex",gap:8,marginBottom:24}}>
           {[{k:"add",label:"➕ Ajouter"},{k:"edit",label:"✏️ Modifier"},{k:"promos",label:`🎯 Promos${promos.length>0?" ("+promos.length+")":""}` },{k:"orders",label:`📋 Commandes${orders.filter(o=>!o.processed).length>0?" ("+orders.filter(o=>!o.processed).length+")":"" }` },{k:"grouporders",label:"🤝 Groupements"}].map(t=>(
-            <button key={t.k} onClick={()=>setTab(t.k)} style={{
+            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); }} style={{
               flex:1, padding:"10px", borderRadius:10, fontWeight:700, fontSize:13, cursor:"pointer",
               border: tab===t.k?"2px solid #0f2d3d":"2px solid #e2e8f0",
               background: tab===t.k?"#0f2d3d":"white",
@@ -1226,6 +1226,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {gcOrdersLoading&&<div style={{textAlign:"center",padding:24,color:"#888"}}>Chargement…</div>}
 
             {!gcOrdersLoading&&gcOrders.length>0&&(()=>{
+              // Map CIP → nom produit depuis la liste produits chargée
+              const cipToName = {};
+              products.forEach(p => { cipToName[p.cip] = p.name; });
               // Agréger par pharmacie
               const byPharm = {};
               gcOrders.forEach(r=>{
@@ -1273,7 +1276,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                           <tbody>
                             {ph.lines.sort((a,b)=>b.qty-a.qty).map(r=>(
                               <tr key={r.cip} style={{borderBottom:"1px solid #f0f2f5"}}>
-                                <td style={{padding:"7px 12px",fontSize:12,fontFamily:"monospace",color:"#555"}}>{r.cip}</td>
+                                <td style={{padding:"7px 12px",fontSize:12,color:"#222"}}>{cipToName[r.cip] || r.cip}</td>
                                 <td style={{padding:"7px 12px",fontSize:13,fontWeight:700,color:"#0f2d3d"}}>{r.qty}</td>
                                 <td style={{padding:"7px 12px",fontSize:11,color:"#999"}}>{r.updated_at?new Date(r.updated_at).toLocaleString("fr-FR"):"-"}</td>
                               </tr>
@@ -1302,7 +1305,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                           const nbP = new Set(lines.map(r=>r.pharmacy_cip)).size;
                           return(
                             <tr key={cip} style={{borderBottom:"1px solid #f0f2f5"}}>
-                              <td style={{padding:"8px 14px",fontSize:12,fontFamily:"monospace",color:"#555"}}>{cip}</td>
+                              <td style={{padding:"8px 14px",fontSize:12,color:"#222"}}>{cipToName[cip] || cip}</td>
+                              <td style={{padding:"8px 14px",fontSize:11,fontFamily:"monospace",color:"#aaa"}}>{cip}</td>
                               <td style={{padding:"8px 14px",fontSize:14,fontWeight:800,color:"#059669"}}>{total}</td>
                               <td style={{padding:"8px 14px",fontSize:12,color:"#888"}}>{nbP}</td>
                             </tr>
