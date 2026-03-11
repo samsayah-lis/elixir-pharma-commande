@@ -289,6 +289,7 @@ export default function App() {
     if (catKey === "stratege") return p.colis || 1;
     if (catKey === "master") return p.palier || 1;
     if (catKey === "blanche") return p.colis || 1;
+    if (catKey === "ulabs") return 6;
     return 1;
   };
 
@@ -1100,13 +1101,14 @@ export default function App() {
                           )}
                           <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? (ulabsPalier === "expert" ? "#d97706" : "#0891b2") : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <button onClick={async () => {
+                            <button onClick={() => {
                               const nq = Math.max(0, qty - step);
                               setQty(key, nq, step);
                               if (activeTab === "ulabs") {
-                                await fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})});
-                                fetchGroupOrders();
+                                const snapped = step > 1 ? Math.round(nq / step) * step : nq;
+                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
+                                  .then(() => fetchGroupOrders());
                               }
                             }} style={{
                               background: cat.accent + "15", border: `1px solid ${cat.accent}40`,
@@ -1115,19 +1117,29 @@ export default function App() {
                             }}>−</button>
                             <input type="number" min="0" step={step} value={quantities[key] || ""}
                               onChange={e => setQty(key, e.target.value, step)}
+                              onBlur={e => {
+                                if (activeTab === "ulabs") {
+                                  const v = parseInt(e.target.value) || 0;
+                                  const snapped = Math.round(v / step) * step;
+                                  fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                    body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
+                                    .then(() => fetchGroupOrders());
+                                }
+                              }}
                               placeholder="0"
                               style={{
                                 width: 50, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
                                 borderRadius: 7, padding: "5px 4px", fontSize: 14,
                                 fontWeight: qty > 0 ? 700 : 400, outline: "none"
                               }}/>
-                            <button onClick={async () => {
+                            <button onClick={() => {
                               const nq = qty + step;
                               setQty(key, nq, step);
                               if (activeTab === "ulabs") {
-                                await fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})});
-                                fetchGroupOrders();
+                                const snapped = step > 1 ? Math.round(nq / step) * step : nq;
+                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
+                                  .then(() => fetchGroupOrders());
                               }
                             }} style={{
                               background: qty > 0 ? cat.accent : "#0f2d3d", border: "none",
