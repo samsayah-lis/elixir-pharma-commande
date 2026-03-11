@@ -306,6 +306,32 @@ export default function App() {
         }));
       merged[k] = { ...meta, products: sectionProducts };
     });
+    // Inject active campaigns as dynamic tabs (with access restriction)
+    campaigns.filter(camp => camp.active).forEach(camp => {
+      const restricted = camp.restricted_to || [];
+      const hasAccess = restricted.length === 0 || restricted.includes(pharmacyEmail);
+      if (!hasAccess) return;
+      // Only inject if not already defined in SECTION_META
+      if (!SECTION_META[camp.id]) {
+        const campProducts = dbProducts
+          .filter(p => p.section === camp.id)
+          .map(p => ({ cip:p.cip, name:p.name, pv:p.pv, pct:p.pct, pn:p.pn, remise_eur:p.remise_eur, colis:p.colis, carton:p.carton, note:p.note, source:p.source, image_url:p.image_url||null, _dbId:p.cip }));
+        merged[camp.id] = {
+          label: camp.label, subtitle: camp.subtitle||"", color: camp.color||"#0d4f3c",
+          accent: camp.accent||"#059669", icon: camp.icon||"🤝", columns: [], isCampaign: true,
+          products: campProducts,
+        };
+      } else {
+        // Merge campaign meta over existing section meta
+        merged[camp.id] = { ...merged[camp.id],
+          label: camp.label||merged[camp.id].label,
+          subtitle: camp.subtitle||merged[camp.id].subtitle,
+          color: camp.color||merged[camp.id].color,
+          accent: camp.accent||merged[camp.id].accent,
+          icon: camp.icon||merged[camp.id].icon,
+        };
+      }
+    });
     // Inject active promo sections as dynamic tabs
     promoSections.filter(ps => ps.active).forEach(ps => {
       merged[`promo_${ps.id}`] = {
@@ -321,7 +347,7 @@ export default function App() {
       };
     });
     return merged;
-  }, [dbProducts, promoSections]);
+  }, [dbProducts, promoSections, campaigns, pharmacyEmail]);
 
   // Onboarding
   const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
@@ -1172,7 +1198,7 @@ export default function App() {
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s + (parseInt(r.qty)||0), 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
-                    const remisePct = activeTab === "ulabs" ? (PALIER_REMISE ?? 33) : 0;
+                    const remisePct = (() => { const _cr = getCampaign(activeTab); return _cr ? (_cr.palier_remise ?? 33) : 0; })();
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
                     const ulabsGInfo = currentGroupe;
                     const ulabsGrat = activeTab === "ulabs" ? campGratuite(p, qty, cat?.products, quantities, activeTab, _groupes) : { livrées: 0, type: null };
@@ -1252,9 +1278,14 @@ export default function App() {
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
-                          {activeTab === "ulabs" && ulabsGInfo?.key === "paro_regen" && (
-                            <span style={{ fontSize: 10, color: "white", background: "#7c3aed", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Obligatoire</span>
-                          )}
+                          {activeTab && (() => {
+                            const _campBadge = getCampaign(activeTab);
+                            const _conds = _campBadge?.conditions || [];
+                            const isOblig = _conds.some(cond => {
+                              try { return new RegExp(cond.match_regex,"i").test(p.name); } catch(e){ return false; }
+                            });
+                            return isOblig ? <span style={{ fontSize: 10, color: "white", background: "#7c3aed", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Obligatoire</span> : null;
+                          })()}
                           {has6plus2 && ulabsGInfo?.note && (
                             <span style={{ fontSize: 10, color: "#065f46", background: "#d1fae5", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4, border: "1px solid #6ee7b7" }}>{ulabsGInfo.note}</span>
                           )}
