@@ -1114,11 +1114,14 @@ export default function App() {
                             </div>
                           )}
                           <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? "#d97706" : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
-                          {has6plus2 && qty >= 6 && (
-                            <div style={{ fontSize: 11, color: "#059669", fontWeight: 700 }}>
-                              soit {fmt(pnEffectif)}/u livré
+                          {has6plus2 && qty >= 6 ? (
+                            <div style={{ background: "#d1fae5", border: "1px solid #6ee7b7", borderRadius: 8, padding: "5px 10px", textAlign: "center", marginTop: 2 }}>
+                              <div style={{ fontSize: 9, color: "#065f46", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>prix effectif avec UG</div>
+                              <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(pnEffectif)}<span style={{ fontSize: 11, fontWeight: 500 }}>/u livrée</span></div>
                             </div>
-                          )}
+                          ) : has6plus2 ? (
+                            <div style={{ fontSize: 10, color: "#6ee7b7", background: "#065f46", borderRadius: 6, padding: "2px 7px", fontWeight: 600 }}>🎁 dès 6 u. : prix réduit</div>
+                          ) : null}
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => {
                               const oblMin = activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) ? 2 : 0;
