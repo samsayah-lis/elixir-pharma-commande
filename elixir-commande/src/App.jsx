@@ -298,6 +298,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, [fetchStock]);
 
+  // ── Pharmacy session state — MUST be before CATALOG_WITH_ADMIN useMemo ──
+  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
+  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
+  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
+
   const CATALOG_WITH_ADMIN = useMemo(() => {
     const merged = {};
     // Construit chaque section depuis les produits Supabase
@@ -370,9 +375,6 @@ export default function App() {
   const [obStep, setObStep] = useState("email");
   const [emailInput, setEmailInput] = useState("");
   const [foundPharmacy, setFoundPharmacy] = useState(null);
-  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
-  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
-  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
 
   const handleLogout = () => {
     localStorage.removeItem("session_name");
