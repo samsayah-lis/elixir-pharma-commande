@@ -92,6 +92,7 @@ export default function App() {
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsConfirming, setUlabsConfirming] = useState(false);
   const [ulabsConfirmed, setUlabsConfirmed] = useState(false);
+  const [ulabsError, setUlabsError] = useState(null);
   const [ulabsPalier, setUlabsPalier] = useState(null); // null | "engage" | "expert"
   const [countdown, setCountdown] = useState("");
   useEffect(() => {
@@ -1173,6 +1174,16 @@ export default function App() {
                               {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
                             </div>
                           )}
+                          {qty > 0 && (
+                            <button onClick={() => {
+                              setQty(key, 0, step);
+                              if (activeTab === "ulabs") {
+                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:0})})
+                                  .then(() => fetchGroupOrders());
+                              }
+                            }} style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 14, padding: "2px 4px", lineHeight: 1 }} title="Remettre à zéro">✕</button>
+                          )}
                         </div>
                       </div>
                     );
@@ -1411,6 +1422,22 @@ export default function App() {
             }, 0);
             const confirmOrder = async () => {
               if (ulabsConfirming || ulabsConfirmed) return;
+              // Vérifier les 3 refs obligatoires
+              const OBL = ["8710604763356","8720181397233","8710604763363"];
+              const oblManquantes = OBL.filter(cip => {
+                const idx = (cat?.products || []).findIndex(p => p.cip === cip);
+                return idx === -1 || !(quantities[`ulabs-${idx}`] > 0);
+              });
+              if (oblManquantes.length > 0) {
+                const noms = oblManquantes.map(cip => {
+                  const p = (cat?.products || []).find(pr => pr.cip === cip);
+                  return p ? p.name : cip;
+                });
+                setUlabsError(`⚠️ Références obligatoires manquantes :\n${noms.join("\n")}`);
+                setTimeout(() => setUlabsError(null), 6000);
+                return;
+              }
+              setUlabsError(null);
               setUlabsConfirming(true);
               const orderId = `UL-${Date.now()}`;
               const items = myItems.map(({ p, qty }) => {
@@ -1434,7 +1461,12 @@ export default function App() {
               setUlabsConfirming(false);
             };
             return (
-              <div style={{ position: "sticky", bottom: 20, display: "flex", justifyContent: "center", zIndex: 50, marginTop: 16 }}>
+              <div style={{ position: "sticky", bottom: 20, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 50, marginTop: 16 }}>
+                {ulabsError && (
+                  <div style={{ background: "#dc2626", borderRadius: 10, padding: "10px 18px", marginBottom: 8, maxWidth: 480, textAlign: "center" }}>
+                    {ulabsError.split("\n").map((line, i) => <div key={i} style={{ color: "white", fontSize: i === 0 ? 13 : 11, fontWeight: i === 0 ? 700 : 400 }}>{line}</div>)}
+                  </div>
+                )}
                 <div style={{ background: ulabsConfirmed ? "#059669" : "#0d4f3c", borderRadius: 16, padding: "16px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 20, border: "1px solid #059669" }}>
                   <div>
                     <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{myItems.length} référence(s) · {myItems.reduce((s,{qty})=>s+qty,0)} unités</div>
