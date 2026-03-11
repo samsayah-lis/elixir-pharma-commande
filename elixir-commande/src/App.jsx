@@ -432,7 +432,20 @@ export default function App() {
         if (qty > 0 && p.pn != null) {
           const remisePct = camp ? (camp.palier_remise ?? 33) : 0;
           const pnNet = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
-          const grat = camp ? campGratuite(p, qty, cat.products, quantities, catKey, groupes) : { livrées: 0 };
+          let grat = { livrées: 0 };
+          if (camp && groupes.length > 0) {
+            grat = campGratuite(p, qty, cat.products, quantities, catKey, groupes);
+          } else if (camp && groupes.length === 0) {
+            // Fallback ulabs : 6+2 si nom contient "dentifrice" (parogencyl/regenerate/145)
+            // 3+1 si brosse à dents hors junior/kids
+            const nm = p.name?.toLowerCase() || "";
+            if (/brosse/.test(nm) && !/junior|kids/.test(nm) && qty >= 3)
+              grat = { livrées: Math.floor(qty/3), type: "3+1" };
+            else if ((/parogencyl|regenerate|145/.test(nm)) && /dentifrice/.test(nm) && qty >= 6)
+              grat = { livrées: Math.floor(qty/6)*2, type: "6+2" };
+            else if (/fluocaril/.test(nm) && /145/.test(nm) && !/junior|kids/.test(nm) && qty >= 6)
+              grat = { livrées: Math.floor(qty/6)*2, type: "6+2" };
+          }
           const qtyUG = grat.livrées || 0;
           items.push({
             key,
@@ -1734,20 +1747,21 @@ export default function App() {
           </>
         </main>
 
-        {/* Cart panel */}
-        <aside style={isMobile ? {
-          position: "fixed", inset: 0, zIndex: 200,
-          background: "white", display: cartOpen ? "flex" : "none",
-          flexDirection: "column", overflowY: "auto"
-        } : {
-          width: cartOpen ? 360 : 0, minWidth: cartOpen ? 360 : 0,
-          background: "white", borderLeft: cartOpen ? "1px solid #e8edf2" : "none",
-          overflow: "hidden", transition: "all 0.3s ease",
+        {/* Cart panel — overlay flottant fixe */}
+        {cartOpen && (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 300, backdropFilter: "blur(2px)" }}
+            onClick={() => setCartOpen(false)} />
+        )}
+        <aside style={{
+          position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 301,
+          width: isMobile ? "100%" : 380,
+          background: "white",
           display: "flex", flexDirection: "column",
-          boxShadow: cartOpen ? "-4px 0 20px rgba(0,0,0,0.08)" : "none"
+          boxShadow: "-6px 0 32px rgba(0,0,0,0.18)",
+          transform: cartOpen ? "translateX(0)" : "translateX(100%)",
+          transition: "transform 0.28s cubic-bezier(0.4,0,0.2,1)",
+          pointerEvents: cartOpen ? "auto" : "none",
         }}>
-          {cartOpen && (
-            <>
               <div style={{ padding: "20px 20px 0", borderBottom: "1px solid #f0f2f5" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div style={{ fontWeight: 800, fontSize: 18, color: "#1a2a3a" }}>🛒 Panier commun</div>
@@ -1899,8 +1913,6 @@ export default function App() {
                 </div>
                 )}
               </div>
-            </>
-          )}
         </aside>
       </div>
 
