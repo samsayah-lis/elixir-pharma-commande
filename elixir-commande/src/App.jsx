@@ -382,22 +382,28 @@ export default function App() {
   const [ncSending, setNcSending] = useState(false);
   const [ncSent, setNcSent] = useState(false);
 
-  const getStep = (catKey, p) => {
-    if (catKey === "stratege") return p.colis || 1;
-    if (catKey === "master") return p.palier || 1;
-    if (catKey === "blanche") return p.colis || 1;
-    if (catKey === "ulabs") {
-      const camp = getCampaign("ulabs");
+  const getStep = (catKey, p) => getStepMin(catKey, p).step;
+
+  const getStepMin = (catKey, p) => {
+    if (catKey === "stratege") return { step: p.colis||1, min: p.colis||1, multiple: p.colis||1 };
+    if (catKey === "master")   return { step: p.palier||1, min: p.palier||1, multiple: p.palier||1 };
+    if (catKey === "blanche")  return { step: p.colis||1, min: p.colis||1, multiple: p.colis||1 };
+    const camp = getCampaign(catKey);
+    if (camp) {
       const groupes = buildGroupes(camp);
       const g = campGetGroupe(p, groupes);
-      return g?.step ?? 6;
+      const step     = g?.step     || 1;
+      const min_qty  = g?.min_qty  || 0;
+      const multiple = g?.multiple || step;
+      return { step, min: min_qty || multiple, multiple };
     }
-    return 1;
+    return { step: 1, min: 0, multiple: 1 };
   };
 
-  const setQty = (key, val, step = 1, min = 0) => {
+  const setQty = (key, val, step = 1, min = 0, multiple = 1) => {
     const raw = Math.max(0, parseInt(val) || 0);
-    const snapped = step > 1 ? Math.round(raw / step) * step : raw;
+    const m = multiple > 1 ? multiple : (step > 1 ? step : 1);
+    const snapped = m > 1 ? Math.round(raw / m) * m : raw;
     const final = snapped > 0 && min > 0 ? Math.max(min, snapped) : snapped;
     setQuantities(prev => ({ ...prev, [key]: final }));
   };
@@ -1194,7 +1200,7 @@ export default function App() {
                     const prevGroupe = activeTab === "ulabs" && prevP ? campGetGroupe(prevP, _groupes) : null;
                     const showGroupHeader = activeTab === "ulabs" && currentGroupe?.key !== prevGroupe?.key;
                     const qty = quantities[key] || 0;
-                    const step = getStep(activeTab, p);
+                    const { step, min: stepMin, multiple } = getStepMin(activeTab, p);
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s + (parseInt(r.qty)||0), 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
@@ -1321,13 +1327,12 @@ export default function App() {
                           ) : null}
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => {
-                              const oblMin = 0;
-                              const nq = qty - step <= 0 ? 0 : Math.max(oblMin || step, qty - step);
-                              setQty(key, nq, step);
+                              const nq = qty - step <= 0 ? 0 : qty - step;
+                              setQty(key, nq, step, 0, multiple);
                               if (activeTab === "ulabs") {
-                                const snapped = step > 1 ? Math.round(nq / step) * step : nq;
+                                const snapped = multiple > 1 ? Math.round(nq/multiple)*multiple : nq;
                                 fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
+                                  body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
                                   .then(() => fetchGroupOrders());
                               }
                             }} style={{
@@ -1335,14 +1340,16 @@ export default function App() {
                               color: cat.accent, borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>−</button>
-                            <input type="number" min={activeTab === "ulabs" ? (["paro_regen","brosses","bdm"].includes(ulabsG) ? 1 : 6) : 0} step={step} value={quantities[key] || ""}
+                            <input type="number" min={stepMin || 0} step={multiple > 1 ? multiple : step} value={quantities[key] || ""}
                               onChange={e => setQty(key, e.target.value, step)}
                               onBlur={e => {
-                                if (activeTab === "ulabs") {
+                                const _camp = getCampaign(activeTab);
+                                if (_camp) {
                                   const v = parseInt(e.target.value) || 0;
-                                  const snapped = Math.round(v / step) * step;
+                                  const m = multiple > 1 ? multiple : step;
+                                  const snapped = m > 1 ? Math.round(v/m)*m : v;
                                   fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                    body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
+                                    body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
                                     .then(() => fetchGroupOrders());
                                 }
                               }}
@@ -1353,10 +1360,11 @@ export default function App() {
                                 fontWeight: qty > 0 ? 700 : 400, outline: "none"
                               }}/>
                             <button onClick={() => {
-                              const nq = qty + step;
-                              setQty(key, nq, step);
-                              if (activeTab === "ulabs") {
-                                const snapped = step > 1 ? Math.round(nq / step) * step : nq;
+                              const nq = qty === 0 ? (stepMin || step) : qty + step;
+                              setQty(key, nq, step, stepMin, multiple);
+                              if (getCampaign(activeTab)) {
+                                const m = multiple > 1 ? multiple : step;
+                                const snapped = m > 1 ? Math.round(nq/m)*m : nq;
                                 fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
                                   body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
                                   .then(() => fetchGroupOrders());
@@ -1569,7 +1577,7 @@ export default function App() {
                         {/* Qty input */}
                         <td style={{ ...tdStyle, textAlign: "center" }}>
                           {(() => {
-                            const step = getStep(activeTab, p);
+                            const { step, min: stepMin, multiple } = getStepMin(activeTab, p);
                             return (
                               <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flexDirection: "column" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>

@@ -1576,8 +1576,20 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                             <div style={{display:"flex",gap:4}}><input type="color" value={g.accent||"#3b82f6"} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{width:36,height:34,borderRadius:6,border:"1.5px solid #e2e8f0",cursor:"pointer"}}/><input value={g.accent||""} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{...IS,flex:1}}/></div>
                           </div>
                           <div>
-                            <label style={LS}>Step quantité (1 ou 6…)</label>
+                            <label style={LS}>Step (incrément + / −)</label>
                             <input type="number" min={1} value={g.step||1} onChange={e=>updGroupe(gi,"step",Number(e.target.value))} style={IS}/>
+                          </div>
+                        </div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
+                          <div>
+                            <label style={LS}>Qté min (1er clic sur + → saute ici)</label>
+                            <input type="number" min={0} value={g.min_qty||""} onChange={e=>updGroupe(gi,"min_qty",e.target.value===""?0:Number(e.target.value))} placeholder="ex: 6" style={IS}/>
+                            <div style={{fontSize:10,color:"#aaa",marginTop:2}}>0 = pas de minimum</div>
+                          </div>
+                          <div>
+                            <label style={LS}>Multiple obligatoire (ex: 3 → 3, 6, 9…)</label>
+                            <input type="number" min={1} value={g.multiple||""} onChange={e=>updGroupe(gi,"multiple",e.target.value===""?1:Number(e.target.value))} placeholder="ex: 3" style={IS}/>
+                            <div style={{fontSize:10,color:"#aaa",marginTop:2}}>1 = libre</div>
                           </div>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
