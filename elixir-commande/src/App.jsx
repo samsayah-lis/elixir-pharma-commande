@@ -952,8 +952,19 @@ export default function App() {
             </div>
             {/* Bloc groupement U-Labs */}
             {activeTab === "ulabs" && (() => {
-              const totalUnites = groupOrders.reduce((s,r) => s + (parseInt(r.qty) || 0), 0);
-              const nbPharm = new Set(groupOrders.map(r => r.pharmacy_cip)).size;
+              // Total hybride : quantités locales pour moi + Supabase pour les autres
+              const OBL_CIPS = ["8710604763356","8720181397233","8710604763363"];
+              const myLocalQty = (cat?.products || []).reduce((s, p, idx) => {
+                return s + (parseInt(quantities[`ulabs-${idx}`]) || 0);
+              }, 0);
+              const othersQty = groupOrders
+                .filter(r => r.pharmacy_cip !== pharmacyCip)
+                .reduce((s,r) => s + (parseInt(r.qty) || 0), 0);
+              const totalUnites = myLocalQty + othersQty;
+              const nbPharm = new Set([
+                ...groupOrders.map(r => r.pharmacy_cip),
+                ...(myLocalQty > 0 ? [pharmacyCip] : [])
+              ]).size;
               const PALIER_EXPERT = 500;
               const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
               const palierAtteint = totalUnites >= PALIER_EXPERT;
