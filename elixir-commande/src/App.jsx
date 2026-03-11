@@ -124,6 +124,12 @@ export default function App() {
   // Stock : chargement et actualisation manuelle
   const [stockLoading, setStockLoading] = useState(false);
   const [stockRefreshing, setStockRefreshing] = useState(false); // true = refresh Odoo en cours
+  const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
+  React.useEffect(() => {
+    const h = () => setIsMobile(window.innerWidth < 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
 
   // Lit les stocks depuis Supabase (rapide)
   const fetchStock = useCallback(async () => {
