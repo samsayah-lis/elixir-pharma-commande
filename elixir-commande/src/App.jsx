@@ -13,7 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "Commandes groupées · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "dont 3 références Parogencyl obligatoires · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -941,12 +941,9 @@ export default function App() {
             {activeTab === "ulabs" && (() => {
               const totalUnites = groupOrders.reduce((s,r) => s+r.qty, 0);
               const nbPharm = new Set(groupOrders.map(r => r.pharmacy_cip)).size;
-              // Paliers : Engagé = 200 unités, Expert = 500 unités (objectifs indicatifs)
-              const PALIER_ENGAGE = 200;
               const PALIER_EXPERT = 500;
-              const pctEngage = Math.min(100, Math.round(totalUnites / PALIER_ENGAGE * 100));
               const pctExpert = Math.min(100, Math.round(totalUnites / PALIER_EXPERT * 100));
-              const palierAtteint = totalUnites >= PALIER_EXPERT ? "expert" : totalUnites >= PALIER_ENGAGE ? "engage" : null;
+              const palierAtteint = totalUnites >= PALIER_EXPERT;
               return (
                 <div style={{ marginTop: 16 }}>
                   {/* Countdown + stats */}
@@ -961,10 +958,8 @@ export default function App() {
                         <div style={{ fontSize: 10, opacity: 0.7 }}>pharmacie(s)</div>
                       </div>
                       {palierAtteint && (
-                        <div style={{ background: palierAtteint === "expert" ? "#f59e0b" : "#06b6d4", borderRadius: 8, padding: "4px 12px", display: "flex", alignItems: "center" }}>
-                          <span style={{ fontWeight: 800, fontSize: 13, color: "white" }}>
-                            {palierAtteint === "expert" ? "⭐ Marché Expert −33% atteint !" : "✅ Marché Engagé −25% atteint !"}
-                          </span>
+                        <div style={{ background: "#f59e0b", borderRadius: 8, padding: "4px 12px", display: "flex", alignItems: "center" }}>
+                          <span style={{ fontWeight: 800, fontSize: 13, color: "white" }}>⭐ Objectif −33% atteint !</span>
                         </div>
                       )}
                     </div>
@@ -989,40 +984,23 @@ export default function App() {
                       {/* Remplissage */}
                       <div style={{
                         width: `${pctExpert}%`, height: "100%", borderRadius: 99, transition: "width 0.6s ease",
-                        background: palierAtteint === "expert" ? "linear-gradient(90deg,#06b6d4,#f59e0b)" : palierAtteint === "engage" ? "linear-gradient(90deg,#06b6d4,#67e8f9)" : "linear-gradient(90deg,#059669,#34d399)"
+                        background: palierAtteint ? "linear-gradient(90deg,#f59e0b,#fcd34d)" : "linear-gradient(90deg,#059669,#34d399)"
                       }}/>
-                      {/* Jalon Engagé */}
-                      <div style={{ position: "absolute", left: `${PALIER_ENGAGE/PALIER_EXPERT*100}%`, top: -2, transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
-                        <div style={{ width: 3, height: 18, background: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.4)", borderRadius: 2 }}/>
-                      </div>
                     </div>
-                    {/* Légende jalons */}
-                    <div style={{ position: "relative", height: 36, marginTop: 2 }}>
-                      {/* Jalon Engagé */}
-                      <div style={{ position: "absolute", left: `${PALIER_ENGAGE/PALIER_EXPERT*100}%`, transform: "translateX(-50%)", textAlign: "center" }}>
-                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.45)", fontWeight: 700, whiteSpace: "nowrap" }}>{PALIER_ENGAGE} u.</div>
-                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_ENGAGE ? "#67e8f9" : "rgba(255,255,255,0.4)", whiteSpace: "nowrap" }}>✅ −25%</div>
-                      </div>
-                      {/* Jalon Expert */}
-                      <div style={{ position: "absolute", right: 0, textAlign: "right" }}>
-                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_EXPERT ? "#fcd34d" : "rgba(255,255,255,0.45)", fontWeight: 700 }}>{PALIER_EXPERT} u.</div>
-                        <div style={{ fontSize: 9, color: totalUnites >= PALIER_EXPERT ? "#fcd34d" : "rgba(255,255,255,0.4)" }}>⭐ −33%</div>
-                      </div>
+                    {/* Légende */}
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>0</span>
+                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} unités = −33% sur facture</span>
                     </div>
                   </div>
                   {/* Sélection palier prix */}
-                  <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Simuler les prix avec remise :</span>
-                    <button onClick={() => setUlabsPalier(ulabsPalier === "engage" ? null : "engage")} style={{
-                      background: ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.1)",
-                      border: `1px solid ${ulabsPalier === "engage" ? "#06b6d4" : "rgba(255,255,255,0.2)"}`,
-                      color: "white", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700
-                    }}>−25%</button>
+                  <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}>Simuler les prix avec −33% :</span>
                     <button onClick={() => setUlabsPalier(ulabsPalier === "expert" ? null : "expert")} style={{
                       background: ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.1)",
                       border: `1px solid ${ulabsPalier === "expert" ? "#f59e0b" : "rgba(255,255,255,0.2)"}`,
                       color: "white", borderRadius: 6, padding: "4px 12px", cursor: "pointer", fontSize: 11, fontWeight: 700
-                    }}>−33%</button>
+                    }}>{ulabsPalier === "expert" ? "✓ Activé" : "Activer"}</button>
                     {ulabsPalier && <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· prix simulés sur les cartes produit</span>}
                   </div>
                 </div>
@@ -1056,7 +1034,7 @@ export default function App() {
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s+r.qty, 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
-                    const remisePct = activeTab === "ulabs" ? (ulabsPalier === "expert" ? 33 : ulabsPalier === "engage" ? 25 : 0) : 0;
+                    const remisePct = activeTab === "ulabs" && ulabsPalier === "expert" ? 33 : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
                     return (
                       <div key={key} style={{
@@ -1081,6 +1059,9 @@ export default function App() {
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
+                          {activeTab === "ulabs" && p.name?.toLowerCase().includes("parogencyl") && (
+                            <span style={{ fontSize: 10, color: "white", background: "#dc2626", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Réf. obligatoire</span>
+                          )}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                           {activeTab === "ulabs" && groupTotal > 0 && (
                             <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: "#d1fae5", borderRadius: 6, padding: "3px 8px" }}>
