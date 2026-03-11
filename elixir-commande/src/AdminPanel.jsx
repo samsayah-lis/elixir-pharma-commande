@@ -590,7 +590,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* Tabs */}
         <div style={{display:"flex",gap:8,marginBottom:24}}>
           {[{k:"add",label:"➕ Ajouter"},{k:"edit",label:"✏️ Modifier"},{k:"promos",label:`🎯 Promos${promos.length>0?" ("+promos.length+")":""}` },{k:"orders",label:`📋 Commandes${orders.filter(o=>!o.processed).length>0?" ("+orders.filter(o=>!o.processed).length+")":"" }` },{k:"grouporders",label:"🤝 Groupements"},{k:"campaigns",label:"🏗️ Campagnes"}].map(t=>(
-            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); }} style={{
+            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }} style={{
               flex:1, padding:"10px", borderRadius:10, fontWeight:700, fontSize:13, cursor:"pointer",
               border: tab===t.k?"2px solid #0f2d3d":"2px solid #e2e8f0",
               background: tab===t.k?"#0f2d3d":"white",
