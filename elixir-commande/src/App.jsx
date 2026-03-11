@@ -1206,19 +1206,36 @@ export default function App() {
                           return (parseInt(quantities[`ulabs-${gi}`]) || 0) > 0;
                         }).length;
                         return (
-                          <div style={{ marginTop: mapIdx > 0 ? 16 : 0, marginBottom: 4, padding: "10px 16px", background: `linear-gradient(135deg, ${gInfo.color} 0%, ${gInfo.accent}22 100%)`, borderRadius: 10, border: `1px solid ${gInfo.accent}40` }}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <div style={{ marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: 12, overflow: "hidden", border: `1px solid ${gInfo.accent}40` }}>
+                            {/* Titre groupe */}
+                            <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${gInfo.color} 0%, ${gInfo.accent}33 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <div>
-                                <div style={{ fontWeight: 800, fontSize: 14, color: "white" }}>{gInfo.label}</div>
-                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>{gInfo.desc}</div>
+                                <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>{gInfo.label}</div>
+                                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", marginTop: 2 }}>{groupProds.length} référence{groupProds.length>1?"s":""}</div>
                               </div>
                               {groupRefsCmd > 0 && (
-                                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 10px", textAlign: "center" }}>
-                                  <div style={{ fontWeight: 800, fontSize: 15, color: "white" }}>{groupRefsCmd}</div>
-                                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)" }}>réf. cmd</div>
+                                <div style={{ background: "rgba(255,255,255,0.18)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
+                                  <div style={{ fontWeight: 800, fontSize: 18, color: "white" }}>{groupRefsCmd}</div>
+                                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>réf. sélectionnées</div>
                                 </div>
                               )}
                             </div>
+                            {/* Conditions */}
+                            {({
+                              bdm: [[" 💡 Requis pour les gratuités brosses à dents","Commandez ≥ 1 bain de bouche Fluocaril ET ≥ 1 Parogencyl","#fef9c3","#92400e"]],
+                              fluoc250: [["⚡ Déclencheur de gratuité","Achetez ≥ 1 de ces 4 références pour activer les gratuités sur les Fluocaril 145mg","#dbeafe","#1e40af"]],
+                              fluoc145: [["🎁 6 achetées → 2 offertes","Condition : avoir commandé ≥ 1 référence Fluocaril 250mg","#d1fae5","#065f46"]],
+                              paro_regen: [["⚠️ Obligatoire dans votre commande","Minimum 3 dentifrices Parogencyl + 1 dentifrice Regenerate dans vos 12 références","#ede9fe","#4c1d95"],["🎁 6 achetées → 2 offertes","Gratuité automatique — sans condition supplémentaire","#d1fae5","#065f46"]],
+                              brosses: [["🎁 3 achetées → 1 offerte","Condition : ≥ 1 brosse Parogencyl + 1 bain de bouche Fluocaril + 1 bain de bouche Parogencyl","#d1fae5","#065f46"]],
+                              junior_kids: [["ℹ️ Aucune gratuité sur cette gamme","Pas d'offre promotionnelle","#f3f4f6","#374151"]],
+                            }[currentGroupe] || []).map(([titre, detail, bg, color], ci) => (
+                              <div key={ci} style={{ padding: "10px 18px", background: bg, borderTop: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                                <div>
+                                  <div style={{ fontWeight: 800, fontSize: 13, color }}>{titre}</div>
+                                  <div style={{ fontSize: 12, color, opacity: 0.8, marginTop: 2 }}>{detail}</div>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         );
                       })()}

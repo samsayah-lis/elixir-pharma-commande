@@ -31,6 +31,7 @@ const SECTIONS = [
   { key: "blanche",   label: "🧻 Gamme Blanche" },
   { key: "covid",     label: "🦠 Diagnostic & Covid" },
   { key: "otc",       label: "🛒 Centrale OTC / Para" },
+  { key: "ulabs",     label: "🤝 Commande groupée U-Labs" },
 ];
 
 const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", section:"otc", hasPalier:false, palier:"", note:"" };
@@ -1169,6 +1170,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 }} style={{fontSize:12,background:"#0ea5e9",color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
                   🔄 Importer photos Medipim pour les produits filtrés sans photo
                 </button>
+                {filterSection === "ulabs" && (
+                  <div style={{marginTop:8,padding:"10px 14px",background:"#f0fdf4",borderRadius:8,border:"1px solid #86efac",fontSize:12,color:"#166534"}}>
+                    💡 <strong>U-Labs :</strong> Le bouton ci-dessus importera les photos pour les {filtered.filter(p=>!p.image_url).length} produits U-Labs sans photo via Medipim.
+                  </div>
+                )}
               </div>
             )}
             {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:"#999",padding:24}}>Aucun produit trouvé pour « {search} »</div>}
