@@ -1114,11 +1114,11 @@ export default function App() {
                 (cat?.products || []).filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0).map(p => p.cip)
               );
               const myValidatedCips = validatedCampOrders[activeTab] || new Set();
-              // Refs des autres pharmacies (Supabase group_orders)
-              const othersCips = new Set(
-                groupOrders.filter(r => r.pharmacy_cip !== pharmacyCip && (parseInt(r.qty)||0) > 0).map(r => r.cip)
+              // Toutes les refs Supabase group_orders (TOUTES pharmacies, y compris la courante)
+              const allGroupCips = new Set(
+                groupOrders.filter(r => (parseInt(r.qty)||0) > 0).map(r => r.cip)
               );
-              const allCips = new Set([...myLocalCips, ...myValidatedCips, ...othersCips]);
+              const allCips = new Set([...myLocalCips, ...myValidatedCips, ...allGroupCips]);
               const totalUnites = allCips.size; // nb de refs distinctes
               const nbPharm = new Set([
                 ...groupOrders.filter(r=>(parseInt(r.qty)||0)>0).map(r => r.pharmacy_cip),
