@@ -1134,7 +1134,11 @@ export default function App() {
                     {(() => {
                       const campHdr = getCampaign(activeTab);
                       const prodsHdr = cat?.products || [];
-                      const cmdRefsHdr = prodsHdr.filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0);
+                      // Refs locales en cours + group_orders sauvegardés pour cette pharmacie
+                      const myGroupCips = new Set(groupOrders.filter(r => r.pharmacy_cip === pharmacyCip && (parseInt(r.qty)||0) > 0).map(r => r.cip));
+                      const cmdRefsHdr = prodsHdr.filter((p, idx) =>
+                        (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0 || myGroupCips.has(p.cip)
+                      );
                       const minRefsHdr = campHdr?.min_refs ?? 0;
                       const condStats = (campHdr?.conditions || []).map(cond => {
                         try {
