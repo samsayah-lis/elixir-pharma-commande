@@ -349,9 +349,10 @@ export default function App() {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
     if (activeTab === "ulabs") {
+      const OBL = ["8710604763356","8720181397233","8710604763363"];
       return [...filtered].sort((a, b) => {
-        const aP = a.name?.toLowerCase().includes("parogencyl") ? 0 : 1;
-        const bP = b.name?.toLowerCase().includes("parogencyl") ? 0 : 1;
+        const aP = OBL.includes(a.cip) ? 0 : 1;
+        const bP = OBL.includes(b.cip) ? 0 : 1;
         return aP - bP || a.name.localeCompare(b.name, "fr");
       });
     }
@@ -1062,7 +1063,7 @@ export default function App() {
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
-                          {activeTab === "ulabs" && p.name?.toLowerCase().includes("parogencyl") && (
+                          {activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) && (
                             <span style={{ fontSize: 10, color: "white", background: "#dc2626", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Réf. obligatoire</span>
                           )}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
