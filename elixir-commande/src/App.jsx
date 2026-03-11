@@ -1374,8 +1374,7 @@ export default function App() {
               });
               const csv = ["CIP;Désignation;Qté;Prix net HT;Total HT",
                 ...items.map(i => `${i.cip};${i.name};${i.qty};${(i.pn||0).toFixed(2)};${(i.total||0).toFixed(2)}`)
-              ].join("
-");
+              ].join("\n");
               try {
                 await fetch("/.netlify/functions/order-save", {
                   method: "POST", headers: { "Content-Type": "application/json" },
