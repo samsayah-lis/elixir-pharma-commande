@@ -88,6 +88,8 @@ function CipCell({ cip }) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
+  const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
+  const [groupSaving, setGroupSaving] = useState({});
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -125,6 +127,18 @@ export default function App() {
   // Stock : chargement et actualisation manuelle
   const [stockLoading, setStockLoading] = useState(false);
   const [stockRefreshing, setStockRefreshing] = useState(false); // true = refresh Odoo en cours
+  // Charger commandes groupées U-Labs
+  const fetchGroupOrders = useCallback(async () => {
+    try {
+      const res = await fetch("/.netlify/functions/group-order?fournisseur=ulabs");
+      const rows = await res.json();
+      setGroupOrders(Array.isArray(rows) ? rows : []);
+    } catch(e) { console.error(e); }
+  }, []);
+  useEffect(() => {
+    if (activeTab === "ulabs") fetchGroupOrders();
+  }, [activeTab, fetchGroupOrders]);
+
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
   React.useEffect(() => {
     const h = () => setIsMobile(window.innerWidth < 768);
@@ -888,8 +902,15 @@ export default function App() {
                 <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, marginTop: 4 }}>{cat.subtitle}</div>
               </div>
               <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
-                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Lignes dans cette gamme</div>
-                <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
+                {activeTab === "ulabs" ? (<>
+                  <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Pharmacies participantes</div>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>
+                    {new Set(groupOrders.map(r => r.pharmacy_cip)).size}
+                  </div>
+                </>) : (<>
+                  <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Lignes dans cette gamme</div>
+                  <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
+                </>)}
               </div>
             </div>
             {/* Search */}
@@ -918,6 +939,8 @@ export default function App() {
                     const qty = quantities[key] || 0;
                     const step = getStep(activeTab, p);
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                    const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s+r.qty, 0) : 0;
+                    const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
                     return (
                       <div key={key} style={{
                         background: "white", borderRadius: 14,
@@ -942,6 +965,12 @@ export default function App() {
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
+                          {activeTab === "ulabs" && groupTotal > 0 && (
+                            <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: "#d1fae5", borderRadius: 6, padding: "3px 8px" }}>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#065f46" }}>🤝 {groupTotal} unités groupées</span>
+                              <span style={{ fontSize: 10, color: "#6ee7b7" }}>· {groupPharm} pharm.</span>
+                            </div>
+                          )}
                         </div>
                         {/* Prix + remise + qté */}
                         <div style={{ flexShrink: 0, padding: "14px 20px", textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, borderLeft: "1px solid #f0f2f5", minWidth: 160 }}>
@@ -953,7 +982,15 @@ export default function App() {
                           )}
                           <div style={{ fontSize: 20, fontWeight: 800, color: cat.color }}>{p.pn != null ? fmt(p.pn) : "–"}</div>
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <button onClick={() => setQty(key, qty - step, step)} style={{
+                            <button onClick={async () => {
+                              const nq = Math.max(0, qty - step);
+                              setQty(key, nq, step);
+                              if (activeTab === "ulabs") {
+                                await fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})});
+                                fetchGroupOrders();
+                              }
+                            }} style={{
                               background: cat.accent + "15", border: `1px solid ${cat.accent}40`,
                               color: cat.accent, borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
@@ -966,7 +1003,15 @@ export default function App() {
                                 borderRadius: 7, padding: "5px 4px", fontSize: 14,
                                 fontWeight: qty > 0 ? 700 : 400, outline: "none"
                               }}/>
-                            <button onClick={() => setQty(key, qty + step, step)} style={{
+                            <button onClick={async () => {
+                              const nq = qty + step;
+                              setQty(key, nq, step);
+                              if (activeTab === "ulabs") {
+                                await fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
+                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})});
+                                fetchGroupOrders();
+                              }
+                            }} style={{
                               background: qty > 0 ? cat.accent : "#0f2d3d", border: "none",
                               color: "white", borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
