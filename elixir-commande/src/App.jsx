@@ -13,7 +13,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "dont 3 références Parogencyl obligatoires · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: ["pharmaclichyavenir@gmail.com"] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "12 références min · dont 3 Parogencyl + 1 Regenerate · Fluocaril · Parogencyl · Regenerate",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: ["pharmaclichyavenir@gmail.com"] },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -56,6 +56,109 @@ const nextBusinessDay = () => {
     if (!holidays.includes(d.toISOString().slice(0,10)) && getFrenchHolidays(d.getFullYear())) {}
   }
   return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
+};
+
+// ── Constantes U-Labs ────────────────────────────────────────────────────────
+const ULABS_GROUPES = {
+  bdm: {
+    label: "🧴 Bains de bouche", color: "#1e3a5f", accent: "#3b82f6",
+    desc: "Requis pour les gratuités brosses à dents",
+    note: null,
+    match: p => /bain de bouche/i.test(p.name),
+  },
+  fluoc250: {
+    label: "💧 Dentifrices Fluocaril 250mg", color: "#065f46", accent: "#059669",
+    desc: "⚡ Déclencheurs — leur achat active les gratuités Fluocaril 145mg",
+    note: "⚡ Déclencheur gratuité 145mg",
+    match: p => /fluocaril/i.test(p.name) && /250/i.test(p.name),
+    cips_declenchants: ["3400936256286","3400936256118","3400935008619","3400935008497"],
+  },
+  fluoc145: {
+    label: "🦷 Dentifrices Fluocaril Bi-Fluoré 145mg", color: "#065f46", accent: "#10b981",
+    desc: "🎁 6 achetées = 2 offertes — si au moins 1 réf. Fluocaril 250mg commandée",
+    note: "🎁 6+2 avec cond.",
+    match: p => /fluocaril/i.test(p.name) && /145/i.test(p.name) && !/junior|kids/i.test(p.name),
+    gratuite: { type: "6+2", conditionGroupe: "fluoc250" },
+  },
+  paro_regen: {
+    label: "⚠️ Dentifrices Parogencyl & Regenerate", color: "#7c3aed", accent: "#8b5cf6",
+    desc: "Obligatoire : 3 Parogencyl + 1 Regenerate minimum · 🎁 6 achetées = 2 offertes",
+    note: "🎁 6+2 offertes",
+    match: p => (/parogencyl/i.test(p.name) || /regenerate/i.test(p.name)) && /dentifrice/i.test(p.name),
+    gratuite: { type: "6+2" },
+  },
+  brosses: {
+    label: "🪥 Brosses à dents", color: "#1e3a5f", accent: "#0ea5e9",
+    desc: "🎁 3 achetées = 1 offerte — si ≥1 brosse Parogencyl + bains de bouche Fluocaril & Parogencyl",
+    note: "🎁 3+1 avec cond.",
+    match: p => /brosse/i.test(p.name) && !/junior|kids/i.test(p.name),
+    gratuite: { type: "3+1", conditionBrosse: true },
+  },
+  junior_kids: {
+    label: "👶 Junior & Kids", color: "#92400e", accent: "#f59e0b",
+    desc: "Pas de gratuité",
+    note: null,
+    match: p => /junior|kids/i.test(p.name),
+  },
+  autres: {
+    label: "✨ Autres références", color: "#374151", accent: "#6b7280",
+    desc: "Natur'Essence · Protection Complète · Spray",
+    note: null,
+    match: p => true,
+  },
+};
+
+const ULABS_GROUP_ORDER = ["bdm","fluoc250","fluoc145","paro_regen","brosses","junior_kids","autres"];
+
+const ulabsGetGroupe = (p) => {
+  for (const key of ULABS_GROUP_ORDER) {
+    if (ULABS_GROUPES[key].match(p)) return key;
+  }
+  return "autres";
+};
+
+// Calcule les gratuités pour un produit selon le panier complet
+const ulabsGratuite = (p, qty, allProducts, quantities, activeTabKey) => {
+  if (activeTabKey !== "ulabs" || qty < 1) return { livrées: 0, type: null };
+  const groupe = ulabsGetGroupe(p);
+  const g = ULABS_GROUPES[groupe];
+  if (!g?.gratuite) return { livrées: 0, type: null };
+
+  // Vérifie les conditions
+  if (g.gratuite.conditionGroupe === "fluoc250") {
+    // Faut au moins 1 ref Fluocaril 250mg
+    const has250 = (allProducts || []).some((ap, idx) => {
+      const apGroupe = ulabsGetGroupe(ap);
+      return apGroupe === "fluoc250" && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0;
+    });
+    if (!has250) return { livrées: 0, type: null, hint: "Commandez au moins 1 réf. Fluocaril 250mg" };
+  }
+  if (g.gratuite.conditionBrosse) {
+    const prods = allProducts || [];
+    // Faut ≥1 brosse Parogencyl
+    const hasBrosseP = prods.some((ap, idx) =>
+      /parogencyl/i.test(ap.name) && /brosse/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
+    );
+    // Faut bain de bouche Fluocaril
+    const hasBdmF = prods.some((ap, idx) =>
+      /fluocaril/i.test(ap.name) && /bain de bouche/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
+    );
+    // Faut bain de bouche Parogencyl
+    const hasBdmP = prods.some((ap, idx) =>
+      /parogencyl/i.test(ap.name) && /bain de bouche/i.test(ap.name) && (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0
+    );
+    if (!hasBrosseP || !hasBdmF || !hasBdmP) {
+      const manque = [];
+      if (!hasBrosseP) manque.push("brosse Parogencyl");
+      if (!hasBdmF) manque.push("bain de bouche Fluocaril");
+      if (!hasBdmP) manque.push("bain de bouche Parogencyl");
+      return { livrées: 0, type: null, hint: `Ajoutez : ${manque.join(", ")}` };
+    }
+  }
+
+  if (g.gratuite.type === "6+2" && qty >= 6) return { livrées: Math.floor(qty / 6) * 2, type: "6+2" };
+  if (g.gratuite.type === "3+1" && qty >= 3) return { livrées: Math.floor(qty / 3), type: "3+1" };
+  return { livrées: 0, type: g.gratuite.type };
 };
 
 const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
@@ -293,8 +396,9 @@ export default function App() {
     if (catKey === "master") return p.palier || 1;
     if (catKey === "blanche") return p.colis || 1;
     if (catKey === "ulabs") {
-      const OBL = ["8710604763356","8720181397233","8710604763363"];
-      return OBL.includes(p.cip) ? 1 : 6;
+      const g = ulabsGetGroupe(p);
+      if (g === "paro_regen" || g === "brosses" || g === "bdm") return 1;
+      return 6;
     }
     return 1;
   };
@@ -353,11 +457,10 @@ export default function App() {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
     if (activeTab === "ulabs") {
-      const OBL = ["8710604763356","8720181397233","8710604763363"];
       return [...filtered].sort((a, b) => {
-        const aP = OBL.includes(a.cip) ? 0 : 1;
-        const bP = OBL.includes(b.cip) ? 0 : 1;
-        return aP - bP || a.name.localeCompare(b.name, "fr");
+        const ai = ULABS_GROUP_ORDER.indexOf(ulabsGetGroupe(a));
+        const bi = ULABS_GROUP_ORDER.indexOf(ulabsGetGroupe(b));
+        return ai - bi || a.name.localeCompare(b.name, "fr");
       });
     }
     return filtered;
@@ -954,7 +1057,6 @@ export default function App() {
             {/* Bloc groupement U-Labs */}
             {activeTab === "ulabs" && (() => {
               // Total hybride : quantités locales pour moi + Supabase pour les autres
-              const OBL_CIPS = ["8710604763356","8720181397233","8710604763363"];
               const myLocalQty = (cat?.products || []).reduce((s, p, idx) => {
                 return s + (parseInt(quantities[`ulabs-${idx}`]) || 0);
               }, 0);
@@ -973,6 +1075,27 @@ export default function App() {
                 <div style={{ marginTop: 16 }}>
                   {/* Countdown + stats */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+                    {/* Compteurs refs commandées */}
+                    {(() => {
+                      const prods = cat?.products || [];
+                      const cmdRefs = prods.filter((p, idx) => (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0);
+                      const nbParo = cmdRefs.filter(p => /parogencyl/i.test(p.name) && /dentifrice/i.test(p.name)).length;
+                      const nbRegen = cmdRefs.filter(p => /regenerate/i.test(p.name) && /dentifrice/i.test(p.name)).length;
+                      return (
+                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+                          {[
+                            { val: cmdRefs.length, total: 12, label: "réf. min", ok: cmdRefs.length >= 12 },
+                            { val: nbParo, total: 3, label: "Parogencyl", ok: nbParo >= 3 },
+                            { val: nbRegen, total: 1, label: "Regenerate", ok: nbRegen >= 1 },
+                          ].map(s => (
+                            <div key={s.label} style={{ background: s.ok ? "rgba(5,150,105,0.3)" : "rgba(220,38,38,0.3)", borderRadius: 8, padding: "5px 12px", border: `1px solid ${s.ok ? "#059669" : "#dc2626"}` }}>
+                              <span style={{ fontWeight: 800, color: "white", fontSize: 16 }}>{s.val}</span>
+                              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 10 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <div style={{ display: "flex", gap: 16 }}>
                       <div style={{ textAlign: "center" }}>
                         <div style={{ fontWeight: 800, fontSize: 20, color: "white" }}>{totalUnites}</div>
@@ -1045,9 +1168,13 @@ export default function App() {
           <>
 {gridWithPhoto.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
-                  {gridWithPhoto.map((p) => {
+                  {gridWithPhoto.map((p, mapIdx) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
+                    const prevP = mapIdx > 0 ? gridWithPhoto[mapIdx - 1] : null;
+                    const currentGroupe = activeTab === "ulabs" ? ulabsGetGroupe(p) : null;
+                    const prevGroupe = activeTab === "ulabs" && prevP ? ulabsGetGroupe(prevP) : null;
+                    const showGroupHeader = activeTab === "ulabs" && currentGroupe !== prevGroupe;
                     const qty = quantities[key] || 0;
                     const step = getStep(activeTab, p);
                     const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
@@ -1055,19 +1182,47 @@ export default function App() {
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
                     const remisePct = activeTab === "ulabs" ? 33 : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
-                    const OBL_CIPS = ["8710604763356","8720181397233","8710604763363"];
-                    const has6plus2 = activeTab === "ulabs" && (
-                      OBL_CIPS.includes(p.cip) ||
-                      p.name?.toLowerCase().includes("junior") ||
-                      p.name?.toLowerCase().includes("kids")
-                    );
-                    const livrées6plus2 = has6plus2 && qty >= 6 ? Math.floor(qty / 6) * 2 : 0;
+                    const ulabsG = activeTab === "ulabs" ? ulabsGetGroupe(p) : null;
+                    const ulabsGInfo = ulabsG ? ULABS_GROUPES[ulabsG] : null;
+                    const ulabsGrat = ulabsGratuite(p, qty, cat?.products, quantities, activeTab);
+                    const has6plus2 = !!ulabsGInfo?.gratuite;
+                    const livrées6plus2 = ulabsGrat.livrées || 0;
                     const qtyLivrée = qty + livrées6plus2;
-                    const pnEffectif = has6plus2 && livrées6plus2 > 0
+                    const pnEffectif = livrées6plus2 > 0
                       ? Math.round((pnAffiche ?? p.pn) * qty / qtyLivrée * 100) / 100
                       : (pnAffiche ?? p.pn);
                     return (
-                      <div key={key} style={{
+                      <React.Fragment key={key}>
+                      {showGroupHeader && currentGroupe && (() => {
+                        const gInfo = ULABS_GROUPES[currentGroupe];
+                        // Compter les refs commandées dans ce groupe
+                        const groupProds = gridWithPhoto.filter(gp => ulabsGetGroupe(gp) === currentGroupe);
+                        const groupQty = groupProds.reduce((s, gp) => {
+                          const gi = cat.products.indexOf(gp);
+                          return s + (parseInt(quantities[`ulabs-${gi}`]) || 0);
+                        }, 0);
+                        const groupRefsCmd = groupProds.filter(gp => {
+                          const gi = cat.products.indexOf(gp);
+                          return (parseInt(quantities[`ulabs-${gi}`]) || 0) > 0;
+                        }).length;
+                        return (
+                          <div style={{ marginTop: mapIdx > 0 ? 16 : 0, marginBottom: 4, padding: "10px 16px", background: `linear-gradient(135deg, ${gInfo.color} 0%, ${gInfo.accent}22 100%)`, borderRadius: 10, border: `1px solid ${gInfo.accent}40` }}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <div>
+                                <div style={{ fontWeight: 800, fontSize: 14, color: "white" }}>{gInfo.label}</div>
+                                <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>{gInfo.desc}</div>
+                              </div>
+                              {groupRefsCmd > 0 && (
+                                <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 8, padding: "4px 10px", textAlign: "center" }}>
+                                  <div style={{ fontWeight: 800, fontSize: 15, color: "white" }}>{groupRefsCmd}</div>
+                                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)" }}>réf. cmd</div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      <div style={{
                         background: "white", borderRadius: 14,
                         boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 2px 12px rgba(0,0,0,0.08)` : "0 1px 6px rgba(0,0,0,0.06)",
                         border: `1px solid ${qty > 0 ? cat.accent : "#eef0f3"}`,
@@ -1089,11 +1244,14 @@ export default function App() {
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
-                          {activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) && (
-                            <span style={{ fontSize: 10, color: "white", background: "#dc2626", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Réf. obligatoire</span>
+                          {activeTab === "ulabs" && ulabsG === "paro_regen" && (
+                            <span style={{ fontSize: 10, color: "white", background: "#7c3aed", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Obligatoire</span>
                           )}
-                          {has6plus2 && (
-                            <span style={{ fontSize: 10, color: "#065f46", background: "#d1fae5", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4, border: "1px solid #6ee7b7" }}>🎁 6 achetées = 2 offertes</span>
+                          {has6plus2 && ulabsGInfo?.note && (
+                            <span style={{ fontSize: 10, color: "#065f46", background: "#d1fae5", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4, border: "1px solid #6ee7b7" }}>{ulabsGInfo.note}</span>
+                          )}
+                          {has6plus2 && ulabsGrat.hint && qty === 0 && (
+                            <div style={{ fontSize: 10, color: "#b45309", marginTop: 3 }}>💡 {ulabsGrat.hint}</div>
                           )}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                           {activeTab === "ulabs" && groupTotal > 0 && (
@@ -1124,7 +1282,7 @@ export default function App() {
                           ) : null}
                           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                             <button onClick={() => {
-                              const oblMin = activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) ? 2 : 0;
+                              const oblMin = 0;
                               const nq = qty - step <= 0 ? 0 : Math.max(oblMin || step, qty - step);
                               setQty(key, nq, step);
                               if (activeTab === "ulabs") {
@@ -1138,7 +1296,7 @@ export default function App() {
                               color: cat.accent, borderRadius: 7, width: 32, height: 32,
                               cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
                             }}>−</button>
-                            <input type="number" min={activeTab === "ulabs" ? (["8710604763356","8720181397233","8710604763363"].includes(p.cip) ? 2 : 6) : 0} step={step} value={quantities[key] || ""}
+                            <input type="number" min={activeTab === "ulabs" ? (["paro_regen","brosses","bdm"].includes(ulabsG) ? 1 : 6) : 0} step={step} value={quantities[key] || ""}
                               onChange={e => setQty(key, e.target.value, step)}
                               onBlur={e => {
                                 if (activeTab === "ulabs") {
@@ -1189,6 +1347,7 @@ export default function App() {
                           )}
                         </div>
                       </div>
+                      </React.Fragment>
                     );
                   })}
                 </div>
@@ -1425,19 +1584,18 @@ export default function App() {
             }, 0);
             const confirmOrder = async () => {
               if (ulabsConfirming || ulabsConfirmed) return;
-              // Vérifier les 3 refs obligatoires
-              const OBL = ["8710604763356","8720181397233","8710604763363"];
-              const oblManquantes = OBL.filter(cip => {
-                const idx = (cat?.products || []).findIndex(p => p.cip === cip);
-                return idx === -1 || !(quantities[`ulabs-${idx}`] > 0);
-              });
-              if (oblManquantes.length > 0) {
-                const noms = oblManquantes.map(cip => {
-                  const p = (cat?.products || []).find(pr => pr.cip === cip);
-                  return p ? p.name : cip;
-                });
-                setUlabsError(`⚠️ Références obligatoires manquantes :\n${noms.join("\n")}`);
-                setTimeout(() => setUlabsError(null), 6000);
+              // Vérifier les conditions : 12 refs min, 3 Parogencyl, 1 Regenerate
+              const prods = cat?.products || [];
+              const cmdRefs = prods.filter((p, idx) => (parseInt(quantities[`ulabs-${idx}`]) || 0) > 0);
+              const errors = [];
+              if (cmdRefs.length < 12) errors.push(`• Minimum 12 références (${cmdRefs.length} actuellement)`);
+              const nbParo = cmdRefs.filter(p => /parogencyl/i.test(p.name) && /dentifrice/i.test(p.name)).length;
+              if (nbParo < 3) errors.push(`• 3 dentifrices Parogencyl minimum (${nbParo} actuellement)`);
+              const nbRegen = cmdRefs.filter(p => /regenerate/i.test(p.name) && /dentifrice/i.test(p.name)).length;
+              if (nbRegen < 1) errors.push(`• 1 dentifrice Regenerate minimum (${nbRegen} actuellement)`);
+              if (errors.length > 0) {
+                setUlabsError("⚠️ Conditions non remplies :\n" + errors.join("\n"));
+                setTimeout(() => setUlabsError(null), 8000);
                 return;
               }
               setUlabsError(null);
