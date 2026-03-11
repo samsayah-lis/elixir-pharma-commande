@@ -237,8 +237,9 @@ export default function App() {
       fetch(`/.netlify/functions/order-list`)
         .then(r => r.json())
         .then(orders => {
+          // Toutes les commandes validées de la campagne (toutes pharmacies)
           const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
-            .filter(o => o.source === activeTab && o.pharmacy_cip === pharmacyCip);
+            .filter(o => o.source === activeTab);
           const cipSet = new Set();
           campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip) cipSet.add(it.cip); }); });
           setValidatedCampOrders(prev => ({...prev, [activeTab]: cipSet}));
@@ -1184,9 +1185,9 @@ export default function App() {
                   <div style={{ marginTop: 4 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
                       <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", fontWeight: 700 }}>
-                        {totalUnites} unité{totalUnites > 1 ? "s" : ""} commandée{totalUnites > 1 ? "s" : ""}
+                        {totalUnites} réf. différentes
                       </span>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} réf. = −{PALIER_REMISE}%</span>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>sur {PALIER_EXPERT} pour −{PALIER_REMISE}%</span>
                     </div>
                     {/* Barre */}
                     <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 14 }}>
