@@ -931,7 +931,7 @@ export default function App() {
                         {/* Info centrale */}
                         <div style={{ flex: 1, padding: "14px 16px", minWidth: 0 }}>
                           <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
-                          {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : {p.cip}</div>}
+                          {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                         </div>

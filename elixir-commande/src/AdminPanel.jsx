@@ -1,6 +1,24 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
 
+// ── Copy CIP button ──────────────────────────────────────────────────────────
+function CipCopy({ cip }) {
+  const [copied, setCopied] = useState(false);
+  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>—</span>;
+  const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
+      <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+      <button onClick={copy} title="Copier CIP" style={{
+        background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
+        padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+        fontWeight:700, lineHeight:"14px", transition:"all 0.2s"
+      }}>{copied ? "✓" : "⎘"}</button>
+    </span>
+  );
+}
+
+
 const ADMIN_PASSWORD = "elixir2026";
 
 const SECTIONS = [
@@ -569,7 +587,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       <tbody>
                         {importPreview.map((r,i)=>(
                           <tr key={i} style={{background:r._valid?"white":"#fff5f5",borderBottom:"1px solid #f5f5f5"}}>
-                            <td style={{padding:"5px 8px",fontFamily:"monospace",color:"#888"}}>{r.cip||"—"}</td>
+                            <td style={{padding:"5px 8px"}}><CipCopy cip={r.cip||""}/></td>
                             <td style={{padding:"5px 8px",fontWeight:600,color:r._valid?"#0f2d3d":"#c53030"}}>{r.name||<em>manquant</em>}</td>
                             <td style={{padding:"5px 8px",textAlign:"right"}}>{r.pv!=null?r.pv.toFixed(2)+" €":"—"}</td>
                             <td style={{padding:"5px 8px",textAlign:"right",color:"#7c3aed"}}>{r.pct||"—"}</td>
@@ -696,7 +714,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",background:"#fafbfc",borderRadius:10,padding:"10px 14px",marginBottom:8,border:"1px solid #f0f2f5"}}>
                     <div>
                       <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d"}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{SECTIONS.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip?` · ${p.cip}`:""}</div>
+                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{SECTIONS.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/></>}</div>
                     </div>
                     <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
                   </div>
@@ -837,7 +855,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       <div key={prod.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #f5f5f5"}}>
                         <div>
                           <span style={{fontWeight:600,fontSize:12,color:"#0f2d3d"}}>{prod.name}</span>
-                          {prod.cip&&<span style={{fontFamily:"monospace",fontSize:10,color:"#aaa",marginLeft:8}}>{prod.cip}</span>}
+                          {prod.cip&&<span style={{marginLeft:8}}><CipCopy cip={prod.cip}/></span>}
                           {prod.note&&<span style={{fontSize:10,color:"#e07b39",marginLeft:6,background:"#fef3ec",borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
@@ -929,7 +947,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                     </div>
                     {o.items?.map((item,i)=>(
                       <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
-                        <span style={{fontFamily:"monospace",color:"#888",width:110,flexShrink:0}}>{item.cip||"—"}</span>
+                        <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
                         <span style={{flex:1,paddingRight:8}}>{item.name}</span>
                         <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
                         <span style={{color:"#555",width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
@@ -983,7 +1001,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
                       </div>
                       <div style={{fontSize:11,color:"#888",marginTop:2}}>
-                        {p._sectionLabel}{p.cip?` · ${p.cip}`:""}
+                        {p._sectionLabel}{p.cip && <> · <CipCopy cip={p.cip}/></>}
                         {" · "}
                         <span style={{color:hasOv?"#d97706":"#555",fontWeight:600}}>
                           {fmt(ov?.pn??p.pn)} net
