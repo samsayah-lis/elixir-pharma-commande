@@ -1040,6 +1040,13 @@ export default function App() {
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
                     const remisePct = activeTab === "ulabs" ? 33 : 0;
                     const pnAffiche = remisePct > 0 ? Math.round(p.pv * (1 - remisePct/100) * 100) / 100 : p.pn;
+                    const OBL_CIPS = ["8710604763356","8720181397233","8710604763363"];
+                    const has6plus2 = activeTab === "ulabs" && (
+                      OBL_CIPS.includes(p.cip) ||
+                      p.name?.toLowerCase().includes("junior") ||
+                      p.name?.toLowerCase().includes("kids")
+                    );
+                    const livrées6plus2 = has6plus2 && qty >= 6 ? Math.floor(qty / 6) * 2 : 0;
                     return (
                       <div key={key} style={{
                         background: "white", borderRadius: 14,
@@ -1065,6 +1072,9 @@ export default function App() {
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
                           {activeTab === "ulabs" && ["8710604763356","8720181397233","8710604763363"].includes(p.cip) && (
                             <span style={{ fontSize: 10, color: "white", background: "#dc2626", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Réf. obligatoire</span>
+                          )}
+                          {has6plus2 && (
+                            <span style={{ fontSize: 10, color: "#065f46", background: "#d1fae5", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4, border: "1px solid #6ee7b7" }}>🎁 6 achetées = 2 offertes</span>
                           )}
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                           {activeTab === "ulabs" && groupTotal > 0 && (
@@ -1134,7 +1144,10 @@ export default function App() {
                           </div>
                           {step > 1 && <div style={{ fontSize: 9, color: "#aaa" }}>par {step}</div>}
                           {qty > 0 && p.pn != null && (
-                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>= {fmt((pnAffiche ?? p.pn) * qty)}</div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>
+                              = {fmt((pnAffiche ?? p.pn) * qty)}
+                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}>+{livrées6plus2} offertes</span>}
+                            </div>
                           )}
                         </div>
                       </div>
