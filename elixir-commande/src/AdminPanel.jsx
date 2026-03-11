@@ -21,6 +21,24 @@ function CipCopy({ cip }) {
 
 const ADMIN_PASSWORD = "elixir2026";
 
+// ── Helpers campagne (identiques à App.jsx) ──────────────────────────────────
+const buildGroupes = (campaign) => {
+  if (!campaign?.groupes?.length) return [];
+  return campaign.groupes.map(g => ({
+    ...g,
+    match: (p) => { try { return g.match_regex ? new RegExp(g.match_regex,"i").test(p.name) : false; } catch(e){ return false; } },
+    gratuite: g.gratuite_type && g.gratuite_type !== "aucune" ? { type: g.gratuite_type } : null,
+  }));
+};
+const campGetGroupe = (p, groupes) => { for (const g of groupes) { if(g.match(p)) return g; } return null; };
+const campGratuiteAdmin = (item, qty, groupes) => {
+  const g = campGetGroupe({name: item.name}, groupes);
+  if (!g?.gratuite) return 0;
+  if (g.gratuite.type === "6+2" && qty >= 6) return Math.floor(qty/6)*2;
+  if (g.gratuite.type === "3+1" && qty >= 3) return Math.floor(qty/3);
+  return 0;
+};
+
 const SECTIONS = [
   { key: "expert",    label: "💊 Sélection Expert" },
   { key: "stratege",  label: "📦 Sélection Stratège" },
@@ -998,22 +1016,39 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   </div>
                   {/* Items preview */}
                   <div style={{marginTop:10,background:"white",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#555",maxHeight:140,overflowY:"auto"}}>
-                    <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
-                      <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
-                      <span style={{flex:1}}>Désignation</span>
-                      <span style={{width:30,textAlign:"right"}}>Qté</span>
-                      <span style={{width:55,textAlign:"right",marginLeft:10}}>PU HT</span>
-                      <span style={{width:60,textAlign:"right",marginLeft:10}}>Total HT</span>
-                    </div>
-                    {o.items?.map((item,i)=>(
-                      <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
-                        <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
-                        <span style={{flex:1,paddingRight:8}}>{item.name}</span>
-                        <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
-                        <span style={{color:"#555",width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
-                        <span style={{fontWeight:700,color:"#0f2d3d",width:60,textAlign:"right",marginLeft:10}}>{item.total!=null?item.total.toFixed(2)+" €":"—"}</span>
-                      </div>
-                    ))}
+                    {(() => {
+                      const campAdmin = campaigns.find(cp => cp.id === o.source);
+                      const groupesAdmin = campAdmin ? buildGroupes(campAdmin) : [];
+                      const hasUG = campAdmin && o.items?.some(item => campGratuiteAdmin(item, item.qty||0, groupesAdmin) > 0);
+                      return (<>
+                        <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
+                          <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
+                          <span style={{flex:1}}>Désignation</span>
+                          <span style={{width:30,textAlign:"right"}}>Qté</span>
+                          {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:"#059669"}}>UG</span>}
+                          <span style={{width:55,textAlign:"right",marginLeft:10}}>PU HT</span>
+                          <span style={{width:60,textAlign:"right",marginLeft:10}}>Total HT</span>
+                        </div>
+                        {o.items?.map((item,i)=>{
+                          const ug = campAdmin ? campGratuiteAdmin(item, item.qty||0, groupesAdmin) : 0;
+                          return (
+                            <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none"}}>
+                              <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
+                              <span style={{flex:1,paddingRight:8}}>{item.name}</span>
+                              <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
+                              {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:ug>0?"#059669":"#ddd",fontWeight:ug>0?800:400}}>{ug>0?`+${ug}`:"—"}</span>}
+                              <span style={{color:"#555",width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
+                              <span style={{fontWeight:700,color:"#0f2d3d",width:60,textAlign:"right",marginLeft:10}}>{item.total!=null?item.total.toFixed(2)+" €":"—"}</span>
+                            </div>
+                          );
+                        })}
+                        {hasUG && (
+                          <div style={{marginTop:6,padding:"4px 6px",background:"#d1fae5",borderRadius:6,fontSize:10,color:"#065f46",fontWeight:700}}>
+                            🎁 Total UG : {o.items.reduce((s,item)=>s+campGratuiteAdmin(item,item.qty||0,groupesAdmin),0)} unités offertes
+                          </div>
+                        )}
+                      </>);
+                    })()}
                   </div>
                 </div>
               </div>

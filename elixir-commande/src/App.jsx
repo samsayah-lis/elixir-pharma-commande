@@ -143,6 +143,7 @@ function CipCell({ cip }) {
 export default function App() {
   const [activeTab, setActiveTab] = useState("expert");
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
+  const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: Set<cip>} commandes déjà validées
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsConfirming, setUlabsConfirming] = useState(false);
   const [ulabsConfirmed, setUlabsConfirmed] = useState(false);
@@ -231,6 +232,18 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (activeTab === "ulabs") fetchGroupOrders();
+    const _camp = getCampaign(activeTab);
+    if (_camp && pharmacyCip) {
+      fetch(`/.netlify/functions/order-list`)
+        .then(r => r.json())
+        .then(orders => {
+          const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
+            .filter(o => o.source === activeTab && o.pharmacy_cip === pharmacyCip);
+          const cipSet = new Set();
+          campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip) cipSet.add(it.cip); }); });
+          setValidatedCampOrders(prev => ({...prev, [activeTab]: cipSet}));
+        }).catch(() => {});
+    }
   }, [activeTab, fetchGroupOrders]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
@@ -1082,15 +1095,16 @@ export default function App() {
               const activeCamp = getCampaign(activeTab);
               const PALIER_EXPERT = activeCamp?.palier_qty ?? 12;
               const PALIER_REMISE = activeCamp?.palier_remise ?? 33;
-              // Mes refs locales commandées (qty > 0)
+              // Mes refs locales en cours + déjà validées
               const myLocalCips = new Set(
                 (cat?.products || []).filter((p, idx) => (parseInt(quantities[`${activeTab}-${idx}`]) || 0) > 0).map(p => p.cip)
               );
-              // Refs des autres pharmacies (depuis Supabase)
+              const myValidatedCips = validatedCampOrders[activeTab] || new Set();
+              // Refs des autres pharmacies (Supabase group_orders)
               const othersCips = new Set(
                 groupOrders.filter(r => r.pharmacy_cip !== pharmacyCip && (parseInt(r.qty)||0) > 0).map(r => r.cip)
               );
-              const allCips = new Set([...myLocalCips, ...othersCips]);
+              const allCips = new Set([...myLocalCips, ...myValidatedCips, ...othersCips]);
               const totalUnites = allCips.size; // nb de refs distinctes
               const nbPharm = new Set([
                 ...groupOrders.filter(r=>(parseInt(r.qty)||0)>0).map(r => r.pharmacy_cip),
@@ -1159,7 +1173,7 @@ export default function App() {
                       <span style={{ fontSize: 12, color: "rgba(255,255,255,0.9)", fontWeight: 700 }}>
                         {totalUnites} unité{totalUnites > 1 ? "s" : ""} commandée{totalUnites > 1 ? "s" : ""}
                       </span>
-                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} unités = −{PALIER_REMISE}%</span>
+                      <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>objectif {PALIER_EXPERT} réf. = −{PALIER_REMISE}%</span>
                     </div>
                     {/* Barre */}
                     <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 14 }}>
@@ -1172,7 +1186,7 @@ export default function App() {
                     {/* Légende */}
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
                       <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>0</span>
-                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} unités = −{PALIER_REMISE}% sur facture</span>
+                      <span style={{ fontSize: 10, color: palierAtteint ? "#fcd34d" : "rgba(255,255,255,0.6)", fontWeight: 700 }}>⭐ {PALIER_EXPERT} réf. commandées = −{PALIER_REMISE}% sur facture</span>
                     </div>
                   </div>
                   {/* Sélection palier prix */}
@@ -1313,7 +1327,7 @@ export default function App() {
                           {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                           {activeTab === "ulabs" && groupTotal > 0 && (
                             <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: "#d1fae5", borderRadius: 6, padding: "3px 8px" }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: "#065f46" }}>🤝 {groupTotal} unités groupées</span>
+                              <span style={{ fontSize: 11, fontWeight: 700, color: "#065f46" }}>🤝 {groupTotal} réf. groupées</span>
                               <span style={{ fontSize: 10, color: "#6ee7b7" }}>· {groupPharm} pharm.</span>
                             </div>
                           )}
