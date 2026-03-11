@@ -1325,73 +1325,81 @@ export default function App() {
                           ) : has6plus2 ? (
                             <div style={{ fontSize: 10, color: "#6ee7b7", background: "#065f46", borderRadius: 6, padding: "2px 7px", fontWeight: 600 }}>🎁 dès 6 u. : prix réduit</div>
                           ) : null}
-                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                            <button onClick={() => {
-                              const nq = qty - step <= 0 ? 0 : qty - step;
-                              setQty(key, nq, step, 0, multiple);
-                              if (activeTab === "ulabs") {
-                                const snapped = multiple > 1 ? Math.round(nq/multiple)*multiple : nq;
-                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
-                                  .then(() => fetchGroupOrders());
+                          {(() => {
+                            const m = multiple > 1 ? multiple : 1;
+                            const syncGroup = (nq) => {
+                              if (getCampaign(activeTab)) fetch("/.netlify/functions/group-order", {
+                                method:"POST", headers:{"Content-Type":"application/json"},
+                                body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})
+                              }).then(() => fetchGroupOrders());
+                            };
+                            const applyQty = (raw) => {
+                              const final = m > 1 ? Math.round(raw/m)*m : raw;
+                              const finalWithMin = final > 0 && stepMin > 0 ? Math.max(stepMin, final) : final;
+                              setQuantities(prev => ({...prev, [key]: finalWithMin}));
+                              syncGroup(finalWithMin);
+                            };
+                            const handleMinus = () => applyQty(qty - step <= 0 ? 0 : qty - step);
+                            const handlePlus  = () => applyQty(qty === 0 ? (stepMin > 0 ? stepMin : (m > 1 ? m : step)) : qty + (m > 1 ? m : step));
+                            const handleBlur  = (raw) => {
+                              const v = parseInt(raw) || 0;
+                              if (v === 0) { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); return; }
+                              const badMin = stepMin > 0 && v < stepMin;
+                              const badMul = m > 1 && v % m !== 0;
+                              if (badMin || badMul) {
+                                const msg = badMin && badMul
+                                  ? `Minimum ${stepMin} u. et multiple de ${m} requis.\nQuantité remise à 0.`
+                                  : badMin ? `Minimum ${stepMin} unités pour cette référence.\nQuantité remise à 0.`
+                                  : `La quantité doit être un multiple de ${m}.\nQuantité remise à 0.`;
+                                alert(msg);
+                                setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); return;
                               }
-                            }} style={{
-                              background: cat.accent + "15", border: `1px solid ${catEffective.accent}40`,
-                              color: cat.accent, borderRadius: 7, width: 32, height: 32,
-                              cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
-                            }}>−</button>
-                            <input type="number" min={stepMin || 0} step={multiple > 1 ? multiple : step} value={quantities[key] || ""}
-                              onChange={e => setQty(key, e.target.value, step)}
-                              onBlur={e => {
-                                const _camp = getCampaign(activeTab);
-                                if (_camp) {
-                                  const v = parseInt(e.target.value) || 0;
-                                  const m = multiple > 1 ? multiple : step;
-                                  const snapped = m > 1 ? Math.round(v/m)*m : v;
-                                  fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                    body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
-                                    .then(() => fetchGroupOrders());
-                                }
-                              }}
-                              placeholder="0"
-                              style={{
-                                width: 50, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
-                                borderRadius: 7, padding: "5px 4px", fontSize: 14,
-                                fontWeight: qty > 0 ? 700 : 400, outline: "none"
-                              }}/>
-                            <button onClick={() => {
-                              const nq = qty === 0 ? (stepMin || step) : qty + step;
-                              setQty(key, nq, step, stepMin, multiple);
-                              if (getCampaign(activeTab)) {
-                                const m = multiple > 1 ? multiple : step;
-                                const snapped = m > 1 ? Math.round(nq/m)*m : nq;
-                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:snapped})})
-                                  .then(() => fetchGroupOrders());
-                              }
-                            }} style={{
-                              background: qty > 0 ? cat.accent : "#0f2d3d", border: "none",
-                              color: "white", borderRadius: 7, width: 32, height: 32,
-                              cursor: "pointer", fontWeight: 800, fontSize: 18, lineHeight: 1
-                            }}>+</button>
-                          </div>
-                          {step > 1 && <div style={{ fontSize: 9, color: "#aaa" }}>par {step}</div>}
-                          {qty > 0 && p.pn != null && (
-                            <div style={{ fontSize: 12, fontWeight: 700, color: cat.color, background: cat.accent + "15", borderRadius: 6, padding: "2px 10px" }}>
-                              = {fmt((pnAffiche ?? p.pn) * qty)}
-                              {livrées6plus2 > 0 && <span style={{ color: "#059669", fontWeight: 800, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
-                            </div>
-                          )}
-                          {qty > 0 && (
-                            <button onClick={() => {
-                              setQty(key, 0, step);
-                              if (activeTab === "ulabs") {
-                                fetch("/.netlify/functions/group-order", { method:"POST", headers:{"Content-Type":"application/json"},
-                                  body: JSON.stringify({fournisseur:"ulabs", cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:0})})
-                                  .then(() => fetchGroupOrders());
-                              }
-                            }} style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 14, padding: "2px 4px", lineHeight: 1 }} title="Remettre à zéro">✕</button>
-                          )}
+                              setQuantities(prev=>({...prev,[key]:v})); syncGroup(v);
+                            };
+                            return (<>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <button onClick={handleMinus} style={{
+                                  background: cat.accent+"15", border:`1px solid ${catEffective.accent}40`,
+                                  color: cat.accent, borderRadius:7, width:32, height:32,
+                                  cursor:"pointer", fontWeight:800, fontSize:18, lineHeight:1
+                                }}>−</button>
+                                <input
+                                  type="number"
+                                  min={stepMin || 0}
+                                  step={m > 1 ? m : step}
+                                  value={quantities[key] ?? ""}
+                                  onChange={e => setQuantities(prev=>({...prev,[key]: e.target.value === "" ? "" : parseInt(e.target.value)||0}))}
+                                  onBlur={e => handleBlur(e.target.value)}
+                                  placeholder="0"
+                                  style={{
+                                    width:50, textAlign:"center", border:`1.5px solid ${qty>0 ? cat.accent : "#ddd"}`,
+                                    borderRadius:7, padding:"5px 4px", fontSize:14,
+                                    fontWeight: qty>0 ? 700 : 400, outline:"none"
+                                  }}/>
+                                <button onClick={handlePlus} style={{
+                                  background: qty>0 ? cat.accent : "#0f2d3d", border:"none",
+                                  color:"white", borderRadius:7, width:32, height:32,
+                                  cursor:"pointer", fontWeight:800, fontSize:18, lineHeight:1
+                                }}>+</button>
+                              </div>
+                              {(stepMin > 0 || m > 1) && (
+                                <div style={{ fontSize:9, color: qty>0 ? cat.accent : "#bbb", marginTop:2 }}>
+                                  {stepMin > 0 && `min ${stepMin}`}{stepMin > 0 && m > 1 && " · "}{m > 1 && `×${m}`}
+                                </div>
+                              )}
+                              {qty > 0 && p.pn != null && (
+                                <div style={{ fontSize:12, fontWeight:700, color:cat.color, background:cat.accent+"15", borderRadius:6, padding:"2px 10px" }}>
+                                  = {fmt((pnAffiche ?? p.pn) * qty)}
+                                  {livrées6plus2 > 0 && <span style={{ color:"#059669", fontWeight:800, marginLeft:6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
+                                </div>
+                              )}
+                              {qty > 0 && (
+                                <button onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
+                                  style={{ background:"none", border:"none", cursor:"pointer", color:"#ccc", fontSize:14, padding:"2px 4px", lineHeight:1 }}
+                                  title="Remettre à zéro">✕</button>
+                              )}
+                            </>);
+                          })()}
                         </div>
                       </div>
                       </React.Fragment>
