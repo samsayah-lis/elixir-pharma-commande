@@ -42,14 +42,17 @@ export const handler = async (event) => {
     const uid = await authenticate();
     console.log(`[catalog-refresh] Auth OK (${Date.now()-t0}ms)`);
 
-    const products = await fetchAll(uid, "product.product",
-      [["active", "=", true], ["default_code", "=like", "3400%"]],
+    // Filtre Odoo : default_code de exactement 13 caractères (=like '____________' = 13 underscores en SQL LIKE)
+    const rawProducts = await fetchAll(uid, "product.product",
+      [["active", "=", true], ["default_code", "=like", "_____________"]],
       ["id", "name", "default_code", "barcode", "list_price", "categ_id"]
     );
-    console.log(`[catalog-refresh] ${products.length} produits CIP13 (${Date.now()-t0}ms)`);
+    // Filtre JS : uniquement les codes 100% numériques (exclut les codes avec lettres)
+    const products = rawProducts.filter(p => /^\d{13}$/.test(p.default_code));
+    console.log(`[catalog-refresh] ${rawProducts.length} produits 13 chars → ${products.length} CIP13 numériques (${Date.now()-t0}ms)`);
 
     if (products.length === 0) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: "0 produits avec CIP 3400*", elapsed: Date.now()-t0 }) };
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: `0 CIP13 valides (${rawProducts.length} à 13 chars)`, elapsed: Date.now()-t0 }) };
     }
 
     // Map pid → product
