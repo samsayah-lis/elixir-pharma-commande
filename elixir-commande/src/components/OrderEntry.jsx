@@ -149,16 +149,21 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const handleRefresh = async () => {
     if (refreshing) return;
     setRefreshing(true);
+    setError(null);
     try {
-      // Lance le sync background
-      await fetch("/.netlify/functions/odoo-catalog?refresh=1");
-      // Attend 45s que la background function ait fini
-      await new Promise(r => setTimeout(r, 45000));
+      // Appelle le refresh qui charge Odoo → Supabase et retourne le résultat
+      const refreshRes = await fetch("/.netlify/functions/odoo-catalog?refresh=1");
+      const refreshData = await refreshRes.json();
+      if (refreshData.error) throw new Error(refreshData.error);
+      console.log(`[refresh] ✓ ${refreshData.products} produits chargés en ${refreshData.elapsed_ms}ms`);
       // Recharge depuis Supabase
       const res = await fetch("/.netlify/functions/odoo-catalog");
       const data = await res.json();
       if (data.products) { setCatalog(data.products); setCatalogUpdatedAt(data.updated_at); }
-    } catch (e) { console.warn("[refresh]", e.message); }
+    } catch (e) {
+      console.error("[refresh]", e.message);
+      setError("Refresh échoué : " + e.message);
+    }
     finally { setRefreshing(false); }
   };
 
@@ -181,7 +186,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             disabled={refreshing}
             style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.5 : 1, whiteSpace: "nowrap" }}
           >
-            {refreshing ? "⏳ Actualisation Odoo (~45s)..." : "🔄 Actualiser depuis Odoo"}
+            {refreshing ? "⏳ Actualisation Odoo en cours..." : "🔄 Actualiser depuis Odoo"}
           </button>
         </div>
       </div>
@@ -242,7 +247,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Cliquez sur le bouton ci-dessous pour charger les produits depuis Odoo. Cette opération prend environ 45 secondes.</div>
           <button onClick={handleRefresh} disabled={refreshing}
             style={{ background: "linear-gradient(135deg, #0f2d3d, #1a4a5e)", color: "white", border: "none", borderRadius: 12, padding: "14px 28px", fontSize: 15, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}>
-            {refreshing ? "⏳ Chargement depuis Odoo (~45s)..." : "🔄 Charger le catalogue Odoo"}
+            {refreshing ? "⏳ Chargement depuis Odoo en cours..." : "🔄 Charger le catalogue Odoo"}
           </button>
         </div>
       )}
