@@ -677,7 +677,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (syncPrice.running) return;
     setSyncPrice({ running: true, progress: "Démarrage..." });
     try {
-      let offset = 0, totalUpdated = 0, totalMatched = 0, mappings = 0;
+      let offset = 0, totalUpdated = 0, totalMatched = 0;
       while (true) {
         const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -685,8 +685,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
         totalMatched += data.matched || 0;
-        if (data.mappings) mappings = data.mappings;
-        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalMatched} matchés, ${totalUpdated} prix mis à jour (${mappings} mappings PID→CIP)` });
+        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalMatched} matchés, ${totalUpdated} prix mis à jour` });
         if (data.done) break;
         offset = data.next_offset;
       }

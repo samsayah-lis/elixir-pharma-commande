@@ -1,6 +1,5 @@
-// ── Sync prix remisés — utilise pid_to_cip + cip_to_price depuis kv_store ──
-// GET /odoo-price-sync?offset=0 → charge 500 règles Odoo, match via kv_store, PATCH Supabase
-// Prérequis : lancer le sync stock d'abord (remplit pid_to_cip et cip_to_price dans kv_store)
+// ── Sync prix — lookup direct Supabase par odoo_pid pour chaque batch ───
+// GET /odoo-price-sync?offset=0 → charge 200 règles Odoo, lookup CIP dans Supabase
 import { authenticate, odooCall } from "./odoo.js";
 
 const PRICELIST_ID = 5;
@@ -9,56 +8,62 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
 const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
 
-const BATCH_SIZE = 500;
+const BATCH_SIZE = 200;
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const offset = parseInt(event.queryStringParameters?.offset || "0");
 
   try {
-    // 1. Charger les mappings depuis kv_store (instantané)
-    const [pidRes, priceRes] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pid_to_cip&select=value`, { headers: SB }),
-      fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.cip_to_price&select=value`, { headers: SB }),
-    ]);
-    const pidRows = await pidRes.json();
-    const priceRows = await priceRes.json();
-
-    if (!pidRows?.[0]?.value) {
-      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Mapping pid_to_cip non trouvé. Lancez le sync stock d'abord." }) };
-    }
-
-    const pidToCip = JSON.parse(pidRows[0].value);    // { "43077": "3400930230008", ... }
-    const cipToPrice = JSON.parse(priceRows?.[0]?.value || "{}"); // { "3400930230008": 1.68, ... }
-    const totalMappings = Object.keys(pidToCip).length;
-
-    // 2. Charger un batch de règles de prix depuis Odoo
     const uid = await authenticate();
+
+    // 1. Charger un batch de règles de prix depuis Odoo
     const items = await odooCall(uid, "product.pricelist.item", "search_read",
       [["pricelist_id", "=", PRICELIST_ID]],
       { fields: ["product_id", "fixed_price"], limit: BATCH_SIZE, offset }
     );
     if (!Array.isArray(items) || items.length === 0) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ done: true, offset, updated: 0, mappings: totalMappings }) };
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ done: true, offset, updated: 0 }) };
     }
 
-    // 3. Matcher et calculer les remises
-    let updated = 0, matched = 0;
-    for (const item of items) {
+    // 2. Extraire les PIDs valides avec leur fixed_price
+    const pidToFixed = {};
+    items.forEach(item => {
       const pid = parseInt(item.product_id);
-      const fixedPrice = parseFloat(item.fixed_price) || 0;
-      if (!pid || fixedPrice <= 0) continue;
+      const fp = parseFloat(item.fixed_price) || 0;
+      if (pid > 0 && fp > 0) pidToFixed[pid] = fp;
+    });
+    const pids = Object.keys(pidToFixed);
 
-      const cip = pidToCip[String(pid)];
-      if (!cip) continue;
-      matched++;
+    if (pids.length === 0) {
+      return { statusCode: 200, headers: cors, body: JSON.stringify({
+        done: items.length < BATCH_SIZE, offset, next_offset: offset + items.length,
+        batch_rules: items.length, matched: 0, updated: 0,
+      })};
+    }
 
-      const listPrice = cipToPrice[cip] || 0;
-      if (listPrice <= 0 || fixedPrice >= listPrice) continue;
+    // 3. Lookup CIP + list_price depuis Supabase par odoo_pid
+    const pidList = pids.join(",");
+    const lookupRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,list_price&odoo_pid=in.(${pidList})`,
+      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-499" } }
+    );
+    const lookupRows = await lookupRes.json();
 
-      const discountPct = Math.round((1 - fixedPrice / listPrice) * 1000) / 10;
+    const pidLookup = {};
+    (Array.isArray(lookupRows) ? lookupRows : []).forEach(r => {
+      if (r.odoo_pid) pidLookup[r.odoo_pid] = { cip: r.cip, listPrice: parseFloat(r.list_price) || 0 };
+    });
 
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}`, {
+    // 4. PATCH les prix dans Supabase
+    let updated = 0, matched = Object.keys(pidLookup).length;
+    for (const [pid, fixedPrice] of Object.entries(pidToFixed)) {
+      const lookup = pidLookup[pid];
+      if (!lookup || !lookup.cip || lookup.listPrice <= 0) continue;
+      if (fixedPrice >= lookup.listPrice) continue;
+
+      const discountPct = Math.round((1 - fixedPrice / lookup.listPrice) * 1000) / 10;
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${lookup.cip}`, {
         method: "PATCH", headers: SB,
         body: JSON.stringify({ discounted_price: fixedPrice, discount_pct: discountPct }),
       });
@@ -68,7 +73,8 @@ export const handler = async (event) => {
     const nextOffset = offset + items.length;
     return { statusCode: 200, headers: cors, body: JSON.stringify({
       done: items.length < BATCH_SIZE, offset, next_offset: nextOffset,
-      batch_rules: items.length, matched, updated, mappings: totalMappings,
+      batch_rules: items.length, pids_in_batch: pids.length,
+      matched, updated,
     })};
 
   } catch (err) {
