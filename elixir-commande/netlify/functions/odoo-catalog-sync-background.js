@@ -77,6 +77,7 @@ export const handler = async (event) => {
         barcode: p.barcode && p.barcode !== "0" ? p.barcode : cip,
         name: p.name || "",
         list_price: parseFloat(p.list_price) || 0,
+        odoo_pid: parseInt(p.id) || 0,
         in_stock: available > 0,
         available,
         updated_at: now,

@@ -651,27 +651,21 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const handleSyncPrice = async () => {
     if (syncPrice.running) return;
-    setSyncPrice({ running: true, progress: "Phase 1 : chargement produits + règles de prix Odoo..." });
+    setSyncPrice({ running: true, progress: "Démarrage..." });
     try {
-      // Phase 1 : compute all prices
-      const mapRes = await fetch("/.netlify/functions/odoo-price-sync?step=compute");
-      const mapData = await mapRes.json();
-      if (mapData.error) throw new Error(mapData.error);
-      setSyncPrice({ running: true, progress: `${mapData.prices_computed} prix calculés. Application...` });
-
-      // Phase 2 : apply by batch
-      let offset = 0, totalUpdated = 0;
+      let offset = 0, totalUpdated = 0, totalMatched = 0;
       while (true) {
         const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
         if (!res.ok) break;
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        setSyncPrice({ running: true, progress: `${offset + (data.batch_size || 0)} / ${data.total || "?"}... ${totalUpdated} prix mis à jour` });
+        totalMatched += data.matched_in_catalog || 0;
+        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalUpdated} prix mis à jour` });
         if (data.done) break;
         offset = data.next_offset;
       }
-      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour` });
+      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour (${totalMatched} produits trouvés)` });
     } catch (e) { setSyncPrice({ running: false, progress: "Erreur: " + e.message }); }
   };
 
@@ -1896,7 +1890,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
                   <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>💰 Prix remisés (Liste de prix EUR 2)</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les 7 376 règles de prix depuis Odoo. Les pharmacies verront le prix barré + le prix remisé en vert.</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les 7 376 règles de prix depuis Odoo. Nécessite un sync stock préalable. ~2 minutes.</div>
                 </div>
                 <button onClick={handleSyncPrice} disabled={syncPrice.running}
                   style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncPrice.running?"default":"pointer",opacity:syncPrice.running?0.6:1,whiteSpace:"nowrap"}}>

@@ -103,9 +103,11 @@ CREATE TABLE IF NOT EXISTS odoo_catalog (
 -- Si la table existe déjà, ajouter les colonnes prix remisés
 ALTER TABLE odoo_catalog ADD COLUMN IF NOT EXISTS discounted_price REAL;
 ALTER TABLE odoo_catalog ADD COLUMN IF NOT EXISTS discount_pct REAL NOT NULL DEFAULT 0;
+ALTER TABLE odoo_catalog ADD COLUMN IF NOT EXISTS odoo_pid INTEGER;
 CREATE INDEX IF NOT EXISTS idx_oc_name ON odoo_catalog(name);
 CREATE INDEX IF NOT EXISTS idx_oc_stock ON odoo_catalog(in_stock);
 CREATE INDEX IF NOT EXISTS idx_oc_expiry ON odoo_catalog(earliest_expiry) WHERE earliest_expiry IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_oc_pid ON odoo_catalog(odoo_pid) WHERE odoo_pid IS NOT NULL;
 
 -- ── 9. Key-Value store (cache mapping PID→CIP, etc.) ────────────
 CREATE TABLE IF NOT EXISTS kv_store (
