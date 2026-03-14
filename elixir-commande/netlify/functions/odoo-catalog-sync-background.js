@@ -7,11 +7,11 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
 
-async function fetchAll(uid, model, domain, fields) {
+async function fetchAll(uid, model, domain, fields, extraKwargs = {}) {
   const results = [];
   let offset = 0;
   while (true) {
-    const page = await odooCall(uid, model, "search_read", domain, { fields, limit: 500, offset });
+    const page = await odooCall(uid, model, "search_read", domain, { fields, limit: 500, offset, ...extraKwargs });
     if (!Array.isArray(page) || page.length === 0) break;
     results.push(...page);
     if (page.length < 500) break;
@@ -40,12 +40,15 @@ export const handler = async (event) => {
     const uid = await authenticate();
     log("Auth OK");
 
-    // ── 1. TOUS les produits actifs avec default_code ────────────────────
+    // ── 1. TOUS les produits actifs avec default_code + prix liste de prix ─
+    // Le champ "price" est calculé par Odoo selon la liste de prix dans le contexte
+    const PRICELIST_ID = 5; // "Liste de prix EUR 2"
     const rawProducts = await fetchAll(uid, "product.product",
       [["active", "=", true], ["default_code", "!=", false]],
-      ["id", "name", "default_code", "barcode", "list_price", "categ_id"]
+      ["id", "name", "default_code", "barcode", "list_price", "price", "categ_id"],
+      { context: { pricelist: PRICELIST_ID } }
     );
-    log(`${rawProducts.length} produits bruts Odoo`);
+    log(`${rawProducts.length} produits bruts Odoo (avec prix pricelist ${PRICELIST_ID})`);
 
     // Filtre JS : CIP13 = exactement 13 chiffres (dans default_code OU barcode)
     const products = rawProducts.filter(p => {
@@ -140,48 +143,8 @@ export const handler = async (event) => {
         .sort((a, b) => (a.expiry || "9999").localeCompare(b.expiry || "9999"));
     });
 
-    // ── 5. Charger la liste de prix (id=5 = "Liste de prix EUR 2") ──────
-    const PRICELIST_ID = 5;
-    let priceRules = []; // [{ product_id, product_tmpl_id, applied_on, compute_price, fixed_price, percent_price, price_discount }]
-    try {
-      const plItems = await fetchAll(uid, "product.pricelist.item",
-        [["pricelist_id", "=", PRICELIST_ID]],
-        ["product_tmpl_id", "product_id", "compute_price", "fixed_price", "percent_price", "price_discount", "price_surcharge", "applied_on", "min_quantity"]
-      );
-      priceRules = Array.isArray(plItems) ? plItems : [];
-      log(`${priceRules.length} règles de prix (pricelist ${PRICELIST_ID})`);
-    } catch (e) {
-      log(`Pricelist error: ${e.message}`);
-    }
-
-    // Fonction de calcul du prix remisé
-    const computeDiscountedPrice = (listPrice, productId) => {
-      if (priceRules.length === 0 || !listPrice) return { discounted_price: null, discount_pct: 0 };
-
-      // Priorité : règle par produit > règle globale
-      const pid = parseInt(productId) || 0;
-      const rule = priceRules.find(r => parseInt(r.product_id) === pid)
-        || priceRules.find(r => (r.applied_on || "").includes("3")); // 3_global ou "3"
-
-      if (!rule) return { discounted_price: null, discount_pct: 0 };
-
-      const cp = rule.compute_price || "";
-      const fixed = parseFloat(rule.fixed_price) || 0;
-      const pctField = parseFloat(rule.percent_price) || parseFloat(rule.price_discount) || 0;
-      const surcharge = parseFloat(rule.price_surcharge) || 0;
-
-      if (cp === "fixed" || (fixed > 0 && cp !== "percentage" && cp !== "formula")) {
-        const disc = listPrice > 0 ? Math.round((1 - fixed / listPrice) * 100) : 0;
-        return { discounted_price: fixed, discount_pct: Math.max(0, disc) };
-      }
-      if ((cp === "percentage" || cp === "formula" || cp === "") && pctField > 0) {
-        const discounted = Math.round(listPrice * (1 - pctField / 100) * 100) / 100 + surcharge;
-        return { discounted_price: discounted, discount_pct: pctField };
-      }
-      return { discounted_price: null, discount_pct: 0 };
-    };
-
-    // ── 6. Construction des rows avec prix remisés ──────────────────────
+    // ── 5. Construction des rows — prix remisé directement depuis Odoo ──
+    // Le champ "price" a été calculé par Odoo avec le contexte pricelist=5
     const now = new Date().toISOString();
     const rows = products.map(p => {
       const cip = p.default_code;
@@ -189,7 +152,15 @@ export const handler = async (event) => {
       const available = Math.round(stock.available);
       const earliestExpiry = stock.lots.find(l => l.expiry)?.expiry || null;
       const listPrice = parseFloat(p.list_price) || 0;
-      const { discounted_price, discount_pct } = computeDiscountedPrice(listPrice, p.id);
+      const pricelistPrice = parseFloat(p.price) || 0;
+
+      // Calcul remise : si price < list_price → il y a une remise
+      let discounted_price = null;
+      let discount_pct = 0;
+      if (pricelistPrice > 0 && listPrice > 0 && pricelistPrice < listPrice) {
+        discounted_price = Math.round(pricelistPrice * 100) / 100;
+        discount_pct = Math.round((1 - pricelistPrice / listPrice) * 1000) / 10; // 1 décimale
+      }
 
       return {
         cip,
