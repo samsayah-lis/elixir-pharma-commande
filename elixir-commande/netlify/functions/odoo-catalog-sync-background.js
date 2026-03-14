@@ -140,19 +140,64 @@ export const handler = async (event) => {
         .sort((a, b) => (a.expiry || "9999").localeCompare(b.expiry || "9999"));
     });
 
-    // ── 5. Construction des rows ────────────────────────────────────────
+    // ── 5. Charger la liste de prix (id=5 = "Liste de prix EUR 2") ──────
+    const PRICELIST_ID = 5;
+    let priceRules = []; // [{ product_id, product_tmpl_id, applied_on, compute_price, fixed_price, percent_price, price_discount }]
+    try {
+      const plItems = await fetchAll(uid, "product.pricelist.item",
+        [["pricelist_id", "=", PRICELIST_ID]],
+        ["product_tmpl_id", "product_id", "compute_price", "fixed_price", "percent_price", "price_discount", "price_surcharge", "applied_on", "min_quantity"]
+      );
+      priceRules = Array.isArray(plItems) ? plItems : [];
+      log(`${priceRules.length} règles de prix (pricelist ${PRICELIST_ID})`);
+    } catch (e) {
+      log(`Pricelist error: ${e.message}`);
+    }
+
+    // Fonction de calcul du prix remisé
+    const computeDiscountedPrice = (listPrice, productId) => {
+      if (priceRules.length === 0 || !listPrice) return { discounted_price: null, discount_pct: 0 };
+
+      // Priorité : règle par produit > règle globale
+      const pid = parseInt(productId) || 0;
+      const rule = priceRules.find(r => parseInt(r.product_id) === pid)
+        || priceRules.find(r => (r.applied_on || "").includes("3")); // 3_global ou "3"
+
+      if (!rule) return { discounted_price: null, discount_pct: 0 };
+
+      const cp = rule.compute_price || "";
+      const fixed = parseFloat(rule.fixed_price) || 0;
+      const pctField = parseFloat(rule.percent_price) || parseFloat(rule.price_discount) || 0;
+      const surcharge = parseFloat(rule.price_surcharge) || 0;
+
+      if (cp === "fixed" || (fixed > 0 && cp !== "percentage" && cp !== "formula")) {
+        const disc = listPrice > 0 ? Math.round((1 - fixed / listPrice) * 100) : 0;
+        return { discounted_price: fixed, discount_pct: Math.max(0, disc) };
+      }
+      if ((cp === "percentage" || cp === "formula" || cp === "") && pctField > 0) {
+        const discounted = Math.round(listPrice * (1 - pctField / 100) * 100) / 100 + surcharge;
+        return { discounted_price: discounted, discount_pct: pctField };
+      }
+      return { discounted_price: null, discount_pct: 0 };
+    };
+
+    // ── 6. Construction des rows avec prix remisés ──────────────────────
     const now = new Date().toISOString();
     const rows = products.map(p => {
       const cip = p.default_code;
       const stock = stockByCip[cip] || { qty: 0, reserved: 0, available: 0, lots: [] };
       const available = Math.round(stock.available);
       const earliestExpiry = stock.lots.find(l => l.expiry)?.expiry || null;
+      const listPrice = parseFloat(p.list_price) || 0;
+      const { discounted_price, discount_pct } = computeDiscountedPrice(listPrice, p.id);
 
       return {
         cip,
         barcode: p.barcode && p.barcode !== "0" ? p.barcode : cip,
         name: p.name || "",
-        list_price: parseFloat(p.list_price) || 0,
+        list_price: listPrice,
+        discounted_price,
+        discount_pct,
         category: p.categ_id || "",
         in_stock: available > 0,
         available: Math.max(0, available),

@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS odoo_catalog (
   barcode         TEXT,
   name            TEXT NOT NULL DEFAULT '',
   list_price      REAL NOT NULL DEFAULT 0,
+  discounted_price REAL,
+  discount_pct    REAL NOT NULL DEFAULT 0,
   category        TEXT DEFAULT '',
   in_stock        BOOLEAN NOT NULL DEFAULT false,
   available       INTEGER NOT NULL DEFAULT 0,
@@ -98,6 +100,9 @@ CREATE TABLE IF NOT EXISTS odoo_catalog (
   lots            TEXT DEFAULT '[]',
   updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- Si la table existe déjà, ajouter les colonnes prix remisés
+ALTER TABLE odoo_catalog ADD COLUMN IF NOT EXISTS discounted_price REAL;
+ALTER TABLE odoo_catalog ADD COLUMN IF NOT EXISTS discount_pct REAL NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_oc_name ON odoo_catalog(name);
 CREATE INDEX IF NOT EXISTS idx_oc_stock ON odoo_catalog(in_stock);
 CREATE INDEX IF NOT EXISTS idx_oc_expiry ON odoo_catalog(earliest_expiry) WHERE earliest_expiry IS NOT NULL;

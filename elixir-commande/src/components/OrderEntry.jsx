@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
@@ -8,9 +8,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [catalogInfo, setCatalogInfo] = useState(null); // { total, in_stock, updated_at }
-  const [priceRules, setPriceRules] = useState([]);
-  const [pricelistName, setPricelistName] = useState("");
+  const [catalogInfo, setCatalogInfo] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({});
   const [alertSaving, setAlertSaving] = useState({});
@@ -18,29 +16,13 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [error, setError] = useState(null);
   const debounceRef = useRef(null);
 
-  // ── Chargement initial : count + pricelist + alerts ───────────────────
+  // ── Chargement initial : count + alerts ───────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        // Count des produits (léger, pas de 502)
         const countRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
-        if (countRes.ok) {
-          const countData = await countRes.json();
-          if (!cancelled) setCatalogInfo(countData);
-        }
-
-        // Liste de prix
-        if (pharmacyCip) {
-          try {
-            const plRes = await fetch(`/.netlify/functions/odoo-pricelist?pharmacy_cip=${pharmacyCip}`);
-            const plData = await plRes.json();
-            if (!cancelled && plData.rules) setPriceRules(plData.rules);
-            if (!cancelled && plData.pricelists?.[0]?.name) setPricelistName(plData.pricelists[0].name);
-          } catch (e) { console.warn("[pricelist]", e.message); }
-        }
-
-        // Alertes
+        if (countRes.ok && !cancelled) setCatalogInfo(await countRes.json());
         if (pharmacyCip) {
           try {
             const alertRes = await fetch(`/.netlify/functions/restock-alert?pharmacy_cip=${pharmacyCip}`);
@@ -48,14 +30,14 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             const map = {};
             (Array.isArray(alertData) ? alertData : []).forEach(a => { map[a.cip] = true; });
             if (!cancelled) setAlerts(map);
-          } catch (e) { console.warn("[alerts]", e.message); }
+          } catch (e) { /* ignore */ }
         }
       } catch (e) { console.warn("[init]", e.message); }
     })();
     return () => { cancelled = true; };
   }, [pharmacyCip]);
 
-  // ── Recherche côté serveur ────────────────────────────────────────────
+  // ── Recherche côté serveur (prix remisés inclus dans la réponse) ──────
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -67,27 +49,10 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setResults(Array.isArray(data.products) ? data.products : []);
-      } catch (e) {
-        console.warn("[search]", e.message);
-        setResults([]);
-      }
+      } catch (e) { setResults([]); }
       finally { setSearching(false); }
     }, 350);
   }, [query, stockOnly]);
-
-  // ── Prix remisé ───────────────────────────────────────────────────────
-  const getDiscountedPrice = useCallback((product) => {
-    if (!product || priceRules.length === 0) return { price: product?.list_price, discount: 0 };
-    const base = product.list_price || 0;
-    const rule = priceRules.find(r => r.product_id && r.cip === product.cip)
-      || priceRules.find(r => r.applied_on === "3_global");
-    if (!rule) return { price: base, discount: 0 };
-    if (rule.type === "fixed" && rule.fixed_price != null) return { price: rule.fixed_price, discount: Math.round((1 - rule.fixed_price / base) * 100) };
-    if ((rule.type === "percentage" || rule.type === "formula") && rule.discount > 0) {
-      return { price: Math.round(base * (1 - rule.discount / 100) * 100) / 100 + (rule.surcharge || 0), discount: rule.discount };
-    }
-    return { price: base, discount: 0 };
-  }, [priceRules]);
 
   // ── Alerte retour en stock ────────────────────────────────────────────
   const toggleAlert = async (product) => {
@@ -109,8 +74,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const handleAdd = (product) => {
     const qty = parseInt(quantities[product.cip]) || 0;
     if (qty <= 0) return;
-    const { price, discount } = getDiscountedPrice(product);
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount });
+    const price = product.discounted_price || product.list_price;
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: product.discount_pct || 0 });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
   };
 
@@ -121,27 +86,21 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     setError(null);
     try {
       await fetch("/.netlify/functions/odoo-catalog?refresh=1");
-      // Poll le count toutes les 5s
       const startTotal = catalogInfo?.total || 0;
       for (let i = 0; i < 24; i++) {
         await new Promise(r => setTimeout(r, 5000));
         const res = await fetch("/.netlify/functions/odoo-catalog?count=1");
         if (res.ok) {
           const data = await res.json();
-          if (data.total > startTotal || (startTotal === 0 && data.total > 0)) {
-            setCatalogInfo(data);
-            break;
-          }
+          if (data.total > startTotal || (startTotal === 0 && data.total > 0)) { setCatalogInfo(data); break; }
         }
       }
-      // Recharger le count final
       const finalRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
       if (finalRes.ok) setCatalogInfo(await finalRes.json());
     } catch (e) { setError("Refresh échoué : " + e.message); }
     finally { setRefreshing(false); }
   };
 
-  // ── Render ────────────────────────────────────────────────────────────
   const hasProducts = catalogInfo && catalogInfo.total > 0;
 
   return (
@@ -153,7 +112,6 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Saisie de commande</div>
             <div style={{ fontSize: 13, opacity: 0.7 }}>
               Recherchez par code CIP ou nom de produit
-              {pricelistName && <span> · Liste de prix : <strong>{pricelistName}</strong></span>}
               {catalogInfo?.updated_at && <span> · Màj : {new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
             </div>
           </div>
@@ -167,14 +125,10 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
       {/* Search bar */}
       <div style={{ position: "relative", marginBottom: 12 }}>
         <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 18, opacity: 0.4 }}>🔍</span>
-        <input
-          value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Saisissez un code CIP (ex: 3400930...) ou un nom de produit..."
-          autoFocus
-          style={{ width: "100%", padding: "14px 16px 14px 44px", fontSize: 15, border: "2px solid #e2e8f0", borderRadius: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit", background: "white", transition: "border 0.2s" }}
-          onFocus={e => e.target.style.borderColor = "#2d9cbc"}
-          onBlur={e => e.target.style.borderColor = "#e2e8f0"}
-        />
+        <input value={query} onChange={e => setQuery(e.target.value)}
+          placeholder="Saisissez un code CIP (ex: 3400930...) ou un nom de produit..." autoFocus
+          style={{ width: "100%", padding: "14px 16px 14px 44px", fontSize: 15, border: "2px solid #e2e8f0", borderRadius: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit", background: "white" }}
+          onFocus={e => e.target.style.borderColor = "#2d9cbc"} onBlur={e => e.target.style.borderColor = "#e2e8f0"} />
         {query && <button onClick={() => setQuery("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "#bbb" }}>✕</button>}
       </div>
 
@@ -183,9 +137,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", fontSize: 13 }}>
           <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)}
             style={{ width: 16, height: 16, accentColor: "#10b981", cursor: "pointer" }} />
-          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? "#059669" : "#666" }}>
-            N'afficher que les produits en stock
-          </span>
+          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? "#059669" : "#666" }}>N'afficher que les produits en stock</span>
         </label>
         {catalogInfo && (
           <span style={{ fontSize: 11, color: "#aaa" }}>
@@ -203,7 +155,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         </div>
       )}
 
-      {/* Empty catalog — first load needed */}
+      {/* Empty catalog */}
       {!hasProducts && !error && (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14 }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
@@ -225,7 +177,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         </div>
       )}
 
-      {/* Search results */}
+      {/* Results */}
       {query.length >= 2 && (
         <div>
           <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>
@@ -238,44 +190,48 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {results.map(p => {
-              const { price, discount } = getDiscountedPrice(p);
+              const hasDiscount = p.discount_pct > 0 && p.discounted_price != null;
+              const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
               const qty = quantities[p.cip] || 0;
               const isAlert = alerts[p.cip];
+
               return (
                 <div key={p.cip} style={{
                   background: "white", borderRadius: 14, padding: "14px 18px",
                   border: p.in_stock ? "1px solid #e8ecf0" : "1px solid #fed7d7",
                   display: "flex", alignItems: "center", gap: 16, opacity: p.in_stock ? 1 : 0.85,
                 }}>
-                  {/* Stock badge */}
-                  <div style={{ flexShrink: 0, textAlign: "center", minWidth: 52 }}>
+                  {/* Stock badge — juste EN STOCK ou RUPTURE, pas de quantité */}
+                  <div style={{ flexShrink: 0, textAlign: "center", minWidth: 60 }}>
                     {p.in_stock ? (
-                      <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "4px 8px", fontSize: 10, fontWeight: 700 }}>
-                        EN STOCK<div style={{ fontSize: 16, fontWeight: 800, marginTop: 2 }}>{p.available}</div>
-                      </div>
+                      <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
                     ) : (
-                      <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "4px 8px", fontSize: 10, fontWeight: 700 }}>RUPTURE</div>
+                      <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>RUPTURE</div>
                     )}
                   </div>
+
                   {/* Info */}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 700, fontSize: 14, color: "#0f2d3d", lineHeight: 1.3 }}>{p.name}</div>
                     <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
                       CIP : <span style={{ fontFamily: "monospace" }}>{p.cip}</span>
-                      {p.earliest_expiry && <span style={{ marginLeft: 10, color: "#b45309" }}>Pér. : {new Date(p.earliest_expiry).toLocaleDateString("fr-FR")}</span>}
                     </div>
                   </div>
-                  {/* Prix */}
-                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 100 }}>
-                    {discount > 0 && (
+
+                  {/* Prix — affiche le prix remisé si disponible */}
+                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 110 }}>
+                    {hasDiscount ? (<>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                         <span style={{ fontSize: 11, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(discount)}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(p.discount_pct)}</span>
                       </div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(p.discounted_price)}</div>
+                    </>) : (
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
                     )}
-                    <div style={{ fontSize: 18, fontWeight: 800, color: discount > 0 ? "#059669" : "#0f2d3d" }}>{fmt(price)}</div>
                     <div style={{ fontSize: 10, color: "#bbb" }}>Prix unitaire HT</div>
                   </div>
+
                   {/* Actions */}
                   <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 120 }}>
                     {p.in_stock ? (<>
@@ -290,7 +246,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       {qty > 0 && (
                         <button onClick={() => handleAdd(p)}
                           style={{ background: "#10b981", color: "white", border: "none", borderRadius: 8, padding: "5px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                          Ajouter {fmt(price * qty)}
+                          Ajouter {fmt(displayPrice * qty)}
                         </button>
                       )}
                     </>) : (
