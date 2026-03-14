@@ -647,6 +647,49 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     </div>
   );
 
+  // ── Sync state ────────────────────────────────────────────────────────
+  const [syncStock, setSyncStock] = useState({ running: false, progress: null });
+  const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
+  // Sync péremptions is handled inside ShortExpiry component
+
+  const handleSyncStock = async () => {
+    if (syncStock.running) return;
+    setSyncStock({ running: true, progress: "Démarrage..." });
+    try {
+      await fetch("/.netlify/functions/odoo-catalog?refresh=1");
+      setSyncStock({ running: true, progress: "Sync Odoo lancé, vérification..." });
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const res = await fetch("/.netlify/functions/odoo-catalog?count=1");
+        if (res.ok) {
+          const data = await res.json();
+          setSyncStock({ running: true, progress: `${data.total} produits, ${data.in_stock} en stock` });
+          if (data.total > 0) break;
+        }
+      }
+      setSyncStock({ running: false, progress: "✓ Terminé" });
+    } catch (e) { setSyncStock({ running: false, progress: "Erreur: " + e.message }); }
+  };
+
+  const handleSyncPrice = async () => {
+    if (syncPrice.running) return;
+    setSyncPrice({ running: true, progress: "Démarrage..." });
+    try {
+      let offset = 0, totalUpdated = 0;
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        if (data.error) break;
+        totalUpdated += data.updated || 0;
+        setSyncPrice({ running: true, progress: `Règle ${offset + (data.batch_rules || 0)}... ${totalUpdated} prix mis à jour` });
+        if (data.done) break;
+        offset = data.next_offset;
+      }
+      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour` });
+    } catch (e) { setSyncPrice({ running: false, progress: "Erreur: " + e.message }); }
+  };
+
   const TABS = [
     {k:"add",      label:"➕ Ajouter",    icon:"➕"},
     {k:"edit",     label:"✏️ Modifier",   icon:"✏️"},
@@ -656,6 +699,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
     {k:"expiry",    label:"⏰ Péremptions",icon:"⏰"},
+    {k:"sync",      label:"🔄 Synchronisation",icon:"🔄"},
   ];
 
   return (
@@ -1819,6 +1863,63 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* ── EXPIRY TAB ── */}
         {tab==="expiry"&&(
           <ShortExpiry isAdmin={true} onAddToCart={() => {}} />
+        )}
+
+        {/* ── SYNC TAB ── */}
+        {tab==="sync"&&(
+          <div>
+            <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d",marginBottom:24}}>Synchronisation Odoo → Supabase</div>
+
+            {/* Stock sync */}
+            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔄 Catalogue & Stock</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Met à jour les quantités disponibles et le statut en stock.</div>
+                </div>
+                <button onClick={handleSyncStock} disabled={syncStock.running}
+                  style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncStock.running?"default":"pointer",opacity:syncStock.running?0.6:1,whiteSpace:"nowrap"}}>
+                  {syncStock.running?"⏳ En cours...":"Lancer le sync"}
+                </button>
+              </div>
+              {syncStock.progress&&<div style={{marginTop:12,fontSize:12,color:syncStock.progress.startsWith("✓")?"#059669":"#888",fontWeight:600,background:"#f8fafc",borderRadius:8,padding:"8px 12px"}}>{syncStock.progress}</div>}
+            </div>
+
+            {/* Price sync */}
+            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>💰 Prix remisés (Liste de prix EUR 2)</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les 7 376 règles de prix depuis Odoo. Les pharmacies verront le prix barré + le prix remisé en vert.</div>
+                </div>
+                <button onClick={handleSyncPrice} disabled={syncPrice.running}
+                  style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncPrice.running?"default":"pointer",opacity:syncPrice.running?0.6:1,whiteSpace:"nowrap"}}>
+                  {syncPrice.running?"⏳ En cours...":"Lancer le sync"}
+                </button>
+              </div>
+              {syncPrice.progress&&<div style={{marginTop:12,fontSize:12,color:syncPrice.progress.startsWith("✓")?"#059669":"#888",fontWeight:600,background:"#f8fafc",borderRadius:8,padding:"8px 12px"}}>{syncPrice.progress}</div>}
+            </div>
+
+            {/* Expiry sync */}
+            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>⏰ Péremptions & Lots</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les dates de péremption et les lots pour chaque produit en stock. Le bouton se trouve dans l'onglet Péremptions.</div>
+                </div>
+                <button onClick={()=>setTab("expiry")}
+                  style={{background:"#f0f2f5",color:"#0f2d3d",border:"1px solid #ddd",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  Aller à Péremptions →
+                </button>
+              </div>
+            </div>
+
+            {/* Info */}
+            <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+              <strong>Ordre recommandé :</strong> 1. Stock → 2. Prix → 3. Péremptions<br/>
+              Le sync stock charge les produits et quantités. Le sync prix associe les remises de la liste de prix EUR 2. Le sync péremptions charge les lots et dates d'expiration pour les produits en stock.
+            </div>
+          </div>
         )}
 
         </div>

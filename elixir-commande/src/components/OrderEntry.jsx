@@ -3,19 +3,15 @@ import React, { useState, useEffect, useRef } from "react";
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, isAdmin }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
-  const [priceSyncing, setPriceSyncing] = useState(false);
-  const [priceSyncProgress, setPriceSyncProgress] = useState(null);
   const [catalogInfo, setCatalogInfo] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({});
   const [alertSaving, setAlertSaving] = useState({});
   const [stockOnly, setStockOnly] = useState(false);
-  const [error, setError] = useState(null);
   const debounceRef = useRef(null);
 
   // ── Chargement initial : count + alerts ───────────────────────────────
@@ -82,77 +78,16 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
   };
 
-  // ── Refresh catalogue ─────────────────────────────────────────────────
-  const handleRefresh = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    setError(null);
-    try {
-      await fetch("/.netlify/functions/odoo-catalog?refresh=1");
-      const startTotal = catalogInfo?.total || 0;
-      for (let i = 0; i < 24; i++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const res = await fetch("/.netlify/functions/odoo-catalog?count=1");
-        if (res.ok) {
-          const data = await res.json();
-          if (data.total > startTotal || (startTotal === 0 && data.total > 0)) { setCatalogInfo(data); break; }
-        }
-      }
-      const finalRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
-      if (finalRes.ok) setCatalogInfo(await finalRes.json());
-    } catch (e) { setError("Refresh échoué : " + e.message); }
-    finally { setRefreshing(false); }
-  };
-
-  // ── Sync prix depuis Odoo (admin) ─────────────────────────────────────
-  const handlePriceSync = async () => {
-    if (priceSyncing) return;
-    setPriceSyncing(true);
-    setPriceSyncProgress(null);
-    try {
-      let offset = 0;
-      let totalUpdated = 0;
-      while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
-        if (!res.ok) break;
-        const data = await res.json();
-        if (data.error) break;
-        totalUpdated += data.updated || 0;
-        setPriceSyncProgress({ offset: data.offset + (data.batch_rules || 0), updated: totalUpdated });
-        if (data.done) break;
-        offset = data.next_offset;
-      }
-      setPriceSyncProgress({ offset: 0, updated: totalUpdated, done: true });
-    } catch (e) { console.warn("[price-sync]", e.message); }
-    finally { setPriceSyncing(false); setPriceSyncProgress(null); }
-  };
-
   const hasProducts = catalogInfo && catalogInfo.total > 0;
 
   return (
     <div>
       {/* Header */}
       <div style={{ background: "linear-gradient(135deg, #0f2d3d, #1a4a5e)", borderRadius: 16, padding: "20px 24px", marginBottom: 20, color: "white" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Saisie de commande</div>
-            <div style={{ fontSize: 13, opacity: 0.7 }}>
-              Recherchez par code CIP ou nom de produit
-              {catalogInfo?.updated_at && <span> · Màj : {new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
-            </div>
-          </div>
-          {isAdmin && (
-            <div style={{ display: "flex", gap: 8 }}>
-              <button onClick={handleRefresh} disabled={refreshing}
-                style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.5 : 1, whiteSpace: "nowrap" }}>
-                {refreshing ? "⏳ Stock..." : "🔄 Sync stock"}
-              </button>
-              <button onClick={handlePriceSync} disabled={priceSyncing}
-                style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: priceSyncing ? "default" : "pointer", opacity: priceSyncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
-                {priceSyncing && priceSyncProgress ? `⏳ Prix ${priceSyncProgress.updated} màj...` : priceSyncing ? "⏳ Prix..." : "💰 Sync prix"}
-              </button>
-            </div>
-          )}
+        <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Saisie de commande</div>
+        <div style={{ fontSize: 13, opacity: 0.7 }}>
+          Recherchez par code CIP ou nom de produit
+          {catalogInfo?.updated_at && <span> · Màj : {new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
         </div>
       </div>
 
@@ -175,24 +110,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         </label>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#991b1b" }}>{error}</div>
-          <button onClick={() => { setError(null); handleRefresh(); }} style={{ marginTop: 8, background: "#dc2626", color: "white", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Réessayer</button>
-        </div>
-      )}
-
       {/* Empty catalog */}
-      {!hasProducts && !error && (
+      {!hasProducts && (
         <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14 }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#0f2d3d", marginBottom: 8 }}>Catalogue vide — premier chargement nécessaire</div>
-          <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>Cliquez ci-dessous pour charger les produits depuis Odoo.</div>
-          <button onClick={handleRefresh} disabled={refreshing}
-            style={{ background: "linear-gradient(135deg, #0f2d3d, #1a4a5e)", color: "white", border: "none", borderRadius: 12, padding: "14px 28px", fontSize: 15, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.6 : 1 }}>
-            {refreshing ? "⏳ Chargement en cours..." : "🔄 Charger le catalogue Odoo"}
-          </button>
+          <div style={{ fontSize: 16, fontWeight: 700, color: "#0f2d3d", marginBottom: 8 }}>Catalogue non synchronisé</div>
+          <div style={{ fontSize: 13, color: "#888" }}>Un administrateur doit lancer la synchronisation depuis le panneau admin.</div>
         </div>
       )}
 
