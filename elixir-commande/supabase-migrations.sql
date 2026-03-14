@@ -61,7 +61,29 @@ CREATE TABLE IF NOT EXISTS pharmacy_segments (
   computed_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ── 6. Vérification ─────────────────────────────────────────────
+-- ── 6. Alertes retour en stock ───────────────────────────────────
+CREATE TABLE IF NOT EXISTS restock_alerts (
+  pharmacy_cip  TEXT NOT NULL,
+  cip           TEXT NOT NULL,
+  pharmacy_email TEXT,
+  product_name  TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  notified      BOOLEAN NOT NULL DEFAULT false,
+  notified_at   TIMESTAMPTZ,
+  PRIMARY KEY (pharmacy_cip, cip)
+);
+CREATE INDEX IF NOT EXISTS idx_ra_cip ON restock_alerts(cip);
+CREATE INDEX IF NOT EXISTS idx_ra_notified ON restock_alerts(notified) WHERE notified = false;
+
+-- ── 7. Remises péremption courte (admin) ────────────────────────
+CREATE TABLE IF NOT EXISTS expiry_discounts (
+  cip           TEXT PRIMARY KEY,
+  discount_pct  REAL NOT NULL DEFAULT 0,
+  product_name  TEXT,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── 8. Vérification ─────────────────────────────────────────────
 DO $$ BEGIN
-  RAISE NOTICE '✅ Migrations terminées — 5 tables créées/mises à jour';
+  RAISE NOTICE '✅ Migrations terminées — 7 tables créées/mises à jour';
 END $$;

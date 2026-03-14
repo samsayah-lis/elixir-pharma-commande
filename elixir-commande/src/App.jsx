@@ -3,8 +3,12 @@ import emailjs from "@emailjs/browser";
 import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
 import AdminPanel from "./AdminPanel";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
+import OrderEntry from "./components/OrderEntry";
+import ShortExpiry from "./components/ShortExpiry";
 
 const SECTION_META = {
+  saisie:   { label: "Saisie de commande",  subtitle: "Recherche par CIP ou nom — stock temps réel Odoo", color: "#0f2d3d", accent: "#2d9cbc", icon: "📝", columns: [], specialView: "orderEntry" },
+  peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
   expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise %","Remise €","Prix net"] },
   stratege: { label: "Sélection Stratège",     subtitle: "Cartons standard – Top 50 rotations nationales",              color: "#2d5a27", accent: "#4a9e42", icon: "📦", columns: ["CIP","Désignation","Colis","Prix","Remise %","Remise €","Prix net","Prix carton"] },
   master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
@@ -149,7 +153,7 @@ function CipCell({ cip }) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("expert");
+  const [activeTab, setActiveTab] = useState("saisie");
   // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
   const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
@@ -1116,6 +1120,58 @@ export default function App() {
             </div>
           )}
 
+          {/* ── SPECIAL VIEWS : Saisie de commande & Péremption courte ── */}
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
+            <OrderEntry
+              pharmacyCip={pharmacyCip}
+              pharmacyName={pharmacyName}
+              pharmacyEmail={pharmacyEmail}
+              onAddToCart={(item) => {
+                // Ajouter au panier global via quantities
+                // Cherche si le produit existe déjà dans le catalogue Supabase
+                let added = false;
+                Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                  if (added) return;
+                  const idx = (c.products || []).findIndex(p => p.cip === item.cip);
+                  if (idx >= 0) {
+                    setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
+                    added = true;
+                  }
+                });
+                if (!added) {
+                  // Produit hors catalogue Supabase — ajouter comme commande spéciale
+                  console.log("[order-entry] Produit ajouté (hors catalogue):", item);
+                  alert(`✓ ${item.qty}x ${item.name} ajouté — ${(item.pn * item.qty).toFixed(2).replace(".",",")} € HT`);
+                }
+              }}
+            />
+          )}
+
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "shortExpiry" && (
+            <ShortExpiry
+              isAdmin={showAdmin}
+              pharmacyCip={pharmacyCip}
+              onAddToCart={(item) => {
+                let added = false;
+                Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                  if (added) return;
+                  const idx = (c.products || []).findIndex(p => p.cip === item.cip);
+                  if (idx >= 0) {
+                    setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
+                    added = true;
+                  }
+                });
+                if (!added) {
+                  console.log("[short-expiry] Produit ajouté (hors catalogue):", item);
+                  alert(`✓ ${item.qty}x ${item.name} ajouté — ${(item.pn * item.qty).toFixed(2).replace(".",",")} € HT`);
+                }
+              }}
+            />
+          )}
+
+          {/* ── CATALOG NORMAL (masqué si vue spéciale active) ── */}
+          {!CATALOG_WITH_ADMIN[activeTab]?.specialView && (<>
+
           {/* ── ML: Réapprovisionnement suggéré ── */}
           {pharmacyCip && (
             <ReorderSuggestion
@@ -1792,6 +1848,7 @@ export default function App() {
             );
           })()}
           </>
+          </>)}
         </main>
 
         {/* Cart panel — overlay flottant fixe */}
