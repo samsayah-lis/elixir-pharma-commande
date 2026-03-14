@@ -626,31 +626,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     });
   };
 
-  // LOGIN
-  if (!authed) return (
-    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
-      <div style={{background:"white",borderRadius:20,padding:"40px 44px",maxWidth:420,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.12)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
-          <div>
-            <div style={{fontWeight:800,fontSize:22,color:"#0f2d3d"}}>🔐 Espace Admin</div>
-            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Gestion du catalogue</div>
-          </div>
-          <button onClick={onClose} style={CB}>✕</button>
-        </div>
-        <label style={LS}>Mot de passe administrateur</label>
-        <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
-          onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••"
-          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} autoFocus />
-        {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>Mot de passe incorrect.</div>}
-        <button onClick={handleLogin} style={{...PB,marginTop:16}}>Accéder →</button>
-      </div>
-    </div>
-  );
-
-  // ── Sync state ────────────────────────────────────────────────────────
+  // ── Sync state (must be before any return) ────────────────────────────
   const [syncStock, setSyncStock] = useState({ running: false, progress: null });
   const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
-  // Sync péremptions is handled inside ShortExpiry component
 
   const handleSyncStock = async () => {
     if (syncStock.running) return;
@@ -689,6 +667,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour` });
     } catch (e) { setSyncPrice({ running: false, progress: "Erreur: " + e.message }); }
   };
+
+  // LOGIN
+  if (!authed) return (
+    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+      <div style={{background:"white",borderRadius:20,padding:"40px 44px",maxWidth:420,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.12)"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
+          <div>
+            <div style={{fontWeight:800,fontSize:22,color:"#0f2d3d"}}>🔐 Espace Admin</div>
+            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Gestion du catalogue</div>
+          </div>
+          <button onClick={onClose} style={CB}>✕</button>
+        </div>
+        <label style={LS}>Mot de passe administrateur</label>
+        <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
+          onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••"
+          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} autoFocus />
+        {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>Mot de passe incorrect.</div>}
+        <button onClick={handleLogin} style={{...PB,marginTop:16}}>Accéder →</button>
+      </div>
+    </div>
+  );
 
   const TABS = [
     {k:"add",      label:"➕ Ajouter",    icon:"➕"},
