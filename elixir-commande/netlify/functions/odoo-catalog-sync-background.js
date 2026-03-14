@@ -99,15 +99,6 @@ export const handler = async (event) => {
 
     log(`✓ ${saved} produits sauvés, ${inStock} en stock`);
 
-    // 5. Déclencher le sync péremptions en arrière-plan
-    try {
-      const host = process.env.URL || "https://commandes-elixir.netlify.app";
-      fetch(`${host}/.netlify/functions/odoo-expiry-sync-background`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-      }).catch(() => {});
-      log("Sync péremptions déclenché");
-    } catch (e) { /* ignore */ }
-
     return { statusCode: 200, headers: cors, body: JSON.stringify({
       success: true, products: saved, in_stock: inStock, elapsed_ms: Date.now()-t0,
     })};

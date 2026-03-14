@@ -15,25 +15,28 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
   const [sortBy, setSortBy] = useState("expiry");
 
   const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(null); // { current, total }
+
   const triggerExpirySync = async () => {
     setSyncing(true);
+    setSyncProgress(null);
     try {
-      // Trigger la background function
-      fetch("/.netlify/functions/odoo-expiry-sync-background", { method: "POST", body: "{}" }).catch(() => {});
-      // Poll toutes les 5s
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const res = await fetch("/.netlify/functions/odoo-catalog?expiry_months=4");
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.products) && data.products.length > 0) {
-            setProducts(data.products);
-            break;
-          }
-        }
+      let offset = 0;
+      let totalUpdated = 0;
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        if (data.error) { console.error("[sync]", data.error); break; }
+        totalUpdated += data.updated || 0;
+        setSyncProgress({ current: offset + (data.batch_size || 0), total: data.total_in_stock || 0, updated: totalUpdated });
+        if (data.done || !data.next_offset) break;
+        offset = data.next_offset;
       }
-    } catch (e) { console.warn("[expiry-sync]", e.message); }
-    finally { setSyncing(false); }
+      // Recharger les produits
+      await fetchData();
+    } catch (e) { console.warn("[sync]", e.message); }
+    finally { setSyncing(false); setSyncProgress(null); }
   };
 
   // ── Chargement : tous les produits en stock < 4 mois de péremption ────
@@ -129,7 +132,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
           </div>
           <button onClick={triggerExpirySync} disabled={syncing}
             style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
-            {syncing ? "⏳ Synchronisation..." : "🔄 Actualiser depuis Odoo"}
+            {syncing && syncProgress ? `⏳ ${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "⏳ Démarrage..." : "🔄 Actualiser depuis Odoo"}
           </button>
         </div>
       </div>
