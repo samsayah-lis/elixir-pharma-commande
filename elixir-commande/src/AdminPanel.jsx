@@ -677,19 +677,20 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (syncPrice.running) return;
     setSyncPrice({ running: true, progress: "Démarrage..." });
     try {
-      let offset = 0, totalUpdated = 0, totalMatched = 0;
+      let offset = 0, totalUpdated = 0, totalMatched = 0, mappings = 0;
       while (true) {
         const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
-        if (!res.ok) break;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        totalMatched += data.matched_in_catalog || 0;
-        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalUpdated} prix mis à jour` });
+        totalMatched += data.matched || 0;
+        if (data.mappings) mappings = data.mappings;
+        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalMatched} matchés, ${totalUpdated} prix mis à jour (${mappings} mappings PID→CIP)` });
         if (data.done) break;
         offset = data.next_offset;
       }
-      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour (${totalMatched} produits trouvés)` });
+      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour sur ${totalMatched} matchés` });
     } catch (e) { setSyncPrice({ running: false, progress: "Erreur: " + e.message }); }
   };
 

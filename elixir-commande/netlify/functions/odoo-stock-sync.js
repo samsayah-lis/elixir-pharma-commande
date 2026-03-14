@@ -111,6 +111,29 @@ export const handler = async (event) => {
         method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
         body: JSON.stringify({ key: "stock_map", value: JSON.stringify(stockByCip), updated_at: new Date().toISOString() }),
       });
+      // Sauver aussi le mapping pid→cip pour le sync prix
+      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
+        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ key: "pid_to_cip", value: JSON.stringify(pidMap), updated_at: new Date().toISOString() }),
+      });
+      // Sauver aussi cip→list_price pour le calcul des remises (seulement CIP13 avec odoo_pid)
+      const cipToPrice = {};
+      let priceOffset = 0;
+      while (true) {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,list_price&odoo_pid=not.is.null&list_price=gt.0&order=cip.asc`,
+          { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${priceOffset}-${priceOffset + 999}` } }
+        );
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        rows.forEach(r => { cipToPrice[r.cip] = r.list_price; });
+        if (rows.length < 1000) break;
+        priceOffset += 1000;
+      }
+      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
+        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ key: "cip_to_price", value: JSON.stringify(cipToPrice), updated_at: new Date().toISOString() }),
+      });
 
       const inStock = Object.values(stockByCip).filter(v => v > 0).length;
       return { statusCode: 200, headers: cors, body: JSON.stringify({
