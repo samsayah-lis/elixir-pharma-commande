@@ -118,11 +118,19 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
     <div>
       {/* Header */}
       <div style={{ background: "linear-gradient(135deg, #7c2d12, #ea580c)", borderRadius: 16, padding: "20px 24px", marginBottom: 20, color: "white" }}>
-        <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Péremption courte</div>
-        <div style={{ fontSize: 13, opacity: 0.8 }}>
-          Produits en stock avec moins de 4 mois de date de péremption
-          {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
-          {isAdmin && <span style={{ marginLeft: 8, background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "2px 8px", fontSize: 11 }}>Mode admin — remises modifiables</span>}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Péremption courte</div>
+            <div style={{ fontSize: 13, opacity: 0.8 }}>
+              Produits en stock avec péremption entre J+30 et 4 mois
+              {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
+              {isAdmin && <span style={{ marginLeft: 8, background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "2px 8px", fontSize: 11 }}>Mode admin — remises modifiables</span>}
+            </div>
+          </div>
+          <button onClick={triggerExpirySync} disabled={syncing}
+            style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
+            {syncing ? "⏳ Synchronisation..." : "🔄 Actualiser depuis Odoo"}
+          </button>
         </div>
       </div>
 
