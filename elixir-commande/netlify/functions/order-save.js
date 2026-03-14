@@ -42,6 +42,41 @@ export const handler = async (event) => {
       return { statusCode: 500, headers: cors, body: JSON.stringify({ success: false, error: err }) };
     }
 
+    // ── Décrémenter le stock dans odoo_catalog ──────────────────────────
+    // Parse les items de la commande et décrémente les quantités
+    try {
+      const items = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+      if (Array.isArray(items)) {
+        for (const item of items) {
+          const cip = item.cip || item.CIP || item.CIP13;
+          const qty = parseInt(item.qty || item.quantite || item.Quantité || 0);
+          if (!cip || qty <= 0) continue;
+
+          // Lire le stock actuel
+          const getRes = await fetch(
+            `${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}&select=available`,
+            { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
+          );
+          const rows = await getRes.json();
+          if (Array.isArray(rows) && rows.length > 0) {
+            const current = parseInt(rows[0].available) || 0;
+            const newAvailable = Math.max(0, current - qty);
+            await fetch(
+              `${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}`,
+              {
+                method: "PATCH",
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ available: newAvailable, in_stock: newAvailable > 0 }),
+              }
+            );
+          }
+        }
+        console.log(`[order-save] Stock décrémenté pour ${items.length} lignes`);
+      }
+    } catch (e) {
+      console.warn("[order-save] Stock decrement error (non-bloquant):", e.message);
+    }
+
     console.log(`[order-save] ✓ ${order.id} (${order.pharmacyName}, source=${row.source})`);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, id: order.id }) };
   } catch (e) {

@@ -108,11 +108,25 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
     return "#ca8a04";
   };
 
+  // ── Remise applicable : admin override > défaut (50% < 500€, 20% >= 500€) ──
+  const getDiscount = (p) => {
+    // Si l'admin a défini une remise spécifique, elle prime
+    if (discounts[p.cip] != null && discounts[p.cip] !== 0) return discounts[p.cip];
+    // Sinon, remise par défaut selon le prix
+    const price = parseFloat(p.list_price) || 0;
+    return price >= 500 ? 20 : 50;
+  };
+
+  const getDiscountedPrice = (p) => {
+    const disc = getDiscount(p);
+    return Math.round((parseFloat(p.list_price) || 0) * (1 - disc / 100) * 100) / 100;
+  };
+
   const handleAdd = (p) => {
     const qty = parseInt(quantities[p.cip]) || 0;
     if (qty <= 0) return;
-    const disc = discounts[p.cip] || 0;
-    const price = disc > 0 ? Math.round(p.list_price * (1 - disc / 100) * 100) / 100 : p.list_price;
+    const disc = getDiscount(p);
+    const price = getDiscountedPrice(p);
     onAddToCart?.({ cip: p.cip, name: p.name, qty, pn: price, pv: p.list_price, discount: disc, note: `Pér. ${p.earliest_expiry?.slice(0,10)}` });
     setQuantities(prev => ({ ...prev, [p.cip]: 0 }));
   };
@@ -127,7 +141,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
             <div style={{ fontSize: 13, opacity: 0.8 }}>
               Produits en stock avec péremption entre J+30 et 4 mois
               {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
-              {isAdmin && <span style={{ marginLeft: 8, background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "2px 8px", fontSize: 11 }}>Mode admin — remises modifiables</span>}
+            </div>
+            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
+              Remise par défaut : -50% (prix &lt; 500 €) · -20% (prix ≥ 500 €) · Modifiable par l'admin
             </div>
           </div>
           <button onClick={triggerExpirySync} disabled={syncing}
@@ -195,8 +211,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
             <tbody>
               {sorted.map((p, i) => {
                 const days = daysUntil(p.earliest_expiry);
-                const disc = discounts[p.cip] || 0;
-                const discPrice = disc > 0 ? Math.round(p.list_price * (1 - disc / 100) * 100) / 100 : null;
+                const disc = getDiscount(p);
+                const discPrice = getDiscountedPrice(p);
+                const hasAdminOverride = discounts[p.cip] != null && discounts[p.cip] !== 0;
                 const qty = quantities[p.cip] || 0;
 
                 return (
@@ -227,7 +244,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                         </div>
                       ))}
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, color: disc > 0 ? "#aaa" : "#0f2d3d", textDecoration: disc > 0 ? "line-through" : "none", fontWeight: disc > 0 ? 400 : 700 }}>
+                    <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, color: "#aaa", textDecoration: "line-through", fontWeight: 400 }}>
                       {fmt(p.list_price)}
                     </td>
                     <td style={{ padding: "10px 12px", textAlign: "center" }}>
@@ -246,25 +263,23 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                               style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 12 }}>✕</button>
                           </div>
                         ) : (
-                          <button onClick={() => { setEditingDiscount(p.cip); setDiscountInput(String(disc || "")); }}
+                          <button onClick={() => { setEditingDiscount(p.cip); setDiscountInput(String(disc)); }}
                             style={{
-                              background: disc > 0 ? "#d1fae5" : "#f0f2f5",
-                              border: disc > 0 ? "1px solid #6ee7b7" : "1px solid #ddd",
+                              background: hasAdminOverride ? "#dbeafe" : "#d1fae5",
+                              border: hasAdminOverride ? "1px solid #93c5fd" : "1px solid #6ee7b7",
                               borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 700,
-                              color: disc > 0 ? "#065f46" : "#999", cursor: "pointer",
+                              color: hasAdminOverride ? "#1e40af" : "#065f46", cursor: "pointer",
                             }}>
-                            {disc > 0 ? `-${disc}%` : "Définir"}
+                            -{disc}% {hasAdminOverride ? "✏️" : ""}
                           </button>
                         )
                       ) : (
-                        disc > 0 ? (
-                          <span style={{ background: "#d1fae5", color: "#065f46", borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>-{disc}%</span>
-                        ) : <span style={{ color: "#ccc" }}>–</span>
+                        <span style={{ background: "#d1fae5", color: "#065f46", borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>-{disc}%</span>
                       )}
                     </td>
                     <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: disc > 0 ? "#059669" : "#0f2d3d" }}>
-                        {fmt(discPrice || p.list_price)}
+                      <span style={{ fontWeight: 800, fontSize: 15, color: "#059669" }}>
+                        {fmt(discPrice)}
                       </span>
                     </td>
                     <td style={{ padding: "10px 12px", textAlign: "center" }}>
