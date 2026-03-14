@@ -17,12 +17,20 @@ export const handler = async (event) => {
   const log = (msg) => console.log(`[expiry-sync] ${msg} (${Date.now()-t0}ms)`);
 
   try {
-    // ── 1. Produits en stock depuis Supabase ────────────────────────────
-    const stockRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name&in_stock=eq.true`,
-      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-999" } }
-    );
-    const inStockProducts = await stockRes.json();
+    // ── 1. Produits en stock depuis Supabase (paginé, tous) ───────────────
+    let inStockProducts = [];
+    let sbOffset = 0;
+    while (true) {
+      const stockRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name&in_stock=eq.true&order=cip.asc`,
+        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${sbOffset}-${sbOffset + 999}` } }
+      );
+      const page = await stockRes.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      inStockProducts.push(...page);
+      if (page.length < 1000) break;
+      sbOffset += 1000;
+    }
     if (!Array.isArray(inStockProducts) || inStockProducts.length === 0) {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: "0 produits en stock" }) };
     }
@@ -31,14 +39,21 @@ export const handler = async (event) => {
     const uid = await authenticate();
     log("Auth OK");
 
-    // ── 2. Mapper CIP → PID Odoo ───────────────────────────────────────
+    // ── 2. Mapper CIP → PID Odoo (paginé) ─────────────────────────────
     const cips = inStockProducts.map(p => p.cip);
-    const products = await odooCall(uid, "product.product", "search_read",
-      [["default_code", "in", cips]],
-      { fields: ["id", "default_code"], limit: 1000 }
-    );
     const cipToPid = {};
-    (Array.isArray(products) ? products : []).forEach(p => { cipToPid[p.default_code] = parseInt(p.id); });
+    // Odoo "in" operator peut gérer de gros arrays, mais on pagine la réponse
+    let pidOffset = 0;
+    while (true) {
+      const products = await odooCall(uid, "product.product", "search_read",
+        [["default_code", "in", cips]],
+        { fields: ["id", "default_code"], limit: 500, offset: pidOffset }
+      );
+      if (!Array.isArray(products) || products.length === 0) break;
+      products.forEach(p => { cipToPid[p.default_code] = parseInt(p.id); });
+      if (products.length < 500) break;
+      pidOffset += 500;
+    }
     log(`${Object.keys(cipToPid).length} CIP→PID mappés`);
 
     // ── 3. Charger TOUS les quants internes Elixir avec lot_id ──────────
@@ -48,7 +63,7 @@ export const handler = async (event) => {
     while (true) {
       const page = await odooCall(uid, "stock.quant", "search_read",
         [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"]],
-        { fields: ["product_id", "lot_id", "quantity"], limit: 500, offset }
+        { fields: ["product_id", "lot_id", "quantity", "reserved_quantity"], limit: 500, offset }
       );
       if (!Array.isArray(page) || page.length === 0) break;
       allQuants.push(...page);
