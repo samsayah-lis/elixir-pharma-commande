@@ -62,13 +62,16 @@ export const handler = async (event) => {
     let quantsWithLot = 0;
     allQuants.forEach(q => {
       const qty = parseFloat(q.quantity || 0);
-      if (qty <= 0) return;
+      const reserved = parseFloat(q.reserved_quantity || 0);
+      const available = qty - reserved;
+      if (available <= 0) return;
       const lotId = parseInt(q.lot_id);
       if (!lotId || lotId <= 0) return;
       const pid = parseInt(q.product_id);
       if (!pid) return;
-      if (!lotIdsByPid[pid]) lotIdsByPid[pid] = new Set();
-      lotIdsByPid[pid].add(lotId);
+      if (!lotIdsByPid[pid]) lotIdsByPid[pid] = {};
+      // Cumuler la quantité disponible par lot (un lot peut avoir plusieurs quants)
+      lotIdsByPid[pid][lotId] = (lotIdsByPid[pid][lotId] || 0) + Math.round(available);
       quantsWithLot++;
     });
     log(`${quantsWithLot} quants avec lot, ${Object.keys(lotIdsByPid).length} produits avec lots`);
@@ -80,8 +83,8 @@ export const handler = async (event) => {
     for (const prod of inStockProducts) {
       const pid = cipToPid[prod.cip];
       if (!pid) continue;
-      const validLotIds = lotIdsByPid[pid];
-      if (!validLotIds || validLotIds.size === 0) continue;
+      const validLots = lotIdsByPid[pid]; // { lotId: qty }
+      if (!validLots || Object.keys(validLots).length === 0) continue;
 
       try {
         // Charger les lots de ce produit avec expiration_date
@@ -92,11 +95,12 @@ export const handler = async (event) => {
 
         if (!Array.isArray(lots) || lots.length === 0) continue;
 
-        // Ne garder QUE les lots dont l'ID est dans les quants Elixir
-        const filtered = lots.filter(l => validLotIds.has(parseInt(l.id)));
+        // Ne garder QUE les lots dont l'ID est dans les quants Elixir avec stock > 0
+        const filtered = lots.filter(l => validLots[parseInt(l.id)] > 0);
 
         const parsed = filtered.map(l => ({
           lot_name: l.name || "",
+          qty: validLots[parseInt(l.id)] || 0,
           expiry: (l.expiration_date || "").split(" ")[0],
         })).filter(l => l.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry));
 
