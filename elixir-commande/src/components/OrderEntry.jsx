@@ -151,15 +151,33 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     setRefreshing(true);
     setError(null);
     try {
-      // Appelle le refresh qui charge Odoo → Supabase et retourne le résultat
-      const refreshRes = await fetch("/.netlify/functions/odoo-catalog?refresh=1");
-      const refreshData = await refreshRes.json();
-      if (refreshData.error) throw new Error(refreshData.error);
-      console.log(`[refresh] ✓ ${refreshData.products} produits chargés en ${refreshData.elapsed_ms}ms`);
-      // Recharge depuis Supabase
-      const res = await fetch("/.netlify/functions/odoo-catalog");
-      const data = await res.json();
-      if (data.products) { setCatalog(data.products); setCatalogUpdatedAt(data.updated_at); }
+      // 1. Déclenche la background function (retourne 202 immédiatement)
+      await fetch("/.netlify/functions/odoo-catalog?refresh=1");
+      console.log("[refresh] Background sync lancé, polling Supabase...");
+
+      // 2. Poll Supabase toutes les 5s jusqu'à ce que des produits apparaissent (max 2min)
+      const startCount = catalog?.length || 0;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const res = await fetch("/.netlify/functions/odoo-catalog");
+        const data = await res.json();
+        if (data.products && data.products.length > startCount) {
+          setCatalog(data.products);
+          setCatalogUpdatedAt(data.updated_at);
+          console.log(`[refresh] ✓ ${data.products.length} produits chargés`);
+          setRefreshing(false);
+          return;
+        }
+      }
+      // Si rien après 2min, afficher ce qu'on a
+      const finalRes = await fetch("/.netlify/functions/odoo-catalog");
+      const finalData = await finalRes.json();
+      if (finalData.products?.length > 0) {
+        setCatalog(finalData.products);
+        setCatalogUpdatedAt(finalData.updated_at);
+      } else {
+        setError("Le chargement Odoo semble prendre plus de temps que prévu. Réessayez dans quelques minutes.");
+      }
     } catch (e) {
       console.error("[refresh]", e.message);
       setError("Refresh échoué : " + e.message);

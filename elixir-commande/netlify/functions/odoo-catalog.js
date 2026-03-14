@@ -1,7 +1,7 @@
-// ── Catalogue Odoo — lecture rapide depuis le cache Supabase ────────────
-// GET /odoo-catalog                  → tous les produits (depuis cache Supabase)
-// GET /odoo-catalog?expiry_months=4  → péremption courte uniquement
-// GET /odoo-catalog?refresh=1        → appelle directement odoo-catalog-refresh
+// ── Catalogue Odoo — lecture rapide depuis Supabase, refresh via background fn ──
+// GET /odoo-catalog                  → lecture cache Supabase (instantané)
+// GET /odoo-catalog?expiry_months=4  → péremption courte
+// GET /odoo-catalog?refresh=1        → déclenche la background function puis retourne 202
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Content-Type": "application/json" };
@@ -10,21 +10,25 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
 
-  // ── Refresh : importe et appelle directement la refresh function ───────
+  // ── Refresh : déclenche la background function (retourne 202 immédiatement) ──
   if (params.refresh === "1") {
     try {
-      const { handler: refreshHandler } = await import("./odoo-catalog-refresh.js");
-      return await refreshHandler(event);
-    } catch (e) {
-      return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "Refresh error: " + e.message }) };
-    }
+      const host = event.headers?.host || "commandes-elixir.netlify.app";
+      const proto = host.includes("localhost") ? "http" : "https";
+      // La function -background retourne 202 instantanément, tourne en arrière-plan 15min max
+      fetch(`${proto}://${host}/.netlify/functions/odoo-catalog-sync-background`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }).catch(() => {}); // fire-and-forget
+    } catch (e) { /* ignore */ }
+    return { statusCode: 202, headers: cors, body: JSON.stringify({ refreshing: true, message: "Sync Odoo lancé en arrière-plan" }) };
   }
 
+  // ── Lecture depuis Supabase ──
   try {
-    // ── Lecture depuis Supabase (instantanée) ────────────────────────────
     let url = `${SUPABASE_URL}/rest/v1/odoo_catalog?select=*&order=name.asc`;
 
-    // Filtre péremption courte
     const expiryMonths = parseInt(params.expiry_months) || 0;
     if (expiryMonths > 0) {
       const threshold = new Date(Date.now() + expiryMonths * 30 * 86400000).toISOString().slice(0, 10);
@@ -34,7 +38,6 @@ export const handler = async (event) => {
     const res = await fetch(url, {
       headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-4999" }
     });
-
     if (!res.ok) throw new Error("Supabase: " + await res.text());
     const rows = await res.json();
 

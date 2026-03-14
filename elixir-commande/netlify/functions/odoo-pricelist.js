@@ -25,6 +25,7 @@ export const handler = async (event) => {
 
   try {
     const uid = await authenticate();
+    const DEFAULT_PRICELIST_ID = 5; // "Liste de prix EUR 2" dans Odoo Elixir
 
     // ── 1. Si pharmacy_cip fourni, trouver sa liste de prix ─────────────
     let pricelistId = params.pricelist_id ? parseInt(params.pricelist_id) : null;
@@ -41,6 +42,12 @@ export const handler = async (event) => {
         pharmacyName = partners[0].name;
         console.log(`[odoo-pricelist] Pharmacie ${pharmacyName} → pricelist ${pricelistId}`);
       }
+    }
+
+    // Fallback : liste de prix par défaut Elixir Pharma
+    if (!pricelistId) {
+      pricelistId = DEFAULT_PRICELIST_ID;
+      console.log(`[odoo-pricelist] Pas de liste spécifique, fallback → pricelist ${DEFAULT_PRICELIST_ID}`);
     }
 
     // ── 2. Charger la/les liste(s) de prix ──────────────────────────────
