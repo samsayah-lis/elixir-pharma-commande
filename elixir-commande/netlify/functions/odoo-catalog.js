@@ -13,13 +13,9 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
 
-  // ── Refresh ──
+  // ── Refresh — redirige vers le sync batch ──
   if (params.refresh === "1") {
-    const host = event.headers?.host || "commandes-elixir.netlify.app";
-    fetch(`https://${host}/.netlify/functions/odoo-catalog-sync-background`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    }).catch(() => {});
-    return { statusCode: 202, headers: cors, body: JSON.stringify({ refreshing: true }) };
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ message: "Utilisez l'admin → Synchronisation pour lancer le sync." }) };
   }
 
   try {

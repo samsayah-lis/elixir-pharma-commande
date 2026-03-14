@@ -632,20 +632,44 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const handleSyncStock = async () => {
     if (syncStock.running) return;
-    setSyncStock({ running: true, progress: "Démarrage..." });
+    setSyncStock({ running: true, progress: "Étape 1/3 : chargement des produits Odoo..." });
     try {
-      await fetch("/.netlify/functions/odoo-catalog?refresh=1");
-      setSyncStock({ running: true, progress: "Sync Odoo lancé, vérification..." });
-      for (let i = 0; i < 30; i++) {
-        await new Promise(r => setTimeout(r, 5000));
-        const res = await fetch("/.netlify/functions/odoo-catalog?count=1");
-        if (res.ok) {
-          const data = await res.json();
-          setSyncStock({ running: true, progress: `${data.total} produits, ${data.in_stock} en stock` });
-          if (data.total > 0) break;
-        }
+      // Step 1 : Products
+      let offset = 0, totalProducts = 0;
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-stock-sync?step=products&offset=${offset}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        totalProducts += data.cip13_saved || 0;
+        setSyncStock({ running: true, progress: `Étape 1/3 : ${totalProducts} produits chargés...` });
+        if (data.done) break;
+        offset = data.next_offset;
       }
-      setSyncStock({ running: false, progress: "✓ Terminé" });
+      setSyncStock({ running: true, progress: `Étape 2/3 : chargement du stock Odoo (${totalProducts} produits)...` });
+
+      // Step 2 : Stock compute
+      const stockRes = await fetch("/.netlify/functions/odoo-stock-sync?step=stock");
+      if (!stockRes.ok) throw new Error(`Stock HTTP ${stockRes.status}`);
+      const stockData = await stockRes.json();
+      if (stockData.error) throw new Error(stockData.error);
+      setSyncStock({ running: true, progress: `Étape 3/3 : application du stock (${stockData.in_stock} en stock)...` });
+
+      // Step 3 : Apply stock
+      offset = 0;
+      let totalUpdated = 0;
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-stock-sync?step=apply&offset=${offset}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        totalUpdated += data.updated || 0;
+        setSyncStock({ running: true, progress: `Étape 3/3 : ${offset + (data.updated || 0)} / ${data.total || "?"}...` });
+        if (data.done) break;
+        offset = data.next_offset;
+      }
+
+      setSyncStock({ running: false, progress: `✓ Terminé — ${totalProducts} produits, ${stockData.in_stock} en stock, ${totalUpdated} mises à jour` });
     } catch (e) { setSyncStock({ running: false, progress: "Erreur: " + e.message }); }
   };
 
