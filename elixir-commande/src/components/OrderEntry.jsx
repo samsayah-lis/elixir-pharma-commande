@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useRef } from "react";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
+const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, isAdmin }) {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [priceSyncing, setPriceSyncing] = useState(false);
+  const [priceSyncProgress, setPriceSyncProgress] = useState(null);
   const [catalogInfo, setCatalogInfo] = useState(null);
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({});
@@ -73,7 +76,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const handleAdd = (product) => {
     const qty = parseInt(quantities[product.cip]) || 0;
     if (qty <= 0) return;
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: product.list_price, pv: product.list_price, discount: 0 });
+    const hasDiscount = product.discounted_price && product.discount_pct > 0;
+    const price = hasDiscount ? product.discounted_price : product.list_price;
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0 });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
   };
 
@@ -99,6 +104,29 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     finally { setRefreshing(false); }
   };
 
+  // ── Sync prix depuis Odoo (admin) ─────────────────────────────────────
+  const handlePriceSync = async () => {
+    if (priceSyncing) return;
+    setPriceSyncing(true);
+    setPriceSyncProgress(null);
+    try {
+      let offset = 0;
+      let totalUpdated = 0;
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
+        if (!res.ok) break;
+        const data = await res.json();
+        if (data.error) break;
+        totalUpdated += data.updated || 0;
+        setPriceSyncProgress({ offset: data.offset + (data.batch_rules || 0), updated: totalUpdated });
+        if (data.done) break;
+        offset = data.next_offset;
+      }
+      setPriceSyncProgress({ offset: 0, updated: totalUpdated, done: true });
+    } catch (e) { console.warn("[price-sync]", e.message); }
+    finally { setPriceSyncing(false); setPriceSyncProgress(null); }
+  };
+
   const hasProducts = catalogInfo && catalogInfo.total > 0;
 
   return (
@@ -113,10 +141,18 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               {catalogInfo?.updated_at && <span> · Màj : {new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
             </div>
           </div>
-          <button onClick={handleRefresh} disabled={refreshing}
-            style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.5 : 1, whiteSpace: "nowrap" }}>
-            {refreshing ? "⏳ Actualisation en cours..." : "🔄 Actualiser depuis Odoo"}
-          </button>
+          {isAdmin && (
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handleRefresh} disabled={refreshing}
+                style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: refreshing ? "default" : "pointer", opacity: refreshing ? 0.5 : 1, whiteSpace: "nowrap" }}>
+                {refreshing ? "⏳ Stock..." : "🔄 Sync stock"}
+              </button>
+              <button onClick={handlePriceSync} disabled={priceSyncing}
+                style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 14px", fontSize: 11, fontWeight: 700, cursor: priceSyncing ? "default" : "pointer", opacity: priceSyncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
+                {priceSyncing && priceSyncProgress ? `⏳ Prix ${priceSyncProgress.updated} màj...` : priceSyncing ? "⏳ Prix..." : "💰 Sync prix"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -184,7 +220,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             {results.map(p => {
               const qty = quantities[p.cip] || 0;
               const isAlert = alerts[p.cip];
-              const displayPrice = p.list_price;
+              const hasDiscount = p.discounted_price && p.discount_pct > 0;
+              const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
 
               return (
                 <div key={p.cip} style={{
@@ -192,7 +229,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                   border: p.in_stock ? "1px solid #e8ecf0" : "1px solid #fed7d7",
                   display: "flex", alignItems: "center", gap: 16, opacity: p.in_stock ? 1 : 0.85,
                 }}>
-                  {/* Stock badge — juste EN STOCK ou RUPTURE, pas de quantité */}
+                  {/* Stock badge */}
                   <div style={{ flexShrink: 0, textAlign: "center", minWidth: 60 }}>
                     {p.in_stock ? (
                       <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
@@ -209,9 +246,17 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     </div>
                   </div>
 
-                  {/* Prix */}
-                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 100 }}>
-                    <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
+                  {/* Prix — avec remise si disponible */}
+                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 110 }}>
+                    {hasDiscount ? (<>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                        <span style={{ fontSize: 11, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(p.discount_pct)}</span>
+                      </div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(p.discounted_price)}</div>
+                    </>) : (
+                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
+                    )}
                     <div style={{ fontSize: 10, color: "#bbb" }}>Prix HT</div>
                   </div>
 

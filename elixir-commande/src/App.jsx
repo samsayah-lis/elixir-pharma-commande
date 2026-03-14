@@ -1126,6 +1126,7 @@ export default function App() {
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
+              isAdmin={showAdmin}
               onAddToCart={(item) => {
                 // Ajouter au panier global via quantities
                 // Cherche si le produit existe déjà dans le catalogue Supabase
