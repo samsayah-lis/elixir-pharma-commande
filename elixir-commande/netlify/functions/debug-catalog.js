@@ -1,4 +1,4 @@
-// ── Debug : teste la même logique que le sync mais avec des limites réduites ──
+// ── Debug : teste le parsing lot_id depuis les quants Elixir ────────────
 import { authenticate, odooCall } from "./odoo.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -9,83 +9,75 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const diag = { timestamp: new Date().toISOString(), steps: [] };
 
-  // 1. Supabase odoo_catalog état actuel
-  try {
-    const [totalR, stockR, expiryR, sampleR] = await Promise.all([
-      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip`, { headers: { ...SB, Range: "0-0", Prefer: "count=exact" } }),
-      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip&in_stock=eq.true`, { headers: { ...SB, Range: "0-0", Prefer: "count=exact" } }),
-      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip&earliest_expiry=not.is.null`, { headers: { ...SB, Range: "0-0", Prefer: "count=exact" } }),
-      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name,available,earliest_expiry,lots&earliest_expiry=not.is.null&order=earliest_expiry.asc&limit=3`, { headers: SB }),
-    ]);
-    diag.steps.push({
-      step: "1. Supabase odoo_catalog",
-      total: totalR.headers.get("content-range")?.split("/")?.[1] || "?",
-      in_stock: stockR.headers.get("content-range")?.split("/")?.[1] || "?",
-      with_expiry: expiryR.headers.get("content-range")?.split("/")?.[1] || "?",
-      sample: await sampleR.json(),
-    });
-  } catch (e) { diag.steps.push({ step: "1", error: e.message }); }
-
   try {
     const uid = await authenticate();
-    diag.steps.push({ step: "2. Odoo auth", uid });
 
-    // 3. Lots avec expiration_date (test simple, limit 5)
-    const lots = await odooCall(uid, "stock.lot", "search_read",
-      [["expiration_date", "!=", false]],
-      { fields: ["id", "name", "product_id", "expiration_date"], limit: 5 }
-    );
-    diag.steps.push({
-      step: "3. stock.lot avec expiration_date (limit 5)",
-      count: Array.isArray(lots) ? lots.length : 0,
-      sample: (Array.isArray(lots) ? lots : []).slice(0, 3),
-    });
-
-    // 4. Combien de lots au total avec expiration_date ?
-    // On utilise search (count) au lieu de search_read
-    let lotCount = "?";
-    try {
-      const countResult = await odooCall(uid, "stock.lot", "search",
-        [["expiration_date", "!=", false]],
-        { limit: false }
-      );
-      lotCount = Array.isArray(countResult) ? countResult.length : countResult;
-    } catch (e) {
-      lotCount = "error: " + e.message.substring(0, 100);
-    }
-    diag.steps.push({ step: "4. Total lots avec expiration", count: lotCount });
-
-    // 5. Quants — test simple
-    const quants = await odooCall(uid, "stock.quant", "search_read",
-      [["company_id", "=", 2], ["location_id.usage", "=", "internal"]],
-      { fields: ["product_id", "quantity", "reserved_quantity"], limit: 5 }
-    );
-    diag.steps.push({
-      step: "5. stock.quant internes (limit 5)",
-      count: Array.isArray(quants) ? quants.length : 0,
-      sample: (Array.isArray(quants) ? quants : []).slice(0, 3),
-    });
-
-    // 6. Teste un produit en stock spécifique — ULTRA-LEVURE (CIP 3400922096612)
-    const testProd = await odooCall(uid, "product.product", "search_read",
+    // 1. ULTRA-LEVURE pid
+    const prod = await odooCall(uid, "product.product", "search_read",
       [["default_code", "=", "3400922096612"]],
-      { fields: ["id", "name", "default_code", "list_price"], limit: 1 }
+      { fields: ["id", "name"], limit: 1 }
     );
-    if (Array.isArray(testProd) && testProd.length > 0) {
-      const testPid = parseInt(testProd[0].id);
-      // Lots de ce produit
-      const testLots = await odooCall(uid, "stock.lot", "search_read",
-        [["product_id", "=", testPid]],
-        { fields: ["id", "name", "expiration_date"], limit: 5 }
+    const pid = Array.isArray(prod) && prod[0] ? parseInt(prod[0].id) : null;
+    diag.steps.push({ step: "1. ULTRA-LEVURE", pid, product: prod?.[0] });
+
+    // 2. Quants Elixir pour ce produit AVEC lot_id
+    if (pid) {
+      const quants = await odooCall(uid, "stock.quant", "search_read",
+        [["product_id", "=", pid], ["company_id", "=", 2], ["location_id.usage", "=", "internal"]],
+        { fields: ["id", "lot_id", "quantity", "reserved_quantity", "location_id"], limit: 20 }
       );
       diag.steps.push({
-        step: "6. Test ULTRA-LEVURE (en stock, pid=" + testPid + ")",
-        product: testProd[0],
-        lots: Array.isArray(testLots) ? testLots : [],
+        step: "2. Quants Elixir pour ULTRA-LEVURE (avec lot_id)",
+        count: Array.isArray(quants) ? quants.length : 0,
+        raw: Array.isArray(quants) ? quants.slice(0, 5) : quants,
+      });
+
+      // 3. Extraire les lot_id parsés
+      const lotIds = (Array.isArray(quants) ? quants : [])
+        .map(q => ({ lot_id_raw: q.lot_id, lot_id_parsed: parseInt(q.lot_id), qty: q.quantity }))
+        .filter(q => parseFloat(q.qty) > 0);
+      diag.steps.push({ step: "3. lot_id parsing", parsed: lotIds });
+
+      // 4. Si on a des lot_ids, charger les lots correspondants
+      const validLotIds = lotIds.map(l => l.lot_id_parsed).filter(id => id > 0);
+      if (validLotIds.length > 0) {
+        const lots = await odooCall(uid, "stock.lot", "search_read",
+          [["id", "in", validLotIds]],
+          { fields: ["id", "name", "expiration_date", "company_id"], limit: 20 }
+        );
+        diag.steps.push({
+          step: "4. Lots trouvés par lot_id depuis quants",
+          count: Array.isArray(lots) ? lots.length : 0,
+          lots: Array.isArray(lots) ? lots : [],
+        });
+      } else {
+        diag.steps.push({ step: "4. Aucun lot_id valide parsé", validLotIds });
+      }
+
+      // 5. AUSSI : tous les lots de ce produit (pour comparer)
+      const allLots = await odooCall(uid, "stock.lot", "search_read",
+        [["product_id", "=", pid], ["expiration_date", "!=", false]],
+        { fields: ["id", "name", "expiration_date", "company_id"], limit: 10 }
+      );
+      diag.steps.push({
+        step: "5. TOUS les lots du produit (toutes sociétés)",
+        count: Array.isArray(allLots) ? allLots.length : 0,
+        lots: Array.isArray(allLots) ? allLots : [],
       });
     }
 
-  } catch (e) { diag.steps.push({ step: "2+", error: e.message }); }
+    // 6. Supabase état péremption
+    const [expiryRes, sampleRes] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip&earliest_expiry=not.is.null`, { headers: { ...SB, Range: "0-0", Prefer: "count=exact" } }),
+      fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name,earliest_expiry,lots&earliest_expiry=not.is.null&order=earliest_expiry.asc&limit=3`, { headers: SB }),
+    ]);
+    diag.steps.push({
+      step: "6. Supabase produits avec péremption",
+      count: expiryRes.headers.get("content-range")?.split("/")?.[1] || "0",
+      sample: await sampleRes.json(),
+    });
+
+  } catch (e) { diag.steps.push({ step: "error", error: e.message }); }
 
   return { statusCode: 200, headers: cors, body: JSON.stringify(diag, null, 2) };
 };
