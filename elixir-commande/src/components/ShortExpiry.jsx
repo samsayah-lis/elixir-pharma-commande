@@ -142,14 +142,13 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
               Produits en stock avec péremption entre J+30 et 4 mois
               {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
             </div>
-            <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>
-              Remise par défaut : -50% (prix &lt; 500 €) · -20% (prix ≥ 500 €) · Modifiable par l'admin
-            </div>
           </div>
-          <button onClick={triggerExpirySync} disabled={syncing}
-            style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
+          {isAdmin && (
+            <button onClick={triggerExpirySync} disabled={syncing}
+              style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
             {syncing && syncProgress ? `⏳ ${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "⏳ Démarrage..." : "🔄 Actualiser depuis Odoo"}
           </button>
+          )}
         </div>
       </div>
 
