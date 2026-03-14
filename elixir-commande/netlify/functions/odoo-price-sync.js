@@ -1,100 +1,124 @@
-// ── Sync prix remisés par batch — charge les règles de la liste de prix EUR 2 ──
-// GET /odoo-price-sync?offset=0  → traite les règles 0-199
-// GET /odoo-price-sync?offset=200 → traite les règles 200-399
-// Retourne { done, offset, next_offset, updated, total_rules }
+// ── Sync prix remisés — 2 phases efficaces ──────────────────────────────
+// Phase 1 : GET /odoo-price-sync?step=compute  → charge produits + règles de prix depuis Odoo,
+//           calcule les prix remisés, sauve dans kv_store
+// Phase 2 : GET /odoo-price-sync?offset=0      → applique les prix depuis kv_store vers odoo_catalog
 import { authenticate, odooCall } from "./odoo.js";
 
-const PRICELIST_ID = 5; // "Liste de prix EUR 2"
+const PRICELIST_ID = 5;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
 const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
 
-const BATCH_SIZE = 200;
+async function odooFetchAll(uid, model, domain, fields) {
+  const all = [];
+  let offset = 0;
+  while (true) {
+    const page = await odooCall(uid, model, "search_read", domain, { fields, limit: 1000, offset });
+    if (!Array.isArray(page) || page.length === 0) break;
+    all.push(...page);
+    if (page.length < 1000) break;
+    offset += 1000;
+  }
+  return all;
+}
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
-  const offset = parseInt(event.queryStringParameters?.offset || "0");
+  const params = event.queryStringParameters || {};
 
   try {
-    const uid = await authenticate();
+    // ══ PHASE 1 : Compute all prices ════════════════════════════════════
+    if (params.step === "compute") {
+      const uid = await authenticate();
 
-    // 1. Charger un batch de règles de prix
-    const items = await odooCall(uid, "product.pricelist.item", "search_read",
-      [["pricelist_id", "=", PRICELIST_ID]],
-      { fields: ["product_id", "fixed_price", "compute_price", "percent_price", "price_discount"], limit: BATCH_SIZE, offset }
-    );
-    if (!Array.isArray(items) || items.length === 0) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ done: true, offset, updated: 0, total_rules: offset }) };
+      // 1. Charger TOUS les produits CIP13 avec list_price
+      const rawProducts = await odooFetchAll(uid, "product.product",
+        [["active", "=", true], ["default_code", "!=", false]],
+        ["id", "default_code", "list_price"]
+      );
+      const pidToCip = {};
+      const cipToListPrice = {};
+      rawProducts.forEach(p => {
+        const cip = p.default_code || "";
+        if (/^\d{13}$/.test(cip)) {
+          pidToCip[parseInt(p.id)] = cip;
+          cipToListPrice[cip] = parseFloat(p.list_price) || 0;
+        }
+      });
+      console.log(`[price-sync] ${Object.keys(pidToCip).length} produits CIP13`);
+
+      // 2. Charger TOUTES les règles de la liste de prix EUR 2
+      const allItems = await odooFetchAll(uid, "product.pricelist.item",
+        [["pricelist_id", "=", PRICELIST_ID]],
+        ["product_id", "fixed_price"]
+      );
+      console.log(`[price-sync] ${allItems.length} règles de prix`);
+
+      // 3. Construire le mapping CIP → { discounted_price, discount_pct }
+      const priceMap = {};
+      allItems.forEach(item => {
+        const pid = parseInt(item.product_id);
+        const cip = pidToCip[pid];
+        if (!cip) return;
+        const fixedPrice = parseFloat(item.fixed_price) || 0;
+        if (fixedPrice <= 0) return;
+        const listPrice = cipToListPrice[cip] || 0;
+        if (listPrice <= 0 || fixedPrice >= listPrice) return;
+        const discountPct = Math.round((1 - fixedPrice / listPrice) * 1000) / 10;
+        priceMap[cip] = { dp: fixedPrice, pct: discountPct };
+      });
+      console.log(`[price-sync] ${Object.keys(priceMap).length} prix remisés calculés`);
+
+      // 4. Sauver dans kv_store
+      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
+        method: "POST",
+        headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ key: "price_map", value: JSON.stringify(priceMap), updated_at: new Date().toISOString() }),
+      });
+
+      return { statusCode: 200, headers: cors, body: JSON.stringify({
+        step: "compute", products_cip13: Object.keys(pidToCip).length,
+        pricelist_rules: allItems.length, prices_computed: Object.keys(priceMap).length,
+      })};
     }
 
-    // 2. Extraire les product_ids et chercher les CIP correspondants
-    const pidToPrice = {};
-    items.forEach(item => {
-      const pid = parseInt(item.product_id);
-      if (!pid) return;
-      const cp = item.compute_price || "";
-      if (cp === "fixed") {
-        pidToPrice[pid] = parseFloat(item.fixed_price) || 0;
-      } else if (cp === "percentage") {
-        // On stockera le pourcentage, mais on a besoin du list_price pour calculer
-        pidToPrice[pid] = { pct: parseFloat(item.percent_price) || parseFloat(item.price_discount) || 0 };
-      }
-    });
+    // ══ PHASE 2 : Appliquer les prix dans odoo_catalog ══════════════════
+    const batchOffset = parseInt(params.offset || "0");
+    const BATCH_SIZE = 100;
 
-    const pids = Object.keys(pidToPrice).map(Number);
-    if (pids.length === 0) {
-      const nextOffset = offset + items.length;
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ done: false, offset, next_offset: nextOffset, updated: 0 }) };
+    // Charger le price map
+    const mapRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.price_map&select=value`, { headers: SB });
+    const mapRows = await mapRes.json();
+    if (!Array.isArray(mapRows) || mapRows.length === 0) {
+      return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Price map non trouvé. Lancez d'abord step=compute." }) };
+    }
+    const priceMap = JSON.parse(mapRows[0].value);
+    const allCips = Object.keys(priceMap);
+    const totalPrices = allCips.length;
+
+    // Traiter un batch de CIPs
+    const batchCips = allCips.slice(batchOffset, batchOffset + BATCH_SIZE);
+    if (batchCips.length === 0) {
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ done: true, offset: batchOffset, updated: 0, total: totalPrices }) };
     }
 
-    // 3. Chercher les CIP (default_code) pour ces product_ids
-    const products = await odooCall(uid, "product.product", "search_read",
-      [["id", "in", pids]],
-      { fields: ["id", "default_code", "list_price"], limit: BATCH_SIZE + 10 }
-    );
-
-    // 4. Construire les updates pour Supabase
-    const updates = [];
-    (Array.isArray(products) ? products : []).forEach(p => {
-      const cip = p.default_code;
-      if (!cip || !/^\d{13}$/.test(cip)) return;
-      const pid = parseInt(p.id);
-      const priceInfo = pidToPrice[pid];
-      if (!priceInfo) return;
-
-      const listPrice = parseFloat(p.list_price) || 0;
-      let discountedPrice, discountPct;
-
-      if (typeof priceInfo === "number") {
-        // Prix fixe
-        discountedPrice = priceInfo;
-        discountPct = listPrice > 0 ? Math.round((1 - priceInfo / listPrice) * 1000) / 10 : 0;
-      } else {
-        // Pourcentage
-        discountPct = priceInfo.pct;
-        discountedPrice = Math.round(listPrice * (1 - priceInfo.pct / 100) * 100) / 100;
-      }
-
-      if (discountedPrice > 0 && discountedPrice < listPrice) {
-        updates.push({ cip, discounted_price: discountedPrice, discount_pct: Math.max(0, discountPct) });
-      }
-    });
-
-    // 5. Batch update Supabase
     let updated = 0;
-    for (const upd of updates) {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${upd.cip}`, {
+    for (const cip of batchCips) {
+      const { dp, pct } = priceMap[cip];
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}`, {
         method: "PATCH", headers: SB,
-        body: JSON.stringify({ discounted_price: upd.discounted_price, discount_pct: upd.discount_pct }),
+        body: JSON.stringify({ discounted_price: dp, discount_pct: pct }),
       });
       if (res.ok) updated++;
     }
 
-    const nextOffset = offset + items.length;
+    const nextOffset = batchOffset + batchCips.length;
+    const done = nextOffset >= totalPrices;
+
     return { statusCode: 200, headers: cors, body: JSON.stringify({
-      done: items.length < BATCH_SIZE, offset, next_offset: nextOffset,
-      batch_rules: items.length, matched_cips: updates.length, updated,
+      done, offset: batchOffset, next_offset: done ? null : nextOffset,
+      batch_size: batchCips.length, updated, total: totalPrices,
     })};
 
   } catch (err) {

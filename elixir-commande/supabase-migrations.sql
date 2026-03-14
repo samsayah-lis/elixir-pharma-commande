@@ -107,7 +107,14 @@ CREATE INDEX IF NOT EXISTS idx_oc_name ON odoo_catalog(name);
 CREATE INDEX IF NOT EXISTS idx_oc_stock ON odoo_catalog(in_stock);
 CREATE INDEX IF NOT EXISTS idx_oc_expiry ON odoo_catalog(earliest_expiry) WHERE earliest_expiry IS NOT NULL;
 
--- ── 9. Vérification ─────────────────────────────────────────────
+-- ── 9. Key-Value store (cache mapping PID→CIP, etc.) ────────────
+CREATE TABLE IF NOT EXISTS kv_store (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL DEFAULT '',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── 10. Vérification ────────────────────────────────────────────
 DO $$ BEGIN
-  RAISE NOTICE '✅ Migrations terminées — 8 tables créées/mises à jour';
+  RAISE NOTICE '✅ Migrations terminées — 9 tables créées/mises à jour';
 END $$;

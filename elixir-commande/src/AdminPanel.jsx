@@ -651,16 +651,23 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const handleSyncPrice = async () => {
     if (syncPrice.running) return;
-    setSyncPrice({ running: true, progress: "Démarrage..." });
+    setSyncPrice({ running: true, progress: "Phase 1 : chargement produits + règles de prix Odoo..." });
     try {
+      // Phase 1 : compute all prices
+      const mapRes = await fetch("/.netlify/functions/odoo-price-sync?step=compute");
+      const mapData = await mapRes.json();
+      if (mapData.error) throw new Error(mapData.error);
+      setSyncPrice({ running: true, progress: `${mapData.prices_computed} prix calculés. Application...` });
+
+      // Phase 2 : apply by batch
       let offset = 0, totalUpdated = 0;
       while (true) {
         const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
         if (!res.ok) break;
         const data = await res.json();
-        if (data.error) break;
+        if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        setSyncPrice({ running: true, progress: `Règle ${offset + (data.batch_rules || 0)}... ${totalUpdated} prix mis à jour` });
+        setSyncPrice({ running: true, progress: `${offset + (data.batch_size || 0)} / ${data.total || "?"}... ${totalUpdated} prix mis à jour` });
         if (data.done) break;
         offset = data.next_offset;
       }
