@@ -57,18 +57,22 @@ export const handler = async (event) => {
     }
     log(`${allQuants.length} quants internes Elixir chargés`);
 
-    // Extraire les lot_id par product_id (seulement qty > 0)
+    // Extraire les lot_id par product_id (seulement stock disponible > 0)
     const lotIdsByPid = {}; // { pid: Set(lotId) }
+    const lotQty = {};      // { lotId: available_qty }
     let quantsWithLot = 0;
     allQuants.forEach(q => {
       const qty = parseFloat(q.quantity || 0);
-      if (qty <= 0) return;
+      const reserved = parseFloat(q.reserved_quantity || 0);
+      const available = qty - reserved;
+      if (available < 1) return; // exclut qty=0 ET qty entièrement réservée
       const lotId = parseInt(q.lot_id);
       if (!lotId || lotId <= 0) return;
       const pid = parseInt(q.product_id);
       if (!pid) return;
       if (!lotIdsByPid[pid]) lotIdsByPid[pid] = new Set();
       lotIdsByPid[pid].add(lotId);
+      lotQty[lotId] = (lotQty[lotId] || 0) + Math.round(available);
       quantsWithLot++;
     });
     log(`${quantsWithLot} quants avec lot, ${Object.keys(lotIdsByPid).length} produits avec lots`);
@@ -97,6 +101,7 @@ export const handler = async (event) => {
 
         const parsed = filtered.map(l => ({
           lot_name: l.name || "",
+          qty: lotQty[parseInt(l.id)] || 0,
           expiry: (l.expiration_date || "").split(" ")[0],
         })).filter(l => l.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry));
 
