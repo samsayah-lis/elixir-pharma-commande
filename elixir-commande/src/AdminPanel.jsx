@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
+import ShortExpiry from "./components/ShortExpiry";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
@@ -654,6 +655,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
+    {k:"expiry",    label:"⏰ Péremptions",icon:"⏰"},
   ];
 
   return (
@@ -1813,6 +1815,12 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             </div>
           </div>
         )}
+
+        {/* ── EXPIRY TAB ── */}
+        {tab==="expiry"&&(
+          <ShortExpiry isAdmin={true} onAddToCart={() => {}} />
+        )}
+
         </div>
       </div>
       {saved&&<div style={{position:"fixed",bottom:24,right:24,background:"#0f2d3d",color:"white",borderRadius:12,padding:"12px 20px",fontWeight:700,fontSize:13,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",zIndex:2000}}>{saved}</div>}
