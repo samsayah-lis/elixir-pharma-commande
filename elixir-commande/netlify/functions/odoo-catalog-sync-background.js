@@ -92,7 +92,6 @@ export const handler = async (event) => {
 
     // Agrège stock par CIP (filtré par emplacement interne)
     const stockByCip = {};
-    const lotIdSet = new Set();
     allQuants.forEach(q => {
       const locId = parseInt(q.location_id) || 0;
       if (!locationIds.has(locId)) return;
@@ -106,41 +105,60 @@ export const handler = async (event) => {
       stockByCip[cip].qty += rawQty;
       stockByCip[cip].reserved += rawRes;
       stockByCip[cip].available += (rawQty - rawRes);
-
-      const lotId = parseInt(q.lot_id);
-      if (lotId > 0) {
-        lotIdSet.add(lotId);
-        stockByCip[cip].lots.push({ lotId, qty: Math.round(rawQty - rawRes) });
-      }
     });
     const inStockCount = Object.values(stockByCip).filter(s => s.available > 0).length;
-    log(`${inStockCount} produits en stock, ${lotIdSet.size} lots à charger`);
+    log(`${inStockCount} produits en stock`);
 
-    // ── 4. Lots avec péremption ─────────────────────────────────────────
-    const lotMap = {};
-    const lotIds = [...lotIdSet];
-    if (lotIds.length > 0) {
-      for (let b = 0; b < lotIds.length; b += 300) {
-        const d = orDomain("id", lotIds.slice(b, b + 300));
-        if (d) {
-          const lots = await fetchAll(uid, "stock.lot", d,
-            ["id", "name", "expiration_date", "use_date", "life_date"]
+    // ── 4. Lots avec péremption — requête DIRECTE par product_id ─────────
+    // On ne passe plus par quant.lot_id (parsing Many2one cassé)
+    // On charge tous les lots qui ont une expiration_date pour les produits en stock
+    const inStockPids = productIds.filter(pid => {
+      const cip = pidMap[pid]?.default_code;
+      return cip && stockByCip[cip] && stockByCip[cip].available > 0;
+    });
+    log(`${inStockPids.length} PIDs en stock → chargement lots`);
+
+    const lotsByPid = {}; // { pid: [{ lot_name, expiry }] }
+    if (inStockPids.length > 0) {
+      for (let b = 0; b < inStockPids.length; b += 200) {
+        const batch = inStockPids.slice(b, b + 200);
+        // stock.lot avec expiration_date non vide pour ces produits
+        const domain = [];
+        domain.push(["expiration_date", "!=", false]);
+        // Ajout du filtre OR sur product_id
+        if (batch.length === 1) {
+          domain.push(["product_id", "=", batch[0]]);
+        } else {
+          for (let i = 0; i < batch.length - 1; i++) domain.push("|");
+          batch.forEach(id => domain.push(["product_id", "=", id]));
+        }
+        try {
+          const lots = await fetchAll(uid, "stock.lot", domain,
+            ["id", "name", "product_id", "expiration_date"]
           );
           lots.forEach(l => {
-            lotMap[parseInt(l.id)] = { name: l.name || "", expiry: l.expiration_date || l.use_date || l.life_date || null };
+            const lpid = parseInt(l.product_id) || 0;
+            if (!lpid || !l.expiration_date) return;
+            if (!lotsByPid[lpid]) lotsByPid[lpid] = [];
+            // Parser la date (Odoo retourne "2025-05-31 21:59:59")
+            const expiry = l.expiration_date.split(" ")[0] || l.expiration_date;
+            lotsByPid[lpid].push({ lot_name: l.name || "", expiry });
           });
+        } catch (e) {
+          log(`Lots batch ${b} error: ${e.message}`);
         }
-        if (b > 0 && b % 1500 === 0) log(`Lots batch ${b}/${lotIds.length}`);
+        if (b > 0 && b % 1000 === 0) log(`Lots batch ${b}/${inStockPids.length}`);
       }
     }
-    log(`${Object.keys(lotMap).length} lots chargés`);
+    const totalLots = Object.values(lotsByPid).reduce((s, arr) => s + arr.length, 0);
+    log(`${totalLots} lots chargés pour ${Object.keys(lotsByPid).length} produits`);
 
-    // Résoudre les noms de lots dans stockByCip
-    Object.values(stockByCip).forEach(s => {
-      s.lots = s.lots
-        .filter(l => l.qty > 0 && lotMap[l.lotId])
-        .map(l => ({ lot_name: lotMap[l.lotId].name, qty: l.qty, expiry: lotMap[l.lotId].expiry }))
-        .sort((a, b) => (a.expiry || "9999").localeCompare(b.expiry || "9999"));
+    // Injecter les lots dans stockByCip
+    Object.entries(lotsByPid).forEach(([pid, lots]) => {
+      const cip = pidMap[parseInt(pid)]?.default_code;
+      if (cip && stockByCip[cip]) {
+        stockByCip[cip].lots = lots.sort((a, b) => (a.expiry || "9999").localeCompare(b.expiry || "9999"));
+      }
     });
 
     // ── 5. Construction des rows — prix remisé directement depuis Odoo ──
