@@ -83,7 +83,26 @@ CREATE TABLE IF NOT EXISTS expiry_discounts (
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- ── 8. Vérification ─────────────────────────────────────────────
+-- ── 8. Cache catalogue Odoo (produits + stock + lots + péremption) ─
+CREATE TABLE IF NOT EXISTS odoo_catalog (
+  cip             TEXT PRIMARY KEY,
+  barcode         TEXT,
+  name            TEXT NOT NULL DEFAULT '',
+  list_price      REAL NOT NULL DEFAULT 0,
+  category        TEXT DEFAULT '',
+  in_stock        BOOLEAN NOT NULL DEFAULT false,
+  available       INTEGER NOT NULL DEFAULT 0,
+  total_qty       INTEGER NOT NULL DEFAULT 0,
+  reserved        INTEGER NOT NULL DEFAULT 0,
+  earliest_expiry TEXT,
+  lots            TEXT DEFAULT '[]',
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_oc_name ON odoo_catalog(name);
+CREATE INDEX IF NOT EXISTS idx_oc_stock ON odoo_catalog(in_stock);
+CREATE INDEX IF NOT EXISTS idx_oc_expiry ON odoo_catalog(earliest_expiry) WHERE earliest_expiry IS NOT NULL;
+
+-- ── 9. Vérification ─────────────────────────────────────────────
 DO $$ BEGIN
-  RAISE NOTICE '✅ Migrations terminées — 7 tables créées/mises à jour';
+  RAISE NOTICE '✅ Migrations terminées — 8 tables créées/mises à jour';
 END $$;
