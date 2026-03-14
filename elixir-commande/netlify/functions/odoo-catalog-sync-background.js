@@ -1,5 +1,5 @@
-// ── Sync catalogue Odoo → Supabase (background, 15min) ─────────────────
-// Approche ultra-simple : requêtes Odoo les plus basiques possibles
+// ── Sync catalogue : produits + stock seulement (pas de lots) ───────────
+// Les lots/péremptions sont gérés par odoo-expiry-sync séparément
 import { authenticate, odooCall, ODOO_COMPANY } from "./odoo.js";
 
 const COMPANY_ID = ODOO_COMPANY || 2;
@@ -24,27 +24,24 @@ async function odooFetchAll(uid, model, domain, fields) {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const t0 = Date.now();
-  const log = (msg) => console.log(`[sync] ${msg} (${Date.now()-t0}ms)`);
+  const log = (msg) => console.log(`[catalog-sync] ${msg} (${Date.now()-t0}ms)`);
 
   try {
     const uid = await authenticate();
     log("Auth OK");
 
-    // ═══ ÉTAPE 1 : Produits ═══════════════════════════════════════════
+    // 1. Produits
     const rawProducts = await odooFetchAll(uid, "product.product",
       [["active", "=", true], ["default_code", "!=", false]],
       ["id", "name", "default_code", "barcode", "list_price"]
     );
-    log(`${rawProducts.length} produits bruts`);
-
-    // Filtre CIP13 (13 chiffres exactement)
     const products = rawProducts.filter(p =>
       /^\d{13}$/.test(p.default_code || "") || /^\d{13}$/.test(p.barcode || "")
     );
     products.forEach(p => {
       if (!/^\d{13}$/.test(p.default_code) && /^\d{13}$/.test(p.barcode)) p.default_code = p.barcode;
     });
-    log(`${products.length} CIP13 valides`);
+    log(`${products.length} CIP13`);
     if (products.length === 0) {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: "0 CIP13" }) };
     }
@@ -52,87 +49,42 @@ export const handler = async (event) => {
     const pidMap = {};
     products.forEach(p => { pidMap[parseInt(p.id)] = p; });
 
-    // ═══ ÉTAPE 2 : Stock (emplacements internes) ═════════════════════
-    const locations = await odooFetchAll(uid, "stock.location",
-      [["usage", "=", "internal"], ["company_id", "=", COMPANY_ID]], ["id"]
-    );
-    const locIds = new Set(locations.map(l => parseInt(l.id)));
-    log(`${locIds.size} emplacements`);
-
-    // Charge TOUS les quants internes de la société (pas de filtre product_id)
+    // 2. Stock
     const allQuants = await odooFetchAll(uid, "stock.quant",
       [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"]],
-      ["product_id", "location_id", "quantity", "reserved_quantity"]
+      ["product_id", "quantity", "reserved_quantity"]
     );
     log(`${allQuants.length} quants`);
 
-    // Agrège stock par PID → CIP
     const stockByCip = {};
     allQuants.forEach(q => {
-      const pid = parseInt(q.product_id);
-      const p = pidMap[pid];
+      const p = pidMap[parseInt(q.product_id)];
       if (!p) return;
       const cip = p.default_code;
-      if (!stockByCip[cip]) stockByCip[cip] = { available: 0 };
-      stockByCip[cip].available += parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
+      if (!stockByCip[cip]) stockByCip[cip] = 0;
+      stockByCip[cip] += parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
     });
-    const inStockCount = Object.values(stockByCip).filter(s => s.available > 0).length;
-    log(`${inStockCount} produits en stock`);
+    const inStock = Object.entries(stockByCip).filter(([, v]) => v > 0).length;
+    log(`${inStock} en stock`);
 
-    // ═══ ÉTAPE 3 : TOUS les lots avec date d'expiration ══════════════
-    // Requête la plus simple possible — pas de filtre par produit
-    const allLots = await odooFetchAll(uid, "stock.lot",
-      [["expiration_date", "!=", false]],
-      ["id", "name", "product_id", "expiration_date"]
-    );
-    log(`${allLots.length} lots avec expiration_date`);
-
-    // Index par product_id
-    const lotsByPid = {};
-    allLots.forEach(l => {
-      const pid = parseInt(l.product_id);
-      if (!pid || !pidMap[pid]) return; // lot d'un produit non-CIP13 → on ignore
-      const expiry = (l.expiration_date || "").split(" ")[0]; // "2025-05-31 21:59:59" → "2025-05-31"
-      if (!expiry) return;
-      if (!lotsByPid[pid]) lotsByPid[pid] = [];
-      lotsByPid[pid].push({ lot_name: l.name || "", expiry });
-    });
-    // Trier par date d'expiration
-    Object.values(lotsByPid).forEach(arr => arr.sort((a, b) => a.expiry.localeCompare(b.expiry)));
-    const prodsWithLots = Object.keys(lotsByPid).length;
-    log(`${prodsWithLots} produits avec lots datés`);
-
-    // ═══ ÉTAPE 4 : Construction des rows ═════════════════════════════
+    // 3. Build rows (sans lots/péremption — géré par odoo-expiry-sync)
     const now = new Date().toISOString();
     const rows = products.map(p => {
       const cip = p.default_code;
-      const stock = stockByCip[cip];
-      const available = stock ? Math.round(Math.max(0, stock.available)) : 0;
-      const lots = lotsByPid[parseInt(p.id)] || [];
-      const earliestExpiry = lots.length > 0 ? lots[0].expiry : null;
-
+      const available = Math.round(Math.max(0, stockByCip[cip] || 0));
       return {
         cip,
         barcode: p.barcode && p.barcode !== "0" ? p.barcode : cip,
         name: p.name || "",
         list_price: parseFloat(p.list_price) || 0,
-        discounted_price: null,
-        discount_pct: 0,
-        category: "",
         in_stock: available > 0,
         available,
-        total_qty: available,
-        reserved: 0,
-        earliest_expiry: earliestExpiry,
-        lots: JSON.stringify(lots.slice(0, 10)),
         updated_at: now,
       };
     });
 
-    const withExpiry = rows.filter(r => r.earliest_expiry).length;
-    log(`${rows.length} rows, ${withExpiry} avec péremption, ${inStockCount} en stock`);
-
-    // ═══ ÉTAPE 5 : Upsert Supabase ══════════════════════════════════
+    // 4. Upsert Supabase — ATTENTION : ne PAS écraser earliest_expiry/lots s'ils existent déjà
+    // On utilise un upsert qui ne touche pas ces champs
     let saved = 0;
     for (let i = 0; i < rows.length; i += 200) {
       const batch = rows.slice(i, i + 200);
@@ -145,14 +97,22 @@ export const handler = async (event) => {
       else log(`Batch ${i} error: ${await res.text()}`);
     }
 
-    log(`✓ TERMINÉ — ${saved} sauvés, ${inStockCount} en stock, ${withExpiry} avec péremption`);
-    return { statusCode: 200, headers: cors, body: JSON.stringify({
-      success: true, products: saved, in_stock: inStockCount,
-      with_expiry: withExpiry, lots_total: allLots.length, elapsed_ms: Date.now()-t0,
-    })};
+    log(`✓ ${saved} produits sauvés, ${inStock} en stock`);
 
+    // 5. Déclencher le sync péremptions en arrière-plan
+    try {
+      const host = process.env.URL || "https://commandes-elixir.netlify.app";
+      fetch(`${host}/.netlify/functions/odoo-expiry-sync-background`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      }).catch(() => {});
+      log("Sync péremptions déclenché");
+    } catch (e) { /* ignore */ }
+
+    return { statusCode: 200, headers: cors, body: JSON.stringify({
+      success: true, products: saved, in_stock: inStock, elapsed_ms: Date.now()-t0,
+    })};
   } catch (err) {
-    console.error("[sync] ERREUR:", err.message);
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message, elapsed_ms: Date.now()-t0 }) };
+    console.error("[catalog-sync] ERREUR:", err.message);
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };

@@ -14,6 +14,28 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
   const [savingDiscount, setSavingDiscount] = useState(false);
   const [sortBy, setSortBy] = useState("expiry");
 
+  const [syncing, setSyncing] = useState(false);
+  const triggerExpirySync = async () => {
+    setSyncing(true);
+    try {
+      // Trigger la background function
+      fetch("/.netlify/functions/odoo-expiry-sync-background", { method: "POST", body: "{}" }).catch(() => {});
+      // Poll toutes les 5s
+      for (let i = 0; i < 30; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const res = await fetch("/.netlify/functions/odoo-catalog?expiry_months=4");
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.products) && data.products.length > 0) {
+            setProducts(data.products);
+            break;
+          }
+        }
+      }
+    } catch (e) { console.warn("[expiry-sync]", e.message); }
+    finally { setSyncing(false); }
+  };
+
   // ── Chargement : tous les produits en stock < 4 mois de péremption ────
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -133,10 +155,18 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
 
       {/* Empty */}
       {!loading && !error && products.length === 0 && (
-        <div style={{ textAlign: "center", padding: 40, color: "#aaa", background: "white", borderRadius: 14 }}>
-          <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-          <div style={{ fontWeight: 600, fontSize: 15 }}>Aucun produit en péremption courte</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>Tous les produits en stock ont plus de 4 mois de péremption.</div>
+        <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14 }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
+          <div style={{ fontWeight: 700, fontSize: 16, color: "#0f2d3d", marginBottom: 8 }}>
+            {syncing ? "Synchronisation des péremptions en cours..." : "Aucune donnée de péremption"}
+          </div>
+          <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
+            Les dates de péremption doivent être synchronisées depuis Odoo.
+          </div>
+          <button onClick={triggerExpirySync} disabled={syncing}
+            style={{ background: "linear-gradient(135deg, #7c2d12, #ea580c)", color: "white", border: "none", borderRadius: 12, padding: "14px 28px", fontSize: 15, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1 }}>
+            {syncing ? "⏳ Synchronisation en cours..." : "🔄 Synchroniser les péremptions Odoo"}
+          </button>
         </div>
       )}
 
