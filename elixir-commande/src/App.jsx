@@ -14,7 +14,7 @@ const SECTION_META = {
   blanche:  { label: "Gamme Blanche",          subtitle: "Génériques & médicaments courants",                            color: "#3a3a3a", accent: "#6b7280", icon: "🏷️",  columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
-  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: [] },
+  ulabs:    { label: "Commande groupée U-Labs",       subtitle: "",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: [], hidden: true },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
@@ -120,7 +120,7 @@ const COND_COLORS = {
   "oblig":  ["#ede9fe","#4c1d95"],
 };
 
-const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
+const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr"];
 
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
@@ -523,7 +523,7 @@ export default function App() {
 
 
   const globalResults = globalSearch.trim().length >= 2
-    ? Object.entries(CATALOG_WITH_ADMIN).flatMap(([catKey, c]) =>
+    ? Object.entries(CATALOG_WITH_ADMIN).filter(([, c]) => !c.hidden).flatMap(([catKey, c]) =>
         (c.products || [])
           .map((p, idx) => ({ ...p, _catKey: catKey, _catLabel: c.label, _catIcon: c.icon, _catAccent: c.accent, _idx: idx }))
           .filter(p => p.name?.toLowerCase().includes(globalSearch.toLowerCase()) || (p.cip||"").includes(globalSearch))
@@ -1035,7 +1035,7 @@ export default function App() {
 
         {/* Tab nav */}
         <div style={{ display: "flex", overflowX: "auto", paddingBottom: 0, borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 8 }}>
-          {Object.entries(CATALOG_WITH_ADMIN).map(([key, c]) => (
+          {Object.entries(CATALOG_WITH_ADMIN).filter(([, c]) => !c.hidden).map(([key, c]) => (
             <button key={key} onClick={() => { setActiveTab(key); setSearch(""); }} style={{
               background: activeTab === key ? "rgba(255,255,255,0.15)" : "transparent",
               border: "none", color: activeTab === key ? "white" : "rgba(255,255,255,0.55)",
