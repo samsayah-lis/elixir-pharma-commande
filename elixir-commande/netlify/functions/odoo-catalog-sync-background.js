@@ -42,17 +42,31 @@ export const handler = async (event) => {
     const uid = await authenticate();
     console.log(`[catalog-refresh] Auth OK (${Date.now()-t0}ms)`);
 
-    // Filtre Odoo : default_code de exactement 13 caractères (=like '____________' = 13 underscores en SQL LIKE)
+    // Background function = 15min timeout → on peut charger TOUT et filtrer en JS
+    // Cherche tous les produits actifs ayant un default_code OU un barcode
     const rawProducts = await fetchAll(uid, "product.product",
-      [["active", "=", true], ["default_code", "=like", "_____________"]],
+      [["active", "=", true], ["default_code", "!=", false]],
       ["id", "name", "default_code", "barcode", "list_price", "categ_id"]
     );
-    // Filtre JS : uniquement les codes 100% numériques (exclut les codes avec lettres)
-    const products = rawProducts.filter(p => /^\d{13}$/.test(p.default_code));
-    console.log(`[catalog-refresh] ${rawProducts.length} produits 13 chars → ${products.length} CIP13 numériques (${Date.now()-t0}ms)`);
+    console.log(`[catalog-refresh] ${rawProducts.length} produits bruts depuis Odoo (${Date.now()-t0}ms)`);
+
+    // Filtre JS : ne garder que les CIP13 valides (exactement 13 chiffres)
+    // Le CIP peut être dans default_code OU barcode
+    const products = rawProducts.filter(p => {
+      const code = p.default_code || "";
+      const bar = p.barcode || "";
+      return /^\d{13}$/.test(code) || /^\d{13}$/.test(bar);
+    });
+    // Normaliser : si default_code n'est pas un CIP13, utiliser barcode
+    products.forEach(p => {
+      if (!/^\d{13}$/.test(p.default_code) && /^\d{13}$/.test(p.barcode)) {
+        p.default_code = p.barcode;
+      }
+    });
+    console.log(`[catalog-refresh] ${products.length} produits CIP13 valides (${Date.now()-t0}ms)`);
 
     if (products.length === 0) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: `0 CIP13 valides (${rawProducts.length} à 13 chars)`, elapsed: Date.now()-t0 }) };
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: `0 CIP13 sur ${rawProducts.length} produits bruts`, elapsed: Date.now()-t0 }) };
     }
 
     // Map pid → product
@@ -81,13 +95,20 @@ export const handler = async (event) => {
     console.log(`[catalog-refresh] ${inStockPids.length} produits en stock pour requête lots (${Date.now()-t0}ms)`);
 
     let lotsByPid = {}; // { pid: [{ lot_name, qty, expiry }] }
-    if (inStockPids.length > 0 && inStockPids.length <= 500) {
+    if (inStockPids.length > 0) {
       try {
-        // Quants pour les produits en stock
-        const domain = orDomain("product_id", inStockPids);
-        const quants = await fetchAll(uid, "stock.quant", domain,
-          ["product_id", "lot_id", "quantity", "reserved_quantity", "location_id"]
-        );
+        // Quants pour les produits en stock — par batch de 300
+        let quants = [];
+        for (let b = 0; b < inStockPids.length; b += 300) {
+          const batch = inStockPids.slice(b, b + 300);
+          const domain = orDomain("product_id", batch);
+          if (domain) {
+            const q = await fetchAll(uid, "stock.quant", domain,
+              ["product_id", "lot_id", "quantity", "reserved_quantity", "location_id"]
+            );
+            quants.push(...q);
+          }
+        }
         console.log(`[catalog-refresh] ${quants.length} quants (${Date.now()-t0}ms)`);
 
         // Emplacements internes

@@ -15,6 +15,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({}); // { cip: true } = alerte active
   const [alertSaving, setAlertSaving] = useState({});
+  const [stockOnly, setStockOnly] = useState(false);
   const [error, setError] = useState(null);
   const debounceRef = useRef(null);
 
@@ -75,14 +76,13 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       const q = query.toLowerCase().trim();
-      const found = catalog.filter(p =>
-        p.name?.toLowerCase().includes(q) ||
-        p.cip?.includes(q) ||
-        p.barcode?.includes(q)
-      ).slice(0, 50);
+      const found = catalog.filter(p => {
+        if (stockOnly && !p.in_stock) return false;
+        return p.name?.toLowerCase().includes(q) || p.cip?.includes(q) || p.barcode?.includes(q);
+      }).slice(0, 100);
       setResults(found);
     }, 200);
-  }, [query, catalog]);
+  }, [query, catalog, stockOnly]);
 
   // ── Calcul du prix remisé selon la liste de prix ──────────────────────
   const getDiscountedPrice = useCallback((product) => {
@@ -226,6 +226,24 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           onBlur={e => e.target.style.borderColor = "#e2e8f0"}
         />
         {query && <button onClick={() => setQuery("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "#bbb" }}>✕</button>}
+      </div>
+
+      {/* Stock filter */}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", fontSize: 13, color: "#444" }}>
+          <input
+            type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)}
+            style={{ width: 16, height: 16, accentColor: "#10b981", cursor: "pointer" }}
+          />
+          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? "#059669" : "#666" }}>
+            N'afficher que les produits en stock
+          </span>
+        </label>
+        {catalog && (
+          <span style={{ fontSize: 11, color: "#aaa" }}>
+            {catalog.filter(p => p.in_stock).length} en stock sur {catalog.length}
+          </span>
+        )}
       </div>
 
       {/* Loading */}
