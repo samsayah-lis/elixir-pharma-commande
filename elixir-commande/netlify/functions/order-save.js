@@ -1,11 +1,7 @@
-// Sauvegarde une commande dans Supabase
+// Sauvegarde une commande dans Supabase — FIX BUG-04 (source) + BUG-10 (error handling)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type"
-};
+const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -27,25 +23,29 @@ export const handler = async (event) => {
     nb_lignes: order.nbLignes,
     csv: order.csv || null,
     processed: false,
+    source: order.source || "catalogue",
   };
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders`, {
-    method: "POST",
-    headers: {
-      "apikey": SUPABASE_KEY,
-      "Authorization": `Bearer ${SUPABASE_KEY}`,
-      "Content-Type": "application/json",
-      "Prefer": "return=minimal"
-    },
-    body: JSON.stringify(row)
-  });
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders`, {
+      method: "POST",
+      headers: {
+        "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`,
+        "Content-Type": "application/json", "Prefer": "return=minimal"
+      },
+      body: JSON.stringify(row)
+    });
 
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("[order-save] Supabase error:", err);
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
+    if (!res.ok) {
+      const err = await res.text();
+      console.error("[order-save] Supabase error:", err);
+      return { statusCode: 500, headers: cors, body: JSON.stringify({ success: false, error: err }) };
+    }
+
+    console.log(`[order-save] ✓ ${order.id} (${order.pharmacyName}, source=${row.source})`);
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, id: order.id }) };
+  } catch (e) {
+    console.error("[order-save] Exception:", e.message);
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ success: false, error: e.message }) };
   }
-
-  console.log(`[order-save] ✓ Commande ${order.id} sauvegardée (${order.pharmacyName})`);
-  return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
 };

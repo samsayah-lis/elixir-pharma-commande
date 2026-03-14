@@ -19,7 +19,8 @@ function CipCopy({ cip }) {
 }
 
 
-const ADMIN_PASSWORD = "elixir2026";
+// Admin password vérifié côté serveur (plus de secret dans le bundle JS)
+const ADMIN_AUTH_ENDPOINT = "/.netlify/functions/admin-login";
 
 // ── Helper UG campagne ───────────────────────────────────────────────────────
 function calcUgAdmin(itemName, qty, campaign) {
@@ -272,9 +273,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }
   }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
-  const handleLogin = () => {
-    if (pwd === ADMIN_PASSWORD) { setAuthed(true); setPwdError(false); refreshOrders(); fetchProducts(); }
-    else setPwdError(true);
+  const handleLogin = async () => {
+    setPwdError(false);
+    try {
+      const res = await fetch(ADMIN_AUTH_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: pwd }),
+      });
+      const data = await res.json();
+      if (data.success && data.token) {
+        localStorage.setItem("admin_token", data.token);
+        setAuthed(true);
+        refreshOrders();
+        fetchProducts();
+      } else {
+        setPwdError(true);
+      }
+    } catch (e) {
+      console.error("[admin-login]", e.message);
+      setPwdError(true);
+    }
   };
 
   const handleField = (k, v) => setForm(f => ({ ...f, [k]: v }));

@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect, useCallback } from "react";
 import emailjs from "@emailjs/browser";
 import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
 import AdminPanel from "./AdminPanel";
+import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 
 const SECTION_META = {
   expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise %","Remise €","Prix net"] },
@@ -42,38 +43,45 @@ const getFrenchHolidays = (year) => {
 };
 
 const nextBusinessDay = () => {
-  const d = new Date();
-  // Si après 14h, on passe au lendemain d'emblée
-  if (d.getHours() >= 14) d.setDate(d.getDate() + 1);
-  else d.setDate(d.getDate() + 1);
-  const holidays = getFrenchHolidays(d.getFullYear());
+  const now = new Date();
+  const d = new Date(now);
+  // Toujours au minimum J+1
+  d.setDate(d.getDate() + 1);
+  // Commande après 14h → J+2 minimum
+  if (now.getHours() >= 14) d.setDate(d.getDate() + 1);
+  const holidays = [...getFrenchHolidays(d.getFullYear()), ...getFrenchHolidays(d.getFullYear() + 1)];
   let safety = 0;
-  while (safety++ < 10) {
+  while (safety++ < 14) {
     const day = d.getDay();
     const iso = d.toISOString().slice(0,10);
     if (day !== 0 && day !== 6 && !holidays.includes(iso)) break;
     d.setDate(d.getDate() + 1);
-    if (!holidays.includes(d.toISOString().slice(0,10)) && getFrenchHolidays(d.getFullYear())) {}
   }
   return d.toLocaleDateString("fr-FR", { weekday:"long", day:"numeric", month:"long" });
 };
 
 // ── Constantes U-Labs ────────────────────────────────────────────────────────
 // ── Helpers campagne dynamique ────────────────────────────────────────────────
+// Cache de regex compilées pour éviter de recompiler à chaque render (PERF-05)
+const _rxCache = new Map();
+const getCachedRx = (pattern) => {
+  if (_rxCache.has(pattern)) return _rxCache.get(pattern);
+  try { const rx = new RegExp(pattern, "i"); _rxCache.set(pattern, rx); return rx; }
+  catch { _rxCache.set(pattern, null); return null; }
+};
 // Construit le tableau de groupes depuis la config Supabase avec fallback vide
 const buildGroupes = (campaign) => {
   if (!campaign?.groupes?.length) return [];
-  return campaign.groupes.map(g => ({
-    ...g,
-    match: (p) => {
-      if (!g.match_regex) return false;
-      try { return new RegExp(g.match_regex, "i").test(p.name); }
-      catch(e) { return false; }
-    },
-    gratuite: g.gratuite_type && g.gratuite_type !== "aucune"
-      ? { type: g.gratuite_type, condition: g.gratuite_condition || "" }
-      : null,
-  }));
+  return campaign.groupes.map(g => {
+    const rx = g.match_regex ? getCachedRx(g.match_regex) : null;
+    return {
+      ...g,
+      match: (p) => rx ? rx.test(p.name) : false,
+      gratuite: g.gratuite_type && g.gratuite_type !== "aucune"
+        ? { type: g.gratuite_type, condition: g.gratuite_condition || "" }
+        : null,
+    };
+  });
 };
 
 // Trouve le groupe d'un produit (renvoie l'objet groupe ou null)
@@ -321,8 +329,13 @@ export default function App() {
 
   useEffect(() => {
     fetchStock();
-    const interval = setInterval(fetchStock, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    let interval = setInterval(fetchStock, 5 * 60 * 1000);
+    const onVisibility = () => {
+      if (document.hidden) { clearInterval(interval); interval = null; }
+      else { fetchStock(); interval = setInterval(fetchStock, 5 * 60 * 1000); }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => { clearInterval(interval); document.removeEventListener("visibilitychange", onVisibility); };
   }, [fetchStock]);
 
   // ── Pharmacy session state — MUST be before CATALOG_WITH_ADMIN useMemo ──
@@ -512,13 +525,12 @@ export default function App() {
   const globalResults = globalSearch.trim().length >= 2
     ? Object.entries(CATALOG_WITH_ADMIN).flatMap(([catKey, c]) =>
         (c.products || [])
+          .map((p, idx) => ({ ...p, _catKey: catKey, _catLabel: c.label, _catIcon: c.icon, _catAccent: c.accent, _idx: idx }))
           .filter(p => p.name?.toLowerCase().includes(globalSearch.toLowerCase()) || (p.cip||"").includes(globalSearch))
-          .map(p => ({ ...p, _catKey: catKey, _catLabel: c.label, _catIcon: c.icon, _catAccent: c.accent,
-            _idx: c.products.indexOf(p) }))
       )
     : [];
 
-  const filteredProducts = (() => {
+  const filteredProducts = useMemo(() => {
     const filtered = (cat?.products || []).filter(p =>
       search === "" || p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.cip && p.cip.includes(search))
@@ -538,7 +550,7 @@ export default function App() {
       });
     }
     return filtered;
-  })();
+  }, [cat?.products, search, activeTab]);
 
   // Split grille/tableau
   const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
@@ -707,7 +719,7 @@ export default function App() {
       // Save order to Supabase via Netlify Function
       try {
         const order = {
-          id: Date.now(),
+          id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
           date: new Date().toISOString(),
           pharmacyName,
           pharmacyEmail,
@@ -718,17 +730,18 @@ export default function App() {
           nbLignes: cartItems.length,
           csv: csvContent,
           processed: false,
+          source: "catalogue",
         };
 
-        // Sauvegarde dans Supabase
-        fetch("/.netlify/functions/order-save", {
+        // Sauvegarde dans Supabase (await pour détecter les erreurs)
+        const saveRes = await fetch("/.netlify/functions/order-save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(order),
-        }).then(r => r.json()).then(j => {
-          if (j.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
-          else console.warn("[order-save] ✗", j.error);
-        }).catch(e => console.warn("[order-save] erreur réseau:", e.message));
+        });
+        const saveJson = await saveRes.json();
+        if (saveJson.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
+        else console.warn("[order-save] ✗", saveJson.error);
 
         // ── Auto-submit vers PharmaML ──
         // Essaie d'abord l'agent local (port 3001), sinon fallback Netlify Function
@@ -1103,6 +1116,22 @@ export default function App() {
             </div>
           )}
 
+          {/* ── ML: Réapprovisionnement suggéré ── */}
+          {pharmacyCip && (
+            <ReorderSuggestion
+              pharmacyCip={pharmacyCip}
+              onApply={(cart) => {
+                // Cherche l'index de chaque CIP dans le catalogue et pré-remplit
+                Object.entries(cart).forEach(([cip, qty]) => {
+                  Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                    const idx = (c.products || []).findIndex(p => p.cip === cip);
+                    if (idx >= 0) setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: qty }));
+                  });
+                });
+              }}
+            />
+          )}
+
           {/* Category header */}
           <div style={{
             background: `linear-gradient(135deg, ${catEffective.color} 0%, ${catEffective.accent}33 100%)`,
@@ -1426,7 +1455,7 @@ export default function App() {
                                   min={stepMin || 0}
                                   step={m > 1 ? m : step}
                                   value={quantities[key] ?? ""}
-                                  onChange={e => setQuantities(prev=>({...prev,[key]: e.target.value === "" ? "" : parseInt(e.target.value)||0}))}
+                                  onChange={e => setQuantities(prev=>({...prev,[key]: e.target.value === "" ? 0 : parseInt(e.target.value)||0}))}
                                   onBlur={e => handleBlur(e.target.value)}
                                   placeholder="0"
                                   style={{
@@ -1865,6 +1894,20 @@ export default function App() {
                   ))
                 )}
 
+                {/* ── ML: Recommandations cross-sell dans le panier ── */}
+                {cartItems.length > 0 && (
+                  <CrossSellBanner
+                    cartCips={cartItems.map(i => i.cip).filter(Boolean)}
+                    accent="#10b981"
+                    onAdd={(cip, qty) => {
+                      Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                        const idx = (c.products || []).findIndex(p => p.cip === cip);
+                        if (idx >= 0) setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + qty }));
+                      });
+                    }}
+                  />
+                )}
+
                 {cartItems.length > 0 && (
                 <div style={{ padding: "8px 0 16px 0", borderTop: "2px solid #f0f2f5", marginTop: 8 }}>
 
@@ -1949,7 +1992,7 @@ export default function App() {
       )}
 
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+        /* DM Sans loaded via <link> in index.html for better performance */
         * { box-sizing: border-box; }
         input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
         @media (max-width: 767px) {

@@ -7,7 +7,8 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 export const handler = async (event) => {
   // Protection basique
   const token = event.queryStringParameters?.token;
-  if (token !== "elixir2026") {
+  const SYNC_TOKEN = process.env.SYNC_TOKEN || process.env.ADMIN_PASSWORD || "elixir2026";
+  if (token !== SYNC_TOKEN) {
     return { statusCode: 403, body: "Forbidden" };
   }
 
