@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
-const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart }) {
   const [query, setQuery] = useState("");
@@ -74,8 +73,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const handleAdd = (product) => {
     const qty = parseInt(quantities[product.cip]) || 0;
     if (qty <= 0) return;
-    const price = product.discounted_price || product.list_price;
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: product.discount_pct || 0 });
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: product.list_price, pv: product.list_price, discount: 0 });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
   };
 
@@ -139,12 +137,6 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             style={{ width: 16, height: 16, accentColor: "#10b981", cursor: "pointer" }} />
           <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? "#059669" : "#666" }}>N'afficher que les produits en stock</span>
         </label>
-        {catalogInfo && (
-          <span style={{ fontSize: 11, color: "#aaa" }}>
-            <span style={{ background: "#d1fae5", color: "#065f46", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>{catalogInfo.in_stock} en stock</span>
-            <span style={{ marginLeft: 6 }}>sur {catalogInfo.total} produits</span>
-          </span>
-        )}
       </div>
 
       {/* Error */}
@@ -190,10 +182,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {results.map(p => {
-              const hasDiscount = p.discount_pct > 0 && p.discounted_price != null;
-              const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
               const qty = quantities[p.cip] || 0;
               const isAlert = alerts[p.cip];
+              const displayPrice = p.list_price;
 
               return (
                 <div key={p.cip} style={{
@@ -218,18 +209,10 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     </div>
                   </div>
 
-                  {/* Prix — affiche le prix remisé si disponible */}
-                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 110 }}>
-                    {hasDiscount ? (<>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                        <span style={{ fontSize: 11, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(p.discount_pct)}</span>
-                      </div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(p.discounted_price)}</div>
-                    </>) : (
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
-                    )}
-                    <div style={{ fontSize: 10, color: "#bbb" }}>Prix unitaire HT</div>
+                  {/* Prix */}
+                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 100 }}>
+                    <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
+                    <div style={{ fontSize: 10, color: "#bbb" }}>Prix HT</div>
                   </div>
 
                   {/* Actions */}

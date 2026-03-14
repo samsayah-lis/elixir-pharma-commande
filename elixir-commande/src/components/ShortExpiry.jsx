@@ -4,37 +4,44 @@ const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " �
 
 export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
   const [products, setProducts] = useState([]);
-  const [discounts, setDiscounts] = useState({}); // { cip: discount_pct }
+  const [discounts, setDiscounts] = useState({});
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [quantities, setQuantities] = useState({});
-  const [editingDiscount, setEditingDiscount] = useState(null); // cip en cours d'édition
+  const [editingDiscount, setEditingDiscount] = useState(null);
   const [discountInput, setDiscountInput] = useState("");
   const [savingDiscount, setSavingDiscount] = useState(false);
-  const [sortBy, setSortBy] = useState("expiry"); // "expiry" | "name" | "stock"
+  const [sortBy, setSortBy] = useState("expiry");
 
-  // ── Chargement ────────────────────────────────────────────────────────
+  // ── Chargement : tous les produits en stock < 4 mois de péremption ────
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const [prodRes, discRes] = await Promise.all([
         fetch("/.netlify/functions/odoo-catalog?expiry_months=4"),
         fetch("/.netlify/functions/restock-alert?action=expiry_discounts"),
       ]);
+      if (!prodRes.ok) throw new Error(`Erreur catalogue: HTTP ${prodRes.status}`);
       const prodData = await prodRes.json();
-      if (prodData.products) setProducts(prodData.products);
+      if (prodData.error) throw new Error(prodData.error);
+      setProducts(Array.isArray(prodData.products) ? prodData.products : []);
 
       const discData = await discRes.json();
       const map = {};
       (Array.isArray(discData) ? discData : []).forEach(d => { map[d.cip] = d.discount_pct; });
       setDiscounts(map);
-    } catch (e) { console.warn("[short-expiry]", e.message); }
+    } catch (e) {
+      console.error("[short-expiry]", e.message);
+      setError(e.message);
+    }
     finally { setLoading(false); }
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // ── Sauvegarde remise admin ───────────────────────────────────────────
+  // ── Remise admin ──────────────────────────────────────────────────────
   const saveDiscount = async (cip, productName) => {
     const pct = parseFloat(discountInput) || 0;
     setSavingDiscount(true);
@@ -45,7 +52,6 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       });
       setDiscounts(prev => ({ ...prev, [cip]: pct }));
       setEditingDiscount(null);
-      setDiscountInput("");
     } catch (e) { console.warn("[discount]", e.message); }
     finally { setSavingDiscount(false); }
   };
@@ -59,15 +65,14 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
 
   const sorted = [...filtered].sort((a, b) => {
     if (sortBy === "expiry") return (a.earliest_expiry || "9999").localeCompare(b.earliest_expiry || "9999");
-    if (sortBy === "name") return a.name.localeCompare(b.name, "fr");
-    if (sortBy === "stock") return b.available - a.available;
+    if (sortBy === "name") return (a.name || "").localeCompare(b.name || "", "fr");
+    if (sortBy === "stock") return (b.available || 0) - (a.available || 0);
     return 0;
   });
 
   const daysUntil = (dateStr) => {
     if (!dateStr) return null;
-    const diff = (new Date(dateStr) - new Date()) / 86400000;
-    return Math.round(diff);
+    return Math.round((new Date(dateStr) - new Date()) / 86400000);
   };
 
   const expiryColor = (days) => {
@@ -93,7 +98,8 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       <div style={{ background: "linear-gradient(135deg, #7c2d12, #ea580c)", borderRadius: 16, padding: "20px 24px", marginBottom: 20, color: "white" }}>
         <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Péremption courte</div>
         <div style={{ fontSize: 13, opacity: 0.8 }}>
-          Produits en stock avec moins de 4 mois de date de péremption · {products.length} référence{products.length > 1 ? "s" : ""}
+          Produits en stock avec moins de 4 mois de date de péremption
+          {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
           {isAdmin && <span style={{ marginLeft: 8, background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "2px 8px", fontSize: 11 }}>Mode admin — remises modifiables</span>}
         </div>
       </div>
@@ -102,11 +108,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
         <div style={{ flex: 1, position: "relative" }}>
           <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.4 }}>🔍</span>
-          <input
-            value={search} onChange={e => setSearch(e.target.value)}
+          <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Filtrer par nom ou CIP..."
-            style={{ width: "100%", padding: "10px 14px 10px 38px", fontSize: 13, border: "1.5px solid #e2e8f0", borderRadius: 10, outline: "none", boxSizing: "border-box" }}
-          />
+            style={{ width: "100%", padding: "10px 14px 10px 38px", fontSize: 13, border: "1.5px solid #e2e8f0", borderRadius: 10, outline: "none", boxSizing: "border-box" }} />
         </div>
         <select value={sortBy} onChange={e => setSortBy(e.target.value)}
           style={{ padding: "8px 14px", border: "1.5px solid #e2e8f0", borderRadius: 10, fontSize: 13, background: "white", cursor: "pointer" }}>
@@ -117,15 +121,26 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       </div>
 
       {/* Loading */}
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#888" }}>Chargement des données Odoo...</div>}
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#888" }}>Chargement des produits à péremption courte...</div>}
 
-      {/* Table */}
-      {!loading && sorted.length === 0 && (
-        <div style={{ textAlign: "center", padding: 40, color: "#aaa", background: "white", borderRadius: 14 }}>
-          Aucun produit en péremption courte
+      {/* Error */}
+      {!loading && error && (
+        <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: "#991b1b" }}>{error}</div>
+          <button onClick={fetchData} style={{ marginTop: 8, background: "#dc2626", color: "white", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Réessayer</button>
         </div>
       )}
 
+      {/* Empty */}
+      {!loading && !error && products.length === 0 && (
+        <div style={{ textAlign: "center", padding: 40, color: "#aaa", background: "white", borderRadius: 14 }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+          <div style={{ fontWeight: 600, fontSize: 15 }}>Aucun produit en péremption courte</div>
+          <div style={{ fontSize: 13, marginTop: 4 }}>Tous les produits en stock ont plus de 4 mois de péremption.</div>
+        </div>
+      )}
+
+      {/* Table */}
       {!loading && sorted.length > 0 && (
         <div style={{ background: "white", borderRadius: 14, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -145,20 +160,13 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
 
                 return (
                   <tr key={p.cip} style={{ background: i % 2 === 0 ? "white" : "#fafbfc", borderBottom: "1px solid #f0f2f5" }}>
-                    {/* CIP */}
                     <td style={{ padding: "10px 12px", fontSize: 11, fontFamily: "monospace", color: "#888" }}>{p.cip}</td>
-
-                    {/* Nom */}
                     <td style={{ padding: "10px 12px", fontWeight: 600, fontSize: 13, color: "#0f2d3d", maxWidth: 280 }}>{p.name}</td>
-
-                    {/* Stock */}
                     <td style={{ padding: "10px 12px", textAlign: "center" }}>
                       <span style={{ fontWeight: 800, fontSize: 15, color: p.available > 10 ? "#059669" : p.available > 0 ? "#d97706" : "#dc2626" }}>
                         {p.available}
                       </span>
                     </td>
-
-                    {/* Péremption */}
                     <td style={{ padding: "10px 12px" }}>
                       {p.earliest_expiry && (
                         <div>
@@ -171,22 +179,16 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                         </div>
                       )}
                     </td>
-
-                    {/* Lots */}
                     <td style={{ padding: "10px 12px", fontSize: 11, color: "#666" }}>
-                      {p.lots?.slice(0, 3).map((l, j) => (
+                      {(p.lots || []).slice(0, 3).map((l, j) => (
                         <div key={j} style={{ whiteSpace: "nowrap" }}>
                           {l.lot_name} ({l.qty}) {l.expiry ? `· ${new Date(l.expiry).toLocaleDateString("fr-FR")}` : ""}
                         </div>
                       ))}
                     </td>
-
-                    {/* Prix de base */}
                     <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, color: disc > 0 ? "#aaa" : "#0f2d3d", textDecoration: disc > 0 ? "line-through" : "none", fontWeight: disc > 0 ? 400 : 700 }}>
                       {fmt(p.list_price)}
                     </td>
-
-                    {/* Remise */}
                     <td style={{ padding: "10px 12px", textAlign: "center" }}>
                       {isAdmin ? (
                         editingDiscount === p.cip ? (
@@ -195,8 +197,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                               onChange={e => setDiscountInput(e.target.value)}
                               onKeyDown={e => e.key === "Enter" && saveDiscount(p.cip, p.name)}
                               autoFocus
-                              style={{ width: 48, textAlign: "center", border: "1.5px solid #ea580c", borderRadius: 6, padding: "3px", fontSize: 13, outline: "none" }}
-                            />
+                              style={{ width: 48, textAlign: "center", border: "1.5px solid #ea580c", borderRadius: 6, padding: "3px", fontSize: 13, outline: "none" }} />
                             <span style={{ fontSize: 12 }}>%</span>
                             <button onClick={() => saveDiscount(p.cip, p.name)} disabled={savingDiscount}
                               style={{ background: "#059669", color: "white", border: "none", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer", fontWeight: 700 }}>✓</button>
@@ -220,15 +221,11 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                         ) : <span style={{ color: "#ccc" }}>–</span>
                       )}
                     </td>
-
-                    {/* Prix remisé */}
                     <td style={{ padding: "10px 12px", textAlign: "right" }}>
                       <span style={{ fontWeight: 800, fontSize: 15, color: disc > 0 ? "#059669" : "#0f2d3d" }}>
                         {fmt(discPrice || p.list_price)}
                       </span>
                     </td>
-
-                    {/* Quantité */}
                     <td style={{ padding: "10px 12px", textAlign: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                         <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
@@ -236,8 +233,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                         <input type="number" min="0" value={quantities[p.cip] || ""}
                           onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: parseInt(e.target.value) || 0 }))}
                           placeholder="0"
-                          style={{ width: 42, textAlign: "center", border: `1.5px solid ${qty > 0 ? "#ea580c" : "#ddd"}`, borderRadius: 5, padding: "3px", fontSize: 13, fontWeight: qty > 0 ? 700 : 400, outline: "none" }}
-                        />
+                          style={{ width: 42, textAlign: "center", border: `1.5px solid ${qty > 0 ? "#ea580c" : "#ddd"}`, borderRadius: 5, padding: "3px", fontSize: 13, fontWeight: qty > 0 ? 700 : 400, outline: "none" }} />
                         <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
                           style={{ background: "#7c2d12", border: "none", borderRadius: 5, width: 24, height: 24, cursor: "pointer", fontWeight: 700, fontSize: 14, color: "white" }}>+</button>
                       </div>
