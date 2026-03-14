@@ -13,6 +13,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({}); // { cip: true } = alerte active
   const [alertSaving, setAlertSaving] = useState({});
+  const [error, setError] = useState(null);
   const debounceRef = useRef(null);
 
   // ── Chargement initial : catalogue Odoo + liste de prix ───────────────
@@ -20,29 +21,46 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setError(null);
       try {
-        const [catRes, plRes, alertRes] = await Promise.all([
-          fetch("/.netlify/functions/odoo-catalog"),
-          pharmacyCip ? fetch(`/.netlify/functions/odoo-pricelist?pharmacy_cip=${pharmacyCip}`) : null,
-          pharmacyCip ? fetch(`/.netlify/functions/restock-alert?pharmacy_cip=${pharmacyCip}`) : null,
-        ]);
-        if (cancelled) return;
+        const catRes = await fetch("/.netlify/functions/odoo-catalog");
+        if (!catRes.ok) throw new Error(`Odoo HTTP ${catRes.status}`);
         const catData = await catRes.json();
-        if (catData.products) setCatalog(catData.products);
-
-        if (plRes) {
-          const plData = await plRes.json();
-          if (plData.rules) setPriceRules(plData.rules);
-          if (plData.pharmacy_name) setPricelistName(plData.pricelists?.[0]?.name || "");
+        if (catData.error) throw new Error(catData.error);
+        if (cancelled) return;
+        if (catData.products) {
+          setCatalog(catData.products);
+          console.log(`[order-entry] ✓ ${catData.products.length} produits chargés depuis Odoo`);
+        } else {
+          setCatalog([]);
+          console.warn("[order-entry] Catalogue vide — aucun produit retourné");
         }
 
-        if (alertRes) {
-          const alertData = await alertRes.json();
-          const map = {};
-          (Array.isArray(alertData) ? alertData : []).forEach(a => { map[a.cip] = true; });
-          setAlerts(map);
+        // Liste de prix
+        if (pharmacyCip) {
+          try {
+            const plRes = await fetch(`/.netlify/functions/odoo-pricelist?pharmacy_cip=${pharmacyCip}`);
+            const plData = await plRes.json();
+            if (plData.rules) setPriceRules(plData.rules);
+            if (plData.pricelists?.[0]?.name) setPricelistName(plData.pricelists[0].name);
+            console.log(`[order-entry] ✓ ${plData.rules?.length || 0} règles de prix`);
+          } catch (e) { console.warn("[order-entry] pricelist error:", e.message); }
         }
-      } catch (e) { console.warn("[order-entry]", e.message); }
+
+        // Alertes retour en stock
+        if (pharmacyCip) {
+          try {
+            const alertRes = await fetch(`/.netlify/functions/restock-alert?pharmacy_cip=${pharmacyCip}`);
+            const alertData = await alertRes.json();
+            const map = {};
+            (Array.isArray(alertData) ? alertData : []).forEach(a => { map[a.cip] = true; });
+            setAlerts(map);
+          } catch (e) { console.warn("[order-entry] alerts error:", e.message); }
+        }
+      } catch (e) {
+        console.error("[order-entry] ERREUR:", e.message);
+        if (!cancelled) setError(e.message);
+      }
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
@@ -156,10 +174,36 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
       </div>
 
       {/* Loading */}
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#888" }}>Chargement du catalogue Odoo...</div>}
+      {loading && <div style={{ textAlign: "center", padding: 40, color: "#888" }}>
+        <div style={{ fontSize: 32, marginBottom: 10 }}>⏳</div>
+        Chargement du catalogue Odoo...
+      </div>}
+
+      {/* Error */}
+      {!loading && error && (
+        <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 14, padding: "20px 24px", marginBottom: 20 }}>
+          <div style={{ fontWeight: 700, fontSize: 14, color: "#991b1b", marginBottom: 6 }}>Erreur de chargement du catalogue Odoo</div>
+          <div style={{ fontSize: 12, color: "#b91c1c", fontFamily: "monospace", wordBreak: "break-all" }}>{error}</div>
+          <button onClick={() => window.location.reload()} style={{ marginTop: 12, background: "#dc2626", color: "white", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Réessayer</button>
+        </div>
+      )}
+
+      {/* Catalog loaded indicator */}
+      {!loading && !error && catalog && (
+        <div style={{ fontSize: 11, color: "#aaa", marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ background: "#d1fae5", color: "#065f46", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+            {catalog.length} produit{catalog.length > 1 ? "s" : ""} Odoo
+          </span>
+          {priceRules.length > 0 && (
+            <span style={{ background: "#dbeafe", color: "#1e40af", borderRadius: 6, padding: "2px 8px", fontWeight: 600 }}>
+              {priceRules.length} règle{priceRules.length > 1 ? "s" : ""} de prix{pricelistName ? ` · ${pricelistName}` : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Empty state */}
-      {!loading && query.length < 2 && (
+      {!loading && !error && query.length < 2 && catalog && (
         <div style={{ textAlign: "center", padding: "60px 20px", color: "#aaa" }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Saisissez au moins 2 caractères</div>
