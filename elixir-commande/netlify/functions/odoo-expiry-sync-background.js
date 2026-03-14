@@ -52,7 +52,7 @@ export const handler = async (event) => {
 
       try {
         const lots = await odooCall(uid, "stock.lot", "search_read",
-          [["product_id", "=", pid], ["expiration_date", "!=", false]],
+          [["product_id", "=", pid], ["expiration_date", "!=", false], ["company_id", "=", 2]],
           { fields: ["name", "expiration_date"], limit: 20 }
         );
 
