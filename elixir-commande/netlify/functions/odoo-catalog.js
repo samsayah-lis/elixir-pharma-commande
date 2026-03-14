@@ -38,12 +38,16 @@ export const handler = async (event) => {
       })};
     }
 
-    // ── Péremption courte ──
+    // ── Péremption courte : entre J+30 et fin du 4e mois ──
     if (params.expiry_months) {
       const months = parseInt(params.expiry_months) || 4;
-      const threshold = new Date(Date.now() + months * 30 * 86400000).toISOString().slice(0, 10);
+      // Minimum : encore valide 30 jours (pas les expirés ni ceux qui expirent dans <30j)
+      const minDate = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+      // Maximum : fin du 4e mois à partir d'aujourd'hui
+      const now = new Date();
+      const maxDate = new Date(now.getFullYear(), now.getMonth() + months + 1, 0).toISOString().slice(0, 10);
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=*&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=lte.${threshold}&order=earliest_expiry.asc`,
+        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=*&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.${minDate}&earliest_expiry=lte.${maxDate}&order=earliest_expiry.asc`,
         { headers: { ...SB, "Range": "0-999" } }
       );
       if (!res.ok) throw new Error(await res.text());
