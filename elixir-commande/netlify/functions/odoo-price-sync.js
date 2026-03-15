@@ -104,22 +104,33 @@ export const handler = async (event) => {
         const listPrice = parseFloat(p.list_price) || 0;
         if (listPrice <= 0) continue;
 
-        // Priorité : produit > template > catégorie > global
+        // Priorité : produit > template > catégorie > règle globale Elixir
         const rule = (p.odoo_pid ? byPid[p.odoo_pid] : null)
           || (p.odoo_tmpl_id ? byTid[p.odoo_tmpl_id] : null)
           || (p.categ_id ? byCid[p.categ_id] : null)
-          || globals[0]
           || null;
 
-        if (!rule) continue;
-
-        // Calculer le prix remisé
         let discountedPrice = null;
-        if (rule.cp === "fixed" && rule.fp > 0) {
-          discountedPrice = rule.fp;
-        } else if (rule.pp > 0) {
-          // percentage ou formula avec discount
-          discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
+
+        if (rule) {
+          // Règle spécifique (produit, template, catégorie)
+          if (rule.cp === "fixed" && rule.fp > 0) {
+            discountedPrice = rule.fp;
+          } else if (rule.pp > 0) {
+            discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
+          }
+        } else {
+          // Règle globale Elixir (3 paliers)
+          if (listPrice < 4.63) {
+            // Forfait 0,23€ de remise par boîte
+            discountedPrice = Math.round((listPrice - 0.23) * 100) / 100;
+          } else if (listPrice <= 463) {
+            // 4,51% de remise
+            discountedPrice = Math.round(listPrice * (1 - 4.51 / 100) * 100) / 100;
+          } else {
+            // Forfait 25€ de remise par boîte
+            discountedPrice = Math.round((listPrice - 25) * 100) / 100;
+          }
         }
 
         if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) continue;
