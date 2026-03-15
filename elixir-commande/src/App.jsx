@@ -421,6 +421,13 @@ export default function App() {
         promoId: ps.id,
       };
     });
+    // Apply display config overrides (subtitles, labels)
+    const dc = getDisplayConfig();
+    if (dc.subtitles) {
+      Object.entries(dc.subtitles).forEach(([k, sub]) => {
+        if (merged[k] && sub != null) merged[k] = { ...merged[k], subtitle: sub };
+      });
+    }
     return merged;
   }, [dbProducts, promoSections, campaigns, pharmacyEmail]);
 

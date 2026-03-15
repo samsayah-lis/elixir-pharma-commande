@@ -699,6 +699,14 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   };
 
   const [dragIdx, setDragIdx] = useState(null);
+  const [editingSubtitle, setEditingSubtitle] = useState(null); // key being edited
+  const [subtitleInput, setSubtitleInput] = useState("");
+
+  const saveSubtitle = (key) => {
+    const current = displayConfig.subtitles || {};
+    saveDisplayConfig({ subtitles: { ...current, [key]: subtitleInput } });
+    setEditingSubtitle(null);
+  };
 
   const moveTab = (from, to) => {
     if (from === to) return;
@@ -2143,10 +2151,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       <span style={{fontSize:18,width:28,textAlign:"center"}}>{meta.icon}</span>
                       <div style={{width:6,height:28,borderRadius:3,background:meta.accent,flexShrink:0}} />
 
-                      {/* Label */}
+                      {/* Label + editable subtitle */}
                       <div style={{flex:1,minWidth:0}}>
                         <div style={{fontWeight:600,fontSize:13,color: isHidden ? "#bbb" : "#0f2d3d"}}>{meta.label}</div>
-                        {meta.subtitle && <div style={{fontSize:10,color:"#aaa",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{meta.subtitle}</div>}
+                        {editingSubtitle === key ? (
+                          <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}} onClick={e=>e.stopPropagation()}>
+                            <input value={subtitleInput} onChange={e=>setSubtitleInput(e.target.value)}
+                              onKeyDown={e=>{ if(e.key==="Enter") saveSubtitle(key); if(e.key==="Escape") setEditingSubtitle(null); }}
+                              autoFocus placeholder="Sous-titre de la section..."
+                              style={{flex:1,border:"1.5px solid #3b82f6",borderRadius:6,padding:"3px 8px",fontSize:11,outline:"none",fontFamily:"inherit"}} />
+                            <button onClick={(e)=>{e.stopPropagation();saveSubtitle(key);}}
+                              style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:10,cursor:"pointer",fontWeight:700}}>✓</button>
+                            <button onClick={(e)=>{e.stopPropagation();setEditingSubtitle(null);}}
+                              style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:12}}>✕</button>
+                          </div>
+                        ) : (
+                          <div style={{fontSize:10,color: (displayConfig.subtitles?.[key] != null) ? "#3b82f6" : "#aaa",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
+                            onClick={(e)=>{e.stopPropagation();setEditingSubtitle(key);setSubtitleInput(displayConfig.subtitles?.[key] ?? meta.subtitle ?? "");}}>
+                            <span>{displayConfig.subtitles?.[key] ?? meta.subtitle ?? "Aucun sous-titre"}</span>
+                            <span style={{fontSize:9,opacity:0.5}}>✏️</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Special badges */}
