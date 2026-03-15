@@ -21,6 +21,21 @@ const SECTION_META = {
   peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+
+// ── Display config (ordre + visibilité des onglets, paramètres visuels) ──
+function getDisplayConfig() {
+  try { return JSON.parse(localStorage.getItem("display_config") || "{}"); } catch { return {}; }
+}
+function getOrderedTabs(catalog) {
+  const config = getDisplayConfig();
+  const allKeys = Object.keys(catalog).filter(k => !catalog[k].hidden);
+  const order = config.tabOrder || allKeys;
+  const hidden = new Set(config.hiddenTabs || []);
+  // Ordre config d'abord, puis les clés restantes non listées
+  const ordered = order.filter(k => allKeys.includes(k) && !hidden.has(k));
+  allKeys.forEach(k => { if (!ordered.includes(k) && !hidden.has(k)) ordered.push(k); });
+  return ordered;
+}
 // Jours fériés France (récurrents + Pâques/Ascension/Pentecôte calculés)
 const getFrenchHolidays = (year) => {
   // Pâques (algorithme de Meeus/Jones/Butcher)
@@ -153,7 +168,7 @@ function CipCell({ cip }) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState("expert");
+  const [activeTab, setActiveTab] = useState(() => getDisplayConfig().defaultTab || "expert");
   // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
   const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
@@ -1040,7 +1055,10 @@ export default function App() {
 
         {/* Tab nav */}
         <div style={{ display: "flex", overflowX: "auto", paddingBottom: 0, borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 8 }}>
-          {Object.entries(CATALOG_WITH_ADMIN).filter(([, c]) => !c.hidden).map(([key, c]) => (
+          {getOrderedTabs(CATALOG_WITH_ADMIN).map(key => {
+            const c = CATALOG_WITH_ADMIN[key];
+            if (!c) return null;
+            return (
             <button key={key} onClick={() => { setActiveTab(key); setSearch(""); }} style={{
               background: activeTab === key ? "rgba(255,255,255,0.15)" : "transparent",
               border: "none", color: activeTab === key ? "white" : "rgba(255,255,255,0.55)",
@@ -1050,7 +1068,8 @@ export default function App() {
             }}>
               {c.icon} {c.label}
             </button>
-          ))}
+            );
+          })}
         </div>
       </header>
 

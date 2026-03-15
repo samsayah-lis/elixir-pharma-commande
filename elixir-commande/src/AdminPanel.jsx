@@ -631,6 +631,42 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [syncStock, setSyncStock] = useState({ running: false, progress: null });
   const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
 
+  // ── Display config state ──────────────────────────────────────────────
+  const [displayConfig, setDisplayConfig] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("display_config") || "{}"); } catch { return {}; }
+  });
+  const allSectionKeys = Object.keys(sectionMeta);
+  const tabOrder = displayConfig.tabOrder || allSectionKeys;
+  const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
+  const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
+
+  const saveDisplayConfig = (newConfig) => {
+    const merged = { ...displayConfig, ...newConfig };
+    setDisplayConfig(merged);
+    localStorage.setItem("display_config", JSON.stringify(merged));
+  };
+
+  const [dragIdx, setDragIdx] = useState(null);
+
+  const moveTab = (from, to) => {
+    if (from === to) return;
+    const order = [...(displayConfig.tabOrder || allSectionKeys)];
+    const [moved] = order.splice(from, 1);
+    order.splice(to, 0, moved);
+    saveDisplayConfig({ tabOrder: order });
+  };
+
+  const toggleTabVisibility = (key) => {
+    const current = new Set(displayConfig.hiddenTabs || []);
+    if (current.has(key)) current.delete(key);
+    else current.add(key);
+    saveDisplayConfig({ hiddenTabs: [...current] });
+  };
+
+  const setDefaultTab = (key) => {
+    saveDisplayConfig({ defaultTab: key });
+  };
+
   const handleSyncStock = async () => {
     if (syncStock.running) return;
     setSyncStock({ running: true, progress: "Étape 1/3 : chargement des produits Odoo..." });
@@ -752,6 +788,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
     {k:"expiry",    label:"⏰ Péremptions",icon:"⏰"},
+    {k:"display",   label:"🎨 Affichage",  icon:"🎨"},
     {k:"sync",      label:"🔄 Synchronisation",icon:"🔄"},
   ];
 
@@ -1916,6 +1953,127 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* ── EXPIRY TAB ── */}
         {tab==="expiry"&&(
           <ShortExpiry isAdmin={true} onAddToCart={() => {}} />
+        )}
+
+        {/* ── DISPLAY TAB ── */}
+        {tab==="display"&&(
+          <div>
+            <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d",marginBottom:8}}>Affichage global</div>
+            <div style={{fontSize:12,color:"#888",marginBottom:24}}>Personnalisez l'ordre, la visibilité et le comportement des onglets du catalogue. Les modifications sont appliquées instantanément.</div>
+
+            {/* Ordre + visibilité des onglets */}
+            <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:4}}>Ordre et visibilité des onglets</div>
+              <div style={{fontSize:11,color:"#aaa",marginBottom:16}}>Glissez-déposez pour réorganiser · Cliquez sur l'œil pour masquer/afficher · L'étoile définit l'onglet par défaut</div>
+
+              <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                {(displayConfig.tabOrder || allSectionKeys).map((key, idx) => {
+                  const meta = sectionMeta[key];
+                  if (!meta) return null;
+                  const isHidden = hiddenTabs.has(key);
+                  const isDefault = defaultTab === key;
+                  const isDragging = dragIdx === idx;
+
+                  return (
+                    <div key={key}
+                      draggable
+                      onDragStart={() => setDragIdx(idx)}
+                      onDragOver={(e) => { e.preventDefault(); }}
+                      onDrop={() => { if (dragIdx !== null) moveTab(dragIdx, idx); setDragIdx(null); }}
+                      onDragEnd={() => setDragIdx(null)}
+                      style={{
+                        display:"flex", alignItems:"center", gap:12,
+                        padding:"10px 14px", borderRadius:10,
+                        background: isDragging ? "#dbeafe" : isHidden ? "#fafafa" : "white",
+                        border: isDragging ? "2px dashed #3b82f6" : isHidden ? "1px solid #eee" : "1px solid #e2e8f0",
+                        opacity: isHidden ? 0.5 : 1,
+                        cursor:"grab", transition:"all 0.15s",
+                      }}
+                    >
+                      {/* Drag handle */}
+                      <span style={{fontSize:14,color:"#ccc",cursor:"grab",userSelect:"none"}}>⣿</span>
+
+                      {/* Position */}
+                      <span style={{fontSize:10,color:"#bbb",fontWeight:700,minWidth:18,textAlign:"center"}}>{idx+1}</span>
+
+                      {/* Icon + Color preview */}
+                      <span style={{fontSize:18,width:28,textAlign:"center"}}>{meta.icon}</span>
+                      <div style={{width:6,height:28,borderRadius:3,background:meta.accent,flexShrink:0}} />
+
+                      {/* Label */}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:13,color: isHidden ? "#bbb" : "#0f2d3d"}}>{meta.label}</div>
+                        {meta.subtitle && <div style={{fontSize:10,color:"#aaa",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{meta.subtitle}</div>}
+                      </div>
+
+                      {/* Special badges */}
+                      {meta.specialView && <span style={{fontSize:9,background:"#eff6ff",color:"#3b82f6",borderRadius:4,padding:"2px 6px",fontWeight:600}}>ODOO</span>}
+                      {meta.restrictedTo && <span style={{fontSize:9,background:"#fef3c7",color:"#92400e",borderRadius:4,padding:"2px 6px",fontWeight:600}}>GROUPEMENT</span>}
+
+                      {/* Default star */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); if (!isHidden) setDefaultTab(key); }}
+                        title={isDefault ? "Onglet par défaut" : "Définir comme onglet par défaut"}
+                        style={{background:"none",border:"none",cursor:isHidden?"default":"pointer",fontSize:18,padding:4,opacity:isHidden?0.2:1}}
+                      >
+                        {isDefault ? "⭐" : "☆"}
+                      </button>
+
+                      {/* Visibility toggle */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleTabVisibility(key); }}
+                        title={isHidden ? "Afficher cet onglet" : "Masquer cet onglet"}
+                        style={{background:isHidden?"#fee2e2":"#d1fae5",border:"none",cursor:"pointer",borderRadius:6,padding:"4px 8px",fontSize:13}}
+                      >
+                        {isHidden ? "👁️‍🗨️" : "👁️"}
+                      </button>
+
+                      {/* Move buttons */}
+                      <div style={{display:"flex",flexDirection:"column",gap:1}}>
+                        <button onClick={(e)=>{e.stopPropagation();if(idx>0)moveTab(idx,idx-1);}}
+                          disabled={idx===0}
+                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:idx>0?"pointer":"default",padding:"1px 6px",fontSize:10,opacity:idx>0?1:0.3}}>▲</button>
+                        <button onClick={(e)=>{e.stopPropagation();const order=displayConfig.tabOrder||allSectionKeys;if(idx<order.length-1)moveTab(idx,idx+1);}}
+                          disabled={idx>=(displayConfig.tabOrder||allSectionKeys).length-1}
+                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:10,opacity:idx<(displayConfig.tabOrder||allSectionKeys).length-1?1:0.3}}>▼</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Onglet par défaut */}
+            <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
+              <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:12}}>Onglet par défaut à l'ouverture</div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+                {(displayConfig.tabOrder || allSectionKeys).filter(k => !hiddenTabs.has(k)).map(key => {
+                  const meta = sectionMeta[key];
+                  if (!meta) return null;
+                  return (
+                    <button key={key} onClick={() => setDefaultTab(key)}
+                      style={{
+                        display:"flex",alignItems:"center",gap:6,
+                        padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:600,
+                        cursor:"pointer",transition:"all 0.15s",
+                        background: defaultTab===key ? meta.color : "#f8fafc",
+                        color: defaultTab===key ? "white" : "#444",
+                        border: defaultTab===key ? `2px solid ${meta.accent}` : "1px solid #ddd",
+                      }}>
+                      {meta.icon} {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Résumé */}
+            <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+              <strong>Résumé :</strong> {(displayConfig.tabOrder||allSectionKeys).filter(k => !hiddenTabs.has(k)).length} onglets visibles sur {allSectionKeys.length} ·
+              Onglet par défaut : <strong>{sectionMeta[defaultTab]?.icon} {sectionMeta[defaultTab]?.label}</strong> ·
+              Les modifications sont sauvegardées automatiquement dans le navigateur.
+            </div>
+          </div>
         )}
 
         {/* ── SYNC TAB ── */}
