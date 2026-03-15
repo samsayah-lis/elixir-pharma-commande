@@ -581,6 +581,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     setOrdersLoading(false);
   };
 
+  // Charger les données au montage si déjà authentifié
+  useEffect(() => {
+    if (authed) { fetchProducts(); refreshOrders(); }
+  }, [authed]);
+
   const downloadCsv = (order) => {
     // Build a CIP lookup from all catalog sections (name → cip, and cip → cip)
     const cipLookup = {};
