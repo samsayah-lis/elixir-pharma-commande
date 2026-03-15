@@ -676,11 +676,22 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const handleSyncPrice = async () => {
     if (syncPrice.running) return;
-    setSyncPrice({ running: true, progress: "Phase 1 : chargement des règles de prix Odoo..." });
+    setSyncPrice({ running: true, progress: "Phase 0 : mise à jour des catégories produits..." });
     try {
-      // Phase 1 : charger toutes les règles
+      // Phase 0 : remplir odoo_tmpl_id + categ_id si manquants
+      let fillRound = 0;
+      while (fillRound < 200) { // max 200 batches = 40000 produits
+        const fillRes = await fetch("/.netlify/functions/fill-tmpl-categ");
+        if (!fillRes.ok) break;
+        const fillData = await fillRes.json();
+        if (fillData.done || fillData.remaining === 0) break;
+        fillRound++;
+        setSyncPrice({ running: true, progress: `Phase 0 : catégories... ${fillData.remaining} produits restants` });
+      }
+
+      // Phase 1 : charger les règles
+      setSyncPrice({ running: true, progress: "Phase 1 : chargement des règles de prix Odoo..." });
       let offset = 0, totalRules = 0;
-      // Phase 1 : charger toutes les règles (offset=0 réinitialise)
       while (true) {
         const res = await fetch(`/.netlify/functions/odoo-price-sync?step=load&offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -691,9 +702,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         if (data.done) break;
         offset = data.next_offset;
       }
-      setSyncPrice({ running: true, progress: `Phase 2 : application de ${totalRules} règles aux produits...` });
 
-      // Phase 2 : appliquer à tous les produits
+      // Phase 2 : appliquer
+      setSyncPrice({ running: true, progress: `Phase 2 : application de ${totalRules} règles aux produits...` });
       offset = 0;
       let totalUpdated = 0, rulesInfo = "";
       while (true) {
@@ -702,8 +713,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        if (data.rules_specific != null) rulesInfo = `${data.rules_specific} spécifiques + ${data.rules_global} globales`;
-        setSyncPrice({ running: true, progress: `Phase 2 : ${offset + (data.updated || 0)} / ${data.total || "?"}... ${totalUpdated} prix mis à jour (${rulesInfo})` });
+        if (data.rules_by_product != null) rulesInfo = `${data.rules_by_product} produit + ${data.rules_by_template} template + ${data.rules_by_category} catégorie + ${data.rules_global} global`;
+        setSyncPrice({ running: true, progress: `Phase 2 : ${offset + 200} / ${data.total || "?"}... ${totalUpdated} prix (${rulesInfo})` });
         if (data.done) break;
         offset = data.next_offset;
       }
