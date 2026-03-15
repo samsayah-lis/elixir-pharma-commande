@@ -1,44 +1,35 @@
-// ── Debug : vérifie le contenu de elixir_products ──
-const SUPABASE_URL = process.env.SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_KEY;
+// ── Debug : liste les emplacements de stock Elixir avec tous les champs utiles ──
+import { authenticate, odooCall } from "./odoo.js";
 const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   try {
-    // Count all
-    const countRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?select=cip`,
-      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-0", "Prefer": "count=exact" } }
-    );
-    const total = countRes.headers.get("content-range")?.split("/")?.[1] || "0";
+    const uid = await authenticate();
 
-    // Count active
-    const activeRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?select=cip&active=eq.true`,
-      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-0", "Prefer": "count=exact" } }
+    // 1. Charger les emplacements internes d'Elixir (company_id=2)
+    const locations = await odooCall(uid, "stock.location", "search_read",
+      [["company_id", "=", 2], ["usage", "=", "internal"]],
+      { fields: ["id", "name", "complete_name", "active", "scrap_location", "return_location", "usage", "replenish_location"], limit: 100 }
     );
-    const totalActive = activeRes.headers.get("content-range")?.split("/")?.[1] || "0";
 
-    // Last 5 added
-    const recentRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?select=cip,name,section,active,source,created_at&order=created_at.desc&limit=5`,
-      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
+    // 2. Chercher les champs disponibles sur stock.location
+    const fields = await odooCall(uid, "stock.location", "fields_get",
+      [],
+      { attributes: ["string", "type"] }
     );
-    const recent = await recentRes.json();
-
-    // By section
-    const allRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?select=section,active&active=eq.true`,
-      { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": "0-9999" } }
-    );
-    const all = await allRes.json();
-    const bySection = {};
-    (Array.isArray(all) ? all : []).forEach(p => {
-      bySection[p.section] = (bySection[p.section] || 0) + 1;
+    
+    // Filtrer les champs qui pourraient être "ne pas exporter"
+    const exportFields = Object.entries(fields || {}).filter(([k, v]) => {
+      const s = (v.string || "").toLowerCase();
+      return s.includes("export") || s.includes("exclu") || s.includes("ignore") || s.includes("bloqu") || k.includes("export") || k.includes("exclude");
     });
 
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ total, totalActive, bySection, recent }, null, 2) };
+    return { statusCode: 200, headers: cors, body: JSON.stringify({
+      locations: Array.isArray(locations) ? locations : [],
+      export_related_fields: exportFields.map(([k, v]) => ({ field: k, label: v.string, type: v.type })),
+      total_fields: Object.keys(fields || {}).length,
+    }, null, 2) };
   } catch (e) {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
   }
