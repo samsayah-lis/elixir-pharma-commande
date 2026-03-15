@@ -322,7 +322,16 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }, 300);
   };
 
+  const [catPendingProduct, setCatPendingProduct] = useState(null); // product waiting for section choice
+
   const selectFromCatalog = (p) => {
+    // Show section picker before filling the form
+    setCatPendingProduct(p);
+  };
+
+  const confirmCatalogSection = (section) => {
+    const p = catPendingProduct;
+    if (!p) return;
     setForm(f => ({
       ...f,
       name: p.name || f.name,
@@ -331,9 +340,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       pn: p.discounted_price ? String(p.discounted_price) : "",
       pct: p.discount_pct ? String(p.discount_pct) : "",
       remise_eur: p.list_price && p.discounted_price ? String(Math.round((p.list_price - p.discounted_price) * 100) / 100) : "",
+      section,
     }));
     setCatSearch("");
     setCatResults([]);
+    setCatPendingProduct(null);
   };
 
   const handleAdd = async () => {
@@ -956,7 +967,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
               {catSearching && <div style={{fontSize:11,color:"#3b82f6",marginTop:8}}>Recherche en cours...</div>}
 
-              {catResults.length > 0 && (
+              {catResults.length > 0 && !catPendingProduct && (
                 <div style={{marginTop:10,border:"1px solid #e8eaed",borderRadius:10,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
                   {catResults.map(p => (
                     <button key={p.cip} onClick={()=>selectFromCatalog(p)}
@@ -991,8 +1002,41 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 </div>
               )}
 
-              {catSearch.length >= 2 && !catSearching && catResults.length === 0 && (
+              {catSearch.length >= 2 && !catSearching && catResults.length === 0 && !catPendingProduct && (
                 <div style={{fontSize:11,color:"#aaa",marginTop:8}}>Aucun résultat. Vous pouvez saisir manuellement ci-dessous.</div>
+              )}
+
+              {/* Section picker after product selection */}
+              {catPendingProduct && (
+                <div style={{marginTop:12,background:"#f0f9ff",border:"2px solid #3b82f6",borderRadius:12,padding:"16px 20px",animation:"fadeIn 0.2s"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                    <div>
+                      <div style={{fontSize:11,color:"#3b82f6",fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>📌 Choisissez la section de destination</div>
+                      <div style={{fontSize:14,fontWeight:700,color:"#0f2d3d",marginTop:4}}>{catPendingProduct.name}</div>
+                      <div style={{fontSize:11,color:"#888",fontFamily:"monospace"}}>CIP {catPendingProduct.cip} · {catPendingProduct.list_price ? parseFloat(catPendingProduct.list_price).toFixed(2) + " €" : ""}</div>
+                    </div>
+                    <button onClick={()=>setCatPendingProduct(null)}
+                      style={{background:"#f0f2f5",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:"#888"}}>✕</button>
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
+                    {SECTIONS.map(s => (
+                      <button key={s.key} onClick={()=>confirmCatalogSection(s.key)}
+                        style={{
+                          display:"flex",alignItems:"center",gap:8,
+                          padding:"10px 14px",borderRadius:10,fontSize:12,fontWeight:600,
+                          cursor:"pointer",transition:"all 0.15s",textAlign:"left",
+                          background: form.section === s.key ? "#dbeafe" : "white",
+                          border: form.section === s.key ? "2px solid #3b82f6" : "1px solid #e2e8f0",
+                          color:"#0f2d3d",
+                        }}
+                        onMouseEnter={e=>{e.currentTarget.style.background="#eff6ff";e.currentTarget.style.borderColor="#93c5fd"}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=form.section===s.key?"#dbeafe":"white";e.currentTarget.style.borderColor=form.section===s.key?"#3b82f6":"#e2e8f0"}}>
+                        <span style={{fontSize:16}}>{s.label.split(" ")[0]}</span>
+                        <span>{s.label.replace(/^[^\s]+\s/,"")}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -1040,8 +1084,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 )}
               </div>
               <div>
-                <label style={LS}>Section *</label>
-                <select value={form.section} onChange={e=>handleField("section",e.target.value)} style={IS}>
+                <label style={{...LS, color: "#3b82f6", fontWeight: 800}}>📌 Section de destination *</label>
+                <select value={form.section} onChange={e=>handleField("section",e.target.value)}
+                  style={{...IS, borderColor: "#3b82f6", borderWidth: 2, background: "#f0f9ff", fontWeight: 700}}>
                   {SECTIONS.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
                 </select>
               </div>
