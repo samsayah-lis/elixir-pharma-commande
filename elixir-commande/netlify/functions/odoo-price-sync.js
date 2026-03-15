@@ -1,6 +1,6 @@
-// ── Sync prix — charge toutes les règles puis applique (spécifiques + globales) ──
-// step=load&offset=0   → charge 1000 règles Odoo, accumule dans kv_store
-// step=apply&offset=0  → lit les règles depuis kv_store, applique à 200 produits
+// ── Sync prix — charge toutes les règles (batch 200) + matching complet ──
+// step=load&offset=0  → charge 200 règles Odoo, accumule dans kv_store
+// step=apply&offset=0 → applique aux produits (product > template > catégorie > global)
 import { authenticate, odooCall } from "./odoo.js";
 
 const PRICELIST_ID = 5;
@@ -15,78 +15,81 @@ export const handler = async (event) => {
   const step = params.step || "load";
 
   try {
-    // ══ STEP LOAD : charger les règles Odoo par batch de 1000 ═══════════
+    // ══ STEP LOAD : charger les règles par batch de 200 ═════════════════
     if (step === "load") {
       const offset = parseInt(params.offset || "0");
       const uid = await authenticate();
 
       const items = await odooCall(uid, "product.pricelist.item", "search_read",
         [["pricelist_id", "=", PRICELIST_ID]],
-        { fields: ["product_id", "product_tmpl_id", "categ_id", "fixed_price", "percent_price", "price_discount", "compute_price", "applied_on"], limit: 1000, offset }
+        { fields: ["product_id", "product_tmpl_id", "categ_id", "fixed_price", "percent_price", "price_discount", "compute_price", "applied_on"], limit: 200, offset }
       );
       if (!Array.isArray(items) || items.length === 0) {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "load", done: true, offset }) };
       }
 
-      // Charger les règles existantes depuis kv_store (ou commencer vide si offset=0)
+      // Lire les règles existantes (ou commencer vide si offset=0)
       let allRules = [];
       if (offset > 0) {
-        const existing = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB });
-        const rows = await existing.json();
-        if (rows?.[0]?.value) allRules = JSON.parse(rows[0].value);
+        try {
+          const existing = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB });
+          const rows = await existing.json();
+          if (rows?.[0]?.value) allRules = JSON.parse(rows[0].value);
+        } catch (e) { /* start fresh */ }
       }
 
-      // Ajouter les nouvelles règles (format compact)
+      // Ajouter les nouvelles
       items.forEach(item => {
-        const r = {
+        allRules.push({
           pid: parseInt(item.product_id) || 0,
           tid: parseInt(item.product_tmpl_id) || 0,
+          cid: parseInt(item.categ_id) || 0,
           ap: item.applied_on || "",
           cp: item.compute_price || "",
           fp: parseFloat(item.fixed_price) || 0,
           pp: parseFloat(item.percent_price) || parseFloat(item.price_discount) || 0,
-        };
-        allRules.push(r);
+        });
       });
 
-      // Sauver dans kv_store
+      // Sauver
       await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
         method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
         body: JSON.stringify({ key: "pricelist_rules", value: JSON.stringify(allRules), updated_at: new Date().toISOString() }),
       });
 
       return { statusCode: 200, headers: cors, body: JSON.stringify({
-        step: "load", done: items.length < 1000,
+        step: "load", done: items.length < 200,
         offset, next_offset: offset + items.length, total_rules: allRules.length,
       })};
     }
 
-    // ══ STEP APPLY : lire les règles et appliquer à 200 produits ════════
+    // ══ STEP APPLY : appliquer les règles aux produits ══════════════════
     if (step === "apply") {
       const offset = parseInt(params.offset || "0");
 
-      // Charger les règles depuis kv_store
+      // Charger les règles
       const rulesRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB });
       const rulesRows = await rulesRes.json();
       if (!rulesRows?.[0]?.value) {
-        return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Règles non chargées. Lancez step=load d'abord." }) };
+        return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Lancez step=load d'abord" }) };
       }
       const allRules = JSON.parse(rulesRows[0].value);
 
-      // Séparer : règles par produit (pid > 0) et règles globales
-      const byPid = {};   // pid → { fp, pp, cp }
-      const globals = [];  // règles applied_on contient "3" (global) ou "2" (catégorie)
+      // Indexer les règles par type
+      const byPid = {};    // product_id → rule
+      const byTid = {};    // product_tmpl_id → rule
+      const byCid = {};    // categ_id → rule
+      const globals = [];  // applied_on = 3_global
       allRules.forEach(r => {
-        if (r.pid > 0) {
-          byPid[r.pid] = r;
-        } else if (r.ap.includes("3") || (r.ap.includes("2") && r.pid === 0 && r.tid === 0)) {
-          globals.push(r);
-        }
+        if (r.pid > 0) byPid[r.pid] = r;
+        else if (r.tid > 0) byTid[r.tid] = r;
+        else if (r.cid > 0) byCid[r.cid] = r;
+        else if (r.ap.includes("3")) globals.push(r);
       });
 
-      // Charger 200 produits depuis odoo_catalog
+      // Charger 200 produits
       const prodRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,list_price&order=cip.asc`,
+        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price&order=cip.asc`,
         { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 199}`, "Prefer": "count=exact" } }
       );
       const total = parseInt(prodRes.headers.get("content-range")?.split("/")?.[1] || "0");
@@ -95,17 +98,18 @@ export const handler = async (event) => {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "apply", done: true, offset, total }) };
       }
 
-      // Appliquer les prix
+      // Appliquer les prix avec priorité
       let updated = 0;
       for (const p of products) {
         const listPrice = parseFloat(p.list_price) || 0;
         if (listPrice <= 0) continue;
 
-        // Chercher une règle spécifique au produit
-        let rule = p.odoo_pid ? byPid[p.odoo_pid] : null;
-
-        // Sinon, prendre la première règle globale applicable
-        if (!rule && globals.length > 0) rule = globals[0];
+        // Priorité : produit > template > catégorie > global
+        const rule = (p.odoo_pid ? byPid[p.odoo_pid] : null)
+          || (p.odoo_tmpl_id ? byTid[p.odoo_tmpl_id] : null)
+          || (p.categ_id ? byCid[p.categ_id] : null)
+          || globals[0]
+          || null;
 
         if (!rule) continue;
 
@@ -113,7 +117,8 @@ export const handler = async (event) => {
         let discountedPrice = null;
         if (rule.cp === "fixed" && rule.fp > 0) {
           discountedPrice = rule.fp;
-        } else if ((rule.cp === "percentage" || rule.cp === "formula" || rule.cp === "") && rule.pp > 0) {
+        } else if (rule.pp > 0) {
+          // percentage ou formula avec discount
           discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
         }
 
@@ -131,11 +136,14 @@ export const handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "apply", done: nextOffset >= total,
         offset, next_offset: nextOffset, updated, total,
-        rules_specific: Object.keys(byPid).length, rules_global: globals.length,
+        rules_by_product: Object.keys(byPid).length,
+        rules_by_template: Object.keys(byTid).length,
+        rules_by_category: Object.keys(byCid).length,
+        rules_global: globals.length,
       })};
     }
 
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "step=load ou step=apply requis" }) };
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "step=load ou step=apply" }) };
   } catch (err) {
     console.error("[price-sync]", err.message);
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };

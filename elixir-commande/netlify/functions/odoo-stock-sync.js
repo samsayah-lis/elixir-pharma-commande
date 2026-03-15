@@ -23,7 +23,7 @@ export const handler = async (event) => {
 
       const page = await odooCall(uid, "product.product", "search_read",
         [["active", "=", true], ["default_code", "!=", false]],
-        { fields: ["id", "name", "default_code", "barcode", "list_price"], limit: 500, offset }
+        { fields: ["id", "name", "default_code", "barcode", "list_price", "product_tmpl_id", "categ_id"], limit: 500, offset }
       );
       if (!Array.isArray(page) || page.length === 0) {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "products", done: true, offset }) };
@@ -44,6 +44,8 @@ export const handler = async (event) => {
           name: p.name || "",
           list_price: parseFloat(p.list_price) || 0,
           odoo_pid: parseInt(p.id) || 0,
+          odoo_tmpl_id: parseInt(p.product_tmpl_id) || 0,
+          categ_id: parseInt(p.categ_id) || 0,
           updated_at: now,
         });
       });
