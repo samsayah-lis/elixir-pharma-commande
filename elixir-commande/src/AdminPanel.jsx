@@ -675,21 +675,38 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const handleSyncPrice = async () => {
     if (syncPrice.running) return;
-    setSyncPrice({ running: true, progress: "Démarrage..." });
+    setSyncPrice({ running: true, progress: "Phase 1 : chargement des règles de prix Odoo..." });
     try {
-      let offset = 0, totalUpdated = 0, totalMatched = 0;
+      // Phase 1 : charger toutes les règles
+      let offset = 0, totalRules = 0;
+      // Phase 1 : charger toutes les règles (offset=0 réinitialise)
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-price-sync?offset=${offset}`);
+        const res = await fetch(`/.netlify/functions/odoo-price-sync?step=load&offset=${offset}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        totalRules = data.total_rules || totalRules;
+        setSyncPrice({ running: true, progress: `Phase 1 : ${totalRules} règles chargées...` });
+        if (data.done) break;
+        offset = data.next_offset;
+      }
+      setSyncPrice({ running: true, progress: `Phase 2 : application de ${totalRules} règles aux produits...` });
+
+      // Phase 2 : appliquer à tous les produits
+      offset = 0;
+      let totalUpdated = 0, rulesInfo = "";
+      while (true) {
+        const res = await fetch(`/.netlify/functions/odoo-price-sync?step=apply&offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        totalMatched += data.matched || 0;
-        setSyncPrice({ running: true, progress: `Règles ${offset + (data.batch_rules || 0)} / 7376... ${totalMatched} matchés, ${totalUpdated} prix mis à jour` });
+        if (data.rules_specific != null) rulesInfo = `${data.rules_specific} spécifiques + ${data.rules_global} globales`;
+        setSyncPrice({ running: true, progress: `Phase 2 : ${offset + (data.updated || 0)} / ${data.total || "?"}... ${totalUpdated} prix mis à jour (${rulesInfo})` });
         if (data.done) break;
         offset = data.next_offset;
       }
-      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour sur ${totalMatched} matchés` });
+      setSyncPrice({ running: false, progress: `✓ Terminé — ${totalUpdated} prix mis à jour (${rulesInfo})` });
     } catch (e) { setSyncPrice({ running: false, progress: "Erreur: " + e.message }); }
   };
 
