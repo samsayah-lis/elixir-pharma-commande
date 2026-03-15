@@ -421,11 +421,37 @@ export default function App() {
         promoId: ps.id,
       };
     });
-    // Apply display config overrides (subtitles, labels)
+    // Apply display config overrides (subtitles, icons, labels)
     const dc = getDisplayConfig();
     if (dc.subtitles) {
       Object.entries(dc.subtitles).forEach(([k, sub]) => {
         if (merged[k] && sub != null) merged[k] = { ...merged[k], subtitle: sub };
+      });
+    }
+    if (dc.icons) {
+      Object.entries(dc.icons).forEach(([k, icon]) => {
+        if (merged[k] && icon) merged[k] = { ...merged[k], icon };
+      });
+    }
+    if (dc.labels) {
+      Object.entries(dc.labels).forEach(([k, label]) => {
+        if (merged[k] && label) merged[k] = { ...merged[k], label };
+      });
+    }
+    // Inject custom sections from display config
+    if (dc.customSections) {
+      dc.customSections.forEach(cs => {
+        if (!cs.key || merged[cs.key]) return; // skip if key missing or already exists
+        const sectionProducts = dbProducts.filter(p => p.section === cs.key).map(p => ({
+          cip: p.cip, name: p.name, pv: p.pv, pct: p.pct, pn: p.pn, remise_eur: p.remise_eur,
+          colis: p.colis, carton: p.carton, note: p.note, source: p.source, image_url: p.image_url || null, _dbId: p.cip,
+        }));
+        merged[cs.key] = {
+          label: cs.label || cs.key, subtitle: cs.subtitle || "", color: cs.color || "#333",
+          accent: cs.accent || "#666", icon: cs.icon || "📁",
+          columns: ["CIP", "Désignation", "PV", "Remise %", "Remise €", "PN"],
+          products: sectionProducts, isCustom: true,
+        };
       });
     }
     return merged;

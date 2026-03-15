@@ -71,6 +71,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
 
+  // ── Display config (needed early for allSectionsList) ─────────────────
+  const [displayConfig, setDisplayConfig] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("display_config") || "{}"); } catch { return {}; }
+  });
+  const customSections = displayConfig.customSections || [];
+  const allSectionKeys = [...Object.keys(sectionMeta), ...customSections.map(cs => cs.key)];
+  const allMeta = { ...sectionMeta };
+  customSections.forEach(cs => {
+    allMeta[cs.key] = { label: cs.label, subtitle: cs.subtitle || "", color: cs.color || "#333", accent: cs.accent || "#666", icon: cs.icon || "📁", columns: [], isCustom: true };
+  });
+  const allSectionsList = [...SECTIONS, ...customSections.map(cs => ({ key: cs.key, label: `${cs.icon || "📁"} ${cs.label}` }))];
+  const tabOrder = displayConfig.tabOrder || allSectionKeys;
+  const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
+  const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
+
+  const saveDisplayConfig = (newConfig) => {
+    const merged = { ...displayConfig, ...newConfig };
+    setDisplayConfig(merged);
+    localStorage.setItem("display_config", JSON.stringify(merged));
+  };
+
   const fetchProducts = async () => {
     setProductsLoading(true);
     try {
@@ -404,7 +425,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     return products.map(p => ({
       ...p,
       _section: p.section,
-      _sectionLabel: SECTIONS.find(s=>s.key===p.section)?.label || p.section,
+      _sectionLabel: allSectionsList.find(s=>s.key===p.section)?.label || p.section,
       _key: overrideKey(p.section, p),
     }));
   }, [products]);
@@ -570,7 +591,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       setImportCount(valid.length);
       setImportPreview(null);
       if (fileInputRef.current) fileInputRef.current.value = "";
-      flash(`✅ ${valid.length} produit(s) importé(s) dans ${SECTIONS.find(s=>s.key===importSection)?.label} !`);
+      flash(`✅ ${valid.length} produit(s) importé(s) dans ${allSectionsList.find(s=>s.key===importSection)?.label} !`);
     } catch(e) { alert("Erreur import : " + e.message); }
   };
 
@@ -683,29 +704,53 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [syncStock, setSyncStock] = useState({ running: false, progress: null });
   const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
 
-  // ── Display config state ──────────────────────────────────────────────
-  const [displayConfig, setDisplayConfig] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("display_config") || "{}"); } catch { return {}; }
-  });
-  const allSectionKeys = Object.keys(sectionMeta);
-  const tabOrder = displayConfig.tabOrder || allSectionKeys;
-  const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
-  const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
-
-  const saveDisplayConfig = (newConfig) => {
-    const merged = { ...displayConfig, ...newConfig };
-    setDisplayConfig(merged);
-    localStorage.setItem("display_config", JSON.stringify(merged));
-  };
-
   const [dragIdx, setDragIdx] = useState(null);
-  const [editingSubtitle, setEditingSubtitle] = useState(null); // key being edited
+  const [editingSubtitle, setEditingSubtitle] = useState(null);
   const [subtitleInput, setSubtitleInput] = useState("");
+  const [editingIcon, setEditingIcon] = useState(null);
+  const [iconInput, setIconInput] = useState("");
+  const [editingLabel, setEditingLabel] = useState(null);
+  const [labelInput, setLabelInput] = useState("");
+  const [showNewSection, setShowNewSection] = useState(false);
+  const [newSection, setNewSection] = useState({ key: "", label: "", subtitle: "", icon: "📁", color: "#333333", accent: "#666666" });
 
   const saveSubtitle = (key) => {
     const current = displayConfig.subtitles || {};
     saveDisplayConfig({ subtitles: { ...current, [key]: subtitleInput } });
     setEditingSubtitle(null);
+  };
+
+  const saveIcon = (key) => {
+    const current = displayConfig.icons || {};
+    saveDisplayConfig({ icons: { ...current, [key]: iconInput } });
+    setEditingIcon(null);
+  };
+
+  const saveLabel = (key) => {
+    const current = displayConfig.labels || {};
+    saveDisplayConfig({ labels: { ...current, [key]: labelInput } });
+    setEditingLabel(null);
+  };
+
+  const addCustomSection = () => {
+    if (!newSection.key.trim() || !newSection.label.trim()) return alert("Clé et nom requis");
+    const key = newSection.key.trim().toLowerCase().replace(/[^a-z0-9_]/g, "_");
+    const existing = displayConfig.customSections || [];
+    if (existing.some(s => s.key === key) || allSectionKeys.includes(key)) return alert("Cette clé existe déjà");
+    const cs = { ...newSection, key };
+    saveDisplayConfig({ customSections: [...existing, cs] });
+    // Add to tab order
+    const order = [...(displayConfig.tabOrder || allSectionKeys), key];
+    saveDisplayConfig({ tabOrder: order, customSections: [...existing, cs] });
+    setNewSection({ key: "", label: "", subtitle: "", icon: "📁", color: "#333333", accent: "#666666" });
+    setShowNewSection(false);
+  };
+
+  const removeCustomSection = (key) => {
+    if (!window.confirm(`Supprimer la section "${key}" ?`)) return;
+    const existing = (displayConfig.customSections || []).filter(s => s.key !== key);
+    const order = (displayConfig.tabOrder || allSectionKeys).filter(k => k !== key);
+    saveDisplayConfig({ customSections: existing, tabOrder: order });
   };
 
   const moveTab = (from, to) => {
@@ -901,7 +946,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 <div style={{flex:1}}>
                   <label style={{...LS,fontSize:10}}>Section de destination</label>
                   <select value={importSection} onChange={e=>setImportSection(e.target.value)} style={{...IS,fontSize:12,padding:"7px 10px"}}>
-                    {SECTIONS.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                    {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </div>
                 <div style={{flex:1}}>
@@ -948,7 +993,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   </div>
                   <div style={{display:"flex",gap:8}}>
                     <button onClick={confirmImport} style={{...PB,flex:2,padding:"9px",fontSize:13}}>
-                      ✅ Importer {importPreview.filter(r=>r._valid).length} produit(s) → {SECTIONS.find(s=>s.key===importSection)?.label}
+                      ✅ Importer {importPreview.filter(r=>r._valid).length} produit(s) → {allSectionsList.find(s=>s.key===importSection)?.label}
                     </button>
                     <button onClick={()=>{setImportPreview(null);if(fileInputRef.current)fileInputRef.current.value="";}} style={{flex:1,background:"#e5e7eb",border:"none",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#374151"}}>
                       Annuler
@@ -1027,7 +1072,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       style={{background:"#f0f2f5",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:"#888"}}>✕</button>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
-                    {SECTIONS.map(s => (
+                    {allSectionsList.map(s => (
                       <button key={s.key} onClick={()=>confirmCatalogSection(s.key)}
                         style={{
                           display:"flex",alignItems:"center",gap:8,
@@ -1095,7 +1140,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 <label style={{...LS, color: "#3b82f6", fontWeight: 800}}>📌 Section de destination *</label>
                 <select value={form.section} onChange={e=>handleField("section",e.target.value)}
                   style={{...IS, borderColor: "#3b82f6", borderWidth: 2, background: "#f0f9ff", fontWeight: 700}}>
-                  {SECTIONS.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                  {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
                 </select>
               </div>
               <div>
@@ -1152,7 +1197,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",background:"#fafbfc",borderRadius:10,padding:"10px 14px",marginBottom:8,border:"1px solid #f0f2f5"}}>
                     <div>
                       <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d"}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{SECTIONS.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/></>}</div>
+                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{allSectionsList.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/></>}</div>
                     </div>
                     <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
                   </div>
@@ -1423,7 +1468,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 placeholder="🔍 Rechercher par nom ou CIP..." style={{...IS,flex:2}}/>
               <select value={filterSection} onChange={e=>setFilterSection(e.target.value)} style={{...IS,flex:1}}>
                 <option value="all">Toutes sections</option>
-                {SECTIONS.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
             <div style={{fontSize:11,color:"#999",marginBottom:12}}>
@@ -2119,11 +2164,19 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {(displayConfig.tabOrder || allSectionKeys).map((key, idx) => {
-                  const meta = sectionMeta[key];
-                  if (!meta) return null;
+                  const baseMeta = allMeta[key];
+                  if (!baseMeta) return null;
+                  // Apply overrides for display
+                  const meta = {
+                    ...baseMeta,
+                    icon: displayConfig.icons?.[key] || baseMeta.icon,
+                    label: displayConfig.labels?.[key] || baseMeta.label,
+                    subtitle: displayConfig.subtitles?.[key] ?? baseMeta.subtitle,
+                  };
                   const isHidden = hiddenTabs.has(key);
                   const isDefault = defaultTab === key;
                   const isDragging = dragIdx === idx;
+                  const isCustom = baseMeta.isCustom;
 
                   return (
                     <div key={key}
@@ -2147,13 +2200,41 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       {/* Position */}
                       <span style={{fontSize:10,color:"#bbb",fontWeight:700,minWidth:18,textAlign:"center"}}>{idx+1}</span>
 
-                      {/* Icon + Color preview */}
-                      <span style={{fontSize:18,width:28,textAlign:"center"}}>{meta.icon}</span>
+                      {/* Editable Icon */}
+                      {editingIcon === key ? (
+                        <div style={{display:"flex",gap:2,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
+                          <input value={iconInput} onChange={e=>setIconInput(e.target.value)}
+                            onKeyDown={e=>{ if(e.key==="Enter") saveIcon(key); if(e.key==="Escape") setEditingIcon(null); }}
+                            autoFocus style={{width:36,textAlign:"center",border:"1.5px solid #3b82f6",borderRadius:6,padding:"2px",fontSize:16,outline:"none"}} />
+                          <button onClick={e=>{e.stopPropagation();saveIcon(key);}} style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"2px 5px",fontSize:9,cursor:"pointer"}}>✓</button>
+                        </div>
+                      ) : (
+                        <span style={{fontSize:18,width:28,textAlign:"center",cursor:"pointer"}} title="Cliquer pour changer l'icône"
+                          onClick={e=>{e.stopPropagation();setEditingIcon(key);setIconInput(meta.icon||"");}}>
+                          {meta.icon}
+                        </span>
+                      )}
+
                       <div style={{width:6,height:28,borderRadius:3,background:meta.accent,flexShrink:0}} />
 
-                      {/* Label + editable subtitle */}
+                      {/* Editable Label + subtitle */}
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontWeight:600,fontSize:13,color: isHidden ? "#bbb" : "#0f2d3d"}}>{meta.label}</div>
+                        {editingLabel === key ? (
+                          <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
+                            <input value={labelInput} onChange={e=>setLabelInput(e.target.value)}
+                              onKeyDown={e=>{ if(e.key==="Enter") saveLabel(key); if(e.key==="Escape") setEditingLabel(null); }}
+                              autoFocus style={{flex:1,border:"1.5px solid #3b82f6",borderRadius:6,padding:"3px 8px",fontSize:13,fontWeight:600,outline:"none",fontFamily:"inherit"}} />
+                            <button onClick={e=>{e.stopPropagation();saveLabel(key);}} style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:10,cursor:"pointer",fontWeight:700}}>✓</button>
+                            <button onClick={e=>{e.stopPropagation();setEditingLabel(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:12}}>✕</button>
+                          </div>
+                        ) : (
+                          <div style={{fontWeight:600,fontSize:13,color:isHidden?"#bbb":"#0f2d3d",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
+                            onClick={e=>{e.stopPropagation();setEditingLabel(key);setLabelInput(meta.label||"");}}>
+                            <span>{meta.label}</span>
+                            <span style={{fontSize:9,opacity:0.4}}>✏️</span>
+                            {isCustom && <span style={{fontSize:8,background:"#f0fdf4",color:"#059669",borderRadius:4,padding:"1px 5px",fontWeight:700}}>CUSTOM</span>}
+                          </div>
+                        )}
                         {editingSubtitle === key ? (
                           <div style={{display:"flex",gap:4,alignItems:"center",marginTop:2}} onClick={e=>e.stopPropagation()}>
                             <input value={subtitleInput} onChange={e=>setSubtitleInput(e.target.value)}
@@ -2205,10 +2286,78 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                           disabled={idx>=(displayConfig.tabOrder||allSectionKeys).length-1}
                           style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:10,opacity:idx<(displayConfig.tabOrder||allSectionKeys).length-1?1:0.3}}>▼</button>
                       </div>
+
+                      {/* Delete custom section */}
+                      {isCustom && (
+                        <button onClick={(e)=>{e.stopPropagation();removeCustomSection(key);}}
+                          title="Supprimer cette section"
+                          style={{background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",fontSize:11,cursor:"pointer",color:"#dc2626",fontWeight:700}}>🗑️</button>
+                      )}
                     </div>
                   );
                 })}
               </div>
+
+              {/* Add new section button + form */}
+              {!showNewSection ? (
+                <button onClick={()=>setShowNewSection(true)}
+                  style={{marginTop:12,width:"100%",padding:"12px",border:"2px dashed #cbd5e0",borderRadius:10,background:"transparent",
+                    cursor:"pointer",fontSize:13,fontWeight:600,color:"#888",display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#3b82f6";e.currentTarget.style.color="#3b82f6"}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#cbd5e0";e.currentTarget.style.color="#888"}}>
+                  ➕ Créer une nouvelle section
+                </button>
+              ) : (
+                <div style={{marginTop:12,background:"#f0f9ff",border:"2px solid #3b82f6",borderRadius:12,padding:"16px 20px"}}>
+                  <div style={{fontWeight:700,fontSize:13,color:"#1e40af",marginBottom:12}}>➕ Nouvelle section</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Clé technique *</label>
+                      <input value={newSection.key} onChange={e=>setNewSection(s=>({...s,key:e.target.value}))}
+                        placeholder="ex: promo_ete" style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Nom affiché *</label>
+                      <input value={newSection.label} onChange={e=>setNewSection(s=>({...s,label:e.target.value}))}
+                        placeholder="ex: Promo Été 2026" style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Icône (emoji)</label>
+                      <input value={newSection.icon} onChange={e=>setNewSection(s=>({...s,icon:e.target.value}))}
+                        style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:16,outline:"none",boxSizing:"border-box",textAlign:"center"}} />
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Sous-titre</label>
+                      <input value={newSection.subtitle} onChange={e=>setNewSection(s=>({...s,subtitle:e.target.value}))}
+                        placeholder="Description courte..." style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Couleur principale</label>
+                      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                        <input type="color" value={newSection.color} onChange={e=>setNewSection(s=>({...s,color:e.target.value}))} style={{width:32,height:32,border:"none",borderRadius:6,cursor:"pointer"}} />
+                        <span style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>{newSection.color}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Couleur accent</label>
+                      <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                        <input type="color" value={newSection.accent} onChange={e=>setNewSection(s=>({...s,accent:e.target.value}))} style={{width:32,height:32,border:"none",borderRadius:6,cursor:"pointer"}} />
+                        <span style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>{newSection.accent}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{display:"flex",gap:8,marginTop:14}}>
+                    <button onClick={addCustomSection}
+                      style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                      ✓ Créer la section
+                    </button>
+                    <button onClick={()=>setShowNewSection(false)}
+                      style={{background:"#f0f2f5",color:"#666",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      Annuler
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Onglet par défaut */}
@@ -2216,7 +2365,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:12}}>Onglet par défaut à l'ouverture</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                 {(displayConfig.tabOrder || allSectionKeys).filter(k => !hiddenTabs.has(k)).map(key => {
-                  const meta = sectionMeta[key];
+                  const meta = allMeta[key];
                   if (!meta) return null;
                   return (
                     <button key={key} onClick={() => setDefaultTab(key)}
@@ -2238,7 +2387,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {/* Résumé */}
             <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
               <strong>Résumé :</strong> {(displayConfig.tabOrder||allSectionKeys).filter(k => !hiddenTabs.has(k)).length} onglets visibles sur {allSectionKeys.length} ·
-              Onglet par défaut : <strong>{sectionMeta[defaultTab]?.icon} {sectionMeta[defaultTab]?.label}</strong> ·
+              Onglet par défaut : <strong>{allMeta[defaultTab]?.icon} {allMeta[defaultTab]?.label}</strong> ·
               Les modifications sont sauvegardées automatiquement dans le navigateur.
             </div>
           </div>
