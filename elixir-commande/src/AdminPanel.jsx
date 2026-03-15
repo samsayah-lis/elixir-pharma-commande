@@ -56,10 +56,11 @@ const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", secti
 const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 
 export default function AdminPanel({ onClose, sectionMeta }) {
-  const [authed, setAuthed]     = useState(false);
+  const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
   const [pwd, setPwd]           = useState("");
   const [pwdError, setPwdError] = useState(false);
-  const [tab, setTab]           = useState("add");
+  const [tab, setTab]           = useState(() => sessionStorage.getItem("admin_tab") || "sync");
+  useEffect(() => { sessionStorage.setItem("admin_tab", tab); }, [tab]);
   const [saved, setSaved]       = useState("");
 
   const [form, setForm]         = useState(EMPTY_FORM);

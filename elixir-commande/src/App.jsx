@@ -192,7 +192,8 @@ export default function App() {
   const [search, setSearch] = useState("");
   const [globalSearch, setGlobalSearch] = useState("");
   const [sendStatus, setSendStatus] = useState(null);
-  const [showAdmin, setShowAdmin] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(() => sessionStorage.getItem("showAdmin") === "1");
+  useEffect(() => { sessionStorage.setItem("showAdmin", showAdmin ? "1" : "0"); }, [showAdmin]);
 
   // Campagnes groupement (config dynamique depuis Supabase)
   const [campaigns, setCampaigns] = useState([]);
