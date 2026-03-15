@@ -795,7 +795,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       if (!stockRes.ok) throw new Error(`Stock HTTP ${stockRes.status}`);
       const stockData = await stockRes.json();
       if (stockData.error) throw new Error(stockData.error);
-      setSyncStock({ running: true, progress: `Étape 3/3 : application du stock (${stockData.in_stock} en stock)...` });
+      setSyncStock({ running: true, progress: `Étape 3/3 : application du stock (${stockData.in_stock} en stock, ${stockData.excluded_locations || 0} emplacements exclus)...` });
 
       // Step 3 : Apply stock
       offset = 0;
@@ -811,7 +811,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         offset = data.next_offset;
       }
 
-      setSyncStock({ running: false, progress: `✓ Terminé — ${totalProducts} produits, ${stockData.in_stock} en stock, ${totalUpdated} mises à jour` });
+      setSyncStock({ running: false, progress: `✓ Terminé — ${totalProducts} produits, ${stockData.in_stock} en stock (${stockData.quants_excluded || 0} quants exclus de ${stockData.excluded_locations || 0} emplacements), ${totalUpdated} mises à jour` });
     } catch (e) { setSyncStock({ running: false, progress: "Erreur: " + e.message }); }
   };
 
@@ -2403,7 +2403,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
                   <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔄 Catalogue & Stock</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Met à jour les quantités disponibles et le statut en stock.</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Exclut les emplacements Quarantaine, A, B, C, V (rangements internes).</div>
                 </div>
                 <button onClick={handleSyncStock} disabled={syncStock.running}
                   style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncStock.running?"default":"pointer",opacity:syncStock.running?0.6:1,whiteSpace:"nowrap"}}>

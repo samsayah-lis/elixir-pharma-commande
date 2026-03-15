@@ -41,15 +41,26 @@ export const handler = async (event) => {
 
     // 3. Quants avec lot_id pour ces produits
     const pids = Object.values(cipToPid);
+
+    // Charger les emplacements exclus depuis kv_store (sauvés par le sync stock)
+    let excludedLocIds = new Set();
+    try {
+      const exclRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.excluded_loc_ids&select=value`, { headers: SB });
+      const exclRows = await exclRes.json();
+      if (exclRows?.[0]?.value) excludedLocIds = new Set(JSON.parse(exclRows[0].value));
+    } catch (e) { /* pas de filtre si kv_store vide */ }
+
     const quants = await odooCall(uid, "stock.quant", "search_read",
       [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"], ["product_id", "in", pids]],
-      { fields: ["product_id", "lot_id", "quantity", "reserved_quantity"], limit: 500 }
+      { fields: ["product_id", "lot_id", "location_id", "quantity", "reserved_quantity"], limit: 500 }
     );
 
-    // Extraire lot_id par PID
+    // Extraire lot_id par PID (en excluant les emplacements non-vendables)
     const lotIdsByPid = {};
     const lotQty = {};
     (Array.isArray(quants) ? quants : []).forEach(q => {
+      const locId = parseInt(q.location_id);
+      if (excludedLocIds.has(locId)) return;
       const qty = parseFloat(q.quantity || 0);
       const reserved = parseFloat(q.reserved_quantity || 0);
       if (qty - reserved < 1) return;

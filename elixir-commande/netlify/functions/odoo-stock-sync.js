@@ -69,13 +69,34 @@ export const handler = async (event) => {
     if (step === "stock") {
       const uid = await authenticate();
 
-      // Charger tous les quants internes Elixir
+      // Pré-charger les IDs des emplacements à EXCLURE
+      // 1. scrap_location = true (quarantaine et sous-emplacements)
+      // 2. complete_name commence par EP/Stock/A, B, C, V (rangements internes)
+      const excludedLocIds = new Set();
+      const exclLocs = await odooCall(uid, "stock.location", "search_read",
+        [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"]],
+        { fields: ["id", "complete_name", "scrap_location"], limit: 2000 }
+      );
+      const EXCLUDED_PREFIXES = ["EP/Stock/A/", "EP/Stock/B/", "EP/Stock/C/", "EP/Stock/V/", "EP/Quarantaine"];
+      (Array.isArray(exclLocs) ? exclLocs : []).forEach(loc => {
+        const cn = loc.complete_name || "";
+        const isScrap = loc.scrap_location === "1" || loc.scrap_location === true;
+        const isExcludedPrefix = EXCLUDED_PREFIXES.some(p => cn.startsWith(p));
+        // Also exclude the parent locations themselves (EP/Stock/A, etc.)
+        const isExcludedExact = ["EP/Stock/A", "EP/Stock/B", "EP/Stock/C", "EP/Stock/V"].includes(cn);
+        if (isScrap || isExcludedPrefix || isExcludedExact) {
+          excludedLocIds.add(parseInt(loc.id));
+        }
+      });
+      console.log(`[stock-sync] ${excludedLocIds.size} emplacements exclus`);
+
+      // Charger tous les quants internes Elixir (avec location_id pour filtrer)
       const allQuants = [];
       let qOffset = 0;
       while (true) {
         const page = await odooCall(uid, "stock.quant", "search_read",
           [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"]],
-          { fields: ["product_id", "quantity", "reserved_quantity"], limit: 500, offset: qOffset }
+          { fields: ["product_id", "location_id", "quantity", "reserved_quantity"], limit: 500, offset: qOffset }
         );
         if (!Array.isArray(page) || page.length === 0) break;
         allQuants.push(...page);
@@ -98,20 +119,29 @@ export const handler = async (event) => {
         sbOffset += 1000;
       }
 
-      // Agréger stock par CIP
+      // Agréger stock par CIP (en excluant les emplacements non-vendables)
       const stockByCip = {};
+      let quantsExcluded = 0;
       allQuants.forEach(q => {
+        const locId = parseInt(q.location_id);
+        if (excludedLocIds.has(locId)) { quantsExcluded++; return; }
         const pid = parseInt(q.product_id);
         const cip = pidMap[pid];
         if (!cip) return;
         if (!stockByCip[cip]) stockByCip[cip] = 0;
         stockByCip[cip] += parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
       });
+      console.log(`[stock-sync] ${quantsExcluded} quants exclus sur ${allQuants.length}`);
 
       // Sauver dans kv_store
       await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
         method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
         body: JSON.stringify({ key: "stock_map", value: JSON.stringify(stockByCip), updated_at: new Date().toISOString() }),
+      });
+      // Sauver les emplacements exclus pour le sync péremptions
+      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
+        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify({ key: "excluded_loc_ids", value: JSON.stringify([...excludedLocIds]), updated_at: new Date().toISOString() }),
       });
       // Sauver aussi le mapping pid→cip pour le sync prix
       await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
@@ -139,7 +169,8 @@ export const handler = async (event) => {
 
       const inStock = Object.values(stockByCip).filter(v => v > 0).length;
       return { statusCode: 200, headers: cors, body: JSON.stringify({
-        step: "stock", quants: allQuants.length, products_mapped: Object.keys(pidMap).length,
+        step: "stock", quants: allQuants.length, quants_excluded: quantsExcluded,
+        excluded_locations: excludedLocIds.size, products_mapped: Object.keys(pidMap).length,
         cips_with_stock: Object.keys(stockByCip).length, in_stock: inStock,
       })};
     }
