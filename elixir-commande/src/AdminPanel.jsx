@@ -64,6 +64,10 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [saved, setSaved]       = useState("");
 
   const [form, setForm]         = useState(EMPTY_FORM);
+  const [catSearch, setCatSearch] = useState("");
+  const [catResults, setCatResults] = useState([]);
+  const [catSearching, setCatSearching] = useState(false);
+  const catSearchRef = useRef(null);
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
 
@@ -299,6 +303,38 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   };
 
   const handleField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // ── Recherche dans le catalogue Odoo (odoo_catalog Supabase) ──────────
+  const searchCatalog = (q) => {
+    setCatSearch(q);
+    if (catSearchRef.current) clearTimeout(catSearchRef.current);
+    if (q.length < 2) { setCatResults([]); return; }
+    catSearchRef.current = setTimeout(async () => {
+      setCatSearching(true);
+      try {
+        const res = await fetch(`/.netlify/functions/odoo-catalog?q=${encodeURIComponent(q)}&limit=8`);
+        if (res.ok) {
+          const data = await res.json();
+          setCatResults(data.products || []);
+        }
+      } catch (e) { console.warn("[cat-search]", e.message); }
+      setCatSearching(false);
+    }, 300);
+  };
+
+  const selectFromCatalog = (p) => {
+    setForm(f => ({
+      ...f,
+      name: p.name || f.name,
+      cip: p.cip || f.cip,
+      pv: p.list_price ? String(p.list_price) : f.pv,
+      pn: p.discounted_price ? String(p.discounted_price) : "",
+      pct: p.discount_pct ? String(p.discount_pct) : "",
+      remise_eur: p.list_price && p.discounted_price ? String(Math.round((p.list_price - p.discounted_price) * 100) / 100) : "",
+    }));
+    setCatSearch("");
+    setCatResults([]);
+  };
 
   const handleAdd = async () => {
     if (!form.name.trim()) return alert("Le nom du produit est requis.");
@@ -903,10 +939,67 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               )}
             </div>
 
+            {/* ── Recherche dans le stock Odoo ── */}
+            <div style={{background:"white",border:"1px solid #e8eaed",borderRadius:14,padding:"16px 20px",marginBottom:24}}>
+              <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+                🔍 Rechercher dans le stock Odoo
+                <span style={{fontSize:10,fontWeight:400,color:"#888",background:"#f0f2f5",borderRadius:6,padding:"2px 8px"}}>Pré-remplit le formulaire</span>
+              </div>
+              <div style={{position:"relative"}}>
+                <input value={catSearch} onChange={e=>searchCatalog(e.target.value)}
+                  placeholder="Tapez un nom ou un CIP (ex: DOLIPRANE, 3400930...)..."
+                  style={{...IS,paddingLeft:36,fontSize:14}} />
+                <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14,opacity:0.4}}>🔍</span>
+                {catSearch && <button onClick={()=>{setCatSearch("");setCatResults([]);}}
+                  style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#bbb"}}>✕</button>}
+              </div>
+
+              {catSearching && <div style={{fontSize:11,color:"#3b82f6",marginTop:8}}>Recherche en cours...</div>}
+
+              {catResults.length > 0 && (
+                <div style={{marginTop:10,border:"1px solid #e8eaed",borderRadius:10,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
+                  {catResults.map(p => (
+                    <button key={p.cip} onClick={()=>selectFromCatalog(p)}
+                      style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:"10px 14px",border:"none",borderBottom:"1px solid #f0f2f5",
+                        background:"white",cursor:"pointer",textAlign:"left",transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background="#f0f9ff"}
+                      onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                      {/* Stock badge */}
+                      <span style={{fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",
+                        background:p.in_stock?"#d1fae5":"#fee2e2",color:p.in_stock?"#065f46":"#991b1b"}}>
+                        {p.in_stock?"EN STOCK":"RUPTURE"}
+                      </span>
+                      {/* Info */}
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:12,color:"#0f2d3d",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                        <div style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>CIP {p.cip}</div>
+                      </div>
+                      {/* Prix */}
+                      <div style={{textAlign:"right",flexShrink:0}}>
+                        {p.discounted_price && p.discount_pct > 0 ? (<>
+                          <div style={{fontSize:10,color:"#aaa",textDecoration:"line-through"}}>{parseFloat(p.list_price).toFixed(2)} €</div>
+                          <div style={{fontSize:13,fontWeight:700,color:"#059669"}}>{parseFloat(p.discounted_price).toFixed(2)} €</div>
+                          <div style={{fontSize:9,color:"#10b981",fontWeight:600}}>-{p.discount_pct}%</div>
+                        </>) : (
+                          <div style={{fontSize:13,fontWeight:700,color:"#0f2d3d"}}>{parseFloat(p.list_price).toFixed(2)} €</div>
+                        )}
+                      </div>
+                      {/* Arrow */}
+                      <span style={{color:"#ccc",fontSize:16}}>→</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {catSearch.length >= 2 && !catSearching && catResults.length === 0 && (
+                <div style={{fontSize:11,color:"#aaa",marginTop:8}}>Aucun résultat. Vous pouvez saisir manuellement ci-dessous.</div>
+              )}
+            </div>
+
             {/* ── Séparateur ── */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
               <div style={{flex:1,height:1,background:"#e8eaed"}}/>
-              <span style={{fontSize:11,color:"#aaa",fontWeight:600}}>OU SAISIE MANUELLE</span>
+              <span style={{fontSize:11,color:"#aaa",fontWeight:600}}>SAISIE MANUELLE</span>
               <div style={{flex:1,height:1,background:"#e8eaed"}}/>
             </div>
 
