@@ -772,7 +772,7 @@ export default function App() {
       // Save order to Supabase via Netlify Function
       try {
         const order = {
-          id: `ORD-${Date.now()}-${Math.random().toString(36).slice(2,6)}`,
+          id: Date.now(),
           date: new Date().toISOString(),
           pharmacyName,
           pharmacyEmail,
@@ -1855,7 +1855,7 @@ export default function App() {
               }
               setUlabsError(null);
               setUlabsConfirming(true);
-              const orderId = `UL-${Date.now()}`;
+              const orderId = Date.now();
               const items = myItems.map(({ p, qty }) => {
                 const pn = p.pv ? Math.round(p.pv * 0.67 * 100) / 100 : p.pn;
                 return { cip: p.cip, name: p.name, qty, pn, total: Math.round((pn||0) * qty * 100) / 100 };
