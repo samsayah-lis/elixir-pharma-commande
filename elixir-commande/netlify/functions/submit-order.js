@@ -36,15 +36,16 @@ export const handler = async (event) => {
       lignes: items.map(i => ({
         CIP: i.cip || "",
         libelle: (i.name || "").substring(0, 50),
-        quantiteCommandee: i.qty,
-        quantiteLivree: i.qty, // à la commande, qté livrée = qté commandée
-        prix: i.pn != null ? parseFloat(i.pn.toFixed(2)) : 0
+        quantiteCommandee: parseInt(i.qty) || 0,
+        quantiteLivree: parseInt(i.qty) || 0,
+        prix: i.pn != null ? Math.round(parseFloat(i.pn) * 100) / 100 : 0
       }))
     }
   ];
 
   try {
     const url = `${PHARMAML_URL}/commandes.php?U=${encodeURIComponent(PHARMAML_USER)}&P=${encodeURIComponent(PHARMAML_PASS)}`;
+    console.log(`[submit-order] Envoi vers PharmaML: CIP=${pharmacyCip}, ${items.length} lignes, orderId=${orderId}`);
     const res = await fetch(url, {
       method: "POST",
       headers: {

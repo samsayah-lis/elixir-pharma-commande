@@ -598,37 +598,46 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   // ── SYNC helpers ──
   const syncOrder = async (order) => {
     setSyncStatus(s => ({ ...s, [order.id]: "pending" }));
-    // Build CSV
-    const cipLookup = {};
-    products.forEach(p => { if(p.cip && p.name) cipLookup[p.name.trim().toLowerCase()] = p.cip; });
-    const lines = (order.items||[]).map(i => {
-      let cip = i.cip && i.cip !== "—" ? i.cip : cipLookup[i.name?.trim().toLowerCase()] || "—";
-      return `${cip.replace(/;/g,"")};${i.qty}`;
+    const payload = JSON.stringify({
+      csvContent: order.csv,
+      items: order.items,
+      pharmacyName: order.pharmacyName,
+      pharmacyEmail: order.pharmacyEmail,
+      pharmacyCip: order.pharmacyCip,
+      orderId: order.id,
     });
-    const csvContent = lines.join("\n");
-    try {
-      const res = await fetch("http://localhost:3001", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ csvContent: order.csv, items: order.items, pharmacyName: order.pharmacyName, pharmacyEmail: order.pharmacyEmail, pharmacyCip: order.pharmacyCip, orderId: order.id }),
-        signal: AbortSignal.timeout(15000),
-      });
-      const json = await res.json().catch(() => ({}));
-      if (res.ok && json.success) {
-        setSyncStatus(s => ({ ...s, [order.id]: "ok" }));
-        // Auto-mark as processed dans Supabase
-        setOrders(orders.map(o => o.id===order.id ? {...o, processed:true} : o));
-        fetch("/.netlify/functions/order-update", {
+    const endpoints = [
+      { url: "http://localhost:3001", label: "agent local" },
+      { url: "/.netlify/functions/submit-order", label: "Netlify" },
+    ];
+    let lastError = "";
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep.url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: order.id, processed: true })
+          body: payload,
+          signal: AbortSignal.timeout(15000),
         });
-      } else {
-        setSyncStatus(s => ({ ...s, [order.id]: json.error || "Erreur inconnue" }));
+        const json = await res.json().catch(() => ({}));
+        if (res.ok && json.success) {
+          setSyncStatus(s => ({ ...s, [order.id]: "ok" }));
+          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, processed: true } : o));
+          fetch("/.netlify/functions/order-update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: order.id, processed: true }),
+          });
+          return; // success
+        }
+        lastError = json.error || json.detail?.message || `HTTP ${res.status}`;
+        console.warn(`[sync] ${ep.label} échoué:`, lastError);
+      } catch (err) {
+        lastError = err.message;
+        console.warn(`[sync] ${ep.label} inaccessible:`, err.message);
       }
-    } catch(err) {
-      setSyncStatus(s => ({ ...s, [order.id]: err.message.includes("fetch") || err.message.includes("connect") ? "Agent local non démarré — lance LANCER_AGENT.command" : err.message }));
     }
+    setSyncStatus(s => ({ ...s, [order.id]: lastError || "Erreur inconnue" }));
   };
 
   const syncAllPending = async () => {
@@ -1403,7 +1412,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       {syncStatus[o.id]==="pending" && <span style={{fontSize:11,color:"#2563eb",fontWeight:700,padding:"6px 4px"}}>⏳ Sync…</span>}
                       {syncStatus[o.id]==="ok" && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ Envoyée</span>}
                       {syncStatus[o.id] && syncStatus[o.id]!=="pending" && syncStatus[o.id]!=="ok" && (
-                        <span title={syncStatus[o.id]} style={{fontSize:11,color:"#dc2626",fontWeight:700,padding:"6px 4px",cursor:"help"}}>⚠️ Erreur</span>
+                        <span title={syncStatus[o.id]} style={{fontSize:11,color:"#dc2626",fontWeight:700,padding:"6px 4px",cursor:"help",maxWidth:300,display:"inline-block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⚠️ {syncStatus[o.id]}</span>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (
                         <button onClick={()=>syncOrder(o)} style={{background:"#2563eb",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
