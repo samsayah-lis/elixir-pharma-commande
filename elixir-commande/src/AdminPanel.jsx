@@ -598,12 +598,36 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   // ── SYNC helpers ──
   const syncOrder = async (order) => {
     setSyncStatus(s => ({ ...s, [order.id]: "pending" }));
+
+    // Si pas de CIP, essayer de le retrouver depuis Supabase (elixir_pharmacies)
+    let cip = order.pharmacyCip;
+    if (!cip && order.pharmacyEmail) {
+      try {
+        const lookupRes = await fetch("/.netlify/functions/pharmacy-lookup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: order.pharmacyEmail }),
+        });
+        const lookupJson = await lookupRes.json();
+        if (lookupJson.found && lookupJson.pharmacy?.cip) {
+          cip = lookupJson.pharmacy.cip;
+          console.log(`[sync] CIP retrouvé pour ${order.pharmacyEmail}: ${cip}`);
+          // Mettre à jour la commande en base
+          fetch("/.netlify/functions/order-update", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: order.id, pharmacy_cip: cip }),
+          });
+        }
+      } catch (e) { console.warn("[sync] CIP lookup error:", e.message); }
+    }
+
     const payload = JSON.stringify({
       csvContent: order.csv,
       items: order.items,
       pharmacyName: order.pharmacyName,
       pharmacyEmail: order.pharmacyEmail,
-      pharmacyCip: order.pharmacyCip,
+      pharmacyCip: cip,
       orderId: order.id,
     });
     const endpoints = [

@@ -5,6 +5,8 @@
 const PHARMAML_URL  = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
 const PHARMAML_USER = process.env.PHARMAML_USER || "admin";
 const PHARMAML_PASS = process.env.PHARMAML_PASS || "";
+const SUPABASE_URL  = process.env.SUPABASE_URL;
+const SUPABASE_KEY  = process.env.SUPABASE_KEY;
 
 export const handler = async (event) => {
   const cors = {
@@ -19,13 +21,29 @@ export const handler = async (event) => {
   try { payload = JSON.parse(event.body); }
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-  const { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
+  let { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
 
   if (!items?.length) {
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
   }
+
+  // Si pas de CIP, essayer de le retrouver dans Supabase par email
+  if (!pharmacyCip && pharmacyEmail && SUPABASE_URL) {
+    try {
+      const res = await fetch(
+        `${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(pharmacyEmail.trim().toLowerCase())}&select=cip&limit=1`,
+        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
+      );
+      const rows = await res.json();
+      if (rows?.[0]?.cip) {
+        pharmacyCip = rows[0].cip;
+        console.log(`[submit-order] CIP retrouvé depuis Supabase: ${pharmacyCip} pour ${pharmacyEmail}`);
+      }
+    } catch (e) { console.warn("[submit-order] Lookup CIP fallback error:", e.message); }
+  }
+
   if (!pharmacyCip) {
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "identifiantPML (pharmacyCip) manquant" }) };
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: `identifiantPML (CIP) introuvable pour ${pharmacyEmail || "email inconnu"}` }) };
   }
 
   // Construction du payload PharmaML JSON

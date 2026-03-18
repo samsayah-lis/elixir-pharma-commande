@@ -45,7 +45,7 @@ export const handler = async (event) => {
     const uid = await authenticate();
     const partners = await odooCall(uid, "res.partner", "search_read",
       [["email", "ilike", emailNorm], ["active", "=", true]],
-      { fields: ["id", "name", "email", "ref", "street", "zip", "city", "phone", "mobile"], limit: 5 }
+      { fields: ["id", "name", "email", "ref", "cip", "street", "zip", "city", "phone", "mobile"], limit: 5 }
     );
 
     // Cherche une correspondance exacte sur l'email
@@ -58,7 +58,7 @@ export const handler = async (event) => {
     const pharmacy = {
       name:   match.name || "",
       email:  emailNorm,
-      cip:    match.ref  || "",
+      cip:    match.cip || match.ref || "",
       street: match.street || "",
       cp:     match.zip  || "",
       ville:  match.city || "",

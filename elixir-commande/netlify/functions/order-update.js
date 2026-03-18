@@ -30,7 +30,12 @@ export const handler = async (event) => {
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
   }
 
-  // Update processed
+  // Update fields (processed, pharmacy_cip, etc.)
+  const patch = {};
+  if (body.processed !== undefined) patch.processed = body.processed;
+  if (body.pharmacy_cip) patch.pharmacy_cip = body.pharmacy_cip;
+  if (Object.keys(patch).length === 0) patch.processed = true;
+
   const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${id}`, {
     method: "PATCH",
     headers: {
@@ -39,7 +44,7 @@ export const handler = async (event) => {
       "Content-Type": "application/json",
       "Prefer": "return=minimal"
     },
-    body: JSON.stringify({ processed: processed ?? true })
+    body: JSON.stringify(patch)
   });
 
   if (!res.ok) return { statusCode: 500, headers: cors, body: JSON.stringify({ error: await res.text() }) };
