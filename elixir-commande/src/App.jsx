@@ -776,7 +776,7 @@ export default function App() {
           date: new Date().toISOString(),
           pharmacyName,
           pharmacyEmail,
-          pharmacyCip: pharmacyCip || null,
+          pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
           isClient,
           items: cartItems.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total })),
           totalHt: cartTotal,

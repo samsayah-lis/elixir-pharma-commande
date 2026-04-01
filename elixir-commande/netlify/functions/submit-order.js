@@ -28,7 +28,7 @@ export const handler = async (event) => {
   }
 
   // Si pas de CIP, essayer de le retrouver dans Supabase par email
-  if (!pharmacyCip && pharmacyEmail && SUPABASE_URL) {
+  if ((!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) && pharmacyEmail && SUPABASE_URL) {
     try {
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(pharmacyEmail.trim().toLowerCase())}&select=cip&limit=1`,
@@ -42,7 +42,7 @@ export const handler = async (event) => {
     } catch (e) { console.warn("[submit-order] Lookup CIP fallback error:", e.message); }
   }
 
-  if (!pharmacyCip) {
+  if (!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) {
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: `identifiantPML (CIP) introuvable pour ${pharmacyEmail || "email inconnu"}` }) };
   }
 

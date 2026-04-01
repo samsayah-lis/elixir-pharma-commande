@@ -601,7 +601,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
     // Si pas de CIP, essayer de le retrouver depuis Supabase (elixir_pharmacies)
     let cip = order.pharmacyCip;
-    if (!cip && order.pharmacyEmail) {
+    if ((!cip || cip === "0" || cip === 0) && order.pharmacyEmail) {
       try {
         const lookupRes = await fetch("/.netlify/functions/pharmacy-lookup", {
           method: "POST",
