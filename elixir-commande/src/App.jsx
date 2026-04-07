@@ -7,7 +7,7 @@ import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
 
 const SECTION_META = {
-  expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise %","Remise €","Prix net"] },
+  expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise €","Prix net"] },
   stratege: { label: "Sélection Stratège",     subtitle: "Cartons standard – Top 50 rotations nationales",              color: "#2d5a27", accent: "#4a9e42", icon: "📦", columns: ["CIP","Désignation","Colis","Prix","Remise %","Remise €","Prix net","Prix carton"] },
   master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   obeso:    { label: "Mounjaro / Wegovy",       subtitle: "Traitements de l'obésité",                                    color: "#4a1a7a", accent: "#8b5cf6", icon: "⚖️",  columns: ["CIP","Désignation","Qté","PV","Remise","PN"] },
