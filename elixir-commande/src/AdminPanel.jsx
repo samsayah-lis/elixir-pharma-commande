@@ -105,6 +105,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const merged = { ...displayConfig, ...newConfig };
     setDisplayConfig(merged);
     localStorage.setItem("display_config", JSON.stringify(merged));
+    // Sync vers Supabase (fire-and-forget)
+    fetch("/.netlify/functions/config-get", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "display_config", value: merged }),
+    }).catch(() => {});
   };
 
   const fetchProducts = async () => {
@@ -507,6 +512,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const savePromos = (updated) => {
     setPromos(updated);
     localStorage.setItem("admin_promos", JSON.stringify(updated));
+    // Sync vers Supabase (fire-and-forget)
+    fetch("/.netlify/functions/config-get", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "admin_promos", value: updated }),
+    }).catch(() => {});
   };
   const createPromo = () => {
     if (!promoForm.name.trim()) return alert("Nom requis");

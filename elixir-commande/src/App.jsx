@@ -271,6 +271,29 @@ export default function App() {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
   const [promoPopupOpen, setPromoPopupOpen] = useState(false);
+
+  // ── Charger la config partagée depuis Supabase (source de vérité) ────
+  const [configLoaded, setConfigLoaded] = useState(false);
+  useEffect(() => {
+    (async () => {
+      try {
+        const [dcRes, promoRes] = await Promise.all([
+          fetch("/.netlify/functions/config-get?key=display_config"),
+          fetch("/.netlify/functions/config-get?key=admin_promos"),
+        ]);
+        const dcJson = await dcRes.json();
+        const promoJson = await promoRes.json();
+        if (dcJson.value) {
+          localStorage.setItem("display_config", JSON.stringify(dcJson.value));
+        }
+        if (promoJson.value) {
+          localStorage.setItem("admin_promos", JSON.stringify(promoJson.value));
+          setPromoSections(promoJson.value);
+        }
+      } catch (e) { console.warn("[config] Supabase fetch error:", e.message); }
+      setConfigLoaded(true);
+    })();
+  }, []);
   const [stockData, setStockData] = useState({}); // { [cip]: { dispo, stock } }
   const [stockUpdatedAt, setStockUpdatedAt] = useState(null);
 
@@ -455,7 +478,7 @@ export default function App() {
       });
     }
     return merged;
-  }, [dbProducts, promoSections, campaigns, pharmacyEmail]);
+  }, [dbProducts, promoSections, campaigns, pharmacyEmail, configLoaded]);
 
   // Onboarding
   const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
