@@ -70,6 +70,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const catSearchRef = useRef(null);
   const [products, setProducts] = useState([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [promos, setPromos] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
+  });
 
   // ── Display config (needed early for allSectionsList) ─────────────────
   const [displayConfig, setDisplayConfig] = useState(() => {
@@ -116,9 +119,6 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [orders, setOrders] = useState([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [syncStatus, setSyncStatus] = useState({}); // orderId → "pending"|"ok"|"error"|message
-  const [promos, setPromos] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
-  });
   const [promoForm, setPromoForm] = useState({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"", withPhotos:false });
   const [editingPromoId, setEditingPromoId] = useState(null);
   const [addingProductToPromo, setAddingProductToPromo] = useState(null); // promoId
