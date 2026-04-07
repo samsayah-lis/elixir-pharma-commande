@@ -76,12 +76,24 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     try { return JSON.parse(localStorage.getItem("display_config") || "{}"); } catch { return {}; }
   });
   const customSections = displayConfig.customSections || [];
-  const allSectionKeys = [...Object.keys(sectionMeta), ...customSections.map(cs => cs.key)];
+  const activePromos = promos.filter(p => p.active);
+  const allSectionKeys = [
+    ...Object.keys(sectionMeta),
+    ...customSections.map(cs => cs.key),
+    ...activePromos.map(p => `promo_${p.id}`),
+  ];
   const allMeta = { ...sectionMeta };
   customSections.forEach(cs => {
     allMeta[cs.key] = { label: cs.label, subtitle: cs.subtitle || "", color: cs.color || "#333", accent: cs.accent || "#666", icon: cs.icon || "📁", columns: [], isCustom: true };
   });
-  const allSectionsList = [...SECTIONS, ...customSections.map(cs => ({ key: cs.key, label: `${cs.icon || "📁"} ${cs.label}` }))];
+  activePromos.forEach(p => {
+    allMeta[`promo_${p.id}`] = { label: p.name, subtitle: p.description || "", color: p.color || "#7c3aed", accent: p.accentColor || "#a855f7", icon: p.icon || "🏷️", columns: [], isPromo: true };
+  });
+  const allSectionsList = [
+    ...SECTIONS,
+    ...customSections.map(cs => ({ key: cs.key, label: `${cs.icon || "📁"} ${cs.label}` })),
+    ...activePromos.map(p => ({ key: `promo_${p.id}`, label: `${p.icon || "🏷️"} ${p.name}` })),
+  ];
   const tabOrder = displayConfig.tabOrder || allSectionKeys;
   const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
   const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
@@ -2210,6 +2222,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   const isDefault = defaultTab === key;
                   const isDragging = dragIdx === idx;
                   const isCustom = baseMeta.isCustom;
+                  const isPromo = baseMeta.isPromo;
 
                   return (
                     <div key={key}
@@ -2266,6 +2279,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                             <span>{meta.label}</span>
                             <span style={{fontSize:9,opacity:0.4}}>✏️</span>
                             {isCustom && <span style={{fontSize:8,background:"#f0fdf4",color:"#059669",borderRadius:4,padding:"1px 5px",fontWeight:700}}>CUSTOM</span>}
+                            {isPromo && <span style={{fontSize:8,background:"#faf5ff",color:"#7c3aed",borderRadius:4,padding:"1px 5px",fontWeight:700}}>PROMO</span>}
                           </div>
                         )}
                         {editingSubtitle === key ? (
