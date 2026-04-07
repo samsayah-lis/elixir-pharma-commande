@@ -833,16 +833,23 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         if (data.done) break;
         offset = data.next_offset;
       }
-      setSyncStock({ running: true, progress: `Étape 2/3 : chargement du stock Odoo (${totalProducts} produits)...` });
+      setSyncStock({ running: true, progress: `Étape 2/4 : préparation (emplacements, mappings)...` });
 
-      // Step 2 : Stock compute
+      // Step 2a : Stock prep (locations + mappings → kv_store)
+      const prepRes = await fetch("/.netlify/functions/odoo-stock-sync?step=stock_prep");
+      if (!prepRes.ok) throw new Error(`Stock prep HTTP ${prepRes.status}`);
+      const prepData = await prepRes.json();
+      if (prepData.error) throw new Error(prepData.error);
+      setSyncStock({ running: true, progress: `Étape 3/4 : chargement des quants (${prepData.excluded_locations} emplacements exclus)...` });
+
+      // Step 2b : Stock compute (quants → stock_map)
       const stockRes = await fetch("/.netlify/functions/odoo-stock-sync?step=stock");
       if (!stockRes.ok) throw new Error(`Stock HTTP ${stockRes.status}`);
       const stockData = await stockRes.json();
       if (stockData.error) throw new Error(stockData.error);
-      setSyncStock({ running: true, progress: `Étape 3/3 : application du stock (${stockData.in_stock} en stock, ${stockData.excluded_locations || 0} emplacements exclus)...` });
+      setSyncStock({ running: true, progress: `Étape 4/4 : application du stock (${stockData.in_stock} en stock, ${stockData.quants_excluded || 0} quants exclus)...` });
 
-      // Step 3 : Apply stock
+      // Step 4 : Apply stock
       offset = 0;
       let totalUpdated = 0;
       while (true) {
@@ -851,7 +858,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
-        setSyncStock({ running: true, progress: `Étape 3/3 : ${offset + (data.updated || 0)} / ${data.total || "?"}...` });
+        setSyncStock({ running: true, progress: `Étape 4/4 : ${offset + (data.updated || 0)} / ${data.total || "?"}...` });
         if (data.done) break;
         offset = data.next_offset;
       }

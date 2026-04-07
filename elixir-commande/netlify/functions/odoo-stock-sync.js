@@ -65,13 +65,11 @@ export const handler = async (event) => {
       })};
     }
 
-    // ══ STEP 2 : Charger tous les quants et calculer le stock ═══════════
-    if (step === "stock") {
+    // ══ STEP 2a : Pré-charger les emplacements exclus + mappings ═══════
+    if (step === "stock_prep") {
       const uid = await authenticate();
 
-      // Pré-charger les IDs des emplacements à EXCLURE
-      // 1. scrap_location = true (quarantaine et sous-emplacements)
-      // 2. complete_name commence par EP/Stock/A, B, C, V (rangements internes)
+      // Charger les emplacements exclus
       const excludedLocIds = new Set();
       const exclLocs = await odooCall(uid, "stock.location", "search_read",
         [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"]],
@@ -82,29 +80,11 @@ export const handler = async (event) => {
         const cn = loc.complete_name || "";
         const isScrap = loc.scrap_location === "1" || loc.scrap_location === true;
         const isExcludedPrefix = EXCLUDED_PREFIXES.some(p => cn.startsWith(p));
-        // Also exclude the parent locations themselves (EP/Stock/A, etc.)
         const isExcludedExact = ["EP/Stock/A", "EP/Stock/B", "EP/Stock/C", "EP/Stock/V"].includes(cn);
-        if (isScrap || isExcludedPrefix || isExcludedExact) {
-          excludedLocIds.add(parseInt(loc.id));
-        }
+        if (isScrap || isExcludedPrefix || isExcludedExact) excludedLocIds.add(parseInt(loc.id));
       });
-      console.log(`[stock-sync] ${excludedLocIds.size} emplacements exclus`);
 
-      // Charger tous les quants internes Elixir (avec location_id pour filtrer)
-      const allQuants = [];
-      let qOffset = 0;
-      while (true) {
-        const page = await odooCall(uid, "stock.quant", "search_read",
-          [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"]],
-          { fields: ["product_id", "location_id", "quantity", "reserved_quantity"], limit: 500, offset: qOffset }
-        );
-        if (!Array.isArray(page) || page.length === 0) break;
-        allQuants.push(...page);
-        if (page.length < 500) break;
-        qOffset += 500;
-      }
-
-      // Charger le mapping pid→cip depuis Supabase
+      // Charger pidMap depuis Supabase
       const pidMap = {};
       let sbOffset = 0;
       while (true) {
@@ -117,6 +97,66 @@ export const handler = async (event) => {
         rows.forEach(r => { if (r.odoo_pid) pidMap[r.odoo_pid] = r.cip; });
         if (rows.length < 1000) break;
         sbOffset += 1000;
+      }
+
+      // Charger cipToPrice depuis Supabase
+      const cipToPrice = {};
+      let priceOffset = 0;
+      while (true) {
+        const res = await fetch(
+          `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,list_price&odoo_pid=not.is.null&list_price=gt.0&order=cip.asc`,
+          { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${priceOffset}-${priceOffset + 999}` } }
+        );
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        rows.forEach(r => { cipToPrice[r.cip] = r.list_price; });
+        if (rows.length < 1000) break;
+        priceOffset += 1000;
+      }
+
+      // Sauver tout dans kv_store
+      await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store`, { method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ key: "excluded_loc_ids", value: JSON.stringify([...excludedLocIds]), updated_at: new Date().toISOString() }) }),
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store`, { method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ key: "pid_to_cip", value: JSON.stringify(pidMap), updated_at: new Date().toISOString() }) }),
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store`, { method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ key: "cip_to_price", value: JSON.stringify(cipToPrice), updated_at: new Date().toISOString() }) }),
+      ]);
+
+      console.log(`[stock-sync] prep: ${excludedLocIds.size} locs exclues, ${Object.keys(pidMap).length} pid→cip, ${Object.keys(cipToPrice).length} cip→price`);
+      return { statusCode: 200, headers: cors, body: JSON.stringify({
+        step: "stock_prep", excluded_locations: excludedLocIds.size,
+        pid_mappings: Object.keys(pidMap).length, price_mappings: Object.keys(cipToPrice).length,
+      })};
+    }
+
+    // ══ STEP 2b : Charger les quants et calculer le stock ═══════════════
+    if (step === "stock") {
+      const uid = await authenticate();
+
+      // Lire les exclusions et pidMap depuis kv_store
+      const [exclRes, pidRes] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.excluded_loc_ids&select=value`, { headers: SB }),
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pid_to_cip&select=value`, { headers: SB }),
+      ]);
+      const exclRows = await exclRes.json();
+      const pidRows = await pidRes.json();
+      const excludedLocIds = new Set(JSON.parse(exclRows?.[0]?.value || "[]"));
+      const pidMap = JSON.parse(pidRows?.[0]?.value || "{}");
+
+      // Charger tous les quants internes Elixir
+      const allQuants = [];
+      let qOffset = 0;
+      while (true) {
+        const page = await odooCall(uid, "stock.quant", "search_read",
+          [["company_id", "=", COMPANY_ID], ["location_id.usage", "=", "internal"]],
+          { fields: ["product_id", "location_id", "quantity", "reserved_quantity"], limit: 500, offset: qOffset }
+        );
+        if (!Array.isArray(page) || page.length === 0) break;
+        allQuants.push(...page);
+        if (page.length < 500) break;
+        qOffset += 500;
       }
 
       // Agréger stock par CIP (en excluant les emplacements non-vendables)
@@ -133,38 +173,10 @@ export const handler = async (event) => {
       });
       console.log(`[stock-sync] ${quantsExcluded} quants exclus sur ${allQuants.length}`);
 
-      // Sauver dans kv_store
+      // Sauver stock_map dans kv_store
       await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
         method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
         body: JSON.stringify({ key: "stock_map", value: JSON.stringify(stockByCip), updated_at: new Date().toISOString() }),
-      });
-      // Sauver les emplacements exclus pour le sync péremptions
-      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
-        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ key: "excluded_loc_ids", value: JSON.stringify([...excludedLocIds]), updated_at: new Date().toISOString() }),
-      });
-      // Sauver aussi le mapping pid→cip pour le sync prix
-      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
-        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ key: "pid_to_cip", value: JSON.stringify(pidMap), updated_at: new Date().toISOString() }),
-      });
-      // Sauver aussi cip→list_price pour le calcul des remises (seulement CIP13 avec odoo_pid)
-      const cipToPrice = {};
-      let priceOffset = 0;
-      while (true) {
-        const res = await fetch(
-          `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,list_price&odoo_pid=not.is.null&list_price=gt.0&order=cip.asc`,
-          { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${priceOffset}-${priceOffset + 999}` } }
-        );
-        const rows = await res.json();
-        if (!Array.isArray(rows) || rows.length === 0) break;
-        rows.forEach(r => { cipToPrice[r.cip] = r.list_price; });
-        if (rows.length < 1000) break;
-        priceOffset += 1000;
-      }
-      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
-        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ key: "cip_to_price", value: JSON.stringify(cipToPrice), updated_at: new Date().toISOString() }),
       });
 
       const inStock = Object.values(stockByCip).filter(v => v > 0).length;
