@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useCallback } from "react";
+import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import emailjs from "@emailjs/browser";
 import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
 import AdminPanel from "./AdminPanel";
@@ -205,7 +205,29 @@ export default function App() {
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [flashMsg, setFlashMsg] = useState("");
+  const flash = (msg) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(""), 3000); };
+
   const [globalSearch, setGlobalSearch] = useState("");
+  const [globalResults, setGlobalResults] = useState([]);
+  const [globalSearching, setGlobalSearching] = useState(false);
+  const globalSearchRef = useRef(null);
+
+  // Debounced Odoo search
+  useEffect(() => {
+    if (globalSearch.trim().length < 2) { setGlobalResults([]); return; }
+    clearTimeout(globalSearchRef.current);
+    globalSearchRef.current = setTimeout(async () => {
+      setGlobalSearching(true);
+      try {
+        const res = await fetch(`/.netlify/functions/odoo-catalog?q=${encodeURIComponent(globalSearch.trim())}&limit=50`);
+        const data = await res.json();
+        setGlobalResults(Array.isArray(data) ? data : data.products || []);
+      } catch { setGlobalResults([]); }
+      setGlobalSearching(false);
+    }, 350);
+    return () => clearTimeout(globalSearchRef.current);
+  }, [globalSearch]);
   const [sendStatus, setSendStatus] = useState(null);
   const [showAdmin, setShowAdmin] = useState(() => sessionStorage.getItem("showAdmin") === "1");
   useEffect(() => { sessionStorage.setItem("showAdmin", showAdmin ? "1" : "0"); }, [showAdmin]);
@@ -598,13 +620,6 @@ export default function App() {
   } : cat;
 
 
-  const globalResults = globalSearch.trim().length >= 2
-    ? Object.entries(CATALOG_WITH_ADMIN).filter(([, c]) => !c.hidden).flatMap(([catKey, c]) =>
-        (c.products || [])
-          .map((p, idx) => ({ ...p, _catKey: catKey, _catLabel: c.label, _catIcon: c.icon, _catAccent: c.accent, _idx: idx }))
-          .filter(p => p.name?.toLowerCase().includes(globalSearch.toLowerCase()) || (p.cip||"").includes(globalSearch))
-      )
-    : [];
 
   const filteredProducts = useMemo(() => {
     const filtered = (cat?.products || []).filter(p =>
@@ -1096,7 +1111,7 @@ export default function App() {
             <input
               value={globalSearch}
               onChange={e => setGlobalSearch(e.target.value)}
-              placeholder="Recherche toutes sections — nom ou CIP..."
+              placeholder="Recherche par CIP ou nom — stock temps réel Odoo..."
               style={{
                 width: "100%", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
                 borderRadius: 10, color: "white", padding: "7px 14px 7px 34px", fontSize: 13,
@@ -1133,64 +1148,85 @@ export default function App() {
         {/* Main content */}
         <main style={{ flex: 1, padding: isMobile ? "12px 10px" : "20px 24px", minWidth: 0 }}>
 
-          {/* ── GLOBAL SEARCH RESULTS ── */}
+          {/* Flash toast */}
+          {flashMsg && (
+            <div style={{ position:"fixed", top:20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
+              background: flashMsg.startsWith("⚠") ? "#fef3c7" : "#d1fae5", color: flashMsg.startsWith("⚠") ? "#92400e" : "#065f46",
+              padding:"10px 24px", borderRadius:10, fontSize:13, fontWeight:700, boxShadow:"0 4px 20px rgba(0,0,0,0.15)",
+              animation:"fadeIn 0.2s" }}>
+              {flashMsg}
+            </div>
+          )}
+
+          {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
           {globalSearch.trim().length >= 2 && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ fontWeight: 800, fontSize: 16, color: "#0f2d3d", marginBottom: 12, display:"flex", alignItems:"center", gap:10 }}>
                 🔍 Résultats pour « {globalSearch} »
-                <span style={{ fontSize:12, fontWeight:400, color:"#888", background:"#f0f2f5", borderRadius:8, padding:"2px 10px" }}>
-                  {globalResults.length} produit(s) trouvé(s)
-                </span>
+                {globalSearching && <span style={{ fontSize:12, color:"#3b82f6", fontWeight:400 }}>Recherche...</span>}
+                {!globalSearching && <span style={{ fontSize:12, fontWeight:400, color:"#888", background:"#f0f2f5", borderRadius:8, padding:"2px 10px" }}>
+                  {globalResults.length} produit(s) · stock Odoo temps réel
+                </span>}
               </div>
-              {globalResults.length === 0 ? (
+              {!globalSearching && globalResults.length === 0 ? (
                 <div style={{ background:"white", borderRadius:14, padding:"32px", textAlign:"center", color:"#aaa", fontSize:14 }}>
                   Aucun produit trouvé pour « {globalSearch} »
                 </div>
               ) : (
                 <div style={{ background:"white", borderRadius:14, overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
-                  <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                    <thead>
-                      <tr style={{ background:"#0f2d3d" }}>
-                        {["Section","CIP","Désignation","Prix net",""].map(h => (
-                          <th key={h} style={{ color:"white", padding:"10px 14px", textAlign:"left", fontSize:11, fontWeight:700, letterSpacing:0.5 }}>{h.toUpperCase()}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {globalResults.map((p, i) => {
-                        const qKey = `${p._catKey}-${p._idx}`;
-                        const qty = quantities[qKey] || 0;
-                        const step = getStep(p._catKey, p);
-                        return (
-                          <tr key={i} style={{ background: i%2===0?"white":"#fafbfc", borderBottom:"1px solid #f0f2f5" }}
-                            onMouseEnter={e => e.currentTarget.style.background=`${p._catAccent}10`}
-                            onMouseLeave={e => e.currentTarget.style.background=i%2===0?"white":"#fafbfc"}>
-                            <td style={{ padding:"10px 14px" }}>
-                              <button onClick={() => { setActiveTab(p._catKey); setGlobalSearch(""); }} style={{ background:`${p._catAccent}20`, border:"none", borderRadius:6, padding:"3px 8px", fontSize:11, fontWeight:700, color:p._catAccent, cursor:"pointer", whiteSpace:"nowrap" }}>
-                                {p._catIcon} {p._catLabel}
-                              </button>
-                            </td>
-                            <td style={{ padding:"10px 14px" }}><CipCell cip={p.cip} /></td>
-                            <td style={{ padding:"10px 14px", fontWeight:600, color:"#0f2d3d", maxWidth:300 }}>
-                              {p.name}
-                              {p.note && <span style={{ marginLeft:6, fontSize:10, color:"#e07b39", background:"#fef3ec", borderRadius:4, padding:"1px 5px" }}>{p.note}</span>}
-                              {p._overridden && <span style={{ marginLeft:6, fontSize:10, color:"#f59e0b", background:"#fffbeb", borderRadius:4, padding:"1px 5px" }}>✎ modifié</span>}
-                            </td>
-                            <td style={{ padding:"10px 14px", textAlign:"right", fontWeight:800, color:"#0f2d3d", whiteSpace:"nowrap" }}>
-                              {p.pn != null ? fmt(p.pn) : "—"}
-                            </td>
-                            <td style={{ padding:"10px 14px", textAlign:"center" }}>
-                              <div style={{ display:"flex", alignItems:"center", gap:6, justifyContent:"center" }}>
-                                <button onClick={() => setQty(qKey, qty - step, step)} style={{ background:"#f0f2f5", border:"none", borderRadius:6, width:26, height:26, cursor:"pointer", fontWeight:800, fontSize:14, color:"#555" }}>−</button>
-                                <span style={{ minWidth:28, textAlign:"center", fontWeight:700, fontSize:13, color: qty>0?"#10b981":"#aaa" }}>{qty||0}</span>
-                                <button onClick={() => setQty(qKey, qty + step, step)} style={{ background: qty>0?"#10b981":"#0f2d3d", border:"none", borderRadius:6, width:26, height:26, cursor:"pointer", fontWeight:800, fontSize:14, color:"white" }}>+</button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                  {globalResults.map((p, i) => (
+                    <div key={p.cip || i} style={{
+                      display:"flex", alignItems:"center", gap:12, padding:"10px 16px",
+                      borderBottom:"1px solid #f0f2f5", background: i%2===0?"white":"#fafbfc",
+                    }}>
+                      {/* Stock badge */}
+                      <span style={{ fontSize:9, fontWeight:700, borderRadius:4, padding:"2px 6px", flexShrink:0,
+                        background: p.in_stock ? "#d1fae5" : "#fee2e2", color: p.in_stock ? "#065f46" : "#991b1b"
+                      }}>{p.in_stock ? "EN STOCK" : "RUPTURE"}</span>
+
+                      {/* Info */}
+                      <div style={{ flex:1, minWidth:0 }}>
+                        <div style={{ fontWeight:600, fontSize:13, color:"#0f2d3d", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
+                        <div style={{ fontSize:10, color:"#888", fontFamily:"monospace" }}>CIP {p.cip} {p.available > 0 ? `· ${p.available} dispo` : ""}</div>
+                      </div>
+
+                      {/* Prix */}
+                      <div style={{ textAlign:"right", flexShrink:0, minWidth:80 }}>
+                        {p.discounted_price && p.discount_pct > 0 ? (<>
+                          <div style={{ fontSize:10, color:"#aaa", textDecoration:"line-through" }}>{parseFloat(p.list_price).toFixed(2)} €</div>
+                          <div style={{ fontSize:14, fontWeight:700, color:"#059669" }}>{parseFloat(p.discounted_price).toFixed(2)} €</div>
+                          <div style={{ fontSize:9, color:"#10b981", fontWeight:600 }}>-{p.discount_pct}%</div>
+                        </>) : (
+                          <div style={{ fontSize:14, fontWeight:700, color:"#0f2d3d" }}>{p.list_price ? parseFloat(p.list_price).toFixed(2)+" €" : "—"}</div>
+                        )}
+                      </div>
+
+                      {/* Add to cart */}
+                      <button onClick={() => {
+                        const pn = p.discounted_price || p.list_price;
+                        if (!pn) return;
+                        // Cherche dans le catalogue existant
+                        let added = false;
+                        Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                          if (added) return;
+                          const idx = (c.products || []).findIndex(cp => cp.cip === p.cip);
+                          if (idx >= 0) {
+                            setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + 1 }));
+                            added = true;
+                          }
+                        });
+                        if (added) {
+                          flash(`✓ ${p.name} ajouté au panier`);
+                        } else {
+                          // Produit hors sections → alerte
+                          flash(`⚠ ${p.name} n'est pas dans le catalogue. Utilisez la Saisie de commande.`);
+                        }
+                      }} style={{
+                        background:"#0f2d3d", color:"white", border:"none", borderRadius:8,
+                        padding:"6px 12px", fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0,
+                      }}>+ Panier</button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
