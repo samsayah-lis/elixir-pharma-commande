@@ -317,6 +317,25 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }
   }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
+  // ── Sync config locale → Supabase (pour que les clients voient la même chose) ──
+  const syncConfigToSupabase = async () => {
+    try {
+      const dc = displayConfig;
+      const pm = promos;
+      await Promise.all([
+        fetch("/.netlify/functions/config-get", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: "display_config", value: dc }),
+        }),
+        fetch("/.netlify/functions/config-get", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ key: "admin_promos", value: pm }),
+        }),
+      ]);
+      console.log("[config] ✓ Config synchronisée vers Supabase");
+    } catch (e) { console.warn("[config] Sync error:", e.message); }
+  };
+
   const handleLogin = async () => {
     setPwdError(false);
     try {
@@ -331,6 +350,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         setAuthed(true);
         refreshOrders();
         fetchProducts();
+        // Auto-sync config vers Supabase au login admin
+        syncConfigToSupabase();
       } else {
         setPwdError(true);
       }
@@ -706,7 +727,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   // Charger les données au montage si déjà authentifié
   useEffect(() => {
-    if (authed) { fetchProducts(); refreshOrders(); }
+    if (authed) { fetchProducts(); refreshOrders(); syncConfigToSupabase(); }
   }, [authed]);
 
   const downloadCsv = (order) => {
@@ -2217,7 +2238,19 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {tab==="display"&&(
           <div>
             <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d",marginBottom:8}}>Affichage global</div>
-            <div style={{fontSize:12,color:"#888",marginBottom:24}}>Personnalisez l'ordre, la visibilité et le comportement des onglets du catalogue. Les modifications sont appliquées instantanément.</div>
+            <div style={{fontSize:12,color:"#888",marginBottom:16}}>Personnalisez l'ordre, la visibilité et le comportement des onglets du catalogue. Les modifications sont appliquées instantanément.</div>
+
+            {/* Sync config button */}
+            <div style={{background:"#eff6ff",borderRadius:12,padding:"12px 16px",marginBottom:20,border:"1px solid #bfdbfe",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:12,fontWeight:700,color:"#1e40af"}}>📡 Synchronisation config → clients</div>
+                <div style={{fontSize:11,color:"#3b82f6",marginTop:2}}>Pousse votre config (onglets, promos, sections) vers Supabase pour que tous les clients la voient.</div>
+              </div>
+              <button onClick={async () => { await syncConfigToSupabase(); flash("✓ Config synchronisée vers Supabase"); }}
+                style={{background:"#2563eb",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                Synchroniser maintenant
+              </button>
+            </div>
 
             {/* Ordre + visibilité des onglets */}
             <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
