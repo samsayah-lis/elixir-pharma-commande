@@ -98,6 +98,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     ...activePromos.map(p => ({ key: `promo_${p.id}`, label: `${p.icon || "🏷️"} ${p.name}` })),
   ];
   const tabOrder = displayConfig.tabOrder || allSectionKeys;
+  // Ajouter les clés manquantes (promos créées après, sections custom) en fin de liste
+  const orderedKeys = [...tabOrder];
+  allSectionKeys.forEach(k => { if (!orderedKeys.includes(k)) orderedKeys.push(k); });
   const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
   const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
 
@@ -816,7 +819,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const cs = { ...newSection, key };
     saveDisplayConfig({ customSections: [...existing, cs] });
     // Add to tab order
-    const order = [...(displayConfig.tabOrder || allSectionKeys), key];
+    const order = [...orderedKeys, key];
     saveDisplayConfig({ tabOrder: order, customSections: [...existing, cs] });
     setNewSection({ key: "", label: "", subtitle: "", icon: "📁", color: "#333333", accent: "#666666" });
     setShowNewSection(false);
@@ -825,13 +828,13 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const removeCustomSection = (key) => {
     if (!window.confirm(`Supprimer la section "${key}" ?`)) return;
     const existing = (displayConfig.customSections || []).filter(s => s.key !== key);
-    const order = (displayConfig.tabOrder || allSectionKeys).filter(k => k !== key);
+    const order = orderedKeys.filter(k => k !== key);
     saveDisplayConfig({ customSections: existing, tabOrder: order });
   };
 
   const moveTab = (from, to) => {
     if (from === to) return;
-    const order = [...(displayConfig.tabOrder || allSectionKeys)];
+    const order = [...orderedKeys];
     const [moved] = order.splice(from, 1);
     order.splice(to, 0, moved);
     saveDisplayConfig({ tabOrder: order });
@@ -2258,7 +2261,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               <div style={{fontSize:11,color:"#aaa",marginBottom:16}}>Glissez-déposez pour réorganiser · Cliquez sur l'œil pour masquer/afficher · L'étoile définit l'onglet par défaut</div>
 
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
-                {(displayConfig.tabOrder || allSectionKeys).map((key, idx) => {
+                {orderedKeys.map((key, idx) => {
                   const baseMeta = allMeta[key];
                   if (!baseMeta) return null;
                   // Apply overrides for display
@@ -2379,9 +2382,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <button onClick={(e)=>{e.stopPropagation();if(idx>0)moveTab(idx,idx-1);}}
                           disabled={idx===0}
                           style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:idx>0?"pointer":"default",padding:"1px 6px",fontSize:10,opacity:idx>0?1:0.3}}>▲</button>
-                        <button onClick={(e)=>{e.stopPropagation();const order=displayConfig.tabOrder||allSectionKeys;if(idx<order.length-1)moveTab(idx,idx+1);}}
-                          disabled={idx>=(displayConfig.tabOrder||allSectionKeys).length-1}
-                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:10,opacity:idx<(displayConfig.tabOrder||allSectionKeys).length-1?1:0.3}}>▼</button>
+                        <button onClick={(e)=>{e.stopPropagation();if(idx<orderedKeys.length-1)moveTab(idx,idx+1);}}
+                          disabled={idx>=orderedKeys.length-1}
+                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:10,opacity:idx<orderedKeys.length-1?1:0.3}}>▼</button>
                       </div>
 
                       {/* Delete custom section */}
@@ -2461,7 +2464,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
               <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:12}}>Onglet par défaut à l'ouverture</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
-                {(displayConfig.tabOrder || allSectionKeys).filter(k => !hiddenTabs.has(k)).map(key => {
+                {orderedKeys.filter(k => !hiddenTabs.has(k)).map(key => {
                   const meta = allMeta[key];
                   if (!meta) return null;
                   return (
