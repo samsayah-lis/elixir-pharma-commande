@@ -3,8 +3,10 @@ import https from "https";
 const ODOO_URL  = process.env.ODOO_URL    || "https://odoo.elixir-pharma.fr";
 const ODOO_DB   = process.env.ODOO_DB     || "healthsoft-sas-lispharma-main-13622653";
 const ODOO_USER = process.env.ODOO_USER   || "pharmacien@elixirpharma.fr";
-const ODOO_PASS = process.env.ODOO_APIKEY || process.env.ODOO_PASS || "";
+const ODOO_KEY  = process.env.ODOO_APIKEY || "";
 export const ODOO_COMPANY = parseInt(process.env.ODOO_COMPANY || "2");
+
+if (!ODOO_KEY) console.warn("[odoo] ⚠ ODOO_APIKEY non configuré dans les variables d'environnement Netlify");
 
 function esc(s) {
   return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
@@ -93,7 +95,7 @@ function parse(xml) {
 }
 
 export async function authenticate() {
-  const body = buildCall("authenticate", [ODOO_DB, ODOO_USER, ODOO_PASS, {}]);
+  const body = buildCall("authenticate", [ODOO_DB, ODOO_USER, ODOO_KEY, {}]);
   console.log("[odoo-auth] XML:", body.substring(0, 300));
   const xml = await post("/xmlrpc/2/common", body);
   console.log("[odoo-auth] Response:", xml.substring(0, 200));
@@ -104,7 +106,7 @@ export async function authenticate() {
 
 export async function odooCall(uid, model, method, domain, kwargs) {
   const kw = kwargs || {};
-  const body = buildCall("execute_kw", [ODOO_DB, uid, ODOO_PASS, model, method, [domain], kw]);
+  const body = buildCall("execute_kw", [ODOO_DB, uid, ODOO_KEY, model, method, [domain], kw]);
   console.log("[odoo-call]", model, method, "XML:", body.substring(0, 400));
   const xml = await post("/xmlrpc/2/object", body);
   console.log("[odoo-call] Response:", xml.substring(0, 300));
