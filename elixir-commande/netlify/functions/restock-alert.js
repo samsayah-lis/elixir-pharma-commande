@@ -1,3 +1,4 @@
+import { getCors } from "./cors.js";
 // ── Alertes retour en stock + remises péremption courte ─────────────────
 // POST /restock-alert { pharmacy_cip, pharmacy_email, cip, product_name }  → s'abonner
 // DELETE /restock-alert?pharmacy_cip=X&cip=Y                               → se désabonner
@@ -8,9 +9,8 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Content-Type": "application/json" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
 

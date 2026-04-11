@@ -1,17 +1,14 @@
 // Recherche une pharmacie : Supabase cache → Odoo fallback → met à jour le cache
 import { authenticate, odooCall } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type"
-};
-
 const validCip = (cip) => cip && cip !== "0" && cip !== "false" && cip !== "";
 
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
 

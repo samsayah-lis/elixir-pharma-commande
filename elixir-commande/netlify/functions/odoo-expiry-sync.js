@@ -4,16 +4,16 @@ import { verifyAdmin } from "./auth.js";
 // GET /odoo-expiry-sync?offset=15 → traite les produits 15-29 en stock
 // Retourne { done, offset, next_offset, updated, total_in_stock }
 import { authenticate, odooCall, ODOO_COMPANY } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const COMPANY_ID = ODOO_COMPANY || 2;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
-
 const BATCH_SIZE = 15; // ~3s pour 5 produits → 15 en ~9s (sous les 10s)
 
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   const auth = verifyAdmin(event);

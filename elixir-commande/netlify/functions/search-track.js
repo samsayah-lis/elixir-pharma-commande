@@ -1,3 +1,4 @@
+import { getCors } from "./cors.js";
 // ── Search tracking — log des recherches + analytics ──────────────────
 // POST /search-track  { query, pharmacy_cip, results_count, clicked_cip, added_to_cart }
 // GET  /search-track?trending=1          → top 20 recherches 7 derniers jours
@@ -7,9 +8,8 @@
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Content-Type": "application/json" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   // ── POST : logger une recherche ──────────────────────────────────────

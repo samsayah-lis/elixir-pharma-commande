@@ -1,8 +1,7 @@
+import { getCors } from "./cors.js";
 const MEDIPIM_BASE = "https://api.medipim.fr/v4";
 const AUTH = "Basic " + Buffer.from("288:094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696").toString("base64");
 const H = { Authorization: AUTH, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
-
 async function tryFind(param, value) {
   if (!value) return null;
   const res = await fetch(`${MEDIPIM_BASE}/products/find?${param}=${value}`, { headers: H });
@@ -13,6 +12,7 @@ async function tryFind(param, value) {
 }
 
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const { cip, cip7 } = event.queryStringParameters || {};
   if (!cip && !cip7) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };

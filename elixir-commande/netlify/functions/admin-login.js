@@ -1,9 +1,11 @@
 // ── Admin login — vérifie le password côté serveur, retourne un JWT ──
-import { signToken, CORS } from "./auth.js";
+import { signToken } from "./auth.js";
+import { getCors } from "./cors.js";
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD; // PAS de fallback — doit être défini dans Netlify
 
 export const handler = async (event) => {
+  const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: CORS, body: JSON.stringify({ error: "POST only" }) };
 

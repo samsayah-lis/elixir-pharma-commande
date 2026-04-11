@@ -1,10 +1,9 @@
 // ── ML Engine — Cross-sell, Re-order, Segmentation ──────────────────────
 import { verifyAdmin } from "./auth.js";
+import { getCors } from "./cors.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Content-Type": "application/json" };
-
 // ── CROSS-SELL : co-occurrence + Lift ────────────────────────────────────
 async function computeAssociations() {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?select=items&order=date.desc`, { headers: { ...H, Range: "0-4999" } });
@@ -141,6 +140,7 @@ async function getReorder(pharmacyCip, limit = 20) {
 
 // ── HANDLER ─────────────────────────────────────────────────────────────
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
 

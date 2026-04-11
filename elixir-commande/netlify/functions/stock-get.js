@@ -1,9 +1,10 @@
+import { getCors } from "./cors.js";
 // Lit les stocks depuis Supabase (instantané)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 export const handler = async () => {
-  const cors = { "Access-Control-Allow-Origin": "*" };
+  const cors = getCors(event);
   try {
     // Header Range-Unit + Range pour récupérer jusqu'à 1000 lignes (catalogue = 233)
     const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_stocks?select=cip,dispo,stock,updated_at`, {

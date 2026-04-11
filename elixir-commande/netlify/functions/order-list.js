@@ -3,16 +3,13 @@
 // GET /order-list?source=ulabs            → filtre par source campagne
 // GET /order-list?pharmacy_cip=XXX        → filtre par pharmacie
 import { verifyToken } from "./auth.js";
+import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-const cors = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization"
-};
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   // Vérifie le JWT si présent

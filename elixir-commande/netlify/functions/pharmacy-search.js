@@ -1,8 +1,8 @@
+import { getCors } from "./cors.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const q = (event.queryStringParameters?.q || "").trim();
   if (!q) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "q manquant" }) };

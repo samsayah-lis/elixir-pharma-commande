@@ -3,14 +3,14 @@ import { verifyAdmin } from "./auth.js";
 // step=load&offset=0  → charge 200 règles Odoo, accumule dans kv_store
 // step=apply&offset=0 → applique aux produits (product > template > catégorie > global)
 import { authenticate, odooCall } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const PRICELIST_ID = 5;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   const auth = verifyAdmin(event);

@@ -1,3 +1,4 @@
+import { getCors } from "./cors.js";
 // Commandes groupées U-Labs
 // GET  /group-order?fournisseur=ulabs              → totaux par produit
 // POST /group-order  { fournisseur, cip, pharmacy_cip, pharmacy_name, qty } → upsert
@@ -9,9 +10,8 @@ const H = {
   "Authorization": `Bearer ${SUPABASE_KEY}`,
   "Content-Type": "application/json",
 };
-const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json", "Access-Control-Allow-Headers": "Content-Type" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   const params = event.queryStringParameters || {};

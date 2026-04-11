@@ -2,13 +2,13 @@ import { verifyAdmin } from "./auth.js";
 // ── Remplir odoo_tmpl_id + categ_id pour les produits existants ──────────
 // GET /fill-tmpl-categ?offset=0 → batch de 200 CIPs, lookup dans Odoo, PATCH Supabase
 import { authenticate, odooCall } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   const auth = verifyAdmin(event);

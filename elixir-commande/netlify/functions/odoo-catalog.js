@@ -1,3 +1,4 @@
+import { getCors } from "./cors.js";
 // ── Catalogue Odoo — recherche côté serveur avec prix remisés ───────────
 // GET /odoo-catalog?q=EYLEA&limit=100          → recherche
 // GET /odoo-catalog?q=EYLEA&stock_only=1       → que les produits en stock
@@ -6,10 +7,10 @@
 // GET /odoo-catalog?refresh=1                  → trigger sync background
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
-const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Content-Type": "application/json" };
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` };
 
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
 

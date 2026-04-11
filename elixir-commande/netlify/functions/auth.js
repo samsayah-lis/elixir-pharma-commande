@@ -1,5 +1,6 @@
 // ── Auth middleware — JWT sans dépendance externe ────────────────────────
 import { createHmac } from "crypto";
+import { getCors } from "./cors.js";
 
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_NETLIFY_ENV_VARS";
 
@@ -25,14 +26,8 @@ export function verifyToken(token) {
   } catch { return null; }
 }
 
-
-export const CORS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  "Content-Type": "application/json",
-};
-
 export function verifyAuth(event) {
+  const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { error: { statusCode: 200, headers: CORS, body: "" } };
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
@@ -42,6 +37,7 @@ export function verifyAuth(event) {
 }
 
 export function verifyAdmin(event) {
+  const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { error: { statusCode: 200, headers: CORS, body: "" } };
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const payload = verifyToken(authHeader.replace(/^Bearer\s+/i, ""));

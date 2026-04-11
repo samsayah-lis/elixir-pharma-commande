@@ -2,6 +2,7 @@ import { verifyAdmin } from "./auth.js";
 // Fonction background — lit stocks Odoo → Supabase
 // FIX BUG-02 : charge les CIP depuis Supabase au lieu du fichier cips.js (vide)
 import { authenticate, odooCall } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const COMPANY_ID = parseInt(process.env.ODOO_COMPANY || "2");
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -65,7 +66,7 @@ async function saveStockSnapshot(stocks) {
 }
 
 export const handler = async () => {
-  const cors = { "Access-Control-Allow-Origin": "*" };
+  const cors = getCors(event);
   try {
     const CATALOG_CIPS = await loadCatalogCips();
     if (CATALOG_CIPS.length === 0) {

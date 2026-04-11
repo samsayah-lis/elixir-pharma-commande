@@ -4,14 +4,14 @@ import { verifyAdmin } from "./auth.js";
 // step=stock              → charge TOUS les quants Odoo, compute stock, sauve dans kv_store
 // step=apply&offset=0     → applique les stocks depuis kv_store → odoo_catalog
 import { authenticate, odooCall, ODOO_COMPANY } from "./odoo.js";
+import { getCors } from "./cors.js";
 
 const COMPANY_ID = ODOO_COMPANY || 2;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/json" };
-
 export const handler = async (event) => {
+  const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
   const auth = verifyAdmin(event);
