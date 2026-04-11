@@ -4,6 +4,7 @@ import { getCors } from "./cors.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const ADMIN_EMAIL  = process.env.ADMIN_EMAIL || "pharmacien@elixirpharma.fr";
+const ADMIN_EMAILS = ADMIN_EMAIL.split(",").map(e => e.trim().toLowerCase()).concat(["sam.sayah@elixir-pharma.fr"]);
 
 // Vérifie un token Supabase en appelant /auth/v1/user
 async function verifySupabaseToken(token) {
@@ -20,7 +21,7 @@ async function verifySupabaseToken(token) {
       email: user.email,
       isAdmin: user.app_metadata?.role === "admin" ||
                user.user_metadata?.role === "admin" ||
-               user.email === ADMIN_EMAIL,
+               ADMIN_EMAILS.includes(user.email?.toLowerCase()),
     };
   } catch { return null; }
 }

@@ -36,10 +36,13 @@ export const handler = async (event) => {
 
     const data = await res.json();
 
-    // Check admin role in user metadata
+    const ADMIN_EMAILS = (process.env.ADMIN_EMAIL || "pharmacien@elixirpharma.fr")
+      .split(",").map(e => e.trim().toLowerCase());
+    ADMIN_EMAILS.push("sam.sayah@elixir-pharma.fr");
+
     const isAdmin = data.user?.app_metadata?.role === "admin" ||
                     data.user?.user_metadata?.role === "admin" ||
-                    data.user?.email === (process.env.ADMIN_EMAIL || "pharmacien@elixirpharma.fr");
+                    ADMIN_EMAILS.includes(data.user?.email?.toLowerCase());
 
     if (!isAdmin) {
       return { statusCode: 200, headers: CORS, body: JSON.stringify({ success: false, error: "Ce compte n'a pas les droits administrateur" }) };
