@@ -1867,10 +1867,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {fmtPct(p.pct)}
-                          </td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
-                            {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
+                            {p.remise_eur ? fmt(p.remise_eur) : fmt(30)}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
                         </>}
