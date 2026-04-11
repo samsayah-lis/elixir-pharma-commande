@@ -1321,7 +1321,6 @@ export default function App() {
                           flash(`⚠ ${p.name} n'est pas dans le catalogue. Utilisez la Saisie de commande.`);
                           trackSearch(globalSearch.trim(), globalResults.length, p.cip, false);
                         }
-                        }
                       }} style={{
                         background:"#0f2d3d", color:"white", border:"none", borderRadius:8,
                         padding:"6px 12px", fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0,
