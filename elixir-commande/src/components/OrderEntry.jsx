@@ -47,6 +47,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setResults(Array.isArray(data.products) ? data.products : []);
+        // Track search (fire-and-forget)
+        const r = Array.isArray(data.products) ? data.products : [];
+        fetch("/.netlify/functions/search-track", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: query.trim(), pharmacy_cip: pharmacyCip || null, results_count: r.length }),
+        }).catch(() => {});
       } catch (e) { setResults([]); }
       finally { setSearching(false); }
     }, 350);
@@ -76,6 +82,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     const price = hasDiscount ? product.discounted_price : product.list_price;
     onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0 });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
+    // Track add-to-cart
+    fetch("/.netlify/functions/search-track", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query.trim(), pharmacy_cip: pharmacyCip || null, results_count: results.length, clicked_cip: product.cip, added_to_cart: true }),
+    }).catch(() => {});
   };
 
   const hasProducts = catalogInfo && catalogInfo.total > 0;

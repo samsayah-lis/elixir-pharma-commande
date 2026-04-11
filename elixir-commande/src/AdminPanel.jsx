@@ -795,6 +795,30 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   // ── Sync state (must be before any return) ────────────────────────────
   const [syncStock, setSyncStock] = useState({ running: false, progress: null });
   const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
+  const [searchML, setSearchML] = useState({ trending: [], zeroResults: [], funnel: null, stats: null, loading: false });
+
+  const loadSearchML = async () => {
+    setSearchML(prev => ({ ...prev, loading: true }));
+    try {
+      const [trendRes, zeroRes, funnelRes, statsRes] = await Promise.all([
+        fetch("/.netlify/functions/search-track?trending=1"),
+        fetch("/.netlify/functions/search-track?zero_results=1"),
+        fetch("/.netlify/functions/search-track?funnel=1"),
+        fetch("/.netlify/functions/search-track?stats=1"),
+      ]);
+      const [trend, zero, funnel, stats] = await Promise.all([trendRes.json(), zeroRes.json(), funnelRes.json(), statsRes.json()]);
+      setSearchML({
+        trending: trend.trending || [],
+        zeroResults: zero.zero_results || [],
+        funnel: funnel.funnel || null,
+        stats: stats || null,
+        loading: false,
+      });
+    } catch (e) {
+      console.warn("[search-ml]", e.message);
+      setSearchML(prev => ({ ...prev, loading: false }));
+    }
+  };
 
   const [dragIdx, setDragIdx] = useState(null);
   const [editingSubtitle, setEditingSubtitle] = useState(null);
@@ -994,6 +1018,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     {k:"expiry",    label:"⏰ Péremptions",icon:"⏰"},
     {k:"display",   label:"🎨 Affichage",  icon:"🎨"},
     {k:"sync",      label:"🔄 Synchronisation",icon:"🔄"},
+    {k:"search_ml", label:"🧠 Recherches",icon:"🧠"},
   ];
 
   return (
@@ -2559,6 +2584,122 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
               <strong>Ordre recommandé :</strong> 1. Stock → 2. Prix → 3. Péremptions<br/>
               Le sync stock charge les produits et quantités. Le sync prix associe les remises de la liste de prix EUR 2. Le sync péremptions charge les lots et dates d'expiration pour les produits en stock.
+            </div>
+          </div>
+        )}
+
+        {/* ── SEARCH ML TAB ── */}
+        {tab==="search_ml"&&(
+          <div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d"}}>🧠 Intelligence Recherche</div>
+                <div style={{fontSize:12,color:"#888",marginTop:4}}>Analyse des recherches des pharmacies — trending, produits manquants, conversion</div>
+              </div>
+              <button onClick={loadSearchML} disabled={searchML.loading}
+                style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:searchML.loading?"default":"pointer",opacity:searchML.loading?0.6:1}}>
+                {searchML.loading ? "⏳ Chargement..." : "📊 Charger les données"}
+              </button>
+            </div>
+
+            {/* Stats globales */}
+            {searchML.stats && (
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(160px, 1fr))",gap:12,marginBottom:20}}>
+                <div style={{background:"white",borderRadius:12,padding:"16px 20px",border:"1px solid #e8ecf0",textAlign:"center"}}>
+                  <div style={{fontSize:28,fontWeight:800,color:"#0f2d3d"}}>{searchML.stats.total || 0}</div>
+                  <div style={{fontSize:11,color:"#888",fontWeight:600}}>Recherches totales</div>
+                </div>
+                <div style={{background:"white",borderRadius:12,padding:"16px 20px",border:"1px solid #e8ecf0",textAlign:"center"}}>
+                  <div style={{fontSize:28,fontWeight:800,color:"#3b82f6"}}>{searchML.stats.today || 0}</div>
+                  <div style={{fontSize:11,color:"#888",fontWeight:600}}>Aujourd'hui</div>
+                </div>
+                {searchML.funnel && <>
+                  <div style={{background:"white",borderRadius:12,padding:"16px 20px",border:"1px solid #e8ecf0",textAlign:"center"}}>
+                    <div style={{fontSize:28,fontWeight:800,color:"#059669"}}>{searchML.funnel.cart_rate}%</div>
+                    <div style={{fontSize:11,color:"#888",fontWeight:600}}>Taux ajout panier</div>
+                  </div>
+                  <div style={{background:"white",borderRadius:12,padding:"16px 20px",border:"1px solid #e8ecf0",textAlign:"center"}}>
+                    <div style={{fontSize:28,fontWeight:800,color:"#f59e0b"}}>{searchML.funnel.click_rate}%</div>
+                    <div style={{fontSize:11,color:"#888",fontWeight:600}}>Taux de clic</div>
+                  </div>
+                </>}
+              </div>
+            )}
+
+            {/* Funnel conversion */}
+            {searchML.funnel && (
+              <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:12}}>📈 Funnel de conversion (30 derniers jours)</div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  {[
+                    { label:"Recherches", value:searchML.funnel.total_searches, color:"#3b82f6" },
+                    { label:"Avec résultats", value:searchML.funnel.with_results, color:"#8b5cf6" },
+                    { label:"Clics produit", value:searchML.funnel.clicked, color:"#f59e0b" },
+                    { label:"Ajout panier", value:searchML.funnel.added_to_cart, color:"#059669" },
+                  ].map((step, i) => {
+                    const maxW = searchML.funnel.total_searches || 1;
+                    const pct = Math.round(step.value / maxW * 100);
+                    return (
+                      <div key={i} style={{flex:1}}>
+                        <div style={{fontSize:10,color:"#888",fontWeight:600,marginBottom:4}}>{step.label}</div>
+                        <div style={{background:"#f0f2f5",borderRadius:6,height:32,position:"relative",overflow:"hidden"}}>
+                          <div style={{background:step.color,height:"100%",width:`${Math.max(pct,3)}%`,borderRadius:6,transition:"width 0.5s"}} />
+                          <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:pct>40?"white":"#333"}}>{step.value}</div>
+                        </div>
+                        <div style={{fontSize:9,color:"#aaa",textAlign:"center",marginTop:2}}>{pct}%</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16}}>
+              {/* Trending searches */}
+              <div style={{background:"white",borderRadius:14,padding:"20px 24px",border:"1px solid #e8ecf0"}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:4}}>🔥 Top recherches (7 jours)</div>
+                <div style={{fontSize:11,color:"#aaa",marginBottom:12}}>Les termes les plus recherchés par les pharmacies</div>
+                {searchML.trending.length === 0 ? (
+                  <div style={{textAlign:"center",padding:24,color:"#ccc",fontSize:13}}>Aucune donnée — cliquez "Charger les données"</div>
+                ) : (
+                  <div style={{maxHeight:400,overflowY:"auto"}}>
+                    {searchML.trending.map((t, i) => (
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                        <span style={{fontSize:11,fontWeight:800,color:i<3?"#f59e0b":"#bbb",minWidth:20,textAlign:"center"}}>{i+1}</span>
+                        <div style={{flex:1}}>
+                          <div style={{fontWeight:600,fontSize:13,color:"#0f2d3d"}}>{t.query}</div>
+                          <div style={{fontSize:10,color:"#aaa"}}>{t.avg_results} résultats en moyenne</div>
+                        </div>
+                        <span style={{background:"#eff6ff",color:"#3b82f6",fontWeight:700,fontSize:11,borderRadius:8,padding:"2px 8px"}}>{t.count}×</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Zero results */}
+              <div style={{background:"white",borderRadius:14,padding:"20px 24px",border:"1px solid #e8ecf0"}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#dc2626",marginBottom:4}}>❌ Recherches sans résultat (30 jours)</div>
+                <div style={{fontSize:11,color:"#aaa",marginBottom:12}}>Produits demandés mais absents du stock — opportunités d'approvisionnement</div>
+                {searchML.zeroResults.length === 0 ? (
+                  <div style={{textAlign:"center",padding:24,color:"#ccc",fontSize:13}}>Aucune donnée</div>
+                ) : (
+                  <div style={{maxHeight:400,overflowY:"auto"}}>
+                    {searchML.zeroResults.map((z, i) => (
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                        <span style={{fontSize:11,fontWeight:800,color:"#dc2626",minWidth:20,textAlign:"center"}}>{i+1}</span>
+                        <div style={{flex:1,fontWeight:600,fontSize:13,color:"#0f2d3d"}}>{z.query}</div>
+                        <span style={{background:"#fee2e2",color:"#dc2626",fontWeight:700,fontSize:11,borderRadius:8,padding:"2px 8px"}}>{z.count}× demandé</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Info */}
+            <div style={{background:"#f5f3ff",borderRadius:14,padding:"16px 20px",border:"1px solid #ddd6fe",fontSize:12,color:"#5b21b6",lineHeight:1.6,marginTop:20}}>
+              <strong>Comment ça marche :</strong> Chaque recherche (barre globale + Saisie de commande) est loggée avec le terme, le nombre de résultats, le CIP cliqué et si le produit a été ajouté au panier. Les données alimentent les futures recommandations ML (cross-sell, prédiction de rupture, segmentation pharmacie).
             </div>
           </div>
         )}

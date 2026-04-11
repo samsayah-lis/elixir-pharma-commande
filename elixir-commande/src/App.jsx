@@ -213,6 +213,15 @@ export default function App() {
   const [globalSearching, setGlobalSearching] = useState(false);
   const globalSearchRef = useRef(null);
 
+  // ── Search tracking (ML) ──────────────────────────────────────────────
+  const trackSearch = useCallback((query, results_count, clicked_cip, added_to_cart) => {
+    if (!query || query.length < 2) return;
+    fetch("/.netlify/functions/search-track", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, pharmacy_cip: pharmacyCip || null, results_count, clicked_cip, added_to_cart }),
+    }).catch(() => {});
+  }, [pharmacyCip]);
+
   // Debounced Odoo search
   useEffect(() => {
     if (globalSearch.trim().length < 2) { setGlobalResults([]); return; }
@@ -222,12 +231,15 @@ export default function App() {
       try {
         const res = await fetch(`/.netlify/functions/odoo-catalog?q=${encodeURIComponent(globalSearch.trim())}&limit=50`);
         const data = await res.json();
-        setGlobalResults(Array.isArray(data) ? data : data.products || []);
+        const results = Array.isArray(data) ? data : data.products || [];
+        setGlobalResults(results);
+        // Track search (fire-and-forget)
+        trackSearch(globalSearch.trim(), results.length, null, false);
       } catch { setGlobalResults([]); }
       setGlobalSearching(false);
     }, 350);
     return () => clearTimeout(globalSearchRef.current);
-  }, [globalSearch]);
+  }, [globalSearch, trackSearch]);
   const [sendStatus, setSendStatus] = useState(null);
   const [showAdmin, setShowAdmin] = useState(() => sessionStorage.getItem("showAdmin") === "1");
   useEffect(() => { sessionStorage.setItem("showAdmin", showAdmin ? "1" : "0"); }, [showAdmin]);
@@ -1209,9 +1221,11 @@ export default function App() {
                         });
                         if (added) {
                           flash(`✓ ${p.name} ajouté au panier`);
+                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, true);
                         } else {
-                          // Produit hors sections → alerte
                           flash(`⚠ ${p.name} n'est pas dans le catalogue. Utilisez la Saisie de commande.`);
+                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, false);
+                        }
                         }
                       }} style={{
                         background:"#0f2d3d", color:"white", border:"none", borderRadius:8,
