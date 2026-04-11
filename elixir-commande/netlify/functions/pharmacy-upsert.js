@@ -1,10 +1,14 @@
 import { getCors } from "./cors.js";
+import { verifyAdmin } from "./auth.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "POST only" };
+
+  const auth = await verifyAdmin(event);
+  if (auth.error) return auth.error;
 
   const body = JSON.parse(event.body || "{}");
   if (!body.email || !body.name) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "email et name requis" }) };

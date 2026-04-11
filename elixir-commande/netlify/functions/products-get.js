@@ -13,7 +13,7 @@ export const handler = async (event) => {
       headers: {
         "apikey": SUPABASE_KEY,
         "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Range": "0-999",
+        "Range": "0-4999",
       }
     }
   );

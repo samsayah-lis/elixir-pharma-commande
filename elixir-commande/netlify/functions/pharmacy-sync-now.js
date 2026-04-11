@@ -1,16 +1,17 @@
 // Endpoint HTTP pour déclencher la sync pharmacies manuellement
 import { authenticate, odooCall } from "./odoo.js";
+import { verifyAdmin } from "./auth.js";
+import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
 export const handler = async (event) => {
-  // Protection basique
-  const token = event.queryStringParameters?.token;
-  const SYNC_TOKEN = process.env.SYNC_TOKEN || process.env.ADMIN_PASSWORD || "elixir2026";
-  if (token !== SYNC_TOKEN) {
-    return { statusCode: 403, body: "Forbidden" };
-  }
+  const cors = getCors(event);
+  if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+
+  const auth = await verifyAdmin(event);
+  if (auth.error) return auth.error;
 
   try {
     const uid = await authenticate();
@@ -50,7 +51,7 @@ export const handler = async (event) => {
       headers: {
         "apikey": SUPABASE_KEY,
         "Authorization": `Bearer ${SUPABASE_KEY}`,
-        "Content-Type": "application/json",
+        ...cors,
         "Prefer": "resolution=merge-duplicates",
       },
       body: JSON.stringify(rows),
@@ -60,10 +61,10 @@ export const handler = async (event) => {
 
     return {
       statusCode: 200,
-      headers: { "Content-Type": "application/json" },
+      headers: { ...cors },
       body: JSON.stringify({ success: true, count: rows.length, message: `${rows.length} pharmacies synchronisées` })
     };
   } catch (err) {
-    return { statusCode: 500, body: JSON.stringify({ error: err.message }) };
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
   }
 };

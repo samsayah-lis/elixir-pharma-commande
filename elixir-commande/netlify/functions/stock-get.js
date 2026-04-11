@@ -3,7 +3,7 @@ import { getCors } from "./cors.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
-export const handler = async () => {
+export const handler = async (event) => {
   const cors = getCors(event);
   try {
     // Header Range-Unit + Range pour récupérer jusqu'à 1000 lignes (catalogue = 233)

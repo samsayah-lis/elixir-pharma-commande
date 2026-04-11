@@ -11,6 +11,15 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const rl = rateLimit(event); if (rl) return rl;
+
+  // Vérification origin — bloque les appels depuis des sites tiers
+  const origin = event.headers?.origin || event.headers?.Origin || "";
+  const referer = event.headers?.referer || event.headers?.Referer || "";
+  const ALLOWED = ["elixir-commande.expepharma.com", "commandes-elixir.netlify.app", "localhost"];
+  if (!ALLOWED.some(d => origin.includes(d) || referer.includes(d))) {
+    return { statusCode: 403, headers: cors, body: JSON.stringify({ error: "Origine non autorisée" }) };
+  }
+
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
 
   let body;

@@ -253,7 +253,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const syncPharmacies = async () => {
     setPharmSyncing(true);
     flash("⏳ Synchronisation Odoo en cours…");
-    const r = await adminFetch("/.netlify/functions/pharmacy-sync-now?token=elixir2026");
+    const r = await adminFetch("/.netlify/functions/pharmacy-sync-now");
     const d = await r.json();
     setPharmSyncing(false);
     flash(d.inserted != null ? `✅ Sync terminée — ${d.inserted} pharmacies mises à jour` : "✅ Sync terminée");
@@ -287,7 +287,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (!cip || cip.length < 7) return;
     setMedipimLookup(prev => ({ ...prev, [cip]: { loading: true } }));
     try {
-      const res = await fetch(`/.netlify/functions/medipim-lookup?cip=${cip}`);
+      const res = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${cip}`);
       const data = await res.json();
       if (data.error) {
         setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: data.error } }));
@@ -1848,7 +1848,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                     const batch = toFetch.slice(i, i+BATCH);
                     await Promise.all(batch.map(async p => {
                       try{
-                        const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
+                        const r=await adminFetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
                         const d=await r.json();
                         if(d.image_url){
                           const up=await adminFetch("/.netlify/functions/product-upload-image",{

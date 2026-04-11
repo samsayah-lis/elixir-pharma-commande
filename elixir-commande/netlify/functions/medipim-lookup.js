@@ -1,6 +1,9 @@
 import { getCors } from "./cors.js";
+import { verifyAdmin } from "./auth.js";
 const MEDIPIM_BASE = "https://api.medipim.fr/v4";
-const AUTH = "Basic " + Buffer.from("288:094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696").toString("base64");
+const MEDIPIM_USER = process.env.MEDIPIM_USER || "288";
+const MEDIPIM_KEY  = process.env.MEDIPIM_KEY  || "094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696";
+const AUTH = "Basic " + Buffer.from(`${MEDIPIM_USER}:${MEDIPIM_KEY}`).toString("base64");
 const H = { Authorization: AUTH, "Content-Type": "application/json" };
 async function tryFind(param, value) {
   if (!value) return null;
@@ -14,6 +17,10 @@ async function tryFind(param, value) {
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+
+  const auth = await verifyAdmin(event);
+  if (auth.error) return auth.error;
+
   const { cip, cip7 } = event.queryStringParameters || {};
   if (!cip && !cip7) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
 
