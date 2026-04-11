@@ -1,3 +1,4 @@
+import { rateLimit } from "./rate-limit.js";
 import { getCors } from "./cors.js";
 // Sauvegarde une commande dans Supabase + décrémentation stock (non-bloquante)
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -6,6 +7,7 @@ const NOTIFY_WEBHOOK = process.env.NOTIFY_WEBHOOK_URL || ""; // URL webhook pour
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  const rl = rateLimit(event); if (rl) return rl;
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
 
   let order;

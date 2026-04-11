@@ -1,3 +1,4 @@
+import { rateLimit } from "./rate-limit.js";
 import { getCors } from "./cors.js";
 // ── Search tracking — log des recherches + analytics ──────────────────
 // POST /search-track  { query, pharmacy_cip, results_count, clicked_cip, added_to_cart }
@@ -11,6 +12,7 @@ const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, 
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  const rl = rateLimit(event); if (rl) return rl;
 
   // ── POST : logger une recherche ──────────────────────────────────────
   if (event.httpMethod === "POST") {

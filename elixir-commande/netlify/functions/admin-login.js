@@ -1,3 +1,4 @@
+import { rateLimit } from "./rate-limit.js";
 // ── Admin login via Supabase Auth ─────────────────────────────────────
 import { getCors } from "./cors.js";
 
@@ -7,6 +8,7 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY; // anon key
 export const handler = async (event) => {
   const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: CORS, body: "" };
+  const rl = rateLimit(event, 10, 60); if (rl) return rl;
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: CORS, body: JSON.stringify({ error: "POST only" }) };
 
   let body;

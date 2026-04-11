@@ -1,3 +1,4 @@
+import { rateLimit } from "./rate-limit.js";
 // ── Email — envoi via EmailJS REST API côté serveur ───────────────────
 // POST /send-email  { template_params: { to_email, pharmacy_name, ... } }
 import { getCors } from "./cors.js";
@@ -9,6 +10,7 @@ const EMAILJS_PUBLIC_KEY  = process.env.EMAILJS_PUBLIC_KEY  || "7KPf-we-Cmh8cSuR
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  const rl = rateLimit(event); if (rl) return rl;
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
 
   let body;
