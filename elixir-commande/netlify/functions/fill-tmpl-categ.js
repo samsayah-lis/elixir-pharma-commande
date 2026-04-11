@@ -11,7 +11,7 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
-  const auth = verifyAdmin(event);
+  const auth = await verifyAdmin(event);
   if (auth.error) return auth.error;
   const offset = parseInt(event.queryStringParameters?.offset || "0");
 

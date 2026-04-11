@@ -58,22 +58,46 @@ const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
-  // Helper : fetch avec JWT admin automatique
+  // Helper : fetch avec JWT Supabase + auto-refresh
   const adminFetch = useCallback(async (url, options = {}) => {
     const token = localStorage.getItem("admin_token") || "";
     const headers = { "Authorization": `Bearer ${token}`, ...(options.headers || {}) };
     if (options.body) headers["Content-Type"] = headers["Content-Type"] || "application/json";
-    const res = await fetch(url, { ...options, headers });
-    // Si 403 = token expiré → forcer re-login
-    if (res.status === 403) {
-      console.warn("[admin] Token expiré — reconnexion requise");
+    let res = await fetch(url, { ...options, headers });
+
+    // Si 401/403, essayer de refresh le token via Netlify function
+    if ((res.status === 401 || res.status === 403) && localStorage.getItem("admin_refresh_token")) {
+      try {
+        const refreshRes = await fetch("/.netlify/functions/admin-refresh", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: localStorage.getItem("admin_refresh_token") }),
+        });
+        const refreshData = await refreshRes.json();
+        if (refreshData.success && refreshData.token) {
+          localStorage.setItem("admin_token", refreshData.token);
+          if (refreshData.refresh_token) localStorage.setItem("admin_refresh_token", refreshData.refresh_token);
+          headers["Authorization"] = `Bearer ${refreshData.token}`;
+          res = await fetch(url, { ...options, headers });
+        } else {
+          localStorage.removeItem("admin_token");
+          localStorage.removeItem("admin_refresh_token");
+          setAuthed(false);
+        }
+      } catch {
+        localStorage.removeItem("admin_token");
+        localStorage.removeItem("admin_refresh_token");
+        setAuthed(false);
+      }
+    } else if (res.status === 401 || res.status === 403) {
       localStorage.removeItem("admin_token");
       setAuthed(false);
     }
     return res;
   }, []);
   const [pwd, setPwd]           = useState("");
-  const [pwdError, setPwdError] = useState(false);
+  const [adminEmail, setAdminEmail] = useState("pharmacien@elixirpharma.fr");
+  const [pwdError, setPwdError] = useState("");
   const [tab, setTab]           = useState(() => sessionStorage.getItem("admin_tab") || "sync");
   useEffect(() => { sessionStorage.setItem("admin_tab", tab); }, [tab]);
   const [saved, setSaved]       = useState("");
@@ -355,27 +379,27 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   };
 
   const handleLogin = async () => {
-    setPwdError(false);
+    setPwdError("");
     try {
       const res = await fetch(ADMIN_AUTH_ENDPOINT, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password: pwd }),
+        body: JSON.stringify({ email: adminEmail, password: pwd }),
       });
       const data = await res.json();
       if (data.success && data.token) {
         localStorage.setItem("admin_token", data.token);
+        if (data.refresh_token) localStorage.setItem("admin_refresh_token", data.refresh_token);
         setAuthed(true);
         refreshOrders();
         fetchProducts();
-        // Auto-sync config vers Supabase au login admin
         syncConfigToSupabase();
       } else {
-        setPwdError(true);
+        setPwdError(data.error || "Identifiants incorrects");
       }
     } catch (e) {
       console.error("[admin-login]", e.message);
-      setPwdError(true);
+      setPwdError("Erreur réseau : " + e.message);
     }
   };
 
@@ -1113,15 +1137,19 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
           <div>
             <div style={{fontWeight:800,fontSize:22,color:"#0f2d3d"}}>🔐 Espace Admin</div>
-            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Gestion du catalogue</div>
+            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Authentification Supabase</div>
           </div>
           <button onClick={onClose} style={CB}>✕</button>
         </div>
-        <label style={LS}>Mot de passe administrateur</label>
+        <label style={LS}>Email</label>
+        <input type="email" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)}
+          placeholder="pharmacien@elixirpharma.fr"
+          style={{...IS, marginBottom:12}} autoFocus />
+        <label style={LS}>Mot de passe</label>
         <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••"
-          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} autoFocus />
-        {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>Mot de passe incorrect.</div>}
+          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} />
+        {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>{pwdError}</div>}
         <button onClick={handleLogin} style={{...PB,marginTop:16}}>Accéder →</button>
       </div>
     </div>

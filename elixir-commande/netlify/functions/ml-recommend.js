@@ -284,7 +284,7 @@ export const handler = async (event) => {
   const params = event.queryStringParameters || {};
 
   if (event.httpMethod === "POST") {
-    const auth = verifyAdmin(event);
+    const auth = await verifyAdmin(event);
     if (auth.error) return auth.error;
     const body = JSON.parse(event.body || "{}");
     if (body.action === "compute") {

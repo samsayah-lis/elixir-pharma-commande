@@ -1,46 +1,56 @@
-// ── Auth middleware — JWT sans dépendance externe ────────────────────────
-import { createHmac } from "crypto";
+// ── Auth middleware — vérifie les tokens Supabase Auth ────────────────
 import { getCors } from "./cors.js";
 
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_NETLIFY_ENV_VARS";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const ADMIN_EMAIL  = process.env.ADMIN_EMAIL || "pharmacien@elixirpharma.fr";
 
-function base64url(str) { return Buffer.from(str).toString("base64url"); }
-function hmac(data, secret) { return createHmac("sha256", secret).update(data).digest("base64url"); }
-
-export function signToken(payload, expiresInHours = 24 * 7) {
-  const header = base64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
-  const now = Math.floor(Date.now() / 1000);
-  const body = base64url(JSON.stringify({ ...payload, iat: now, exp: now + expiresInHours * 3600 }));
-  return `${header}.${body}.${hmac(`${header}.${body}`, JWT_SECRET)}`;
-}
-
-export function verifyToken(token) {
+// Vérifie un token Supabase en appelant /auth/v1/user
+async function verifySupabaseToken(token) {
   if (!token) return null;
-  const [header, body, sig] = token.split(".");
-  if (!header || !body || !sig) return null;
-  if (sig !== hmac(`${header}.${body}`, JWT_SECRET)) return null;
   try {
-    const payload = JSON.parse(Buffer.from(body, "base64url").toString());
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
-    return payload;
+    const res = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
+    const user = await res.json();
+    if (!user?.id) return null;
+    return {
+      id: user.id,
+      email: user.email,
+      isAdmin: user.app_metadata?.role === "admin" ||
+               user.user_metadata?.role === "admin" ||
+               user.email === ADMIN_EMAIL,
+    };
   } catch { return null; }
 }
 
-export function verifyAuth(event) {
+export function verifyToken(token) {
+  // Kept for backward compatibility — synchronous check not possible with Supabase
+  // Use verifyTokenAsync instead
+  return null;
+}
+
+export async function verifyTokenAsync(token) {
+  return verifySupabaseToken(token);
+}
+
+export async function verifyAuth(event) {
   const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { error: { statusCode: 200, headers: CORS, body: "" } };
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
-  const payload = verifyToken(token);
-  if (!payload) return { error: { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "Non authentifié" }) } };
-  return { user: payload, error: null };
+  const user = await verifySupabaseToken(token);
+  if (!user) return { error: { statusCode: 401, headers: CORS, body: JSON.stringify({ error: "Non authentifié" }) } };
+  return { user, error: null };
 }
 
-export function verifyAdmin(event) {
+export async function verifyAdmin(event) {
   const CORS = getCors(event);
   if (event.httpMethod === "OPTIONS") return { error: { statusCode: 200, headers: CORS, body: "" } };
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
-  const payload = verifyToken(authHeader.replace(/^Bearer\s+/i, ""));
-  if (!payload?.isAdmin) return { error: { statusCode: 403, headers: CORS, body: JSON.stringify({ error: "Accès admin requis" }) } };
-  return { admin: payload, error: null };
+  const token = authHeader.replace(/^Bearer\s+/i, "");
+  const user = await verifySupabaseToken(token);
+  if (!user?.isAdmin) return { error: { statusCode: 403, headers: CORS, body: JSON.stringify({ error: "Accès admin requis" }) } };
+  return { admin: user, error: null };
 }

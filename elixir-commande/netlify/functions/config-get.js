@@ -25,7 +25,7 @@ export const handler = async (event) => {
 
   // POST — écriture admin (JWT requis)
   if (event.httpMethod === "POST") {
-    const auth = verifyAdmin(event);
+    const auth = await verifyAdmin(event);
     if (auth.error) return auth.error;
 
     let body;

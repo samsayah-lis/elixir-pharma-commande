@@ -2,7 +2,7 @@
 // GET /order-list                         → toutes (admin) ou filtrées (pharmacie)
 // GET /order-list?source=ulabs            → filtre par source campagne
 // GET /order-list?pharmacy_cip=XXX        → filtre par pharmacie
-import { verifyToken } from "./auth.js";
+import { verifyTokenAsync } from "./auth.js";
 import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -12,10 +12,10 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
-  // Vérifie le JWT si présent
+  // Vérifie le JWT Supabase si présent
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
-  const user = verifyToken(token);
+  const user = token ? await verifyTokenAsync(token) : null;
   const isAdmin = user?.isAdmin === true;
 
   const params = event.queryStringParameters || {};
