@@ -59,16 +59,18 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
   // Helper : fetch avec JWT admin automatique
-  const adminFetch = useCallback((url, options = {}) => {
+  const adminFetch = useCallback(async (url, options = {}) => {
     const token = localStorage.getItem("admin_token") || "";
-    return fetch(url, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-        ...(options.headers || {}),
-      },
-    });
+    const headers = { "Authorization": `Bearer ${token}`, ...(options.headers || {}) };
+    if (options.body) headers["Content-Type"] = headers["Content-Type"] || "application/json";
+    const res = await fetch(url, { ...options, headers });
+    // Si 403 = token expiré → forcer re-login
+    if (res.status === 403) {
+      console.warn("[admin] Token expiré — reconnexion requise");
+      localStorage.removeItem("admin_token");
+      setAuthed(false);
+    }
+    return res;
   }, []);
   const [pwd, setPwd]           = useState("");
   const [pwdError, setPwdError] = useState(false);
