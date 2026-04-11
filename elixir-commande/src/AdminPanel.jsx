@@ -741,6 +741,43 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     setOrdersLoading(false);
   };
 
+  const exportOrdersXlsx = () => {
+    if (orders.length === 0) return;
+    // Sheet 1 : Résumé commandes
+    const summary = orders.map(o => ({
+      "Date": new Date(o.date).toLocaleDateString("fr-FR"),
+      "Heure": new Date(o.date).toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" }),
+      "Pharmacie": o.pharmacyName,
+      "Email": o.pharmacyEmail,
+      "CIP": o.pharmacyCip || "",
+      "Lignes": o.nbLignes || (Array.isArray(o.items) ? o.items.length : 0),
+      "Total HT": parseFloat(o.totalHt) || 0,
+      "Statut": o.processed ? "Traitée" : "En attente",
+      "Source": o.source || "catalogue",
+    }));
+    // Sheet 2 : Détail lignes
+    const lines = [];
+    orders.forEach(o => {
+      (Array.isArray(o.items) ? o.items : []).forEach(it => {
+        lines.push({
+          "Date": new Date(o.date).toLocaleDateString("fr-FR"),
+          "Pharmacie": o.pharmacyName,
+          "CIP Pharmacie": o.pharmacyCip || "",
+          "CIP Produit": it.cip || "",
+          "Produit": it.name || "",
+          "Quantité": parseInt(it.qty) || 0,
+          "Prix net HT": parseFloat(it.pn) || 0,
+          "Total HT": Math.round((parseFloat(it.pn) || 0) * (parseInt(it.qty) || 0) * 100) / 100,
+        });
+      });
+    });
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), "Commandes");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(lines), "Détail lignes");
+    XLSX.writeFile(wb, `commandes_elixir_${new Date().toISOString().slice(0,10)}.xlsx`);
+    flash("✓ Export Excel téléchargé");
+  };
+
   // Charger les données au montage si déjà authentifié
   useEffect(() => {
     if (authed) { fetchProducts(); refreshOrders(); syncConfigToSupabase(); }
@@ -1565,6 +1602,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   🔁 Sync toutes ({orders.filter(o=>!o.processed).length})
                 </button>
                 <button onClick={refreshOrders} style={{background:"#f0f2f5",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#555"}}>🔄 Actualiser</button>
+                <button onClick={exportOrdersXlsx} style={{background:"#059669",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white"}}>📥 Export Excel</button>
               </div>
             </div>
             {orders.length===0&&(

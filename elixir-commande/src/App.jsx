@@ -205,6 +205,23 @@ export default function App() {
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
+
+  // ── Favoris pharmacie ────────────────────────────────────────────────
+  const favKey = pharmacyCip && pharmacyCip !== "0" ? `favorites_${pharmacyCip}` : "favorites_anon";
+  const [favorites, setFavorites] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(favKey) || "[]")); } catch { return new Set(); }
+  });
+  const [showFavOnly, setShowFavOnly] = useState(false);
+  const [filterStock, setFilterStock] = useState("all"); // "all" | "instock" | "rupture"
+  const [filterRemise, setFilterRemise] = useState(false);
+  const toggleFav = (cip) => {
+    setFavorites(prev => {
+      const next = new Set(prev);
+      if (next.has(cip)) next.delete(cip); else next.add(cip);
+      localStorage.setItem(favKey, JSON.stringify([...next]));
+      return next;
+    });
+  };
   const [flashMsg, setFlashMsg] = useState("");
   const flash = (msg) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(""), 3000); };
 
@@ -654,10 +671,14 @@ export default function App() {
 
 
   const filteredProducts = useMemo(() => {
-    const filtered = (cat?.products || []).filter(p =>
+    let filtered = (cat?.products || []).filter(p =>
       search === "" || p.name.toLowerCase().includes(search.toLowerCase()) ||
       (p.cip && p.cip.includes(search))
     );
+    if (showFavOnly) filtered = filtered.filter(p => p.cip && favorites.has(p.cip));
+    if (filterStock === "instock") filtered = filtered.filter(p => !p.cip || !stockData[p.cip] || stockData[p.cip]?.dispo > 0);
+    if (filterStock === "rupture") filtered = filtered.filter(p => p.cip && stockData[p.cip]?.dispo === 0);
+    if (filterRemise) filtered = filtered.filter(p => p.pct > 0 || p.remise_eur > 0);
     if (activeTab === "otc" || activeTab === "nr") {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
@@ -673,7 +694,7 @@ export default function App() {
       });
     }
     return filtered;
-  }, [cat?.products, search, activeTab]);
+  }, [cat?.products, search, activeTab, showFavOnly, favorites, filterStock, filterRemise, stockData]);
 
   // Split grille/tableau
   const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
@@ -1518,6 +1539,36 @@ export default function App() {
                   outline: "none", boxSizing: "border-box"
                 }}
               />
+              {/* Filters */}
+              <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
+                <button onClick={() => setShowFavOnly(!showFavOnly)} style={{
+                  background: showFavOnly ? "#fef3c7" : "rgba(255,255,255,0.08)",
+                  border: showFavOnly ? "1px solid #fbbf24" : "1px solid rgba(255,255,255,0.15)",
+                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:showFavOnly?700:400,
+                  color: showFavOnly ? "#92400e" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                }}>{showFavOnly ? "⭐ Favoris" : "☆ Favoris"} ({favorites.size})</button>
+
+                <button onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={{
+                  background: filterStock === "instock" ? "#d1fae5" : "rgba(255,255,255,0.08)",
+                  border: filterStock === "instock" ? "1px solid #34d399" : "1px solid rgba(255,255,255,0.15)",
+                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "instock"?700:400,
+                  color: filterStock === "instock" ? "#065f46" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                }}>✓ En stock</button>
+
+                <button onClick={() => setFilterStock(filterStock === "rupture" ? "all" : "rupture")} style={{
+                  background: filterStock === "rupture" ? "#fee2e2" : "rgba(255,255,255,0.08)",
+                  border: filterStock === "rupture" ? "1px solid #fca5a5" : "1px solid rgba(255,255,255,0.15)",
+                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "rupture"?700:400,
+                  color: filterStock === "rupture" ? "#991b1b" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                }}>⚠ Ruptures</button>
+
+                <button onClick={() => setFilterRemise(!filterRemise)} style={{
+                  background: filterRemise ? "#dbeafe" : "rgba(255,255,255,0.08)",
+                  border: filterRemise ? "1px solid #93c5fd" : "1px solid rgba(255,255,255,0.15)",
+                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterRemise?700:400,
+                  color: filterRemise ? "#1e40af" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                }}>💰 Avec remise</button>
+              </div>
             </div>
           </div>
 
@@ -1787,6 +1838,7 @@ export default function App() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: cat.color }}>
+                    <th style={{ color: "white", padding: "12px 4px 12px 10px", fontSize: 11, width: 28 }}>★</th>
                     {cat.columns.map(col => (
                       <th key={col} style={{
                         color: "white", padding: "12px 14px", textAlign: "left",
@@ -1815,6 +1867,13 @@ export default function App() {
                         onMouseEnter={e => e.currentTarget.style.background = `${cat.accent}10`}
                         onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? "white" : "#fafbfc"}
                       >
+                        {/* Favori */}
+                        <td style={{ ...tdStyle, width:28, padding:"6px 2px 6px 10px", cursor:"pointer" }}
+                          onClick={() => p.cip && toggleFav(p.cip)}>
+                          <span style={{ fontSize:14, color: favorites.has(p.cip) ? "#f59e0b" : "#ddd" }}>
+                            {favorites.has(p.cip) ? "★" : "☆"}
+                          </span>
+                        </td>
                         {/* Render cells based on category */}
                         {activeTab === "expert" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
