@@ -528,7 +528,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   };
 
   const clearEdit = async (p) => {
-    // Remet les valeurs d'origine (supprime les overrides = recharge depuis catalog-data)
+    // Remet les valeurs d'origine (re-sync depuis Supabase)
     flash("↩️ Fonctionnalité disponible via re-migration");
   };
 

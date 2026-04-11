@@ -376,17 +376,9 @@ export default function App() {
     if (stockRefreshing) return;
     setStockRefreshing(true);
     try {
-      // Lance le refresh Odoo en background (retourne 202 immédiatement)
-      await fetch("/.netlify/functions/stock-refresh-background", { signal: AbortSignal.timeout(5000) });
-      console.log("[stock] Refresh Odoo lancé en background, attente 40s…");
-      // Attend 40s que la fonction background ait fini d'écrire dans Supabase
-      await new Promise(r => setTimeout(r, 40000));
-      // Relit les stocks depuis Supabase
       await fetchStock();
     } catch(e) {
       console.warn("[stock] refresh error:", e.message);
-      // En cas d'erreur réseau, on relit quand même
-      await fetchStock();
     } finally {
       setStockRefreshing(false);
     }
