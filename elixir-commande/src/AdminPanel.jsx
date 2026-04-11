@@ -783,6 +783,55 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (authed) { fetchProducts(); refreshOrders(); syncConfigToSupabase(); }
   }, [authed]);
 
+  // ── Notifications push : polling 30s + Notification API ──────────────
+  const lastOrderCountRef = useRef(orders.length);
+  const notifSoundRef = useRef(null);
+
+  // Demander la permission au montage
+  useEffect(() => {
+    if (authed && "Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, [authed]);
+
+  // Polling toutes les 30s
+  useEffect(() => {
+    if (!authed) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await adminFetch("/.netlify/functions/order-list");
+        const json = await res.json();
+        if (!json.orders) return;
+        const newOrders = json.orders.filter(o => !orders.some(existing => existing.id === o.id));
+        if (newOrders.length > 0) {
+          setOrders(json.orders);
+          // Browser notification
+          if ("Notification" in window && Notification.permission === "granted") {
+            newOrders.forEach(o => {
+              new Notification("🛒 Nouvelle commande Elixir", {
+                body: `${o.pharmacyName} — ${parseFloat(o.totalHt || 0).toFixed(2)} € HT · ${o.nbLignes || "?"} ligne(s)`,
+                icon: "/favicon.ico",
+                tag: `order-${o.id}`,
+              });
+            });
+          }
+          // Sound
+          try {
+            if (!notifSoundRef.current) {
+              notifSoundRef.current = new Audio("data:audio/wav;base64,UklGRl9vT19teleVBATUxJU1QAAAAGgABABwWBAAYFgQAAgAQAGRhdGE7b09v" +
+                "AAAAAP//AQACAAMABAAFAAYAB//+//3//P/7//r/+f/4//f/+P/5//r/+//8//3//v8AAAEAAQACAAMABQAGAAYA");
+            }
+            notifSoundRef.current.play().catch(() => {});
+          } catch {}
+          // Flash
+          flash(`🔔 ${newOrders.length} nouvelle(s) commande(s) !`);
+        }
+        lastOrderCountRef.current = json.orders.length;
+      } catch {}
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [authed, orders, adminFetch]);
+
   const downloadCsv = (order) => {
     // Build a CIP lookup from all catalog sections (name → cip, and cip → cip)
     const cipLookup = {};

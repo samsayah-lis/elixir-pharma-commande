@@ -2,6 +2,7 @@ import { getCors } from "./cors.js";
 // Sauvegarde une commande dans Supabase + décrémentation stock (non-bloquante)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
+const NOTIFY_WEBHOOK = process.env.NOTIFY_WEBHOOK_URL || ""; // URL webhook pour notifications (Signal, Slack, Zapier...)
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -50,6 +51,37 @@ export const handler = async (event) => {
     }
 
     console.log(`[order-save] ✓ ${orderId} (${order.pharmacyName}, source=${row.source})`);
+
+    // ── Notification webhook (fire-and-forget) ────────────────────────
+    if (NOTIFY_WEBHOOK) {
+      fetch(NOTIFY_WEBHOOK, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "new_order",
+          id: orderId,
+          pharmacy: order.pharmacyName,
+          email: order.pharmacyEmail,
+          total: order.totalHt,
+          lignes: order.nbLignes || (Array.isArray(order.items) ? order.items.length : 0),
+          source: row.source,
+          text: `🛒 Nouvelle commande : ${order.pharmacyName} — ${parseFloat(order.totalHt || 0).toFixed(2)} € HT (${order.nbLignes || "?"} lignes)`,
+        }),
+      }).catch(e => console.warn("[notify]", e.message));
+    }
+
+    // ── Notification in-app (stockée en Supabase) ─────────────────────
+    fetch(`${SUPABASE_URL}/rest/v1/ec_notifications`, {
+      method: "POST",
+      headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json", "Prefer": "return=minimal" },
+      body: JSON.stringify({
+        type: "new_order",
+        title: `Commande de ${order.pharmacyName}`,
+        body: `${parseFloat(order.totalHt || 0).toFixed(2)} € HT · ${order.nbLignes || "?"} ligne(s)`,
+        data: { order_id: orderId, pharmacy: order.pharmacyName, total: order.totalHt },
+        read: false,
+      }),
+    }).catch(() => {});
 
     // ── Décrémentation stock — fire-and-forget (non-bloquant) ──────────
     // On ne bloque PAS la réponse pour le client
