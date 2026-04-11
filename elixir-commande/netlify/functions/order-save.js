@@ -90,24 +90,18 @@ export const handler = async (event) => {
     try {
       const items = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
       if (Array.isArray(items)) {
-        // Décrémente en parallèle (max 5 en même temps)
+        // Décrémente atomiquement via RPC Supabase (pas de race condition)
         const batch = items.filter(i => (i.cip || i.CIP || i.CIP13) && parseInt(i.qty || i.quantite || 0) > 0);
         for (let i = 0; i < batch.length; i += 5) {
           await Promise.all(batch.slice(i, i + 5).map(async (item) => {
             const cip = item.cip || item.CIP || item.CIP13;
             const qty = parseInt(item.qty || item.quantite || 0);
             try {
-              const getRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}&select=available`,
-                { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } });
-              const rows = await getRes.json();
-              if (Array.isArray(rows) && rows.length > 0) {
-                const newAvailable = Math.max(0, (parseInt(rows[0].available) || 0) - qty);
-                await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}`, {
-                  method: "PATCH",
-                  headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
-                  body: JSON.stringify({ available: newAvailable, in_stock: newAvailable > 0 }),
-                });
-              }
+              await fetch(`${SUPABASE_URL}/rest/v1/rpc/decrement_stock`, {
+                method: "POST",
+                headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+                body: JSON.stringify({ p_cip: cip, p_qty: qty }),
+              });
             } catch (e) { /* ignore per-item errors */ }
           }));
         }
