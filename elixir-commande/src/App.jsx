@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import emailjs from "@emailjs/browser";
-import { EMAILJS_CONFIG, DEFAULT_RECIPIENT } from "./emailjsConfig";
 import AdminPanel from "./AdminPanel";
+
+const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
@@ -791,12 +791,12 @@ export default function App() {
     if (!ncName.trim()) { setOnboardingError("Veuillez saisir le nom de la pharmacie."); return; }
     setOnboardingError("");
     setNcSending(true);
-    // Send via EmailJS to notify Elixir Pharma of new prospect
+    // Notifie Elixir Pharma du nouveau prospect Elixir Pharma of new prospect
     try {
-      await emailjs.send(
-        EMAILJS_CONFIG.SERVICE_ID,
-        EMAILJS_CONFIG.TEMPLATE_ID,
-        {
+      await fetch("/.netlify/functions/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template_params: {
           to_email: DEFAULT_RECIPIENT,
           pharmacy_name: ncName,
           pharmacy_email: emailInput.trim().toLowerCase(),
@@ -806,9 +806,8 @@ export default function App() {
           total_ht: "—",
           nb_lignes: 0,
           nb_unites: 0,
-        },
-        EMAILJS_CONFIG.PUBLIC_KEY
-      );
+        }}),
+      });
     } catch(e) { console.error(e); }
     setNcSending(false);
     setNcSent(true);
@@ -856,12 +855,11 @@ export default function App() {
     };
 
     try {
-      await emailjs.send(
-        EMAILJS_CONFIG.SERVICE_ID,
-        EMAILJS_CONFIG.TEMPLATE_ID,
-        templateParams,
-        EMAILJS_CONFIG.PUBLIC_KEY
-      );
+      await fetch("/.netlify/functions/send-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ template_params: templateParams }),
+      });
       setSendStatus("success");
       // Save order to Supabase via Netlify Function
       try {
@@ -930,7 +928,7 @@ export default function App() {
         setCartOpen(false);
       }, 3000);
     } catch (err) {
-      console.error("EmailJS error:", err);
+      console.error("[send-email] error:", err);
       setSendStatus("error");
       setTimeout(() => setSendStatus(null), 5000);
     }
