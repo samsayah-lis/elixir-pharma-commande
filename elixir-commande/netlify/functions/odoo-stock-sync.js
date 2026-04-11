@@ -128,7 +128,6 @@ export const handler = async (event) => {
           body: JSON.stringify({ key: "cip_to_price", value: JSON.stringify(cipToPrice), updated_at: new Date().toISOString() }) }),
       ]);
 
-      console.log(`[stock-sync] prep: ${excludedLocIds.size} locs exclues, ${Object.keys(pidMap).length} pid→cip, ${Object.keys(cipToPrice).length} cip→price`);
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "stock_prep", excluded_locations: excludedLocIds.size,
         pid_mappings: Object.keys(pidMap).length, price_mappings: Object.keys(cipToPrice).length,
@@ -175,7 +174,6 @@ export const handler = async (event) => {
         if (!stockByCip[cip]) stockByCip[cip] = 0;
         stockByCip[cip] += parseFloat(q.quantity || 0) - parseFloat(q.reserved_quantity || 0);
       });
-      console.log(`[stock-sync] ${quantsExcluded} quants exclus sur ${allQuants.length}`);
 
       // Sauver stock_map dans kv_store
       await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {

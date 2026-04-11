@@ -96,9 +96,7 @@ function parse(xml) {
 
 export async function authenticate() {
   const body = buildCall("authenticate", [ODOO_DB, ODOO_USER, ODOO_KEY, {}]);
-  console.log("[odoo-auth] XML:", body.substring(0, 300));
   const xml = await post("/xmlrpc/2/common", body);
-  console.log("[odoo-auth] Response:", xml.substring(0, 200));
   const uid = parse(xml);
   if (!uid || uid === 0) throw new Error("Odoo auth échouée — variables ODOO_* manquantes dans Netlify");
   return uid;
@@ -107,8 +105,6 @@ export async function authenticate() {
 export async function odooCall(uid, model, method, domain, kwargs) {
   const kw = kwargs || {};
   const body = buildCall("execute_kw", [ODOO_DB, uid, ODOO_KEY, model, method, [domain], kw]);
-  console.log("[odoo-call]", model, method, "XML:", body.substring(0, 400));
   const xml = await post("/xmlrpc/2/object", body);
-  console.log("[odoo-call] Response:", xml.substring(0, 300));
   return parse(xml);
 }

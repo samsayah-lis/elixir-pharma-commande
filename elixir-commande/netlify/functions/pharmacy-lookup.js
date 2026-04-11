@@ -36,7 +36,6 @@ export const handler = async (event) => {
 
   // Si le cache a un CIP valide, on le renvoie
   if (cached && validCip(cached.cip)) {
-    console.log(`[pharmacy-lookup] ✓ Supabase cache: ${cached.name} (CIP=${cached.cip})`);
     return { statusCode: 200, headers: cors, body: JSON.stringify({
       found: true,
       pharmacy: { name: cached.name, email: cached.email, cip: cached.cip, street: cached.street||"", cp: cached.cp||"", ville: cached.ville||"", tel: cached.tel||"" }
@@ -44,7 +43,6 @@ export const handler = async (event) => {
   }
 
   // ── 2. Cache absent ou CIP invalide → interroger Odoo ────────────────────
-  console.log(`[pharmacy-lookup] ${cached ? "Cache CIP invalide" : "Pas en cache"}, fallback Odoo pour: ${emailNorm}`);
   try {
     const uid = await authenticate();
     const partners = await odooCall(uid, "res.partner", "search_read",
@@ -54,7 +52,6 @@ export const handler = async (event) => {
 
     const match = (partners || []).find(p => p.email?.trim().toLowerCase() === emailNorm);
     if (!match) {
-      console.log(`[pharmacy-lookup] Introuvable dans Odoo: ${emailNorm}`);
       return { statusCode: 200, headers: cors, body: JSON.stringify({ found: false }) };
     }
 
@@ -78,7 +75,6 @@ export const handler = async (event) => {
       body: JSON.stringify(pharmacy),
     });
 
-    console.log(`[pharmacy-lookup] ✓ Odoo→cache: ${pharmacy.name} (CIP=${pharmacy.cip})`);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ found: true, pharmacy }) };
 
   } catch (e) {

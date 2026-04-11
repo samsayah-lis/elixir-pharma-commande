@@ -52,7 +52,6 @@ export const handler = async (event) => {
       return { statusCode: 500, headers: cors, body: JSON.stringify({ success: false, error: err }) };
     }
 
-    console.log(`[order-save] ✓ ${orderId} (${order.pharmacyName}, source=${row.source})`);
 
     // ── Notification webhook (fire-and-forget) ────────────────────────
     if (NOTIFY_WEBHOOK) {

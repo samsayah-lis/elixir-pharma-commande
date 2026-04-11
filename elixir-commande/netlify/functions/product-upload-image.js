@@ -70,6 +70,5 @@ export const handler = async (event) => {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "DB update: " + err }) };
   }
 
-  console.log(`[product-upload-image] ✓ ${cip} → ${image_url}`);
   return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, image_url }) };
 };

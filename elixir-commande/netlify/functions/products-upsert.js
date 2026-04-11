@@ -77,6 +77,5 @@ export const handler = async (event) => {
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
   }
 
-  console.log(`[products-upsert] ✓ ${action || "update"} — ${product.name} (${product.cip})`);
   return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
 };

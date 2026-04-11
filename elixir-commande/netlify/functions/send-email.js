@@ -47,7 +47,6 @@ export const handler = async (event) => {
       return { statusCode: 500, headers: cors, body: JSON.stringify({ error: "Erreur envoi email" }) };
     }
 
-    console.log(`[send-email] ✓ email envoyé (${template_params.pharmacy_name || "?"})`);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
   } catch (e) {
     console.error("[send-email]", e.message);

@@ -45,7 +45,6 @@ async function computeAssociations() {
         body: JSON.stringify(associations.slice(i, i + 100))
       });
   }
-  console.log(`[ml] ✓ ${associations.length} associations depuis ${N} commandes`);
   return { computed: associations.length, baskets: N };
 }
 
@@ -102,7 +101,6 @@ async function computePatterns() {
         body: JSON.stringify(patterns.slice(i, i + 100))
       });
 
-  console.log(`[ml] ✓ ${patterns.length} patterns pharmacie`);
   return { computed: patterns.length };
 }
 
@@ -176,7 +174,6 @@ async function computeRuptures() {
 
   const critical = predictions.filter(p => p.level === "critical").length;
   const rupture = predictions.filter(p => p.level === "rupture").length;
-  console.log(`[ml] ✓ ${predictions.length} prédictions rupture (${rupture} ruptures, ${critical} critiques)`);
   return { computed: predictions.length, rupture, critical, warning: predictions.length - rupture - critical };
 }
 
@@ -241,7 +238,6 @@ async function computeSegments() {
 
   const bySegment = {};
   segments.forEach(s => { bySegment[s.segment] = (bySegment[s.segment] || 0) + 1; });
-  console.log(`[ml] ✓ ${segments.length} pharmacies segmentées`, bySegment);
   return { computed: segments.length, segments: bySegment };
 }
 

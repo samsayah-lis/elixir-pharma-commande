@@ -84,7 +84,6 @@ export const handler = async (event) => {
       body: JSON.stringify(row)
     });
     if (!res.ok) return { statusCode: 500, headers: cors, body: JSON.stringify({ error: await res.text() }) };
-    console.log(`[restock-alert] ✓ Alerte créée: ${body.pharmacy_cip} → ${body.cip}`);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
   }
 
