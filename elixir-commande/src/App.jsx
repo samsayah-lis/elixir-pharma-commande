@@ -286,8 +286,12 @@ export default function App() {
     return () => clearTimeout(globalSearchRef.current);
   }, [globalSearch, trackSearch]);
   const [sendStatus, setSendStatus] = useState(null);
-  const [showAdmin, setShowAdmin] = useState(() => sessionStorage.getItem("showAdmin") === "1");
-  useEffect(() => { sessionStorage.setItem("showAdmin", showAdmin ? "1" : "0"); }, [showAdmin]);
+  const [showAdmin, setShowAdmin] = useState(() => window.location.hash === "#admin");
+  useEffect(() => {
+    const onHash = () => setShowAdmin(window.location.hash === "#admin");
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
 
   // Campagnes groupement (config dynamique depuis Supabase)
   const [campaigns, setCampaigns] = useState([]);
@@ -553,7 +557,6 @@ export default function App() {
 
   // Onboarding
   const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
-  const [showAdminLogin, setShowAdminLogin] = useState(false);
   // Onboarding flow: "email" | "confirm" | "new_client"
   const [obStep, setObStep] = useState("email");
   const [emailInput, setEmailInput] = useState("");
@@ -951,9 +954,6 @@ export default function App() {
   const obFooter = (
     <>
       <div style={{ fontSize:11, color:"#bbb", textAlign:"center", marginTop:14 }}>Elixir Pharma · pharmacien@elixirpharma.fr · 01 86 04 39 95</div>
-      <div style={{ textAlign:"center", marginTop:8 }}>
-        <button onClick={() => setShowAdminLogin(true)} style={{ background:"none", border:"none", cursor:"pointer", fontSize:11, color:"#ddd", textDecoration:"underline", padding:0 }}>Accès administrateur</button>
-      </div>
     </>
   );
 
@@ -1042,17 +1042,6 @@ export default function App() {
           <button onClick={() => { setObStep("email"); setOnboardingError(""); }} style={{ width:"100%", background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#999", textDecoration:"underline" }}>← Retour</button>
           {obFooter}
         </div>
-      )}
-
-      {showAdminLogin && (
-        <AdminPanel
-          sectionMeta={SECTION_META}
-          onClose={() => {
-            setShowAdminLogin(false);
-            fetchProducts();
-            try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
-          }}
-        />
       )}
     </div>
   );
@@ -1144,11 +1133,6 @@ export default function App() {
                 color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12
               }}>📋 {isMobile ? "" : "Mes commandes"}</button>
             )}
-            <button onClick={() => setShowAdmin(true)} style={{
-              background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)",
-              color: "rgba(255,255,255,0.5)", borderRadius: 8, padding: "6px 10px",
-              cursor: "pointer", fontSize: 12, title: "Administration"
-            }} title="Administration">{isMobile ? "" : "⚙️"}</button>
             <button onClick={() => setCartOpen(!cartOpen)} style={{
               background: cartCount > 0 ? "#10b981" : "rgba(255,255,255,0.15)",
               border: "none", color: "white", borderRadius: 10, padding: "8px 16px",
@@ -2405,7 +2389,7 @@ export default function App() {
         <AdminPanel
           sectionMeta={SECTION_META}
           onClose={() => {
-            setShowAdmin(false);
+            window.location.hash = "";
             fetchProducts();
             try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
           }}
