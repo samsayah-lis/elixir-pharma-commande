@@ -907,6 +907,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   };
 
   const [mlCompute, setMlCompute] = useState({ running: false, result: null });
+  const [mlRuptures, setMlRuptures] = useState([]);
+  const [mlSegments, setMlSegments] = useState([]);
+
   const runMLCompute = async () => {
     setMlCompute({ running: true, result: null });
     try {
@@ -916,9 +919,23 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       });
       const data = await res.json();
       setMlCompute({ running: false, result: data });
+      // Reload predictions after compute
+      loadMLData();
     } catch (e) {
       setMlCompute({ running: false, result: { error: e.message } });
     }
+  };
+
+  const loadMLData = async () => {
+    try {
+      const [ruptRes, segRes] = await Promise.all([
+        fetch("/.netlify/functions/ml-recommend?mode=ruptures"),
+        fetch("/.netlify/functions/ml-recommend?mode=segments"),
+      ]);
+      const [rupt, seg] = await Promise.all([ruptRes.json(), segRes.json()]);
+      setMlRuptures(rupt.predictions || []);
+      setMlSegments(seg.segments || []);
+    } catch {}
   };
 
   const [dragIdx, setDragIdx] = useState(null);
@@ -2875,18 +2892,30 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 </button>
               </div>
               {mlCompute.result && !mlCompute.result.error && (
-                <div style={{background:"#f0fdf4",borderRadius:10,padding:"12px 16px",border:"1px solid #bbf7d0",display:"flex",gap:20}}>
+                <div style={{background:"#f0fdf4",borderRadius:10,padding:"12px 16px",border:"1px solid #bbf7d0",display:"flex",gap:16,flexWrap:"wrap"}}>
                   <div style={{textAlign:"center"}}>
                     <div style={{fontSize:22,fontWeight:800,color:"#059669"}}>{mlCompute.result.associations?.computed || 0}</div>
-                    <div style={{fontSize:10,color:"#888"}}>Associations cross-sell</div>
+                    <div style={{fontSize:10,color:"#888"}}>Cross-sell</div>
                   </div>
                   <div style={{textAlign:"center"}}>
                     <div style={{fontSize:22,fontWeight:800,color:"#3b82f6"}}>{mlCompute.result.associations?.baskets || 0}</div>
-                    <div style={{fontSize:10,color:"#888"}}>Paniers analysés</div>
+                    <div style={{fontSize:10,color:"#888"}}>Paniers</div>
                   </div>
                   <div style={{textAlign:"center"}}>
                     <div style={{fontSize:22,fontWeight:800,color:"#f59e0b"}}>{mlCompute.result.patterns?.computed || 0}</div>
-                    <div style={{fontSize:10,color:"#888"}}>Patterns pharmacie</div>
+                    <div style={{fontSize:10,color:"#888"}}>Patterns</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#dc2626"}}>{mlCompute.result.ruptures?.rupture || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Ruptures</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#f97316"}}>{mlCompute.result.ruptures?.critical || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Critiques (&lt;7j)</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#8b5cf6"}}>{mlCompute.result.segments?.computed || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Pharmacies segm.</div>
                   </div>
                 </div>
               )}
@@ -2894,6 +2923,65 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 <div style={{background:"#fee2e2",borderRadius:10,padding:"12px 16px",fontSize:12,color:"#dc2626",fontWeight:600}}>{mlCompute.result.error}</div>
               )}
             </div>
+
+            {/* Rupture predictions + Segments — load on demand */}
+            <div style={{display:"flex",gap:8,marginTop:20,marginBottom:12}}>
+              <button onClick={loadMLData}
+                style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                📊 Charger prédictions & segments
+              </button>
+            </div>
+
+            {/* Rupture predictions */}
+            {mlRuptures.length > 0 && (
+              <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#dc2626",marginBottom:4}}>⚠️ Prédictions de rupture</div>
+                <div style={{fontSize:11,color:"#aaa",marginBottom:12}}>Produits dont le stock sera épuisé prochainement (vélocité vente vs stock actuel)</div>
+                <div style={{maxHeight:400,overflowY:"auto"}}>
+                  {mlRuptures.map((r, i) => (
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                      <span style={{
+                        fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 8px",minWidth:60,textAlign:"center",
+                        background: r.level === "rupture" ? "#fee2e2" : r.level === "critical" ? "#fef3c7" : "#dbeafe",
+                        color: r.level === "rupture" ? "#dc2626" : r.level === "critical" ? "#92400e" : "#1e40af",
+                      }}>{r.level === "rupture" ? "RUPTURE" : r.level === "critical" ? `${r.days_before_rupture}j ⚠` : `${r.days_before_rupture}j`}</span>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontWeight:600,fontSize:12,color:"#0f2d3d",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{r.name}</div>
+                        <div style={{fontSize:10,color:"#888"}}>CIP {r.cip} · stock: {r.stock} · {r.velocity} unités/jour · {r.order_count} cmd</div>
+                      </div>
+                      <span style={{fontWeight:700,fontSize:12,color:"#888"}}>{r.list_price ? parseFloat(r.list_price).toFixed(2)+" €" : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pharmacy segments */}
+            {mlSegments.length > 0 && (
+              <div style={{background:"white",borderRadius:14,padding:"20px 24px",border:"1px solid #e8ecf0"}}>
+                <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:4}}>🏷️ Segmentation pharmacies</div>
+                <div style={{fontSize:11,color:"#aaa",marginBottom:12}}>Classement par comportement d'achat — score composite (fréquence, CA, diversité, récence)</div>
+                <div style={{maxHeight:400,overflowY:"auto"}}>
+                  {mlSegments.map((s, i) => {
+                    const segColors = { gros_generaliste:"#059669", specialiste_cher:"#7c3aed", parapharmacie:"#f59e0b", regulier:"#3b82f6", dormant:"#dc2626", nouveau:"#888" };
+                    const segLabels = { gros_generaliste:"Gros généraliste", specialiste_cher:"Spécialiste cher", parapharmacie:"Parapharmacie", regulier:"Régulier", dormant:"Dormant", nouveau:"Nouveau" };
+                    return (
+                      <div key={i} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 0",borderBottom:"1px solid #f5f5f5"}}>
+                        <div style={{width:36,height:36,borderRadius:8,background:`${segColors[s.segment]||"#888"}20`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:14,color:segColors[s.segment]||"#888"}}>{s.score}</div>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{fontWeight:600,fontSize:12,color:"#0f2d3d",display:"flex",alignItems:"center",gap:6}}>
+                            {s.pharmacy_name}
+                            <span style={{fontSize:8,fontWeight:700,borderRadius:4,padding:"1px 6px",background:`${segColors[s.segment]||"#888"}20`,color:segColors[s.segment]||"#888"}}>{segLabels[s.segment]||s.segment}</span>
+                          </div>
+                          <div style={{fontSize:10,color:"#888"}}>{s.total_orders} cmd · {parseFloat(s.total_ca).toFixed(0)} € CA · {s.product_diversity} produits · il y a {s.days_since_last}j</div>
+                        </div>
+                        <span style={{fontWeight:700,fontSize:12,color:"#059669"}}>{parseFloat(s.avg_basket).toFixed(0)} € moy.</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
         )}
 

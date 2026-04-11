@@ -106,6 +106,145 @@ async function computePatterns() {
   return { computed: patterns.length };
 }
 
+// ── RUPTURE PREDICTION : vélocité de vente vs stock actuel ──────────
+async function computeRuptures() {
+  // 1. Charger les commandes des 90 derniers jours
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?select=items,date&date=gte.${since}&order=date.asc`, { headers: { ...H, Range: "0-4999" } });
+  const orders = await res.json();
+  if (!Array.isArray(orders) || orders.length === 0) return { computed: 0, reason: "Pas de commandes récentes" };
+
+  // 2. Calculer la vélocité par CIP (unités/jour)
+  const cipData = {};
+  const now = Date.now();
+  for (const o of orders) {
+    const d = new Date(o.date).getTime();
+    (Array.isArray(o.items) ? o.items : []).forEach(it => {
+      if (!it.cip) return;
+      if (!cipData[it.cip]) cipData[it.cip] = { total_qty: 0, first_date: d, last_date: d, order_count: 0 };
+      cipData[it.cip].total_qty += parseInt(it.qty) || 0;
+      cipData[it.cip].order_count++;
+      if (d < cipData[it.cip].first_date) cipData[it.cip].first_date = d;
+      if (d > cipData[it.cip].last_date) cipData[it.cip].last_date = d;
+    });
+  }
+
+  // 3. Charger le stock actuel
+  const cips = Object.keys(cipData);
+  if (cips.length === 0) return { computed: 0 };
+  const stockMap = {};
+  for (let i = 0; i < cips.length; i += 200) {
+    const batch = cips.slice(i, i + 200);
+    const sRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=in.(${batch.join(",")})&select=cip,name,available,list_price`, { headers: H });
+    const rows = await sRes.json();
+    if (Array.isArray(rows)) rows.forEach(r => { stockMap[r.cip] = r; });
+  }
+
+  // 4. Calculer les prédictions
+  const predictions = [];
+  for (const [cip, data] of Object.entries(cipData)) {
+    const days_span = Math.max(1, (data.last_date - data.first_date) / 86400000);
+    const velocity = data.total_qty / days_span; // unités/jour
+    if (velocity <= 0) continue;
+    const stock = parseInt(stockMap[cip]?.available) || 0;
+    const days_before_rupture = stock > 0 ? Math.round(stock / velocity) : 0;
+    const level = days_before_rupture <= 0 ? "rupture" : days_before_rupture <= 7 ? "critical" : days_before_rupture <= 14 ? "warning" : "ok";
+    if (level === "ok") continue; // ne stocker que les alertes
+
+    predictions.push({
+      cip,
+      name: stockMap[cip]?.name || "",
+      stock,
+      velocity: Math.round(velocity * 100) / 100,
+      days_before_rupture,
+      level,
+      order_count: data.order_count,
+      list_price: stockMap[cip]?.list_price || 0,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  // 5. Sauver dans Supabase
+  if (predictions.length > 0) {
+    await fetch(`${SUPABASE_URL}/rest/v1/ec_rupture_predictions?updated_at=lt.${new Date().toISOString()}`, { method: "DELETE", headers: H });
+    for (let i = 0; i < predictions.length; i += 100)
+      await fetch(`${SUPABASE_URL}/rest/v1/ec_rupture_predictions`, {
+        method: "POST", headers: { ...H, Prefer: "return=minimal" },
+        body: JSON.stringify(predictions.slice(i, i + 100)),
+      });
+  }
+
+  const critical = predictions.filter(p => p.level === "critical").length;
+  const rupture = predictions.filter(p => p.level === "rupture").length;
+  console.log(`[ml] ✓ ${predictions.length} prédictions rupture (${rupture} ruptures, ${critical} critiques)`);
+  return { computed: predictions.length, rupture, critical, warning: predictions.length - rupture - critical };
+}
+
+// ── SEGMENTATION K-MEANS (simplifié : scoring + clustering) ────────
+async function computeSegments() {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?select=pharmacy_cip,pharmacy_name,total_ht,items,date&pharmacy_cip=not.is.null&order=date.asc`, { headers: { ...H, Range: "0-9999" } });
+  const orders = await res.json();
+  if (!Array.isArray(orders) || orders.length < 5) return { computed: 0 };
+
+  const pharma = {};
+  for (const o of orders) {
+    const pc = o.pharmacy_cip;
+    if (!pc || pc === "0") continue;
+    if (!pharma[pc]) pharma[pc] = { name: o.pharmacy_name, orders: [], total_ca: 0, cips: new Set() };
+    pharma[pc].orders.push(o.date);
+    pharma[pc].total_ca += parseFloat(o.total_ht) || 0;
+    (Array.isArray(o.items) ? o.items : []).forEach(it => { if (it.cip) pharma[pc].cips.add(it.cip); });
+  }
+
+  const segments = [];
+  for (const [cip, data] of Object.entries(pharma)) {
+    const n = data.orders.length;
+    const ca = data.total_ca;
+    const panier = ca / n;
+    const diversite = data.cips.size;
+    const dates = data.orders.map(d => new Date(d).getTime()).sort();
+    const recence = Math.round((Date.now() - dates[dates.length - 1]) / 86400000);
+    const freq = dates.length >= 2 ? Math.round((dates[dates.length - 1] - dates[0]) / 86400000 / (n - 1)) : null;
+
+    // Score composite (0-100)
+    const score_freq = Math.min(100, n * 10); // 10 commandes = 100
+    const score_ca = Math.min(100, ca / 50); // 5000€ = 100
+    const score_div = Math.min(100, diversite * 5); // 20 produits = 100
+    const score_rec = Math.max(0, 100 - recence * 2); // 0j = 100, 50j = 0
+    const score = Math.round((score_freq + score_ca + score_div + score_rec) / 4);
+
+    // Segment
+    let segment;
+    if (n <= 1) segment = "nouveau";
+    else if (ca > 3000 && diversite > 10) segment = "gros_generaliste";
+    else if (panier > 500) segment = "specialiste_cher";
+    else if (diversite > 8) segment = "parapharmacie";
+    else if (recence > 30) segment = "dormant";
+    else segment = "regulier";
+
+    segments.push({
+      pharmacy_cip: cip, pharmacy_name: data.name, segment, score,
+      total_orders: n, total_ca: Math.round(ca * 100) / 100, avg_basket: Math.round(panier * 100) / 100,
+      product_diversity: diversite, days_since_last: recence, avg_interval_days: freq,
+      updated_at: new Date().toISOString(),
+    });
+  }
+
+  if (segments.length > 0) {
+    await fetch(`${SUPABASE_URL}/rest/v1/ec_pharmacy_segments?updated_at=lt.${new Date().toISOString()}`, { method: "DELETE", headers: H });
+    for (let i = 0; i < segments.length; i += 100)
+      await fetch(`${SUPABASE_URL}/rest/v1/ec_pharmacy_segments`, {
+        method: "POST", headers: { ...H, Prefer: "return=minimal" },
+        body: JSON.stringify(segments.slice(i, i + 100)),
+      });
+  }
+
+  const bySegment = {};
+  segments.forEach(s => { bySegment[s.segment] = (bySegment[s.segment] || 0) + 1; });
+  console.log(`[ml] ✓ ${segments.length} pharmacies segmentées`, bySegment);
+  return { computed: segments.length, segments: bySegment };
+}
+
 // ── QUERY helpers ───────────────────────────────────────────────────────
 async function getRecs(cip, limit = 5) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/product_associations?or=(cip_a.eq.${encodeURIComponent(cip)},cip_b.eq.${encodeURIComponent(cip)})&order=lift.desc&limit=${limit}`, { headers: H });
@@ -149,10 +288,26 @@ export const handler = async (event) => {
     if (auth.error) return auth.error;
     const body = JSON.parse(event.body || "{}");
     if (body.action === "compute") {
-      const [assoc, pats] = await Promise.all([computeAssociations(), computePatterns()]);
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, associations: assoc, patterns: pats }) };
+      const [assoc, pats, rupt, seg] = await Promise.all([
+        computeAssociations(), computePatterns(), computeRuptures(), computeSegments()
+      ]);
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, associations: assoc, patterns: pats, ruptures: rupt, segments: seg }) };
     }
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "action inconnue" }) };
+  }
+
+  // GET ruptures
+  if (params.mode === "ruptures") {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/ec_rupture_predictions?order=days_before_rupture.asc&limit=50`, { headers: H });
+    const data = await res.json();
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ predictions: Array.isArray(data) ? data : [] }) };
+  }
+
+  // GET segments
+  if (params.mode === "segments") {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/ec_pharmacy_segments?order=score.desc&limit=100`, { headers: H });
+    const data = await res.json();
+    return { statusCode: 200, headers: cors, body: JSON.stringify({ segments: Array.isArray(data) ? data : [] }) };
   }
 
   if (params.mode === "reorder" && params.pharmacy_cip) {
