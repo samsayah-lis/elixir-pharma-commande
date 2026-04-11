@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import ShortExpiry from "./components/ShortExpiry";
 import AdminSearchML from "./components/AdminSearchML";
+import AdminOrderKPIs from "./components/AdminOrderKPIs";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
@@ -1576,64 +1577,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* ── ORDERS TAB ── */}
         {tab==="orders"&&(
           <>
-            {/* KPIs */}
-            {orders.length > 0 && (() => {
-              const totalCA = orders.reduce((s, o) => s + (parseFloat(o.totalHt) || 0), 0);
-              const panierMoyen = totalCA / orders.length;
-              const today = new Date().toISOString().slice(0, 10);
-              const todayOrders = orders.filter(o => o.date?.startsWith(today));
-              const todayCA = todayOrders.reduce((s, o) => s + (parseFloat(o.totalHt) || 0), 0);
-              // Top pharmacies
-              const pharmCA = {};
-              orders.forEach(o => { pharmCA[o.pharmacyName] = (pharmCA[o.pharmacyName] || 0) + (parseFloat(o.totalHt) || 0); });
-              const topPharm = Object.entries(pharmCA).sort((a, b) => b[1] - a[1]).slice(0, 5);
-              // Top produits
-              const prodQty = {};
-              orders.forEach(o => { (Array.isArray(o.items) ? o.items : []).forEach(it => {
-                if (it.name) prodQty[it.name] = (prodQty[it.name] || 0) + (parseInt(it.qty) || 0);
-              }); });
-              const topProd = Object.entries(prodQty).sort((a, b) => b[1] - a[1]).slice(0, 5);
-              return (
-                <div style={{marginBottom:20}}>
-                  {/* KPI cards */}
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit, minmax(140px, 1fr))",gap:10,marginBottom:16}}>
-                    {[
-                      { label:"CA total", value:totalCA.toFixed(0)+" €", color:"#059669" },
-                      { label:"Commandes", value:orders.length, color:"#3b82f6" },
-                      { label:"Panier moyen", value:panierMoyen.toFixed(0)+" €", color:"#f59e0b" },
-                      { label:"Aujourd'hui", value:todayOrders.length+" cmd · "+todayCA.toFixed(0)+" €", color:"#8b5cf6" },
-                      { label:"En attente", value:orders.filter(o=>!o.processed).length, color:"#dc2626" },
-                    ].map((kpi, i) => (
-                      <div key={i} style={{background:"white",borderRadius:12,padding:"14px 16px",border:"1px solid #e8ecf0",textAlign:"center"}}>
-                        <div style={{fontSize:22,fontWeight:800,color:kpi.color}}>{kpi.value}</div>
-                        <div style={{fontSize:10,color:"#888",fontWeight:600,marginTop:2}}>{kpi.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  {/* Top pharmacies + produits */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-                    <div style={{background:"white",borderRadius:12,padding:"14px 16px",border:"1px solid #e8ecf0"}}>
-                      <div style={{fontWeight:700,fontSize:12,color:"#0f2d3d",marginBottom:8}}>🏥 Top pharmacies (CA)</div>
-                      {topPharm.map(([name, ca], i) => (
-                        <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderBottom:"1px solid #f5f5f5"}}>
-                          <span style={{color:i<3?"#0f2d3d":"#888",fontWeight:i<3?600:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{name}</span>
-                          <span style={{fontWeight:700,color:"#059669",flexShrink:0,marginLeft:8}}>{ca.toFixed(0)} €</span>
-                        </div>
-                      ))}
-                    </div>
-                    <div style={{background:"white",borderRadius:12,padding:"14px 16px",border:"1px solid #e8ecf0"}}>
-                      <div style={{fontWeight:700,fontSize:12,color:"#0f2d3d",marginBottom:8}}>📦 Top produits (quantité)</div>
-                      {topProd.map(([name, qty], i) => (
-                        <div key={i} style={{display:"flex",justifyContent:"space-between",fontSize:11,padding:"3px 0",borderBottom:"1px solid #f5f5f5"}}>
-                          <span style={{color:i<3?"#0f2d3d":"#888",fontWeight:i<3?600:400,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{name}</span>
-                          <span style={{fontWeight:700,color:"#3b82f6",flexShrink:0,marginLeft:8}}>×{qty}</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            {orders.length > 0 && <AdminOrderKPIs orders={orders} />}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <div style={{fontSize:12,color:"#666"}}>
                 <span style={{fontWeight:700,color:"#0f2d3d"}}>{orders.filter(o=>!o.processed).length}</span> en attente · <span style={{color:"#888"}}>{orders.filter(o=>o.processed).length} traitée(s)</span>
