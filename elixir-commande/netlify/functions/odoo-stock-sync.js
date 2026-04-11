@@ -212,7 +212,7 @@ export const handler = async (event) => {
       let updated = 0;
       for (const cip of batch) {
         const available = Math.round(Math.max(0, stockByCip[cip]));
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}`, {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}`, {
           method: "PATCH", headers: SB,
           body: JSON.stringify({ available, in_stock: available > 0 }),
         });

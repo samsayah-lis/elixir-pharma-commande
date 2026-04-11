@@ -63,12 +63,12 @@ export const handler = async (event) => {
             const cip = item.cip || item.CIP || item.CIP13;
             const qty = parseInt(item.qty || item.quantite || 0);
             try {
-              const getRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}&select=available`,
+              const getRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}&select=available`,
                 { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } });
               const rows = await getRes.json();
               if (Array.isArray(rows) && rows.length > 0) {
                 const newAvailable = Math.max(0, (parseInt(rows[0].available) || 0) - qty);
-                await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${cip}`, {
+                await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}`, {
                   method: "PATCH",
                   headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
                   body: JSON.stringify({ available: newAvailable, in_stock: newAvailable > 0 }),

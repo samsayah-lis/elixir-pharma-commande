@@ -20,7 +20,7 @@ export const handler = async (event) => {
   // ── GET : récupère toutes les lignes du groupement ──
   if (event.httpMethod === "GET") {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${fournisseur}&select=*`,
+      `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&select=*`,
       { headers: H }
     );
     const rows = await res.json();
@@ -38,7 +38,7 @@ export const handler = async (event) => {
     if (qty === 0) {
       // Supprimer la ligne
       await fetch(
-        `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${fournisseur}&cip=eq.${cip}&pharmacy_cip=eq.${pharmacy_cip}`,
+        `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&cip=eq.${encodeURIComponent(cip)}&pharmacy_cip=eq.${encodeURIComponent(pharmacy_cip)}`,
         { method: "DELETE", headers: H }
       );
     } else {
@@ -56,7 +56,7 @@ export const handler = async (event) => {
     const { pharmacy_cip } = params;
     if (!pharmacy_cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "pharmacy_cip requis" }) };
     await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${fournisseur}&pharmacy_cip=eq.${pharmacy_cip}`,
+      `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&pharmacy_cip=eq.${encodeURIComponent(pharmacy_cip)}`,
       { method: "DELETE", headers: H }
     );
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };

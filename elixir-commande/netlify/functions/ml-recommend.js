@@ -108,7 +108,7 @@ async function computePatterns() {
 
 // ── QUERY helpers ───────────────────────────────────────────────────────
 async function getRecs(cip, limit = 5) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/product_associations?or=(cip_a.eq.${cip},cip_b.eq.${cip})&order=lift.desc&limit=${limit}`, { headers: H });
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/product_associations?or=(cip_a.eq.${encodeURIComponent(cip)},cip_b.eq.${encodeURIComponent(cip)})&order=lift.desc&limit=${limit}`, { headers: H });
   const rows = await res.json();
   if (!Array.isArray(rows) || rows.length === 0) return [];
   const recs = rows.map(r => ({ cip: r.cip_a === cip ? r.cip_b : r.cip_a, lift: r.lift, confidence: r.confidence }));
@@ -120,7 +120,7 @@ async function getRecs(cip, limit = 5) {
 }
 
 async function getReorder(pharmacyCip, limit = 20) {
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/pharmacy_patterns?pharmacy_cip=eq.${pharmacyCip}&confidence=gte.0.4&order=confidence.desc,avg_qty.desc&limit=${limit}`, { headers: H });
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/pharmacy_patterns?pharmacy_cip=eq.${encodeURIComponent(pharmacyCip)}&confidence=gte.0.4&order=confidence.desc,avg_qty.desc&limit=${limit}`, { headers: H });
   const pats = await res.json();
   if (!Array.isArray(pats) || pats.length === 0) return [];
   const cipList = pats.map(p => p.cip).join(",");

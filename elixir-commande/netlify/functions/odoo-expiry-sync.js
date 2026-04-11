@@ -102,7 +102,7 @@ export const handler = async (event) => {
         })).filter(l => l.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry));
 
         if (parsed.length > 0) {
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${prod.cip}`, {
+          const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(prod.cip)}`, {
             method: "PATCH", headers: SB,
             body: JSON.stringify({ earliest_expiry: parsed[0].expiry, lots: JSON.stringify(parsed.slice(0, 10)), updated_at: now }),
           });

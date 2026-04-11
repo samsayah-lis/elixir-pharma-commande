@@ -49,7 +49,7 @@ export const handler = async (event) => {
     for (const p of products) {
       const info = pidInfo[p.odoo_pid];
       if (!info) continue;
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${p.cip}`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {
         method: "PATCH", headers: SB,
         body: JSON.stringify({ odoo_tmpl_id: info.tmpl, categ_id: info.categ }),
       });

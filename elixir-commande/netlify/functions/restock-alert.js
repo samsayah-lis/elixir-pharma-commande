@@ -26,7 +26,7 @@ export const handler = async (event) => {
     // Alertes d'une pharmacie
     if (params.pharmacy_cip) {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/restock_alerts?pharmacy_cip=eq.${params.pharmacy_cip}&select=*`,
+        `${SUPABASE_URL}/rest/v1/restock_alerts?pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}&select=*`,
         { headers: H }
       );
       const rows = await res.json();
@@ -36,7 +36,7 @@ export const handler = async (event) => {
     // Alertes pour un produit
     if (params.cip) {
       const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/restock_alerts?cip=eq.${params.cip}&select=*`,
+        `${SUPABASE_URL}/rest/v1/restock_alerts?cip=eq.${encodeURIComponent(params.cip)}&select=*`,
         { headers: H }
       );
       const rows = await res.json();
@@ -94,7 +94,7 @@ export const handler = async (event) => {
       return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "pharmacy_cip et cip requis" }) };
     }
     await fetch(
-      `${SUPABASE_URL}/rest/v1/restock_alerts?pharmacy_cip=eq.${params.pharmacy_cip}&cip=eq.${params.cip}`,
+      `${SUPABASE_URL}/rest/v1/restock_alerts?pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}&cip=eq.${encodeURIComponent(params.cip)}`,
       { method: "DELETE", headers: H }
     );
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };

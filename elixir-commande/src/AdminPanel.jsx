@@ -734,7 +734,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const refreshOrders = async () => {
     setOrdersLoading(true);
     try {
-      const res = await fetch("/.netlify/functions/order-list");
+      const res = await adminFetch("/.netlify/functions/order-list");
       const json = await res.json();
       if (json.orders) setOrders(json.orders);
     } catch(e) { console.warn("[order-list] erreur:", e.message); }

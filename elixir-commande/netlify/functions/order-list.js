@@ -15,13 +15,18 @@ const cors = {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
-  // Vérifie le JWT si présent (optionnel pour rétrocompatibilité)
+  // Vérifie le JWT si présent
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
   const user = verifyToken(token);
   const isAdmin = user?.isAdmin === true;
 
   const params = event.queryStringParameters || {};
+
+  // Sans admin JWT et sans filtre, bloquer l'accès
+  if (!isAdmin && !params.pharmacy_cip && !user?.cip && !params.source) {
+    return { statusCode: 403, headers: cors, body: JSON.stringify({ error: "Accès non autorisé" }) };
+  }
 
   // Construction de l'URL Supabase avec filtres
   let url = `${SUPABASE_URL}/rest/v1/elixir_orders?select=*&order=date.desc`;

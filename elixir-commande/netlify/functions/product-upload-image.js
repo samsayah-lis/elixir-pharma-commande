@@ -57,7 +57,7 @@ export const handler = async (event) => {
   }
 
   // Met à jour image_url dans elixir_products
-  const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${cip}`, {
+  const updateRes = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(cip)}`, {
     method: "PATCH",
     headers: {
       "apikey": SUPABASE_KEY,

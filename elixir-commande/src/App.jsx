@@ -334,7 +334,7 @@ export default function App() {
     if (activeTab === "ulabs") fetchGroupOrders();
     const _camp = getCampaign(activeTab);
     if (_camp && pharmacyCip) {
-      fetch(`/.netlify/functions/order-list`)
+      fetch(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
         .then(r => r.json())
         .then(orders => {
           // Toutes les commandes validées de la campagne (toutes pharmacies)

@@ -140,7 +140,7 @@ export const handler = async (event) => {
         if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) continue;
 
         const discountPct = Math.round((1 - discountedPrice / listPrice) * 1000) / 10;
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${p.cip}`, {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {
           method: "PATCH", headers: SB,
           body: JSON.stringify({ discounted_price: discountedPrice, discount_pct: discountPct }),
         });

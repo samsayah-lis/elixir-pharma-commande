@@ -28,7 +28,7 @@ export const handler = async (event) => {
   let history = [];
   if (action !== "create") {
     const existing = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${product.cip}&select=history`,
+      `${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(product.cip)}&select=history`,
       { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
     );
     const rows = await existing.json();

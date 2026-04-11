@@ -23,7 +23,7 @@ export const handler = async (event) => {
   if (!id) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "id manquant" }) };
 
   if (action === "delete") {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${id}`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${encodeURIComponent(id)}`, {
       method: "DELETE",
       headers: {
         "apikey": SUPABASE_KEY,
@@ -40,7 +40,7 @@ export const handler = async (event) => {
   if (body.pharmacy_cip) patch.pharmacy_cip = body.pharmacy_cip;
   if (Object.keys(patch).length === 0) patch.processed = true;
 
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${id}`, {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: {
       "apikey": SUPABASE_KEY,
