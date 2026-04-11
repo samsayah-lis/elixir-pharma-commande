@@ -1,3 +1,4 @@
+import { verifyAdmin } from "./auth.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type", "Content-Type": "application/json" };
@@ -5,6 +6,9 @@ const H = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Cont
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+
+  const auth = verifyAdmin(event);
+  if (auth.error) return auth.error;
 
   if (event.httpMethod === "DELETE") {
     const { id } = event.queryStringParameters || {};

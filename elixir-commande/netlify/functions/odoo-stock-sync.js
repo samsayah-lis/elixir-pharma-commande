@@ -1,3 +1,4 @@
+import { verifyAdmin } from "./auth.js";
 // ── Sync catalogue & stock par batch ─────────────────────────────────────
 // step=products&offset=0  → charge 500 produits Odoo, filtre CIP13, upsert Supabase
 // step=stock              → charge TOUS les quants Odoo, compute stock, sauve dans kv_store
@@ -12,6 +13,9 @@ const cors = { "Access-Control-Allow-Origin": "*", "Content-Type": "application/
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+
+  const auth = verifyAdmin(event);
+  if (auth.error) return auth.error;
   const params = event.queryStringParameters || {};
   const step = params.step || "products";
 

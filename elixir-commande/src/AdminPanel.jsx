@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import ShortExpiry from "./components/ShortExpiry";
 
@@ -57,6 +57,19 @@ const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 
 export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
+
+  // Helper : fetch avec JWT admin automatique
+  const adminFetch = useCallback((url, options = {}) => {
+    const token = localStorage.getItem("admin_token") || "";
+    return fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        ...(options.headers || {}),
+      },
+    });
+  }, []);
   const [pwd, setPwd]           = useState("");
   const [pwdError, setPwdError] = useState(false);
   const [tab, setTab]           = useState(() => sessionStorage.getItem("admin_tab") || "sync");
@@ -109,7 +122,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     setDisplayConfig(merged);
     localStorage.setItem("display_config", JSON.stringify(merged));
     // Sync vers Supabase (fire-and-forget)
-    fetch("/.netlify/functions/config-get", {
+    adminFetch("/.netlify/functions/config-get", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: "display_config", value: merged }),
     }).catch(() => {});
@@ -167,7 +180,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const fetchCampaigns = async () => {
     setCampLoading(true);
-    const r = await fetch("/.netlify/functions/campaign-get");
+    const r = await adminFetch("/.netlify/functions/campaign-get");
     const d = await r.json();
     setCampaigns(Array.isArray(d) ? d : []);
     setCampLoading(false);
@@ -175,7 +188,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const saveCampaign = async (camp) => {
     setCampSaving(true);
-    const r = await fetch("/.netlify/functions/campaign-save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(camp) });
+    const r = await adminFetch("/.netlify/functions/campaign-save", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(camp) });
     const d = await r.json();
     setCampSaving(false);
     if (d.error) { flash("❌ " + d.error); return; }
@@ -212,7 +225,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const syncPharmacies = async () => {
     setPharmSyncing(true);
     flash("⏳ Synchronisation Odoo en cours…");
-    const r = await fetch("/.netlify/functions/pharmacy-sync-now?token=elixir2026");
+    const r = await adminFetch("/.netlify/functions/pharmacy-sync-now?token=elixir2026");
     const d = await r.json();
     setPharmSyncing(false);
     flash(d.inserted != null ? `✅ Sync terminée — ${d.inserted} pharmacies mises à jour` : "✅ Sync terminée");
@@ -222,7 +235,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (!pharmManual.email || !pharmManual.name) { flash("❌ Email et nom obligatoires"); return; }
     setPharmSaving(true);
     const row = { ...pharmManual, email: pharmManual.email.trim().toLowerCase() };
-    const r = await fetch("/.netlify/functions/pharmacy-upsert", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(row) });
+    const r = await adminFetch("/.netlify/functions/pharmacy-upsert", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(row) });
     const d = await r.json();
     setPharmSaving(false);
     if (d.error) { flash("❌ " + d.error); return; }
@@ -268,7 +281,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       reader.onload = async (e) => {
         const base64 = e.target.result.split(",")[1];
         const mimeType = file.type;
-        const res = await fetch("/.netlify/functions/product-upload-image", {
+        const res = await adminFetch("/.netlify/functions/product-upload-image", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cip, imageBase64: base64, mimeType }),
@@ -326,11 +339,11 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       const dc = displayConfig;
       const pm = promos;
       await Promise.all([
-        fetch("/.netlify/functions/config-get", {
+        adminFetch("/.netlify/functions/config-get", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ key: "display_config", value: dc }),
         }),
-        fetch("/.netlify/functions/config-get", {
+        adminFetch("/.netlify/functions/config-get", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ key: "admin_promos", value: pm }),
         }),
@@ -425,7 +438,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       active: true,
     };
     try {
-      const res = await fetch("/.netlify/functions/products-upsert", {
+      const res = await adminFetch("/.netlify/functions/products-upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product, action: "create", author: "admin" }),
@@ -438,7 +451,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       // Upload image Medipim si disponible
       if (form._medipim_image && product.cip) {
         try {
-          await fetch("/.netlify/functions/product-upload-image", {
+          await adminFetch("/.netlify/functions/product-upload-image", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ cip: product.cip, image_url: form._medipim_image }),
@@ -452,7 +465,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const handleDelete = async (cip) => {
     if (!window.confirm("Désactiver ce produit ?")) return;
     try {
-      await fetch("/.netlify/functions/products-upsert", {
+      await adminFetch("/.netlify/functions/products-upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product: { cip, active: false }, action: "delete", author: "admin" }),
@@ -514,7 +527,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       _changes: { pv, pct, pn, note: editForm.note },
     };
     try {
-      const res = await fetch("/.netlify/functions/products-upsert", {
+      const res = await adminFetch("/.netlify/functions/products-upsert", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ product, action: "update", author: "admin" }),
@@ -537,7 +550,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     setPromos(updated);
     localStorage.setItem("admin_promos", JSON.stringify(updated));
     // Sync vers Supabase (fire-and-forget)
-    fetch("/.netlify/functions/config-get", {
+    adminFetch("/.netlify/functions/config-get", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key: "admin_promos", value: updated }),
     }).catch(() => {});
@@ -627,7 +640,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }));
     try {
       await Promise.all(newProducts.map(p =>
-        fetch("/.netlify/functions/products-upsert", {
+        adminFetch("/.netlify/functions/products-upsert", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ product: p, action: "create", author: "import" }),
@@ -659,7 +672,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
           cip = lookupJson.pharmacy.cip;
           console.log(`[sync] CIP retrouvé pour ${order.pharmacyEmail}: ${cip}`);
           // Mettre à jour la commande en base
-          fetch("/.netlify/functions/order-update", {
+          adminFetch("/.netlify/functions/order-update", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: order.id, pharmacy_cip: cip }),
@@ -693,7 +706,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         if (res.ok && json.success) {
           setSyncStatus(s => ({ ...s, [order.id]: "ok" }));
           setOrders(prev => prev.map(o => o.id === order.id ? { ...o, processed: true } : o));
-          fetch("/.netlify/functions/order-update", {
+          adminFetch("/.netlify/functions/order-update", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ id: order.id, processed: true }),
@@ -763,7 +776,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const order = orders.find(o => o.id === id);
     const newVal = !order?.processed;
     setOrders(orders.map(o => o.id===id ? {...o, processed: newVal} : o));
-    await fetch("/.netlify/functions/order-update", {
+    await adminFetch("/.netlify/functions/order-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, processed: newVal })
@@ -772,7 +785,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
 
   const deleteOrder = async (id) => {
     setOrders(orders.filter(o => o.id!==id));
-    await fetch("/.netlify/functions/order-update", {
+    await adminFetch("/.netlify/functions/order-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, action: "delete" })
@@ -870,14 +883,14 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       setSyncStock({ running: true, progress: `Étape 2/4 : préparation (emplacements, mappings)...` });
 
       // Step 2a : Stock prep (locations + mappings → kv_store)
-      const prepRes = await fetch("/.netlify/functions/odoo-stock-sync?step=stock_prep");
+      const prepRes = await adminFetch("/.netlify/functions/odoo-stock-sync?step=stock_prep");
       if (!prepRes.ok) throw new Error(`Stock prep HTTP ${prepRes.status}`);
       const prepData = await prepRes.json();
       if (prepData.error) throw new Error(prepData.error);
       setSyncStock({ running: true, progress: `Étape 3/4 : chargement des quants (${prepData.excluded_locations} emplacements exclus)...` });
 
       // Step 2b : Stock compute (quants → stock_map)
-      const stockRes = await fetch("/.netlify/functions/odoo-stock-sync?step=stock");
+      const stockRes = await adminFetch("/.netlify/functions/odoo-stock-sync?step=stock");
       if (!stockRes.ok) throw new Error(`Stock HTTP ${stockRes.status}`);
       const stockData = await stockRes.json();
       if (stockData.error) throw new Error(stockData.error);
@@ -908,7 +921,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       // Phase 0 : remplir odoo_tmpl_id + categ_id si manquants
       let fillRound = 0;
       while (fillRound < 200) { // max 200 batches = 40000 produits
-        const fillRes = await fetch("/.netlify/functions/fill-tmpl-categ");
+        const fillRes = await adminFetch("/.netlify/functions/fill-tmpl-categ");
         if (!fillRes.ok) break;
         const fillData = await fillRes.json();
         if (fillData.done || fillData.remaining === 0) break;
@@ -1670,7 +1683,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                               <button onClick={async()=>{
                                 setUploadingImg(p.cip);
                                 try {
-                                  const r=await fetch("/.netlify/functions/product-upload-image",{
+                                  const r=await adminFetch("/.netlify/functions/product-upload-image",{
                                     method:"POST",headers:{"Content-Type":"application/json"},
                                     body:JSON.stringify({cip:p.cip,image_url:medipimLookup[p.cip].image_url})
                                   });
@@ -1717,7 +1730,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         const r=await fetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
                         const d=await r.json();
                         if(d.image_url){
-                          const up=await fetch("/.netlify/functions/product-upload-image",{
+                          const up=await adminFetch("/.netlify/functions/product-upload-image",{
                             method:"POST",headers:{"Content-Type":"application/json"},
                             body:JSON.stringify({cip:p.cip,image_url:d.image_url})
                           });

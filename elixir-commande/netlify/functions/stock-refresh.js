@@ -1,3 +1,4 @@
+import { verifyAdmin } from "./auth.js";
 // Fonction background — lit stocks Odoo → Supabase
 // FIX BUG-02 : charge les CIP depuis Supabase au lieu du fichier cips.js (vide)
 import { authenticate, odooCall } from "./odoo.js";

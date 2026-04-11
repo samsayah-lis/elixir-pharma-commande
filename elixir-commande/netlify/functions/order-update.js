@@ -1,4 +1,5 @@
 // Met à jour le statut processed d'une commande, ou la supprime
+import { verifyAdmin } from "./auth.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 
@@ -11,11 +12,14 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
 
+  const auth = verifyAdmin(event);
+  if (auth.error) return auth.error;
+
   let body;
   try { body = JSON.parse(event.body); }
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-  const { id, action, processed } = body;
+  const { id, action } = body;
   if (!id) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "id manquant" }) };
 
   if (action === "delete") {

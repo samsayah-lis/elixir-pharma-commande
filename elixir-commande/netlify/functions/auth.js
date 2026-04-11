@@ -25,6 +25,7 @@ export function verifyToken(token) {
   } catch { return null; }
 }
 
+
 export const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type, Authorization",

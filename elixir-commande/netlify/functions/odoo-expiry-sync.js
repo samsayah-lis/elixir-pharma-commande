@@ -1,3 +1,4 @@
+import { verifyAdmin } from "./auth.js";
 // ── Sync péremptions par batch — function normale (10s timeout) ─────────
 // GET /odoo-expiry-sync?offset=0  → traite les produits 0-14 en stock
 // GET /odoo-expiry-sync?offset=15 → traite les produits 15-29 en stock
@@ -14,6 +15,9 @@ const BATCH_SIZE = 15; // ~3s pour 5 produits → 15 en ~9s (sous les 10s)
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+
+  const auth = verifyAdmin(event);
+  if (auth.error) return auth.error;
   const offset = parseInt(event.queryStringParameters?.offset || "0");
 
   try {

@@ -1,6 +1,6 @@
 // GET  /config-get?key=display_config     → { value: {...} }
-// GET  /config-get?key=admin_promos       → { value: [...] }
-// POST /config-get  { key, value }        → sauvegarde (admin only via token)
+// POST /config-get  { key, value }        → sauvegarde (admin only)
+import { verifyAdmin } from "./auth.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -23,8 +23,11 @@ export const handler = async (event) => {
     return { statusCode: 200, headers: cors, body: JSON.stringify({ key, value }) };
   }
 
-  // POST — écriture admin
+  // POST — écriture admin (JWT requis)
   if (event.httpMethod === "POST") {
+    const auth = verifyAdmin(event);
+    if (auth.error) return auth.error;
+
     let body;
     try { body = JSON.parse(event.body); }
     catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }

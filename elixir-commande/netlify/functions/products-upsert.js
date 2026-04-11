@@ -1,3 +1,4 @@
+import { verifyAdmin } from "./auth.js";
 // Crée ou met à jour un produit dans Supabase avec historique
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -10,6 +11,9 @@ const cors = {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: JSON.stringify({ error: "POST only" }) };
+
+  const auth = verifyAdmin(event);
+  if (auth.error) return auth.error;
 
   let body;
   try { body = JSON.parse(event.body); }
