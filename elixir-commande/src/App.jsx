@@ -208,6 +208,20 @@ export default function App() {
   const [flashMsg, setFlashMsg] = useState("");
   const flash = (msg) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(""), 3000); };
 
+  // ── Suggestions de récommande (ML) ───────────────────────────────────
+  const [reorderSuggestions, setReorderSuggestions] = useState([]);
+  const [showReorder, setShowReorder] = useState(false);
+  useEffect(() => {
+    if (!pharmacyCip || pharmacyCip === "0") return;
+    fetch(`/.netlify/functions/ml-recommend?mode=reorder&pharmacy_cip=${encodeURIComponent(pharmacyCip)}&limit=10`)
+      .then(r => r.json())
+      .then(data => {
+        const due = (data.suggestions || []).filter(s => s.should_reorder && s.name);
+        if (due.length > 0) { setReorderSuggestions(due); setShowReorder(true); }
+      })
+      .catch(() => {});
+  }, [pharmacyCip]);
+
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalResults, setGlobalResults] = useState([]);
   const [globalSearching, setGlobalSearching] = useState(false);
@@ -1159,6 +1173,46 @@ export default function App() {
               padding:"10px 24px", borderRadius:10, fontSize:13, fontWeight:700, boxShadow:"0 4px 20px rgba(0,0,0,0.15)",
               animation:"fadeIn 0.2s" }}>
               {flashMsg}
+            </div>
+          )}
+
+          {/* Suggestions de récommande (ML) */}
+          {showReorder && reorderSuggestions.length > 0 && (
+            <div style={{ background:"linear-gradient(135deg, #faf5ff, #eff6ff)", borderRadius:14, padding:"16px 20px", marginBottom:20, border:"1px solid #ddd6fe" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
+                <div style={{ fontWeight:700, fontSize:14, color:"#5b21b6" }}>
+                  🧠 Suggestions de récommande — {reorderSuggestions.length} produit(s) à recommander
+                </div>
+                <button onClick={() => setShowReorder(false)}
+                  style={{ background:"none", border:"none", cursor:"pointer", fontSize:14, color:"#aaa" }}>✕</button>
+              </div>
+              <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
+                {reorderSuggestions.map(s => (
+                  <div key={s.cip} style={{
+                    background:"white", borderRadius:10, padding:"10px 14px", minWidth:180, flexShrink:0,
+                    border:"1px solid #e8ecf0", cursor:"pointer",
+                  }} onClick={() => {
+                    // Cherche le produit dans le catalogue et ajoute 1
+                    let added = false;
+                    Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+                      if (added) return;
+                      const idx = (c.products || []).findIndex(p => p.cip === s.cip);
+                      if (idx >= 0) {
+                        setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: s.suggested_qty || 1 }));
+                        added = true;
+                      }
+                    });
+                    if (added) flash(`✓ ${s.suggested_qty || 1}x ${s.name} ajouté`);
+                  }}>
+                    <div style={{ fontWeight:600, fontSize:12, color:"#0f2d3d", marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
+                    <div style={{ fontSize:10, color:"#888", fontFamily:"monospace" }}>CIP {s.cip}</div>
+                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
+                      <span style={{ fontSize:11, color:"#5b21b6", fontWeight:700 }}>×{s.suggested_qty}</span>
+                      <span style={{ fontSize:9, color:"#f59e0b", fontWeight:600 }}>il y a {s.days_since_last}j</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 

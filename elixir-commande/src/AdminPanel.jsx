@@ -820,6 +820,21 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }
   };
 
+  const [mlCompute, setMlCompute] = useState({ running: false, result: null });
+  const runMLCompute = async () => {
+    setMlCompute({ running: true, result: null });
+    try {
+      const res = await adminFetch("/.netlify/functions/ml-recommend", {
+        method: "POST",
+        body: JSON.stringify({ action: "compute" }),
+      });
+      const data = await res.json();
+      setMlCompute({ running: false, result: data });
+    } catch (e) {
+      setMlCompute({ running: false, result: { error: e.message } });
+    }
+  };
+
   const [dragIdx, setDragIdx] = useState(null);
   const [editingSubtitle, setEditingSubtitle] = useState(null);
   const [subtitleInput, setSubtitleInput] = useState("");
@@ -2700,6 +2715,39 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {/* Info */}
             <div style={{background:"#f5f3ff",borderRadius:14,padding:"16px 20px",border:"1px solid #ddd6fe",fontSize:12,color:"#5b21b6",lineHeight:1.6,marginTop:20}}>
               <strong>Comment ça marche :</strong> Chaque recherche (barre globale + Saisie de commande) est loggée avec le terme, le nombre de résultats, le CIP cliqué et si le produit a été ajouté au panier. Les données alimentent les futures recommandations ML (cross-sell, prédiction de rupture, segmentation pharmacie).
+            </div>
+
+            {/* ML Compute */}
+            <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginTop:20,border:"1px solid #e8ecf0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>⚙️ Calcul des modèles ML</div>
+                  <div style={{fontSize:11,color:"#aaa",marginTop:2}}>Analyse les commandes pour calculer les associations produits (cross-sell) et les patterns d'achat par pharmacie.</div>
+                </div>
+                <button onClick={runMLCompute} disabled={mlCompute.running}
+                  style={{background:"linear-gradient(135deg, #7c3aed, #a855f7)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:mlCompute.running?"default":"pointer",opacity:mlCompute.running?0.6:1,whiteSpace:"nowrap"}}>
+                  {mlCompute.running ? "⏳ Calcul..." : "🧮 Lancer le calcul ML"}
+                </button>
+              </div>
+              {mlCompute.result && !mlCompute.result.error && (
+                <div style={{background:"#f0fdf4",borderRadius:10,padding:"12px 16px",border:"1px solid #bbf7d0",display:"flex",gap:20}}>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#059669"}}>{mlCompute.result.associations?.computed || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Associations cross-sell</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#3b82f6"}}>{mlCompute.result.associations?.baskets || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Paniers analysés</div>
+                  </div>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:"#f59e0b"}}>{mlCompute.result.patterns?.computed || 0}</div>
+                    <div style={{fontSize:10,color:"#888"}}>Patterns pharmacie</div>
+                  </div>
+                </div>
+              )}
+              {mlCompute.result?.error && (
+                <div style={{background:"#fee2e2",borderRadius:10,padding:"12px 16px",fontSize:12,color:"#dc2626",fontWeight:600}}>{mlCompute.result.error}</div>
+              )}
             </div>
           </div>
         )}

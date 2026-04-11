@@ -1,4 +1,5 @@
 // ── ML Engine — Cross-sell, Re-order, Segmentation ──────────────────────
+import { verifyAdmin } from "./auth.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -144,6 +145,8 @@ export const handler = async (event) => {
   const params = event.queryStringParameters || {};
 
   if (event.httpMethod === "POST") {
+    const auth = verifyAdmin(event);
+    if (auth.error) return auth.error;
     const body = JSON.parse(event.body || "{}");
     if (body.action === "compute") {
       const [assoc, pats] = await Promise.all([computeAssociations(), computePatterns()]);
