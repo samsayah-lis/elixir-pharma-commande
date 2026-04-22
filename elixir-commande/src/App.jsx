@@ -7,6 +7,13 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { hasError: false }; }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(err, info) { console.error("[ErrorBoundary]", err, info); }
+  render() { return this.state.hasError ? this.props.fallback : this.props.children; }
+}
+
 const SECTION_META = {
   expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise €","Prix net"] },
   stratege: { label: "Sélection Stratège",     subtitle: "Cartons standard – Top 50 rotations nationales",              color: "#2d5a27", accent: "#4a9e42", icon: "📦", columns: ["CIP","Désignation","Colis","Prix","Remise %","Remise €","Prix net","Prix carton"] },
@@ -291,7 +298,16 @@ export default function App() {
   useEffect(() => {
     const onHash = () => setShowAdmin(window.location.hash === "#admin");
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    // Keyboard shortcut: Ctrl+Shift+A (or Cmd+Shift+A on Mac)
+    const onKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "A") {
+        e.preventDefault();
+        if (window.location.hash === "#admin") { window.location.hash = ""; }
+        else { window.location.hash = "#admin"; }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("keydown", onKey); };
   }, []);
 
   // Campagnes groupement (config dynamique depuis Supabase)
@@ -2319,14 +2335,26 @@ export default function App() {
 
       {/* Admin Panel */}
       {showAdmin && (
-        <AdminPanel
-          sectionMeta={SECTION_META}
-          onClose={() => {
-            window.location.hash = "";
-            fetchProducts();
-            try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
-          }}
-        />
+        <ErrorBoundary fallback={<div style={{position:"fixed",inset:0,zIndex:9999,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif"}}>
+          <div style={{background:"white",borderRadius:16,padding:"40px",maxWidth:500,textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,0.1)"}}>
+            <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
+            <div style={{fontWeight:700,fontSize:18,color:"#0f2d3d",marginBottom:8}}>Erreur Admin Panel</div>
+            <div style={{fontSize:13,color:"#888",marginBottom:20}}>Une erreur s'est produite. Essayez de vider le cache du navigateur.</div>
+            <button onClick={() => { localStorage.removeItem("admin_token"); window.location.hash = ""; window.location.reload(); }}
+              style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:10,padding:"10px 24px",fontWeight:700,cursor:"pointer"}}>
+              Réinitialiser et recharger
+            </button>
+          </div>
+        </div>}>
+          <AdminPanel
+            sectionMeta={SECTION_META}
+            onClose={() => {
+              window.location.hash = "";
+              fetchProducts();
+              try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
+            }}
+          />
+        </ErrorBoundary>
       )}
     </div>
   );
