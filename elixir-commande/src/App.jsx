@@ -972,7 +972,7 @@ export default function App() {
     </>
   );
 
-  if (!onboardingDone) return (
+  if (!onboardingDone && !showAdmin) return (
     <div style={obBg}>
 
       {/* ── STEP LOADING ── */}
