@@ -8,7 +8,7 @@ export default function AdminEdit({
   editingKey, setEditingKey, editForm, setEditForm,
   uploadingImg, setUploadingImg, uploadedImgs, setUploadedImgs,
   medipimLookup, setMedipimLookup, adminFetch, flash, fetchProducts,
-  allProducts, sectionMeta,
+  allProducts, sectionMeta, allSectionsList,
 }) {
   const sections = [...new Set(products.map(p => p.section).filter(Boolean))].sort();
   const filtered = allProducts || products.filter(p => {
