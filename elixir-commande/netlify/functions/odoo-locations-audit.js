@@ -1,11 +1,15 @@
 // ── Audit des emplacements internes Odoo ────────────────────────────────
 // GET /.netlify/functions/odoo-locations-audit
 // Retourne la liste exhaustive des emplacements internes (company_id=2)
-// avec pour chacun : id, nom complet, statut scrap, statut inclus/exclu,
-// raison de l'exclusion, et nombre de quants présents.
+// avec pour chacun : id, nom complet, statut scrap, statut do_not_export,
+// statut inclus/exclu, raison, et nombre de quants présents.
 //
 // Applique EXACTEMENT la même logique d'exclusion que odoo-stock-sync.js
-// pour permettre une vérification fidèle.
+// step=stock_prep : exclu si do_not_export=true OU scrap_location=true.
+//
+// Le champ do_not_export est géré directement dans Odoo sur la fiche
+// emplacement (case à cocher). Pour exclure un emplacement du sync, il
+// suffit donc de cocher la case dans Odoo — plus besoin de modifier le code.
 
 import { verifyAdmin } from "./auth.js";
 import { authenticate, odooCall, ODOO_COMPANY } from "./odoo.js";
@@ -13,20 +17,15 @@ import { getCors } from "./cors.js";
 
 const COMPANY_ID = ODOO_COMPANY || 2;
 
-// ⚠ Doit rester synchronisé avec odoo-stock-sync.js (step=stock_prep)
-const EXCLUDED_PREFIXES = ["EP/Stock/A/", "EP/Stock/B/", "EP/Stock/C/", "EP/Stock/V/", "EP/Quarantaine"];
-const EXCLUDED_EXACT    = ["EP/Stock/A", "EP/Stock/B", "EP/Stock/C", "EP/Stock/V"];
-
 function classifyLocation(loc) {
-  const cn = loc.complete_name || "";
-  const isScrap = loc.scrap_location === "1" || loc.scrap_location === true;
-  const prefixMatch = EXCLUDED_PREFIXES.find(p => cn.startsWith(p));
-  const exactMatch = EXCLUDED_EXACT.includes(cn);
+  const isScrap    = loc.scrap_location === "1" || loc.scrap_location === true;
+  const isDoNotExp = loc.do_not_export   === "1" || loc.do_not_export   === true;
 
-  if (isScrap)     return { excluded: true,  reason: "scrap",  detail: "scrap_location=true" };
-  if (prefixMatch) return { excluded: true,  reason: "prefix", detail: `commence par "${prefixMatch}"` };
-  if (exactMatch)  return { excluded: true,  reason: "exact",  detail: `nom = "${cn}"` };
-  return                  { excluded: false, reason: null,     detail: "inclus dans la sync stock" };
+  // Les deux peuvent être vrais en même temps : on rapporte la raison principale
+  if (isScrap && isDoNotExp) return { excluded: true,  reason: "do_not_export+scrap", detail: "do_not_export coché + scrap_location" };
+  if (isDoNotExp)            return { excluded: true,  reason: "do_not_export",       detail: "case do_not_export cochée dans Odoo" };
+  if (isScrap)               return { excluded: true,  reason: "scrap",               detail: "scrap_location=true" };
+  return                            { excluded: false, reason: null,                  detail: "inclus dans la sync stock" };
 }
 
 export const handler = async (event) => {
@@ -42,7 +41,7 @@ export const handler = async (event) => {
     // 1) Tous les emplacements internes
     const locations = await odooCall(uid, "stock.location", "search_read",
       [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"]],
-      { fields: ["id", "complete_name", "name", "scrap_location"], limit: 2000 }
+      { fields: ["id", "complete_name", "name", "scrap_location", "do_not_export"], limit: 2000 }
     );
     const locArr = Array.isArray(locations) ? locations : [];
 
@@ -76,6 +75,7 @@ export const handler = async (event) => {
         complete_name: loc.complete_name || "",
         name: loc.name || "",
         scrap_location: !!(loc.scrap_location === "1" || loc.scrap_location === true),
+        do_not_export:  !!(loc.do_not_export   === "1" || loc.do_not_export   === true),
         excluded: c.excluded,
         reason: c.reason,
         detail: c.detail,
@@ -98,9 +98,8 @@ export const handler = async (event) => {
       total_locations: rows.length,
       excluded: rows.filter(r => r.excluded).length,
       included: rows.filter(r => !r.excluded).length,
-      excluded_by_scrap:  rows.filter(r => r.reason === "scrap").length,
-      excluded_by_prefix: rows.filter(r => r.reason === "prefix").length,
-      excluded_by_exact:  rows.filter(r => r.reason === "exact").length,
+      excluded_by_do_not_export: rows.filter(r => r.do_not_export).length,
+      excluded_by_scrap:         rows.filter(r => r.scrap_location).length,
       total_quants_excluded: rows.filter(r => r.excluded).reduce((s, r) => s + r.quants_count, 0),
       total_quants_included: rows.filter(r => !r.excluded).reduce((s, r) => s + r.quants_count, 0),
     };
@@ -110,15 +109,23 @@ export const handler = async (event) => {
       body: JSON.stringify({
         company_id: COMPANY_ID,
         rules: {
-          excluded_prefixes: EXCLUDED_PREFIXES,
-          excluded_exact: EXCLUDED_EXACT,
-          excludes_scrap: true,
+          field_do_not_export: "do_not_export (case à cocher sur la fiche emplacement Odoo)",
+          field_scrap: "scrap_location",
+          logic: "exclu si do_not_export=true OU scrap_location=true",
         },
         summary,
         locations: rows,
       }),
     };
   } catch (e) {
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
+    return {
+      statusCode: 500, headers: cors,
+      body: JSON.stringify({
+        error: e.message,
+        hint: e.message && e.message.includes("do_not_export")
+          ? "Le champ 'do_not_export' n'existe pas sur stock.location. Verifie le nom technique exact dans Odoo (Parametres -> Technique -> Champs)."
+          : null,
+      }),
+    };
   }
 };

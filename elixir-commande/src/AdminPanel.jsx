@@ -1417,7 +1417,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
                   <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔄 Catalogue & Stock</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Exclut les emplacements Quarantaine, A, B, C, V (rangements internes).</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Exclut les emplacements dont la case <strong>do_not_export</strong> est cochée dans Odoo (ou marqués comme scrap).</div>
                 </div>
                 <button onClick={handleSyncStock} disabled={syncStock.running}
                   style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncStock.running?"default":"pointer",opacity:syncStock.running?0.6:1,whiteSpace:"nowrap"}}>
@@ -1461,19 +1461,16 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                     <div style={{background:"#fef3c7",borderRadius:8,padding:"10px 12px",border:"1px solid #fde68a"}}>
                       <div style={{fontSize:11,color:"#92400e",fontWeight:600}}>Détail exclusions</div>
                       <div style={{fontSize:12,color:"#92400e",marginTop:4,lineHeight:1.5}}>
-                        scrap : {audit.data.summary.excluded_by_scrap}<br/>
-                        prefix : {audit.data.summary.excluded_by_prefix}<br/>
-                        exact : {audit.data.summary.excluded_by_exact}
+                        do_not_export : {audit.data.summary.excluded_by_do_not_export}<br/>
+                        scrap : {audit.data.summary.excluded_by_scrap}
                       </div>
                     </div>
                   </div>
 
                   {/* Règles appliquées */}
                   <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:11,color:"#475569",border:"1px solid #e2e8f0"}}>
-                    <strong>Règles d'exclusion appliquées :</strong><br/>
-                    • Préfixes : {audit.data.rules.excluded_prefixes.map(p=><code key={p} style={{background:"#fff",padding:"1px 5px",borderRadius:3,marginRight:4,border:"1px solid #ddd"}}>{p}</code>)}<br/>
-                    • Noms exacts : {audit.data.rules.excluded_exact.map(e=><code key={e} style={{background:"#fff",padding:"1px 5px",borderRadius:3,marginRight:4,border:"1px solid #ddd"}}>{e}</code>)}<br/>
-                    • Scrap locations : oui
+                    <strong>Règle d'exclusion :</strong> un emplacement est exclu du sync stock si <code style={{background:"#fff",padding:"1px 5px",borderRadius:3,border:"1px solid #ddd"}}>do_not_export = true</code> OU <code style={{background:"#fff",padding:"1px 5px",borderRadius:3,border:"1px solid #ddd"}}>scrap_location = true</code>.<br/>
+                    Pour modifier l'exclusion : ouvre la fiche emplacement dans Odoo et coche/décoche la case <strong>"Do not export"</strong>. Plus besoin de toucher au code.
                   </div>
 
                   {/* Tableau */}
@@ -1483,7 +1480,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <tr>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Statut</th>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Emplacement</th>
-                          <th style={{padding:"8px 10px",textAlign:"left"}}>Raison</th>
+                          <th style={{padding:"8px 10px",textAlign:"center"}}>do_not_export</th>
+                          <th style={{padding:"8px 10px",textAlign:"center"}}>scrap</th>
                           <th style={{padding:"8px 10px",textAlign:"right"}}>Quants</th>
                           <th style={{padding:"8px 10px",textAlign:"right"}}>Qté totale</th>
                           <th style={{padding:"8px 10px",textAlign:"right"}}>ID</th>
@@ -1496,7 +1494,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                               {loc.excluded?"❌ Exclu":"✓ Inclus"}
                             </td>
                             <td style={{padding:"6px 10px",fontFamily:"monospace",fontSize:11}}>{loc.complete_name}</td>
-                            <td style={{padding:"6px 10px",fontSize:11,color:"#64748b"}}>{loc.detail}</td>
+                            <td style={{padding:"6px 10px",textAlign:"center",fontSize:14}}>{loc.do_not_export?"☑":"☐"}</td>
+                            <td style={{padding:"6px 10px",textAlign:"center",fontSize:14}}>{loc.scrap_location?"☑":"☐"}</td>
                             <td style={{padding:"6px 10px",textAlign:"right",fontWeight:600}}>{loc.quants_count}</td>
                             <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11}}>{loc.total_quantity}</td>
                             <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:"#94a3b8"}}>{loc.id}</td>

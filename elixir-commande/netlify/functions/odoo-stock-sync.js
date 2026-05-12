@@ -74,18 +74,17 @@ export const handler = async (event) => {
       const uid = await authenticate();
 
       // Charger les emplacements exclus
+      // Règle d'exclusion : do_not_export = true OU scrap_location = true
+      // (do_not_export est le champ géré directement dans Odoo sur la fiche emplacement)
       const excludedLocIds = new Set();
       const exclLocs = await odooCall(uid, "stock.location", "search_read",
         [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"]],
-        { fields: ["id", "complete_name", "scrap_location"], limit: 2000 }
+        { fields: ["id", "complete_name", "scrap_location", "do_not_export"], limit: 2000 }
       );
-      const EXCLUDED_PREFIXES = ["EP/Stock/A/", "EP/Stock/B/", "EP/Stock/C/", "EP/Stock/V/", "EP/Quarantaine"];
       (Array.isArray(exclLocs) ? exclLocs : []).forEach(loc => {
-        const cn = loc.complete_name || "";
-        const isScrap = loc.scrap_location === "1" || loc.scrap_location === true;
-        const isExcludedPrefix = EXCLUDED_PREFIXES.some(p => cn.startsWith(p));
-        const isExcludedExact = ["EP/Stock/A", "EP/Stock/B", "EP/Stock/C", "EP/Stock/V"].includes(cn);
-        if (isScrap || isExcludedPrefix || isExcludedExact) excludedLocIds.add(parseInt(loc.id));
+        const isScrap     = loc.scrap_location === "1" || loc.scrap_location === true;
+        const isDoNotExp  = loc.do_not_export   === "1" || loc.do_not_export   === true;
+        if (isScrap || isDoNotExp) excludedLocIds.add(parseInt(loc.id));
       });
 
       // Charger pidMap depuis Supabase
