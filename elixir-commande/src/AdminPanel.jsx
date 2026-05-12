@@ -704,7 +704,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       // Step 1 : Products
       let offset = 0, totalProducts = 0;
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-stock-sync?step=products&offset=${offset}`);
+        const res = await adminFetch(`/.netlify/functions/odoo-stock-sync?step=products&offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -733,7 +733,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       offset = 0;
       let totalUpdated = 0;
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-stock-sync?step=apply&offset=${offset}`);
+        const res = await adminFetch(`/.netlify/functions/odoo-stock-sync?step=apply&offset=${offset}`);
         if (!res.ok) break;
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -766,7 +766,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       setSyncPrice({ running: true, progress: "Phase 1 : chargement des règles de prix Odoo..." });
       let offset = 0, totalRules = 0;
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-price-sync?step=load&offset=${offset}`);
+        const res = await adminFetch(`/.netlify/functions/odoo-price-sync?step=load&offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
@@ -781,7 +781,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       offset = 0;
       let totalUpdated = 0, rulesInfo = "";
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-price-sync?step=apply&offset=${offset}`);
+        const res = await adminFetch(`/.netlify/functions/odoo-price-sync?step=apply&offset=${offset}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
