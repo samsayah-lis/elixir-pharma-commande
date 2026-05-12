@@ -692,9 +692,24 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   // ── Sync state (must be before any return) ────────────────────────────
   const [syncStock, setSyncStock] = useState({ running: false, progress: null });
   const [syncPrice, setSyncPrice] = useState({ running: false, progress: null });
+  const [audit, setAudit]         = useState({ running: false, data: null, error: null });
 
   const setDefaultTab = (key) => {
     saveDisplayConfig({ defaultTab: key });
+  };
+
+  const handleAuditLocations = async () => {
+    if (audit.running) return;
+    setAudit({ running: true, data: null, error: null });
+    try {
+      const res = await adminFetch("/.netlify/functions/odoo-locations-audit");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setAudit({ running: false, data, error: null });
+    } catch (e) {
+      setAudit({ running: false, data: null, error: e.message });
+    }
   };
 
   const handleSyncStock = async () => {
@@ -1410,6 +1425,88 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                 </button>
               </div>
               {syncStock.progress&&<div style={{marginTop:12,fontSize:12,color:syncStock.progress.startsWith("✓")?"#059669":"#888",fontWeight:600,background:"#f8fafc",borderRadius:8,padding:"8px 12px"}}>{syncStock.progress}</div>}
+            </div>
+
+            {/* Audit emplacements */}
+            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔍 Audit emplacements Odoo</div>
+                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Liste tous les emplacements internes (company 2) et vérifie ceux qui sont exclus du sync stock. Affiche le nombre de quants par emplacement.</div>
+                </div>
+                <button onClick={handleAuditLocations} disabled={audit.running}
+                  style={{background:"linear-gradient(135deg, #475569, #334155)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:audit.running?"default":"pointer",opacity:audit.running?0.6:1,whiteSpace:"nowrap"}}>
+                  {audit.running?"⏳ Analyse...":"Lancer l'audit"}
+                </button>
+              </div>
+              {audit.error&&<div style={{marginTop:12,fontSize:12,color:"#dc2626",fontWeight:600,background:"#fef2f2",borderRadius:8,padding:"8px 12px"}}>Erreur : {audit.error}</div>}
+              {audit.data&&(
+                <div style={{marginTop:16}}>
+                  {/* Résumé */}
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:16}}>
+                    <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",border:"1px solid #e2e8f0"}}>
+                      <div style={{fontSize:11,color:"#64748b",fontWeight:600}}>Total emplacements</div>
+                      <div style={{fontSize:20,fontWeight:800,color:"#0f2d3d",marginTop:2}}>{audit.data.summary.total_locations}</div>
+                    </div>
+                    <div style={{background:"#fef2f2",borderRadius:8,padding:"10px 12px",border:"1px solid #fecaca"}}>
+                      <div style={{fontSize:11,color:"#991b1b",fontWeight:600}}>Exclus</div>
+                      <div style={{fontSize:20,fontWeight:800,color:"#dc2626",marginTop:2}}>{audit.data.summary.excluded}</div>
+                      <div style={{fontSize:10,color:"#991b1b",marginTop:2}}>{audit.data.summary.total_quants_excluded} quants</div>
+                    </div>
+                    <div style={{background:"#ecfdf5",borderRadius:8,padding:"10px 12px",border:"1px solid #a7f3d0"}}>
+                      <div style={{fontSize:11,color:"#065f46",fontWeight:600}}>Inclus dans le stock</div>
+                      <div style={{fontSize:20,fontWeight:800,color:"#059669",marginTop:2}}>{audit.data.summary.included}</div>
+                      <div style={{fontSize:10,color:"#065f46",marginTop:2}}>{audit.data.summary.total_quants_included} quants</div>
+                    </div>
+                    <div style={{background:"#fef3c7",borderRadius:8,padding:"10px 12px",border:"1px solid #fde68a"}}>
+                      <div style={{fontSize:11,color:"#92400e",fontWeight:600}}>Détail exclusions</div>
+                      <div style={{fontSize:12,color:"#92400e",marginTop:4,lineHeight:1.5}}>
+                        scrap : {audit.data.summary.excluded_by_scrap}<br/>
+                        prefix : {audit.data.summary.excluded_by_prefix}<br/>
+                        exact : {audit.data.summary.excluded_by_exact}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Règles appliquées */}
+                  <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:11,color:"#475569",border:"1px solid #e2e8f0"}}>
+                    <strong>Règles d'exclusion appliquées :</strong><br/>
+                    • Préfixes : {audit.data.rules.excluded_prefixes.map(p=><code key={p} style={{background:"#fff",padding:"1px 5px",borderRadius:3,marginRight:4,border:"1px solid #ddd"}}>{p}</code>)}<br/>
+                    • Noms exacts : {audit.data.rules.excluded_exact.map(e=><code key={e} style={{background:"#fff",padding:"1px 5px",borderRadius:3,marginRight:4,border:"1px solid #ddd"}}>{e}</code>)}<br/>
+                    • Scrap locations : oui
+                  </div>
+
+                  {/* Tableau */}
+                  <div style={{maxHeight:480,overflow:"auto",border:"1px solid #e8ecf0",borderRadius:8}}>
+                    <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
+                      <thead style={{position:"sticky",top:0,background:"#0f2d3d",color:"white",zIndex:1}}>
+                        <tr>
+                          <th style={{padding:"8px 10px",textAlign:"left"}}>Statut</th>
+                          <th style={{padding:"8px 10px",textAlign:"left"}}>Emplacement</th>
+                          <th style={{padding:"8px 10px",textAlign:"left"}}>Raison</th>
+                          <th style={{padding:"8px 10px",textAlign:"right"}}>Quants</th>
+                          <th style={{padding:"8px 10px",textAlign:"right"}}>Qté totale</th>
+                          <th style={{padding:"8px 10px",textAlign:"right"}}>ID</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {audit.data.locations.map(loc=>(
+                          <tr key={loc.id} style={{background:loc.excluded?"#fef2f2":"white",borderBottom:"1px solid #f0f2f5"}}>
+                            <td style={{padding:"6px 10px",fontWeight:700,color:loc.excluded?"#dc2626":"#059669",whiteSpace:"nowrap"}}>
+                              {loc.excluded?"❌ Exclu":"✓ Inclus"}
+                            </td>
+                            <td style={{padding:"6px 10px",fontFamily:"monospace",fontSize:11}}>{loc.complete_name}</td>
+                            <td style={{padding:"6px 10px",fontSize:11,color:"#64748b"}}>{loc.detail}</td>
+                            <td style={{padding:"6px 10px",textAlign:"right",fontWeight:600}}>{loc.quants_count}</td>
+                            <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11}}>{loc.total_quantity}</td>
+                            <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:"#94a3b8"}}>{loc.id}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Price sync */}
