@@ -43,13 +43,16 @@ export default function AdminEdit({
 
   const saveEdit = async (p) => {
     const pv=parseFloat(editForm.pv), pct=parseFloat(editForm.pct), pn=parseFloat(editForm.pn);
+    const newCip = editForm.cip?.trim() || p.cip;
+    const cipChanged = newCip !== p.cip;
     const product = {
-      cip: p.cip, name: p.name, section: p._section,
+      cip: newCip, name: p.name, section: p._section,
       pv: !isNaN(pv) ? pv : p.pv, pct: !isNaN(pct) ? pct : p.pct, pn: !isNaN(pn) ? pn : p.pn,
       remise_eur: parseFloat(editForm.remise_eur) || null,
       colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
       note: editForm.note !== "" ? editForm.note : p.note,
       source: p.source || "catalog", active: true,
+      ...(cipChanged ? { old_cip: p.cip } : {}),
     };
     try {
       const res = await adminFetch("/.netlify/functions/products-upsert", {
@@ -60,7 +63,7 @@ export default function AdminEdit({
       if (!json.success) throw new Error(json.error);
       await fetchProducts();
       setEditingKey(null);
-      flash("✅ Modification enregistrée !");
+      flash("✅ Modification enregistrée !" + (cipChanged ? " (CIP changé)" : ""));
     } catch(e) { alert("Erreur : " + e.message); }
   };
 

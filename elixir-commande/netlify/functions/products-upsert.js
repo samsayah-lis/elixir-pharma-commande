@@ -20,18 +20,29 @@ export const handler = async (event) => {
   if (!product?.cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip manquant" }) };
 
   const now = new Date().toISOString();
+  const oldCip = product.old_cip; // si changement de CIP
+  const lookupCip = oldCip || product.cip;
 
   // Récupère l'historique existant si c'est une mise à jour
   let history = [];
   if (action !== "create") {
     const existing = await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(product.cip)}&select=history`,
+      `${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(lookupCip)}&select=history`,
       { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
     );
     const rows = await existing.json();
     if (rows?.[0]?.history) {
       try { history = JSON.parse(rows[0].history); } catch {}
     }
+  }
+
+  // Si changement de CIP, supprimer l'ancien enregistrement
+  if (oldCip && oldCip !== product.cip) {
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(oldCip)}`,
+      { method: "DELETE", headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
+    );
+    history.push({ action: "cip_changed", date: now, author: author || "admin", changes: { old_cip: oldCip, new_cip: product.cip } });
   }
 
   // Ajoute l'entrée d'historique
