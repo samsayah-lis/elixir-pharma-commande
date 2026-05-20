@@ -109,8 +109,9 @@ export default function AdminEdit({
   };
 
   const sections = [...new Set(products.map(p => p.section).filter(Boolean))].sort();
-  const filtered = allProducts || products.filter(p => {
-    const ms = filterSection === "all" || p.section === filterSection;
+  const base = allProducts || products;
+  const filtered = base.filter(p => {
+    const ms = filterSection === "all" || p._section === filterSection || p.section === filterSection;
     const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search);
     return ms && mq;
   });
