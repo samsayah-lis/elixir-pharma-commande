@@ -65,6 +65,49 @@ export default function AdminEdit({
   };
 
   const clearEdit = () => { flash("↩️ Fonctionnalité disponible via re-migration"); };
+
+  const GRID_SECTIONS = ["otc", "molnlycke", "obeso"];
+
+  const handleImageUpload = async (cip, file) => {
+    if (!file) return;
+    setUploadingImg(cip);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = e.target.result.split(",")[1];
+        const mimeType = file.type;
+        const res = await adminFetch("/.netlify/functions/product-upload-image", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cip, imageBase64: base64, mimeType }),
+        });
+        const json = await res.json();
+        if (json.success) {
+          setUploadedImgs(prev => ({ ...prev, [cip]: json.image_url }));
+          flash("🖼️ Photo uploadée !");
+          await fetchProducts();
+        } else { alert("Erreur upload : " + json.error); }
+        setUploadingImg(null);
+      };
+      reader.readAsDataURL(file);
+    } catch(e) { alert("Erreur : " + e.message); setUploadingImg(null); }
+  };
+
+  const lookupMedipim = async (cip) => {
+    if (!cip || cip.length < 7 || medipimLookup[cip]) return;
+    setMedipimLookup(prev => ({ ...prev, [cip]: { loading: true } }));
+    try {
+      const res = await adminFetch("/.netlify/functions/medipim-lookup?cip=" + cip);
+      if (res.ok) {
+        const data = await res.json();
+        setMedipimLookup(prev => ({ ...prev, [cip]: { ...data, loading: false } }));
+      } else {
+        setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: "Non trouvé" } }));
+      }
+    } catch (e) {
+      setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: e.message } }));
+    }
+  };
+
   const sections = [...new Set(products.map(p => p.section).filter(Boolean))].sort();
   const filtered = allProducts || products.filter(p => {
     const ms = filterSection === "all" || p.section === filterSection;
