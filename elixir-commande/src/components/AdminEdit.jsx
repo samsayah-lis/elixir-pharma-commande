@@ -2,6 +2,7 @@ import React from "react";
 
 const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
 const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
 
 export default function AdminEdit({
   products, search, setSearch, filterSection, setFilterSection,
@@ -10,36 +11,66 @@ export default function AdminEdit({
   medipimLookup, setMedipimLookup, adminFetch, flash, fetchProducts,
   allProducts, sectionMeta, allSectionsList,
 }) {
+  const fmt = (n) => n!=null&&!isNaN(n) ? Number(n).toFixed(2)+" €" : "—";
+
+  function CipCopy({ cip }) {
+    const [copied, setCopied] = React.useState(false);
+    if (!cip || cip === "–") return <span style={{ fontFamily:"monospace", fontSize:11, color:"#bbb" }}>–</span>;
+    const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
+    return (
+      <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
+        <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+        <button onClick={copy} title="Copier CIP" style={{
+          background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
+          padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+          fontWeight:700, lineHeight:"14px"
+        }}>{copied ? "✓" : "⎘"}</button>
+      </span>
+    );
+  }
+
+  const startEdit = (p) => {
+    const pv = parseFloat(p.pv) || 0;
+    const pct = parseFloat(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")) || 0;
+    const remise_eur = pv && pct ? (pv * pct / 100).toFixed(2) : "";
+    setEditForm({
+      cip: String(p.cip ?? ""), pv: String(p.pv ?? ""), pct: String(pct || ""),
+      remise_eur: String(p.remise_eur ?? remise_eur), pn: String(p.pn ?? ""),
+      palier: String(p.colis ?? ""), note: String(p.note ?? ""), _lastEdited: "",
+    });
+    setEditingKey(p._key);
+  };
+
+  const saveEdit = async (p) => {
+    const pv=parseFloat(editForm.pv), pct=parseFloat(editForm.pct), pn=parseFloat(editForm.pn);
+    const product = {
+      cip: p.cip, name: p.name, section: p._section,
+      pv: !isNaN(pv) ? pv : p.pv, pct: !isNaN(pct) ? pct : p.pct, pn: !isNaN(pn) ? pn : p.pn,
+      remise_eur: parseFloat(editForm.remise_eur) || null,
+      colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
+      note: editForm.note !== "" ? editForm.note : p.note,
+      source: p.source || "catalog", active: true,
+    };
+    try {
+      const res = await adminFetch("/.netlify/functions/products-upsert", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product, action: "update", author: "admin" }),
+      });
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      await fetchProducts();
+      setEditingKey(null);
+      flash("✅ Modification enregistrée !");
+    } catch(e) { alert("Erreur : " + e.message); }
+  };
+
+  const clearEdit = () => { flash("↩️ Fonctionnalité disponible via re-migration"); };
   const sections = [...new Set(products.map(p => p.section).filter(Boolean))].sort();
   const filtered = allProducts || products.filter(p => {
     const ms = filterSection === "all" || p.section === filterSection;
     const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search);
     return ms && mq;
   });
-
-  const handleSave = async (product) => {
-    try {
-      const res = await adminFetch("/.netlify/functions/products-upsert", {
-        method: "POST",
-        body: JSON.stringify({ product: { ...product, ...editForm }, action: "update", author: "admin" }),
-      });
-      if (res.ok) {
-        flash("✓ Produit mis à jour");
-        setEditingKey(null);
-        fetchProducts();
-      }
-    } catch (e) { flash("❌ " + e.message); }
-  };
-
-  const handleDelete = async (product) => {
-    if (!confirm(`Supprimer ${product.name} ?`)) return;
-    await adminFetch("/.netlify/functions/products-upsert", {
-      method: "POST",
-      body: JSON.stringify({ product: { ...product, active: false }, action: "delete", author: "admin" }),
-    });
-    flash("🗑️ Produit supprimé");
-    fetchProducts();
-  };
 
   return (
           <>
