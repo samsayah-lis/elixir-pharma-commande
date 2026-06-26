@@ -211,6 +211,8 @@ export default function App() {
     return () => clearInterval(t);
   }, []);
   const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
+  // Produits hors catalogue curaté (ajoutés depuis Saisie de commande / Péremption courte)
+  const [specialItems, setSpecialItems] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_special") || "[]"); } catch { return []; } });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -367,6 +369,9 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("cart_quantities", JSON.stringify(quantities));
   }, [quantities]);
+  useEffect(() => {
+    localStorage.setItem("cart_special", JSON.stringify(specialItems));
+  }, [specialItems]);
   const [promoSections, setPromoSections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
@@ -588,6 +593,7 @@ export default function App() {
     setPharmacyCip("");
     setOnboardingDone(false);
     setQuantities({});
+    setSpecialItems([]);
     setCartOpen(false);
   };
   const [isClient, setIsClient] = useState(null);
@@ -625,6 +631,48 @@ export default function App() {
     const snapped = m > 1 ? Math.round(raw / m) * m : raw;
     const final = snapped > 0 && min > 0 ? Math.max(min, snapped) : snapped;
     setQuantities(prev => ({ ...prev, [key]: final }));
+  };
+
+  // Modifie la quantité d'un article du panier, qu'il vienne du catalogue (quantities)
+  // ou soit hors-catalogue (specialItems). newQty <= 0 → suppression de l'article.
+  const setItemQty = (item, newQty) => {
+    if (item.isSpecial) {
+      const q = Math.max(0, parseInt(newQty) || 0);
+      const id = item.cip || item.name;
+      setSpecialItems(prev => q <= 0
+        ? prev.filter(s => (s.cip || s.name) !== id)
+        : prev.map(s => (s.cip || s.name) === id ? { ...s, qty: q } : s));
+    } else {
+      setQty(item.key, newQty, item.step);
+    }
+  };
+
+  // Ajoute un produit au panier depuis la Saisie de commande / Péremption courte.
+  // S'il est dans le catalogue curaté → quantities (logique campagnes/UG) ; sinon → specialItems.
+  const addItemToCart = (item) => {
+    let added = false;
+    Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+      if (added) return;
+      const idx = (c.products || []).findIndex(p => p.cip === item.cip);
+      if (idx >= 0) {
+        setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
+        added = true;
+      }
+    });
+    if (!added) {
+      const id = item.cip || item.name;
+      setSpecialItems(prev => {
+        const i = prev.findIndex(s => (s.cip || s.name) === id);
+        if (i >= 0) {
+          const n = [...prev];
+          n[i] = { ...n[i], qty: n[i].qty + item.qty };
+          return n;
+        }
+        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null }];
+      });
+    }
+    flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
+    setCartOpen(true);
   };
 
   const cartItems = useMemo(() => {
@@ -670,8 +718,28 @@ export default function App() {
         }
       });
     });
+    // Produits hors catalogue curaté (Saisie de commande / Péremption courte)
+    specialItems.forEach((s, i) => {
+      if (!(s.qty > 0)) return;
+      const pn = s.pn ?? null;
+      items.push({
+        key: `special-${s.cip || i}`,
+        cat: "Hors catalogue",
+        catKey: "special",
+        name: s.name,
+        cip: s.cip || null,
+        pn,
+        qty: s.qty,
+        qtyUG: 0,
+        total: (pn || 0) * s.qty,
+        color: "#2d9cbc",
+        step: 1,
+        isCampaign: false,
+        isSpecial: true,
+      });
+    });
     return items;
-  }, [quantities, CATALOG_WITH_ADMIN]);
+  }, [quantities, CATALOG_WITH_ADMIN, specialItems]);
 
   const cartTotal = cartItems.reduce((s, i) => s + i.total, 0);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
@@ -942,6 +1010,7 @@ export default function App() {
       setTimeout(() => {
         setSendStatus(null);
         setQuantities({});
+        setSpecialItems([]);
         setCartOpen(false);
       }, 3000);
     } catch (err) {
@@ -1337,24 +1406,7 @@ export default function App() {
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
-              onAddToCart={(item) => {
-                // Ajouter au panier global via quantities
-                // Cherche si le produit existe déjà dans le catalogue Supabase
-                let added = false;
-                Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
-                  if (added) return;
-                  const idx = (c.products || []).findIndex(p => p.cip === item.cip);
-                  if (idx >= 0) {
-                    setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
-                    added = true;
-                  }
-                });
-                if (!added) {
-                  // Produit hors catalogue Supabase — ajouter comme commande spéciale
-                  console.log("[order-entry] Produit ajouté (hors catalogue):", item);
-                  alert(`✓ ${item.qty}x ${item.name} ajouté — ${(item.pn * item.qty).toFixed(2).replace(".",",")} € HT`);
-                }
-              }}
+              onAddToCart={addItemToCart}
             />
           )}
 
@@ -1362,21 +1414,7 @@ export default function App() {
             <ShortExpiry
               isAdmin={showAdmin}
               pharmacyCip={pharmacyCip}
-              onAddToCart={(item) => {
-                let added = false;
-                Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
-                  if (added) return;
-                  const idx = (c.products || []).findIndex(p => p.cip === item.cip);
-                  if (idx >= 0) {
-                    setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
-                    added = true;
-                  }
-                });
-                if (!added) {
-                  console.log("[short-expiry] Produit ajouté (hors catalogue):", item);
-                  alert(`✓ ${item.qty}x ${item.name} ajouté — ${(item.pn * item.qty).toFixed(2).replace(".",",")} € HT`);
-                }
-              }}
+              onAddToCart={addItemToCart}
             />
           )}
 
@@ -2172,7 +2210,7 @@ export default function App() {
                         <div style={{ fontSize: 10, color: item.color, fontWeight: 700, letterSpacing: 0.5 }}>
                           {item.cat.toUpperCase()}
                         </div>
-                        <button onClick={() => setQty(item.key, 0)} style={{
+                        <button onClick={() => setItemQty(item, 0)} style={{
                           background: "none", border: "none", cursor: "pointer",
                           color: "#ccc", fontSize: 15, lineHeight: 1, padding: "0 2px"
                         }} title="Supprimer">✕</button>
@@ -2190,14 +2228,14 @@ export default function App() {
                       {/* Qty controls + subtotal */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <button onClick={() => setQty(item.key, item.qty - item.step, item.step)} style={{
+                          <button onClick={() => setItemQty(item, item.qty - item.step)} style={{
                             background: item.color + "20", border: `1px solid ${item.color}40`,
                             color: item.color, borderRadius: 6, width: 26, height: 26,
                             cursor: "pointer", fontWeight: 800, fontSize: 16, lineHeight: 1,
                             display: "flex", alignItems: "center", justifyContent: "center"
                           }}>−</button>
                           <span style={{ fontWeight: 700, fontSize: 14, minWidth: 24, textAlign: "center", color: "#1a2a3a" }}>{item.qty}</span>
-                          <button onClick={() => setQty(item.key, item.qty + item.step, item.step)} style={{
+                          <button onClick={() => setItemQty(item, item.qty + item.step)} style={{
                             background: item.color + "20", border: `1px solid ${item.color}40`,
                             color: item.color, borderRadius: 6, width: 26, height: 26,
                             cursor: "pointer", fontWeight: 800, fontSize: 16, lineHeight: 1,
@@ -2290,7 +2328,7 @@ export default function App() {
                   }}>
                     {copyStatus || "📋 Copier le bon de commande"}
                   </button>
-                  <button onClick={() => setQuantities({})} style={{
+                  <button onClick={() => { setQuantities({}); setSpecialItems([]); }} style={{
                     width: "100%", background: "none", color: "#e53e3e",
                     border: "1px solid #fed7d7", borderRadius: 10, padding: "8px",
                     fontWeight: 600, fontSize: 12, cursor: "pointer"
