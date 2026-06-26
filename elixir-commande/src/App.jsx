@@ -1458,26 +1458,26 @@ export default function App() {
 
           {/* Category header */}
           <div style={{
-            background: `linear-gradient(135deg, ${catEffective.color} 0%, ${catEffective.accent}33 100%)`,
+            background: "#ffffff",
             borderRadius: 16, padding: "20px 28px", marginBottom: 20,
-            border: `1px solid ${catEffective.accent}40`
+            border: "1px solid #e8e8e8", borderLeft: `3px solid ${catEffective.accent}`
           }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <div style={{ fontSize: 26, fontWeight: 800, color: "white", display: "flex", alignItems: "center", gap: 12 }}>
+                <div style={{ fontSize: 26, fontWeight: 800, color: "#0f2d3d", display: "flex", alignItems: "center", gap: 12 }}>
                   <span>{catEffective.icon}</span> {catEffective.label}
                 </div>
-                <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 13, marginTop: 4 }}>{catEffective.subtitle}</div>
+                <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>{catEffective.subtitle}</div>
               </div>
-              <div style={{ background: "rgba(255,255,255,0.1)", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
+              <div style={{ background: "#f5f6f7", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
                 {activeTab === "ulabs" ? (<>
-                  <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Pharmacies participantes</div>
-                  <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>
+                  <div style={{ color: "#888", fontSize: 11 }}>Pharmacies participantes</div>
+                  <div style={{ color: "#0f2d3d", fontWeight: 700, fontSize: 22 }}>
                     {new Set(groupOrders.map(r => r.pharmacy_cip)).size}
                   </div>
                 </>) : (<>
-                  <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>Lignes dans cette gamme</div>
-                  <div style={{ color: "white", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
+                  <div style={{ color: "#888", fontSize: 11 }}>Lignes dans cette gamme</div>
+                  <div style={{ color: "#0f2d3d", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
                 </>)}
               </div>
             </div>
@@ -1532,52 +1532,52 @@ export default function App() {
                       return allStats.length === 0 ? null : (
                         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
                           {allStats.map(s => (
-                            <div key={s.label} style={{ background: s.ok ? "rgba(5,150,105,0.3)" : "rgba(220,38,38,0.3)", borderRadius: 8, padding: "5px 12px", border: `1px solid ${s.ok ? "#059669" : "#dc2626"}` }}>
-                              <span style={{ fontWeight: 800, color: "white", fontSize: 16 }}>{s.val}</span>
-                              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 10 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
+                            <div key={s.label} style={{ background: s.ok ? "#d1fae5" : "#fee2e2", borderRadius: 8, padding: "5px 12px", border: `1px solid ${s.ok ? "#059669" : "#dc2626"}` }}>
+                              <span style={{ fontWeight: 800, color: "#0f2d3d", fontSize: 16 }}>{s.val}</span>
+                              <span style={{ color: "#555", fontSize: 10 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
                             </div>
                           ))}
                         </div>
                       );
                     })()}
-                    <div style={{ background: "rgba(0,0,0,0.25)", borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ background: "#f0f2f5", borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
                       <span style={{ fontSize: 16 }}>⏱️</span>
                       <div>
-                        <div style={{ fontSize: 9, opacity: 0.6, textTransform: "uppercase", letterSpacing: 1 }}>Fermeture dimanche 23h59</div>
-                        <div style={{ fontWeight: 800, fontSize: 15, color: "white", fontVariantNumeric: "tabular-nums" }}>{countdown}</div>
+                        <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Fermeture dimanche 23h59</div>
+                        <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d", fontVariantNumeric: "tabular-nums" }}>{countdown}</div>
                       </div>
                     </div>
                   </div>
                   {/* Barre de progression — nb de références distinctes tous clients */}
                   <div style={{ marginTop: 4 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
-                      <span style={{ fontSize: 13, color: "white", fontWeight: 800 }}>
-                        {totalUnites} <span style={{ fontWeight: 400, fontSize: 11, opacity: 0.8 }}>/ {PALIER_EXPERT} références différentes</span>
+                      <span style={{ fontSize: 13, color: "#0f2d3d", fontWeight: 800 }}>
+                        {totalUnites} <span style={{ fontWeight: 400, fontSize: 11, color: "#888" }}>/ {PALIER_EXPERT} références différentes</span>
                       </span>
                       {palierAtteint
-                        ? <span style={{ fontSize: 12, color: "#fcd34d", fontWeight: 800 }}>⭐ −{PALIER_REMISE}% atteint !</span>
-                        : <span style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>encore {PALIER_EXPERT - totalUnites} réf. pour −{PALIER_REMISE}%</span>
+                        ? <span style={{ fontSize: 12, color: "#b45309", fontWeight: 800 }}>⭐ −{PALIER_REMISE}% atteint !</span>
+                        : <span style={{ fontSize: 11, color: "#888" }}>encore {PALIER_EXPERT - totalUnites} réf. pour −{PALIER_REMISE}%</span>
                       }
                     </div>
-                    <div style={{ position: "relative", background: "rgba(255,255,255,0.15)", borderRadius: 99, height: 16 }}>
+                    <div style={{ position: "relative", background: "#e5e7eb", borderRadius: 99, height: 16 }}>
                       <div style={{
                         width: `${pctExpert}%`, height: "100%", borderRadius: 99, transition: "width 0.6s ease",
                         background: palierAtteint ? "linear-gradient(90deg,#f59e0b,#fcd34d)" : "linear-gradient(90deg,#059669,#34d399)"
                       }}/>
                       {!palierAtteint && totalUnites > 0 && (
-                        <div style={{ position: "absolute", top: "50%", left: `${pctExpert}%`, transform: "translateY(-50%) translateX(-50%)", background: "white", borderRadius: 99, width: 8, height: 8 }}/>
+                        <div style={{ position: "absolute", top: "50%", left: `${pctExpert}%`, transform: "translateY(-50%) translateX(-50%)", background: "#0f2d3d", borderRadius: 99, width: 8, height: 8 }}/>
                       )}
                     </div>
                     <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>
+                      <span style={{ fontSize: 10, color: "#999" }}>
                         {nbPharm > 0 ? `${nbPharm} pharmacie${nbPharm>1?"s":""} participante${nbPharm>1?"s":""}` : "Soyez le premier !"}
                       </span>
-                      <span style={{ fontSize: 10, color: "rgba(255,255,255,0.4)" }}>dont commandes validées incluses</span>
+                      <span style={{ fontSize: 10, color: "#999" }}>dont commandes validées incluses</span>
                     </div>
                   </div>
                   {/* Prix */}
                   <div style={{ marginTop: 6 }}>
-                    <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)" }}>· Prix affichés avec remise −33% sur facture incluse</span>
+                    <span style={{ fontSize: 10, color: "#888" }}>· Prix affichés avec remise −33% sur facture incluse</span>
                   </div>
                 </div>
               );
@@ -1589,39 +1589,39 @@ export default function App() {
                 onChange={e => setSearch(e.target.value)}
                 placeholder="🔍  Rechercher par nom ou CIP..."
                 style={{
-                  width: "100%", background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.25)",
-                  borderRadius: 10, color: "white", padding: "8px 16px", fontSize: 13,
+                  width: "100%", background: "#f5f6f7", border: "1px solid #e2e2e2",
+                  borderRadius: 10, color: "#0f2d3d", padding: "8px 16px", fontSize: 13,
                   outline: "none", boxSizing: "border-box"
                 }}
               />
               {/* Filters */}
               <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
                 <button onClick={() => setShowFavOnly(!showFavOnly)} style={{
-                  background: showFavOnly ? "#fef3c7" : "rgba(255,255,255,0.08)",
-                  border: showFavOnly ? "1px solid #fbbf24" : "1px solid rgba(255,255,255,0.15)",
+                  background: showFavOnly ? "#fef3c7" : "#f0f2f5",
+                  border: showFavOnly ? "1px solid #fbbf24" : "1px solid #e2e2e2",
                   borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:showFavOnly?700:400,
-                  color: showFavOnly ? "#92400e" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                  color: showFavOnly ? "#92400e" : "#555", cursor:"pointer"
                 }}>{showFavOnly ? "⭐ Favoris" : "☆ Favoris"} ({favorites.size})</button>
 
                 <button onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={{
-                  background: filterStock === "instock" ? "#d1fae5" : "rgba(255,255,255,0.08)",
-                  border: filterStock === "instock" ? "1px solid #34d399" : "1px solid rgba(255,255,255,0.15)",
+                  background: filterStock === "instock" ? "#d1fae5" : "#f0f2f5",
+                  border: filterStock === "instock" ? "1px solid #34d399" : "1px solid #e2e2e2",
                   borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "instock"?700:400,
-                  color: filterStock === "instock" ? "#065f46" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                  color: filterStock === "instock" ? "#065f46" : "#555", cursor:"pointer"
                 }}>✓ En stock</button>
 
                 <button onClick={() => setFilterStock(filterStock === "rupture" ? "all" : "rupture")} style={{
-                  background: filterStock === "rupture" ? "#fee2e2" : "rgba(255,255,255,0.08)",
-                  border: filterStock === "rupture" ? "1px solid #fca5a5" : "1px solid rgba(255,255,255,0.15)",
+                  background: filterStock === "rupture" ? "#fee2e2" : "#f0f2f5",
+                  border: filterStock === "rupture" ? "1px solid #fca5a5" : "1px solid #e2e2e2",
                   borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "rupture"?700:400,
-                  color: filterStock === "rupture" ? "#991b1b" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                  color: filterStock === "rupture" ? "#991b1b" : "#555", cursor:"pointer"
                 }}>⚠ Ruptures</button>
 
                 <button onClick={() => setFilterRemise(!filterRemise)} style={{
-                  background: filterRemise ? "#dbeafe" : "rgba(255,255,255,0.08)",
-                  border: filterRemise ? "1px solid #93c5fd" : "1px solid rgba(255,255,255,0.15)",
+                  background: filterRemise ? "#dbeafe" : "#f0f2f5",
+                  border: filterRemise ? "1px solid #93c5fd" : "1px solid #e2e2e2",
                   borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterRemise?700:400,
-                  color: filterRemise ? "#1e40af" : "rgba(255,255,255,0.7)", cursor:"pointer"
+                  color: filterRemise ? "#1e40af" : "#555", cursor:"pointer"
                 }}>💰 Avec remise</button>
               </div>
             </div>
