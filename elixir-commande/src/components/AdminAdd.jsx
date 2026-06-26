@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
 
 const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
@@ -8,6 +8,23 @@ const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 1
 const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", section:"otc", hasPalier:false, palier:"", note:"" };
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "—";
+
+// Affiche un CIP avec bouton « copier » (identique à AdminPanel/AdminEdit)
+function CipCopy({ cip }) {
+  const [copied, setCopied] = useState(false);
+  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>—</span>;
+  const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
+  return (
+    <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
+      <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+      <button onClick={copy} title="Copier CIP" style={{
+        background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
+        padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+        fontWeight:700, lineHeight:"14px", transition:"all 0.2s"
+      }}>{copied ? "✓" : "⎘"}</button>
+    </span>
+  );
+}
 
 export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProducts, products, medipimLookup, setMedipimLookup }) {
   const [form, setForm] = useState(EMPTY_FORM);
@@ -21,6 +38,35 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
   const [importError, setImportError] = useState("");
   const [importCount, setImportCount] = useState(0);
   const fileInputRef = useRef(null);
+
+  // Met à jour un champ du formulaire de saisie manuelle
+  const handleField = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Désactive (soft-delete) un produit ajouté
+  const handleDelete = async (cip) => {
+    if (!window.confirm("Désactiver ce produit ?")) return;
+    try {
+      await adminFetch("/.netlify/functions/products-upsert", {
+        method: "POST",
+        body: JSON.stringify({ product: { cip, active: false }, action: "delete", author: "admin" }),
+      });
+      await fetchProducts();
+      flash("🗑️ Produit désactivé");
+    } catch (e) { alert("Erreur : " + e.message); }
+  };
+
+  // Auto-calcul prix remisé ↔ remise % ↔ remise € (identique au formulaire d'édition)
+  useEffect(() => {
+    const pv = parseFloat(form.pv);
+    if (isNaN(pv) || pv === 0) return;
+    const pct = parseFloat(form.pct);
+    const eur = parseFloat(form.remise_eur);
+    if (!isNaN(pct) && form._lastEdited !== "eur") {
+      setForm(f => ({ ...f, remise_eur: (pv * pct / 100).toFixed(2), pn: (pv - pv * pct / 100).toFixed(2) }));
+    } else if (!isNaN(eur) && form._lastEdited === "eur") {
+      setForm(f => ({ ...f, pct: (eur / pv * 100).toFixed(2), pn: (pv - eur).toFixed(2) }));
+    }
+  }, [form.pv, form.pct, form.remise_eur]);
 
   const lookupMedipim = async (cip) => {
     if (!cip || cip.length < 7 || medipimLookup[cip]) return;
