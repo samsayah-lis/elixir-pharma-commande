@@ -1136,7 +1136,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh", background: "#ffffff", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh", background: "#0c0d0e", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
 
       {/* ── SIDEBAR (navigation colonne gauche) ── */}
       {!isDesktop && sidebarOpen && (
@@ -1219,25 +1219,25 @@ export default function App() {
         </div>
       )}
 
-      {/* ── TOP BAR ── */}
+      {/* ── TOP BAR (sombre) ── */}
       <header style={{
-        background: "#ffffff", color: "#111", position: "sticky", top: 0, zIndex: 90,
-        borderBottom: "1px solid #ededed"
+        background: "#0c0d0e", color: "#f0f0f0", position: "sticky", top: 0, zIndex: 90,
+        borderBottom: "1px solid #1e1e1e"
       }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: isMobile ? "10px 12px" : "12px 22px" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
             {!isDesktop && (
-              <button onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "#111", padding: 4, flexShrink: 0 }}>☰</button>
+              <button onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "#f0f0f0", padding: 4, flexShrink: 0 }}>☰</button>
             )}
             {!isDesktop && (
-              <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: 2, color: "#111", flexShrink: 0 }}>ELIXIR</span>
+              <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: 2, color: "#fff", flexShrink: 0 }}>ELIXIR</span>
             )}
             {isDesktop && (
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {CATALOG_WITH_ADMIN[activeTab]?.label || "Catalogue"}
                 </div>
-                <div style={{ fontSize: 11, color: "#999" }}>
+                <div style={{ fontSize: 11, color: "#888" }}>
                   Bon de commande – Février 2026
                   {stockUpdatedAt && (
                     <span style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
@@ -1253,26 +1253,26 @@ export default function App() {
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {!isMobile && (
               <div style={{ position: "relative", width: 260 }}>
-                <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#bbb" }}>🔍</span>
+                <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#777" }}>🔍</span>
                 <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
-                  style={{ width: "100%", background: "#fff", border: "1px solid #e2e2e2", borderRadius: 9, color: "#111", padding: "7px 12px 7px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
-                {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
+                  style={{ width: "100%", background: "#16181b", border: "1px solid #2a2a2a", borderRadius: 9, color: "#f0f0f0", padding: "7px 12px 7px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+                {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
               </div>
             )}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #ededed", borderRadius: 9, padding: "4px 4px 4px 12px" }}>
-              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: "#444", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
-              <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#f5f6f7", border: "none", borderRadius: 6, color: "#888", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #262626", borderRadius: 9, padding: "4px 4px 4px 12px" }}>
+              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: "#cfcfcf", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
+              <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>
             </div>
-            {!isMobile && <button onClick={handlePrint} style={{ background: "#fff", border: "1px solid #e2e2e2", color: "#444", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>🖨</button>}
+            {!isMobile && <button onClick={handlePrint} style={{ background: "#16181b", border: "1px solid #2a2a2a", color: "#ddd", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>🖨</button>}
             {pharmacyCip && pharmacyCip !== "0" && (
-              <button onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} style={{ background: "#fff", border: "1px solid #e2e2e2", color: "#444", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>📋{isMobile ? "" : " Mes commandes"}</button>
+              <button onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} style={{ background: "#16181b", border: "1px solid #2a2a2a", color: "#ddd", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>📋{isMobile ? "" : " Mes commandes"}</button>
             )}
             <button onClick={() => setCartOpen(!cartOpen)} style={{
-              background: cartCount > 0 ? "#111" : "#fff", border: cartCount > 0 ? "1px solid #111" : "1px solid #e2e2e2",
-              color: cartCount > 0 ? "#fff" : "#111", borderRadius: 9, padding: "7px 14px",
+              background: cartCount > 0 ? "#ffffff" : "#16181b", border: cartCount > 0 ? "1px solid #ffffff" : "1px solid #2a2a2a",
+              color: cartCount > 0 ? "#111" : "#f0f0f0", borderRadius: 9, padding: "7px 14px",
               cursor: "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 7, transition: "all 0.2s"
             }}>
-              🛒{isMobile ? "" : " Panier"} {cartCount > 0 && <span style={{ background: cartCount > 0 ? "#fff" : "#111", color: cartCount > 0 ? "#111" : "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800 }}>{cartCount}</span>}
+              🛒{isMobile ? "" : " Panier"} {cartCount > 0 && <span style={{ background: "#111", color: "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800 }}>{cartCount}</span>}
             </button>
           </div>
         </div>
@@ -1281,10 +1281,10 @@ export default function App() {
         {isMobile && (
           <div style={{ padding: "0 12px 10px" }}>
             <div style={{ position: "relative" }}>
-              <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#bbb" }}>🔍</span>
+              <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#777" }}>🔍</span>
               <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
-                style={{ width: "100%", background: "#fff", border: "1px solid #e2e2e2", borderRadius: 9, color: "#111", padding: "8px 12px 8px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
-              {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
+                style={{ width: "100%", background: "#16181b", border: "1px solid #2a2a2a", borderRadius: 9, color: "#f0f0f0", padding: "8px 12px 8px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+              {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
             </div>
           </div>
         )}
@@ -1347,7 +1347,7 @@ export default function App() {
           {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
           {globalSearch.trim().length >= 2 && (
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: "#0f2d3d", marginBottom: 12, display:"flex", alignItems:"center", gap:10 }}>
+              <div style={{ fontWeight: 800, fontSize: 16, color: "#f0f0f0", marginBottom: 12, display:"flex", alignItems:"center", gap:10 }}>
                 🔍 Résultats pour « {globalSearch} »
                 {globalSearching && <span style={{ fontSize:12, color:"#3b82f6", fontWeight:400 }}>Recherche...</span>}
                 {!globalSearching && <span style={{ fontSize:12, fontWeight:400, color:"#888", background:"#f0f2f5", borderRadius:8, padding:"2px 10px" }}>
