@@ -431,11 +431,16 @@ export default function App() {
   }, [activeTab, fetchGroupOrders]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
+  // isDesktop ≥ 1024 → sidebar fixe persistante ; sinon (mobile + tablette) → tiroir
+  const [isDesktop, setIsDesktop] = React.useState(() => window.innerWidth >= 1024);
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
   React.useEffect(() => {
-    const h = () => setIsMobile(window.innerWidth < 768);
+    const h = () => { setIsMobile(window.innerWidth < 768); setIsDesktop(window.innerWidth >= 1024); };
     window.addEventListener('resize', h);
     return () => window.removeEventListener('resize', h);
   }, []);
+  // Ferme le tiroir dès qu'on repasse en desktop
+  React.useEffect(() => { if (isDesktop) setSidebarOpen(false); }, [isDesktop]);
 
   // Lit les stocks depuis Supabase (rapide)
   const fetchStock = useCallback(async () => {
@@ -1131,7 +1136,53 @@ export default function App() {
   );
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh", background: "#f0f4f8", display: "flex", flexDirection: "column" }}>
+    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh", background: "#ffffff", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
+
+      {/* ── SIDEBAR (navigation colonne gauche) ── */}
+      {!isDesktop && sidebarOpen && (
+        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 140 }} />
+      )}
+      <aside style={{
+        position: "fixed", top: 0, left: 0, bottom: 0, width: 248, background: "#ffffff",
+        borderRight: "1px solid #ededed", zIndex: 150, display: "flex", flexDirection: "column",
+        transform: (isDesktop || sidebarOpen) ? "translateX(0)" : "translateX(-100%)",
+        transition: "transform 0.25s ease", overflowY: "auto"
+      }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 16px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#2d9cbc" }} />
+            <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: 3, color: "#111" }}>ELIXIR</span>
+          </div>
+          {!isDesktop && (
+            <button onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#111", lineHeight: 1 }}>✕</button>
+          )}
+        </div>
+        {[
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "ulabs"].includes(k)) },
+          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "ulabs"].includes(k)) },
+        ].map(group => group.keys.length === 0 ? null : (
+          <div key={group.title} style={{ marginBottom: 4 }}>
+            <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
+            {group.keys.map(key => {
+              const c = CATALOG_WITH_ADMIN[key];
+              if (!c) return null;
+              const active = activeTab === key;
+              return (
+                <button key={key} onClick={() => { setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                  display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left",
+                  background: active ? "#f5f6f7" : "transparent", border: "none",
+                  borderLeft: active ? "2px solid #111" : "2px solid transparent",
+                  color: active ? "#111" : "#555", padding: "9px 20px", cursor: "pointer",
+                  fontSize: 13, fontWeight: active ? 700 : 500, fontFamily: "inherit",
+                }}>
+                  <span style={{ fontSize: 15, width: 20, textAlign: "center", flexShrink: 0 }}>{c.icon}</span>
+                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        ))}
+      </aside>
 
       {/* ── PROMO POPUP ── */}
       {promoPopupOpen && promoSections.some(p => p.active) && (
@@ -1168,107 +1219,75 @@ export default function App() {
         </div>
       )}
 
-      {/* Header */}
+      {/* ── TOP BAR ── */}
       <header style={{
-        background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 60%, #16637a 100%)",
-        color: "white", padding: "0", position: "sticky", top: 0, zIndex: 100,
-        boxShadow: "0 4px 20px rgba(0,0,0,0.3)"
+        background: "#ffffff", color: "#111", position: "sticky", top: 0, zIndex: 90,
+        borderBottom: "1px solid #ededed"
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "8px 12px" : "12px 24px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ background: "#2d9cbc", borderRadius: 10, padding: isMobile ? "4px 8px" : "6px 12px", fontWeight: 800, fontSize: isMobile ? 15 : 20, letterSpacing: 2 }}>
-              ELIXIR
-            </div>
-            <div>
-              <div style={{ fontSize: 13, opacity: 0.7, letterSpacing: 1 }}>PHARMA</div>
-              <div style={{ fontSize: 11, opacity: 0.5 }}>
-                Bon de commande – Catalogue Février 2026
-                {stockUpdatedAt && (
-                  <span style={{ marginLeft: 8, opacity: 0.7 }}>· stocks mis à jour {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
-                )}
-                <button
-                  onClick={handleRefresh}
-                  disabled={stockRefreshing || stockLoading}
-                  title={stockRefreshing ? "Actualisation Odoo en cours (~40s)…" : "Forcer la mise à jour depuis Odoo"}
-                  style={{ marginLeft: 8, background: "none", border: "none", cursor: (stockRefreshing || stockLoading) ? "default" : "pointer", padding: "0 2px", opacity: (stockRefreshing || stockLoading) ? 0.4 : 0.8, fontSize: 13, color: "inherit" }}
-                >{stockRefreshing ? "⏳ Actualisation…" : "🔄"}</button>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: isMobile ? "10px 12px" : "12px 22px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+            {!isDesktop && (
+              <button onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "#111", padding: 4, flexShrink: 0 }}>☰</button>
+            )}
+            {!isDesktop && (
+              <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: 2, color: "#111", flexShrink: 0 }}>ELIXIR</span>
+            )}
+            {isDesktop && (
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#111", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {CATALOG_WITH_ADMIN[activeTab]?.label || "Catalogue"}
+                </div>
+                <div style={{ fontSize: 11, color: "#999" }}>
+                  Bon de commande – Février 2026
+                  {stockUpdatedAt && (
+                    <span style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                  )}
+                  <button onClick={handleRefresh} disabled={stockRefreshing || stockLoading}
+                    title={stockRefreshing ? "Actualisation Odoo en cours (~40s)…" : "Forcer la mise à jour depuis Odoo"}
+                    style={{ marginLeft: 6, background: "none", border: "none", cursor: (stockRefreshing || stockLoading) ? "default" : "pointer", padding: "0 2px", opacity: (stockRefreshing || stockLoading) ? 0.4 : 0.7, fontSize: 12, color: "inherit" }}
+                  >{stockRefreshing ? "⏳" : "🔄"}</button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6,
-              background: "rgba(255,255,255,0.12)", border: "1px solid rgba(255,255,255,0.2)",
-              borderRadius: 8, padding: "4px 4px 4px 14px"
-            }}>
-              <span style={{ fontSize: isMobile ? 11 : 13, fontWeight: 600, color: "rgba(255,255,255,0.9)", maxWidth: isMobile ? 100 : "none", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
-              <button onClick={handleLogout} title="Se déconnecter" style={{
-                background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.2)",
-                borderRadius: 6, color: "rgba(255,255,255,0.7)", cursor: "pointer",
-                padding: "3px 8px", fontSize: 11, lineHeight: 1
-              }}>⎋ Déco</button>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {!isMobile && (
+              <div style={{ position: "relative", width: 260 }}>
+                <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#bbb" }}>🔍</span>
+                <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
+                  style={{ width: "100%", background: "#fff", border: "1px solid #e2e2e2", borderRadius: 9, color: "#111", padding: "7px 12px 7px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+                {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #ededed", borderRadius: 9, padding: "4px 4px 4px 12px" }}>
+              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: "#444", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
+              <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#f5f6f7", border: "none", borderRadius: 6, color: "#888", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>
             </div>
-            {!isMobile && <button onClick={handlePrint} style={{
-              background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
-              color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12
-            }}>🖨 Imprimer</button>}
+            {!isMobile && <button onClick={handlePrint} style={{ background: "#fff", border: "1px solid #e2e2e2", color: "#444", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>🖨</button>}
             {pharmacyCip && pharmacyCip !== "0" && (
-              <button onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} style={{
-                background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)",
-                color: "white", borderRadius: 8, padding: "6px 14px", cursor: "pointer", fontSize: 12
-              }}>📋 {isMobile ? "" : "Mes commandes"}</button>
+              <button onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} style={{ background: "#fff", border: "1px solid #e2e2e2", color: "#444", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>📋{isMobile ? "" : " Mes commandes"}</button>
             )}
             <button onClick={() => setCartOpen(!cartOpen)} style={{
-              background: cartCount > 0 ? "#10b981" : "rgba(255,255,255,0.15)",
-              border: "none", color: "white", borderRadius: 10, padding: "8px 16px",
-              cursor: "pointer", fontWeight: 700, fontSize: 14, display: "flex", alignItems: "center", gap: 8,
-              transition: "all 0.2s"
+              background: cartCount > 0 ? "#111" : "#fff", border: cartCount > 0 ? "1px solid #111" : "1px solid #e2e2e2",
+              color: cartCount > 0 ? "#fff" : "#111", borderRadius: 9, padding: "7px 14px",
+              cursor: "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 7, transition: "all 0.2s"
             }}>
-              🛒 Panier {cartCount > 0 && <span style={{
-                background: "white", color: "#10b981", borderRadius: 20,
-                padding: "2px 8px", fontSize: 12, fontWeight: 800
-              }}>{cartCount}</span>}
+              🛒{isMobile ? "" : " Panier"} {cartCount > 0 && <span style={{ background: cartCount > 0 ? "#fff" : "#111", color: cartCount > 0 ? "#111" : "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800 }}>{cartCount}</span>}
             </button>
           </div>
         </div>
 
-        {/* Global search bar */}
-        <div style={{ padding: isMobile ? "6px 12px 0" : "8px 24px 0", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
-          <div style={{ position: "relative", maxWidth: isMobile ? "100%" : 480 }}>
-            <span style={{ position:"absolute", left:12, top:"50%", transform:"translateY(-50%)", fontSize:14, opacity:0.6 }}>🔍</span>
-            <input
-              value={globalSearch}
-              onChange={e => setGlobalSearch(e.target.value)}
-              placeholder="Recherche par CIP ou nom — stock temps réel Odoo..."
-              style={{
-                width: "100%", background: "rgba(255,255,255,0.1)", border: "1px solid rgba(255,255,255,0.2)",
-                borderRadius: 10, color: "white", padding: "7px 14px 7px 34px", fontSize: 13,
-                outline: "none", boxSizing: "border-box",
-              }}
-            />
-            {globalSearch && (
-              <button onClick={() => setGlobalSearch("")} style={{ position:"absolute", right:10, top:"50%", transform:"translateY(-50%)", background:"none", border:"none", color:"rgba(255,255,255,0.5)", cursor:"pointer", fontSize:16, padding:0 }}>✕</button>
-            )}
+        {/* Recherche (mobile : sous la barre) */}
+        {isMobile && (
+          <div style={{ padding: "0 12px 10px" }}>
+            <div style={{ position: "relative" }}>
+              <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#bbb" }}>🔍</span>
+              <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
+                style={{ width: "100%", background: "#fff", border: "1px solid #e2e2e2", borderRadius: 9, color: "#111", padding: "8px 12px 8px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+              {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#bbb", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
+            </div>
           </div>
-        </div>
-
-        {/* Tab nav */}
-        <div style={{ display: "flex", overflowX: "auto", paddingBottom: 0, borderTop: "1px solid rgba(255,255,255,0.08)", marginTop: 8 }}>
-          {getOrderedTabs(CATALOG_WITH_ADMIN).map(key => {
-            const c = CATALOG_WITH_ADMIN[key];
-            if (!c) return null;
-            return (
-            <button key={key} onClick={() => { setActiveTab(key); setSearch(""); }} style={{
-              background: activeTab === key ? "rgba(255,255,255,0.15)" : "transparent",
-              border: "none", color: activeTab === key ? "white" : "rgba(255,255,255,0.55)",
-              padding: "10px 16px", cursor: "pointer", fontSize: 12, fontWeight: 600,
-              whiteSpace: "nowrap", borderBottom: activeTab === key ? `3px solid ${c.accent}` : "3px solid transparent",
-              transition: "all 0.2s"
-            }}>
-              {c.icon} {c.label}
-            </button>
-            );
-          })}
-        </div>
+        )}
       </header>
 
       <div style={{ display: "flex", flex: 1, position: "relative" }}>
