@@ -7,9 +7,13 @@ export function CrossSellBanner({ cartCips = [], onAdd, accent = "#10b981" }) {
   const [recs, setRecs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dismissed, setDismissed] = useState(new Set());
-  const uniqueCips = useMemo(() => [...new Set(cartCips.filter(Boolean))], [cartCips]);
+  // Clé stable PAR VALEUR : le compte à rebours re-rend App chaque seconde, donc
+  // cartCips change de référence à chaque render. Sans clé stable, l'effet ci-dessous
+  // refetchait ml-recommend ~1×/s en continu. On ne relance que si l'ensemble change.
+  const cipsKey = useMemo(() => [...new Set(cartCips.filter(Boolean))].sort().join(","), [cartCips]);
 
   useEffect(() => {
+    const uniqueCips = cipsKey ? cipsKey.split(",") : [];
     if (uniqueCips.length === 0) { setRecs([]); return; }
     let cancelled = false;
     const timer = setTimeout(async () => {
@@ -33,7 +37,7 @@ export function CrossSellBanner({ cartCips = [], onAdd, accent = "#10b981" }) {
       finally { if (!cancelled) setLoading(false); }
     }, 800);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [uniqueCips, dismissed]);
+  }, [cipsKey, dismissed]);
 
   if (recs.length === 0 && !loading) return null;
 
