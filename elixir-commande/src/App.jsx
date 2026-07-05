@@ -246,7 +246,9 @@ export default function App() {
     if (!pharmacyCip || pharmacyCip === "0") return;
     setMyOrdersLoading(true);
     try {
-      const res = await fetch(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
+      const ptok = localStorage.getItem("pharmacy_token");
+      const res = await fetch(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`,
+        ptok ? { headers: { Authorization: `Bearer ${ptok}` } } : {});
       const data = await res.json();
       setMyOrders(data.orders || []);
     } catch { setMyOrders([]); }
@@ -379,15 +381,18 @@ export default function App() {
 
   // ── Charger la config partagée depuis Supabase (source de vérité) ────
   const [configLoaded, setConfigLoaded] = useState(false);
+  const [authMode, setAuthMode] = useState("legacy"); // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode
   useEffect(() => {
     (async () => {
       try {
-        const [dcRes, promoRes] = await Promise.all([
+        const [dcRes, promoRes, amRes] = await Promise.all([
           fetch("/.netlify/functions/config-get?key=display_config"),
           fetch("/.netlify/functions/config-get?key=admin_promos"),
+          fetch("/.netlify/functions/config-get?key=pharmacy_auth_mode"),
         ]);
         const dcJson = await dcRes.json();
         const promoJson = await promoRes.json();
+        try { const amJson = await amRes.json(); if (amJson.value) setAuthMode(amJson.value === "otp" ? "otp" : "legacy"); } catch {}
         if (dcJson.value) {
           localStorage.setItem("display_config", JSON.stringify(dcJson.value));
         }
@@ -397,6 +402,25 @@ export default function App() {
         }
       } catch (e) { console.warn("[config] Supabase fetch error:", e.message); }
       setConfigLoaded(true);
+    })();
+  }, []);
+  // Session pharmacie longue durée : au démarrage, on échange le refresh token
+  // contre un access token frais (session valide tant que le refresh l'est).
+  useEffect(() => {
+    const rt = localStorage.getItem("pharmacy_refresh_token");
+    if (!rt) return;
+    (async () => {
+      try {
+        const rf = await fetch("/.netlify/functions/admin-refresh", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: rt }),
+        });
+        const rj = await rf.json();
+        if (rj.success && rj.token) {
+          localStorage.setItem("pharmacy_token", rj.token);
+          if (rj.refresh_token) localStorage.setItem("pharmacy_refresh_token", rj.refresh_token);
+        }
+      } catch {}
     })();
   }, []);
   const [stockData, setStockData] = useState({}); // { [cip]: { dispo, stock } }
@@ -588,11 +612,15 @@ export default function App() {
   const [obStep, setObStep] = useState("email");
   const [emailInput, setEmailInput] = useState("");
   const [foundPharmacy, setFoundPharmacy] = useState(null);
+  const [otpInput, setOtpInput] = useState("");
+  const [otpBusy, setOtpBusy] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem("session_name");
     localStorage.removeItem("session_email");
     localStorage.removeItem("session_cip");
+    localStorage.removeItem("pharmacy_token");
+    localStorage.removeItem("pharmacy_refresh_token");
     setPharmacyName("");
     setPharmacyEmail("");
     setPharmacyCip("");
@@ -885,6 +913,22 @@ export default function App() {
     if (!email || !email.includes("@")) { setOnboardingError("Veuillez saisir une adresse e-mail valide."); return; }
     setOnboardingError("");
     setObStep("loading");
+    // Mode OTP : envoi d'un code à 6 chiffres (email vérifié) au lieu du simple lookup.
+    if (authMode === "otp") {
+      try {
+        const res = await fetch("/.netlify/functions/pharmacy-otp-send", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const json = await res.json();
+        if (json.success) { setOtpInput(""); setObStep("otp"); }
+        else if (json.unknown) { setObStep("new_client"); }
+        else { setOnboardingError(json.error || "Envoi du code impossible."); setObStep("email"); }
+      } catch (err) {
+        setOnboardingError("Erreur de connexion. Veuillez réessayer."); setObStep("email");
+      }
+      return;
+    }
     try {
       const res = await fetch("/.netlify/functions/pharmacy-lookup", {
         method: "POST",
@@ -918,6 +962,34 @@ export default function App() {
       const promos = JSON.parse(localStorage.getItem("admin_promos") || "[]");
       if (promos.some(p => p.active)) setPromoPopupOpen(true);
     } catch {}
+  };
+
+  const handleVerifyOtp = async () => {
+    const email = emailInput.trim().toLowerCase();
+    const code = otpInput.trim();
+    if (code.length < 6) { setOnboardingError("Saisissez le code à 6 chiffres reçu par e-mail."); return; }
+    setOnboardingError(""); setOtpBusy(true);
+    try {
+      const res = await fetch("/.netlify/functions/pharmacy-otp-verify", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, token: code }),
+      });
+      const json = await res.json();
+      if (!json.success) { setOnboardingError(json.error || "Code invalide ou expiré."); setOtpBusy(false); return; }
+      localStorage.setItem("pharmacy_token", json.token || "");
+      if (json.refresh_token) localStorage.setItem("pharmacy_refresh_token", json.refresh_token);
+      const ph = json.pharmacy || {};
+      const name = ph.name || email;
+      const cip = ph.cip || "";
+      localStorage.setItem("session_name", name);
+      localStorage.setItem("session_email", email);
+      localStorage.setItem("session_cip", cip);
+      setPharmacyName(name); setPharmacyEmail(email); setPharmacyCip(cip);
+      setOnboardingDone(true);
+      if (promoSections.some(p => p.active)) setPromoPopupOpen(true);
+    } catch (err) {
+      setOnboardingError("Erreur de connexion. Veuillez réessayer.");
+    } finally { setOtpBusy(false); }
   };
 
   const handleNewClientSubmit = async () => {
@@ -1033,11 +1105,14 @@ export default function App() {
             { url: "http://localhost:3001", label: "agent local" },
             { url: "/.netlify/functions/submit-order", label: "Netlify Function" },
           ];
+          const ptok = localStorage.getItem("pharmacy_token");
           for (const ep of endpoints) {
             try {
               const res = await fetch(ep.url, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: ptok
+                  ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` }
+                  : { "Content-Type": "application/json" },
                 body: payload,
                 signal: AbortSignal.timeout(5000),
               });
@@ -1146,6 +1221,33 @@ export default function App() {
               ← Retour
             </button>
           </div>
+          {obFooter}
+        </div>
+      )}
+
+      {/* ── STEP OTP : SAISIE DU CODE ── */}
+      {obStep === "otp" && (
+        <div style={obCard}>
+          {obLogo}
+          <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d", marginBottom:6 }}>Vérification</div>
+          <div style={{ fontSize:13, color:"#666", marginBottom:24 }}>
+            Un code à 6 chiffres a été envoyé à<br /><strong>{emailInput.trim().toLowerCase()}</strong>
+          </div>
+          <label style={obLabel}>Code reçu par e-mail</label>
+          <input
+            inputMode="numeric" maxLength={6} value={otpInput}
+            onChange={e => { setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setOnboardingError(""); }}
+            onKeyDown={e => e.key === "Enter" && handleVerifyOtp()}
+            placeholder="123456"
+            style={{ ...obInput, marginBottom:16, letterSpacing:6, textAlign:"center", fontSize:22, fontWeight:800 }}
+            autoFocus
+          />
+          {onboardingError && <div style={{ background:"#fff5f5", border:"1px solid #fed7d7", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#c53030", marginBottom:16 }}>⚠️ {onboardingError}</div>}
+          <button onClick={handleVerifyOtp} disabled={otpBusy} style={{ ...obBtn, opacity: otpBusy ? 0.6 : 1 }}>{otpBusy ? "Vérification…" : "Se connecter →"}</button>
+          <button onClick={() => { setObStep("email"); setOtpInput(""); setOnboardingError(""); }}
+            style={{ width:"100%", background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#999", textDecoration:"underline", marginTop:12 }}>
+            ← Changer d'e-mail
+          </button>
           {obFooter}
         </div>
       )}
