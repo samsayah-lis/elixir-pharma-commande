@@ -749,6 +749,40 @@ export default function App() {
   const cartTotal = cartItems.reduce((s, i) => s + i.total, 0);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
 
+  // ── Panier : invalidation si la STRUCTURE du catalogue a changé ──────────
+  // Le panier est indexé par position (catKey-idx). Si l'admin ajoute / retire /
+  // réordonne un produit entre deux sessions, ces index pointent alors sur
+  // d'autres produits → commande faussée silencieusement. On détecte le
+  // changement via une signature (liste ordonnée des CIP par section) et on
+  // réinitialise le panier plutôt que d'envoyer une commande erronée. Un simple
+  // changement de prix ne modifie pas les CIP → aucune invalidation.
+  const catalogSig = useMemo(
+    () => Object.keys(CATALOG_WITH_ADMIN).sort().map(
+      k => k + ":" + (CATALOG_WITH_ADMIN[k].products || []).map(p => p.cip || "").join("|")
+    ).join(";"),
+    [CATALOG_WITH_ADMIN]
+  );
+  const sigCheckedRef = useRef(false);
+  useEffect(() => {
+    if (productsLoading || sigCheckedRef.current) return; // attendre le vrai catalogue chargé
+    sigCheckedRef.current = true;
+    try {
+      const stored = localStorage.getItem("cart_catalog_sig");
+      if (stored && stored !== catalogSig && Object.keys(quantities).length > 0) {
+        setQuantities({});
+        try { localStorage.removeItem("cart_quantities"); } catch {}
+        flash("⚠ Catalogue mis à jour — panier réinitialisé par sécurité");
+      }
+      localStorage.setItem("cart_catalog_sig", catalogSig);
+    } catch {}
+  }, [productsLoading, catalogSig, quantities]);
+  // Tient la signature à jour si le catalogue évolue en cours de session (sans re-vider)
+  useEffect(() => {
+    if (!productsLoading && sigCheckedRef.current) {
+      try { localStorage.setItem("cart_catalog_sig", catalogSig); } catch {}
+    }
+  }, [catalogSig, productsLoading]);
+
   // Garde-fou : si l'onglet actif n'existe plus (ex. defaultTab supprimé côté admin),
   // rebasculer sur le premier onglet valide au lieu de crasher au render.
   useEffect(() => {
