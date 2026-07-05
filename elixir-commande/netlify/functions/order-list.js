@@ -33,12 +33,13 @@ export const handler = async (event) => {
     url += `&source=eq.${encodeURIComponent(params.source)}`;
   }
 
-  // Si pas admin, filtre par pharmacy_cip
-  if (!isAdmin && params.pharmacy_cip) {
-    url += `&pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}`;
-  } else if (!isAdmin && user?.cip) {
-    // Filtre automatique basé sur le JWT
+  // Si pas admin : le CIP du JETON pharmacie prime (sécurisé). À défaut de jeton,
+  // fallback legacy sur le pharmacy_cip de la requête (à retirer une fois toutes
+  // les pharmacies migrées vers l'OTP).
+  if (!isAdmin && user?.cip) {
     url += `&pharmacy_cip=eq.${encodeURIComponent(user.cip)}`;
+  } else if (!isAdmin && params.pharmacy_cip) {
+    url += `&pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}`;
   }
   // Si admin sans filtre → toutes les commandes
 

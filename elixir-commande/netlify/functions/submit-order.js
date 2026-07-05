@@ -1,5 +1,6 @@
 import { getCors } from "./cors.js";
 import { rateLimit } from "./rate-limit.js";
+import { verifyTokenAsync } from "./auth.js";
 // Soumet une commande au frontal PharmaML via l'API INFOSOFT
 const PHARMAML_URL  = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
 const PHARMAML_USER = process.env.PHARMAML_USER || "admin";
@@ -23,6 +24,13 @@ export const handler = async (event) => {
 
   let { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
   if (!items?.length) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
+
+  // Sécurité : si un jeton pharmacie valide est présent, le CIP vient du jeton
+  // (email vérifié) et non du corps de la requête → pas d'usurpation possible.
+  const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
+  const tok = authHeader.replace(/^Bearer\s+/i, "");
+  const authUser = tok ? await verifyTokenAsync(tok) : null;
+  if (authUser?.cip) pharmacyCip = authUser.cip;
 
   // Si pas de CIP, essayer de le retrouver dans Supabase par email
   if ((!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) && pharmacyEmail && SUPABASE_URL) {

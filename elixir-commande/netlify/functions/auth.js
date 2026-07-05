@@ -16,13 +16,23 @@ async function verifySupabaseToken(token) {
     if (!res.ok) return null;
     const user = await res.json();
     if (!user?.id) return null;
-    return {
-      id: user.id,
-      email: user.email,
-      isAdmin: user.app_metadata?.role === "admin" ||
-               user.user_metadata?.role === "admin" ||
-               ADMIN_EMAILS.includes(user.email?.toLowerCase()),
-    };
+    const isAdmin = user.app_metadata?.role === "admin" ||
+                    user.user_metadata?.role === "admin" ||
+                    ADMIN_EMAILS.includes(user.email?.toLowerCase());
+    // Pour une pharmacie (non-admin), on résout le CIP à partir de l'email
+    // VÉRIFIÉ du jeton → impossible d'usurper le CIP d'une autre pharmacie.
+    let cip = null;
+    if (!isAdmin && user.email) {
+      try {
+        const pr = await fetch(
+          `${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(user.email.toLowerCase())}&select=cip&limit=1`,
+          { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } }
+        );
+        const rows = await pr.json();
+        cip = Array.isArray(rows) ? (rows[0]?.cip || null) : null;
+      } catch { /* cip reste null */ }
+    }
+    return { id: user.id, email: user.email, isAdmin, cip };
   } catch { return null; }
 }
 
