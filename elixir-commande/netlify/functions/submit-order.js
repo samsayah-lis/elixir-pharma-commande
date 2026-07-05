@@ -1,4 +1,5 @@
 import { getCors } from "./cors.js";
+import { rateLimit } from "./rate-limit.js";
 // Soumet une commande au frontal PharmaML via l'API INFOSOFT
 const PHARMAML_URL  = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
 const PHARMAML_USER = process.env.PHARMAML_USER || "admin";
@@ -10,6 +11,11 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "Method Not Allowed" };
+
+  // Transmission fournisseur : plafonner les envois par IP pour limiter l'abus.
+  // (mitigation — une auth pharmacie reste à mettre en place pour fermer l'IDOR)
+  const rl = rateLimit(event, 10, 60);
+  if (rl) return { ...rl, headers: { ...rl.headers, ...cors } };
 
   let payload;
   try { payload = JSON.parse(event.body); }

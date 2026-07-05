@@ -749,6 +749,15 @@ export default function App() {
   const cartTotal = cartItems.reduce((s, i) => s + i.total, 0);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
 
+  // Garde-fou : si l'onglet actif n'existe plus (ex. defaultTab supprimé côté admin),
+  // rebasculer sur le premier onglet valide au lieu de crasher au render.
+  useEffect(() => {
+    if (activeTab && CATALOG_WITH_ADMIN && !CATALOG_WITH_ADMIN[activeTab]) {
+      const first = getOrderedTabs(CATALOG_WITH_ADMIN)[0];
+      if (first) setActiveTab(first);
+    }
+  }, [activeTab, CATALOG_WITH_ADMIN]);
+
   const cat = CATALOG_WITH_ADMIN[activeTab];
   // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
   const activeCampMeta = getCampaign(activeTab);
@@ -1437,8 +1446,8 @@ export default function App() {
             />
           )}
 
-          {/* ── CATALOG NORMAL (masqué si vue spéciale active) ── */}
-          {!CATALOG_WITH_ADMIN[activeTab]?.specialView && (<>
+          {/* ── CATALOG NORMAL (masqué si vue spéciale active ou onglet inexistant) ── */}
+          {CATALOG_WITH_ADMIN[activeTab] && !CATALOG_WITH_ADMIN[activeTab]?.specialView && (<>
 
           {/* ── ML: Réapprovisionnement suggéré ── */}
           {pharmacyCip && (

@@ -2,6 +2,12 @@ import React, { useState, useEffect, useCallback } from "react";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 
+// En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés)
+const adminAuthHeaders = () => {
+  const t = (typeof localStorage !== "undefined" && localStorage.getItem("admin_token")) || "";
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
+
 export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
   const [products, setProducts] = useState([]);
   const [discounts, setDiscounts] = useState({});
@@ -24,8 +30,8 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       let offset = 0;
       let totalUpdated = 0;
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`);
-        if (!res.ok) break;
+        const res = await fetch(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`, { headers: adminAuthHeaders() });
+        if (!res.ok) { console.error("[sync] échec HTTP", res.status, "— êtes-vous connecté en admin ?"); break; }
         const data = await res.json();
         if (data.error) { console.error("[sync]", data.error); break; }
         totalUpdated += data.updated || 0;
@@ -72,7 +78,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
     setSavingDiscount(true);
     try {
       await fetch("/.netlify/functions/restock-alert", {
-        method: "POST", headers: { "Content-Type": "application/json" },
+        method: "POST", headers: { "Content-Type": "application/json", ...adminAuthHeaders() },
         body: JSON.stringify({ action: "set_expiry_discount", cip, discount_pct: pct, product_name: productName }),
       });
       setDiscounts(prev => ({ ...prev, [cip]: pct }));

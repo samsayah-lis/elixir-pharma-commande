@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 
 const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
+const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
+const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
 
 const EMPTY_CAMPAIGN = {
   id: "", label: "", subtitle: "", color: "#0d4f3c", accent: "#059669", icon: "🤝",

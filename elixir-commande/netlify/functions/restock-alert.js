@@ -1,4 +1,5 @@
 import { getCors } from "./cors.js";
+import { verifyAdmin } from "./auth.js";
 // ── Alertes retour en stock + remises péremption courte ─────────────────
 // POST /restock-alert { pharmacy_cip, pharmacy_email, cip, product_name }  → s'abonner
 // DELETE /restock-alert?pharmacy_cip=X&cip=Y                               → se désabonner
@@ -33,8 +34,10 @@ export const handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify(Array.isArray(rows) ? rows : []) };
     }
 
-    // Alertes pour un produit
+    // Alertes pour un produit → contient les emails abonnés : réservé admin
     if (params.cip) {
+      const { error: adminErr } = await verifyAdmin(event);
+      if (adminErr) return { ...adminErr, headers: { ...adminErr.headers, ...cors } };
       const res = await fetch(
         `${SUPABASE_URL}/rest/v1/restock_alerts?cip=eq.${encodeURIComponent(params.cip)}&select=*`,
         { headers: H }
@@ -52,6 +55,8 @@ export const handler = async (event) => {
 
     // Admin : définir une remise péremption courte
     if (body.action === "set_expiry_discount") {
+      const { error: adminErr } = await verifyAdmin(event);
+      if (adminErr) return { ...adminErr, headers: { ...adminErr.headers, ...cors } };
       if (!body.cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
       const row = {
         cip: body.cip,

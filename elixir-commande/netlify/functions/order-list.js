@@ -58,6 +58,17 @@ export const handler = async (event) => {
 
     const rows = await res.json();
 
+    // SEC : le mode `source` (barre de progression campagne, appelé côté client)
+    // ne doit PAS exposer les PII des autres pharmacies. Réponse réduite aux
+    // seuls CIP/quantités agrégés tant qu'on n'est pas admin.
+    if (!isAdmin && params.source) {
+      const orders = rows.map(r => ({
+        items: Array.isArray(r.items) ? r.items.map(i => ({ cip: i.cip, qty: i.qty })) : [],
+        source: r.source || "catalogue",
+      }));
+      return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };
+    }
+
     const orders = rows.map(r => ({
       id: r.id,
       date: r.date,
