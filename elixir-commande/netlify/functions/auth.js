@@ -65,3 +65,13 @@ export async function verifyAdmin(event) {
   if (!user?.isAdmin) return { error: { statusCode: 403, headers: CORS, body: JSON.stringify({ error: "Accès admin requis" }) } };
   return { admin: user, error: null };
 }
+
+// Autorise un appel automatisé (cron GitHub Actions) via un secret partagé.
+// Renvoie false si CRON_SECRET n'est pas configuré → aucun contournement possible.
+export function isCronAuthorized(event) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return false;
+  const h = event.headers || {};
+  const provided = h["x-cron-secret"] || h["X-Cron-Secret"] || "";
+  return provided === secret;
+}

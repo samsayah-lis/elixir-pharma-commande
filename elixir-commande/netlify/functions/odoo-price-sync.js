@@ -1,4 +1,4 @@
-import { verifyAdmin } from "./auth.js";
+import { verifyAdmin, isCronAuthorized } from "./auth.js";
 // ── Sync prix — charge toutes les règles (batch 200) + matching complet ──
 // step=load&offset=0  → charge 200 règles Odoo, accumule dans kv_store
 // step=apply&offset=0 → applique aux produits (product > template > catégorie > global)
@@ -13,8 +13,10 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
-  const auth = await verifyAdmin(event);
-  if (auth.error) return auth.error;
+  if (!isCronAuthorized(event)) {
+    const auth = await verifyAdmin(event);
+    if (auth.error) return auth.error;
+  }
   const params = event.queryStringParameters || {};
   const step = params.step || "load";
 
