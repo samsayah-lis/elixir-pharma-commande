@@ -625,6 +625,11 @@ export default function App() {
     setPharmacyEmail("");
     setPharmacyCip("");
     setOnboardingDone(false);
+    // Repartir de l'écran e-mail (sinon on retombe sur la saisie du code OTP)
+    setObStep("email");
+    setEmailInput("");
+    setOtpInput("");
+    setOnboardingError("");
     setQuantities({});
     setSpecialItems([]);
     setCartOpen(false);
