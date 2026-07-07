@@ -749,7 +749,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       let totalUpdated = 0;
       while (true) {
         const res = await adminFetch(`/.netlify/functions/odoo-stock-sync?step=apply&offset=${offset}`);
-        if (!res.ok) break;
+        if (!res.ok) throw new Error(`Application du stock interrompue (HTTP ${res.status}) — sync partielle, relancez.`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         totalUpdated += data.updated || 0;
@@ -758,7 +758,17 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         offset = data.next_offset;
       }
 
-      setSyncStock({ running: false, progress: `✓ Terminé — ${totalProducts} produits, ${stockData.in_stock} en stock (${stockData.quants_excluded || 0} quants exclus de ${stockData.excluded_locations || 0} emplacements), ${totalUpdated} mises à jour` });
+      // Étape 5 : RAZ des produits disparus → remis en rupture (garde-fou côté serveur)
+      setSyncStock({ running: true, progress: "Nettoyage des ruptures (produits disparus)..." });
+      let resetInfo = "";
+      try {
+        const resetRes = await adminFetch("/.netlify/functions/odoo-stock-sync?step=reset_absent");
+        const resetData = await resetRes.json().catch(() => ({}));
+        if (resetData.skipped) resetInfo = ` · ⚠ RAZ ignorée (${resetData.reason})`;
+        else if (resetData.reset != null) resetInfo = ` · ${resetData.reset} remis en rupture`;
+      } catch (e) { resetInfo = " · ⚠ RAZ des ruptures échouée : " + e.message; }
+
+      setSyncStock({ running: false, progress: `✓ Terminé — ${totalProducts} produits, ${stockData.in_stock} en stock (${stockData.quants_excluded || 0} quants exclus de ${stockData.excluded_locations || 0} emplacements), ${totalUpdated} mises à jour${resetInfo}` });
     } catch (e) { setSyncStock({ running: false, progress: "Erreur: " + e.message }); }
   };
 

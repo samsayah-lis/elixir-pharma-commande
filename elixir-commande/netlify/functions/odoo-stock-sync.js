@@ -223,6 +223,62 @@ export const handler = async (event) => {
       })};
     }
 
+    // ══ STEP 4 : RAZ des absents — produits sans quant → rupture ════════
+    // Sans ça, un produit épuisé (quants purgés par Odoo) garderait son ancien
+    // in_stock=true. On ne touche QUE les produits actuellement in_stock=true
+    // dont le CIP n'est plus dans stock_map.
+    if (step === "reset_absent") {
+      const mapRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.stock_map&select=value`, { headers: SB });
+      const mapRows = await mapRes.json();
+      if (!Array.isArray(mapRows) || mapRows.length === 0) {
+        return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "stock_map non trouvé. Lancez step=stock d'abord." }) };
+      }
+      const stockByCip = JSON.parse(mapRows[0].value);
+      const stockCips = new Set(Object.keys(stockByCip));
+      const inStockCount = Object.values(stockByCip).filter(v => v > 0).length;
+
+      // GARDE-FOU : stock_map vide/anormalement petit = échec Odoo probable.
+      // On annule la RAZ pour ne PAS mettre tout le catalogue en rupture.
+      if (stockCips.size < 10 || inStockCount < 5) {
+        return { statusCode: 200, headers: cors, body: JSON.stringify({
+          step: "reset_absent", skipped: true,
+          reason: `stock_map trop petit (${stockCips.size} CIP, ${inStockCount} en stock) — RAZ annulée par sécurité`,
+        })};
+      }
+
+      // Récupère les produits actuellement marqués en stock
+      const inStock = [];
+      let off = 0;
+      while (true) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?in_stock=eq.true&select=cip`, {
+          headers: { ...SB, Range: `${off}-${off + 999}` },
+        });
+        const rows = await res.json();
+        if (!Array.isArray(rows) || rows.length === 0) break;
+        inStock.push(...rows);
+        if (rows.length < 1000) break;
+        off += 1000;
+      }
+
+      // Ceux dont le CIP n'est plus dans stock_map → à remettre en rupture
+      const toReset = inStock.map(r => r.cip).filter(cip => cip && !stockCips.has(cip));
+
+      let reset = 0;
+      for (let i = 0; i < toReset.length; i += 100) {
+        const chunk = toReset.slice(i, i + 100);
+        const inList = chunk.map(c => encodeURIComponent(c)).join(",");
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=in.(${inList})`, {
+          method: "PATCH", headers: SB,
+          body: JSON.stringify({ in_stock: false, available: 0 }),
+        });
+        if (res.ok) reset += chunk.length;
+      }
+
+      return { statusCode: 200, headers: cors, body: JSON.stringify({
+        step: "reset_absent", done: true, checked: inStock.length, reset,
+      })};
+    }
+
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "step invalide" }) };
   } catch (err) {
     console.error("[stock-sync]", err.message);
