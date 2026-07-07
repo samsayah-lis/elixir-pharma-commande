@@ -37,5 +37,5 @@ jobs:
       - name: Lancer la sync
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
-          SITE_URL: https://elixir-commandes.expepharma.com
-        run: node elixir-commande/scripts/run-sync.mjs "${{ steps.t.outputs.target }}"
+          SITE_URL: https://commandes-elixir.netlify.app
+          run: node elixir-commande/scripts/run-sync.mjs "${{ steps.t.outputs.target }}"
