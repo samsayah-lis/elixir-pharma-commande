@@ -193,7 +193,7 @@ export const handler = async (event) => {
     // ══ STEP 3 : Appliquer le stock depuis kv_store ═════════════════════
     if (step === "apply") {
       const offset = parseInt(params.offset || "0");
-      const BATCH = 200;
+      const BATCH = 100; // 100 PATCH/invocation → reste sous le timeout Netlify (10s)
 
       const mapRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.stock_map&select=value`, { headers: SB });
       const mapRows = await mapRes.json();

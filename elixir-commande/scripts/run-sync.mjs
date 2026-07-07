@@ -15,14 +15,32 @@ if (!["stock", "price", "expiry"].includes(target)) {
 
 const HEADERS = { "x-cron-secret": SECRET };
 
-async function call(fn, qs) {
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Appel avec retries : les fonctions Netlify peuvent renvoyer un 502/504
+// (timeout / cold start) de façon transitoire, ou un échec réseau ponctuel.
+async function call(fn, qs, attempt = 1) {
   const url = `${SITE}/.netlify/functions/${fn}?${qs}`;
-  const res = await fetch(url, { headers: HEADERS });
-  const text = await res.text();
-  let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
-  if (!res.ok) throw new Error(`${fn}?${qs} → HTTP ${res.status}: ${text.slice(0, 200)}`);
-  if (json.error) throw new Error(`${fn}?${qs} → ${json.error}`);
-  return json;
+  try {
+    const res = await fetch(url, { headers: HEADERS });
+    const text = await res.text();
+    if (res.status >= 500 && attempt <= 5) {
+      console.log(`  ⟳ ${fn}?${qs} HTTP ${res.status} — retry ${attempt}/5 dans ${attempt * 4}s`);
+      await sleep(attempt * 4000);
+      return call(fn, qs, attempt + 1);
+    }
+    let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+    if (!res.ok) throw new Error(`${fn}?${qs} → HTTP ${res.status}: ${text.slice(0, 200)}`);
+    if (json.error) throw new Error(`${fn}?${qs} → ${json.error}`);
+    return json;
+  } catch (e) {
+    if (/fetch failed|network|ECONN|EAI_AGAIN|timeout|socket/i.test(e.message) && attempt <= 5) {
+      console.log(`  ⟳ ${fn}?${qs} ${e.message} — retry ${attempt}/5 dans ${attempt * 4}s`);
+      await sleep(attempt * 4000);
+      return call(fn, qs, attempt + 1);
+    }
+    throw e;
+  }
 }
 
 // Boucle une étape paginée jusqu'à done (protège contre une boucle infinie).

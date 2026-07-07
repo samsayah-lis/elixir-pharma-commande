@@ -96,7 +96,7 @@ export const handler = async (event) => {
       // Charger 200 produits
       const prodRes = await fetch(
         `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price,discounted_price&order=cip.asc`,
-        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 199}`, "Prefer": "count=exact" } }
+        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 99}`, "Prefer": "count=exact" } }
       );
       const total = parseInt(prodRes.headers.get("content-range")?.split("/")?.[1] || "0");
       const products = await prodRes.json();
