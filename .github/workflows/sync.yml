@@ -1,13 +1,13 @@
 name: Sync Odoo
 on:
   schedule:
-    - cron: "0 */3 * * *"   # stock — toutes les 3 heures
-    - cron: "20 2 * * *"    # prix — chaque nuit 02:20 UTC
-    - cron: "50 2 * * *"    # péremption — chaque nuit 02:50 UTC
+    - cron: "0 */3 * * *"
+    - cron: "20 2 * * *"
+    - cron: "50 2 * * *"
   workflow_dispatch:
     inputs:
       target:
-        description: "Sync à lancer manuellement"
+        description: "Sync à lancer"
         required: true
         default: stock
         type: choice
@@ -21,21 +21,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Déterminer la cible
-        id: t
-        run: |
-          if [ -n "${{ github.event.inputs.target }}" ]; then
-            echo "target=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
-          else
-            case "${{ github.event.schedule }}" in
-              "0 */3 * * *") echo "target=stock"  >> "$GITHUB_OUTPUT" ;;
-              "20 2 * * *")  echo "target=price"  >> "$GITHUB_OUTPUT" ;;
-              "50 2 * * *")  echo "target=expiry" >> "$GITHUB_OUTPUT" ;;
-              *)             echo "target=stock"  >> "$GITHUB_OUTPUT" ;;
-            esac
-          fi
       - name: Lancer la sync
         env:
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           SITE_URL: https://commandes-elixir.netlify.app
-          run: node elixir-commande/scripts/run-sync.mjs "${{ steps.t.outputs.target }}"
+          INPUT_TARGET: ${{ github.event.inputs.target }}
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          T="$INPUT_TARGET"
+          if [ -z "$T" ]; then
+            case "$SCHEDULE" in
+              "20 2 * * *") T=price ;;
+              "50 2 * * *") T=expiry ;;
+              *) T=stock ;;
+            esac
+          fi
+          echo "Sync cible : $T"
+          node elixir-commande/scripts/run-sync.mjs "$T"
