@@ -3,7 +3,7 @@
 // Usage : node scripts/run-sync.mjs stock|price|expiry
 // Env   : CRON_SECRET (obligatoire), SITE_URL (défaut = prod)
 
-const SITE = (process.env.SITE_URL || "https://elixir-commandes.expepharma.com").replace(/\/$/, "");
+const SITE = (process.env.SITE_URL || "https://commandes-elixir.netlify.app").replace(/\/$/, "");
 const SECRET = process.env.CRON_SECRET;
 const target = process.argv[2];
 
