@@ -93,7 +93,7 @@ export const handler = async (event) => {
 
       // Charger 200 produits
       const prodRes = await fetch(
-        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price&order=cip.asc`,
+        `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price,discounted_price&order=cip.asc`,
         { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 199}`, "Prefer": "count=exact" } }
       );
       const total = parseInt(prodRes.headers.get("content-range")?.split("/")?.[1] || "0");
@@ -137,7 +137,19 @@ export const handler = async (event) => {
           }
         }
 
-        if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) continue;
+        if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) {
+          // Pas de remise valable → effacer une remise obsolète éventuelle
+          // (le fallback global produit toujours une remise valide, donc on
+          // n'arrive ici que pour de vrais cas « sans remise »).
+          if (p.discounted_price != null) {
+            const clr = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {
+              method: "PATCH", headers: SB,
+              body: JSON.stringify({ discounted_price: null, discount_pct: null }),
+            });
+            if (clr.ok) updated++;
+          }
+          continue;
+        }
 
         const discountPct = Math.round((1 - discountedPrice / listPrice) * 1000) / 10;
         const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {

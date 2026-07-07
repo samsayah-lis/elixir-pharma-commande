@@ -23,7 +23,7 @@ export const handler = async (event) => {
   try {
     // 1. Produits en stock depuis Supabase (juste ce batch)
     const stockRes = await fetch(
-      `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name&in_stock=eq.true&order=cip.asc`,
+      `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,name,earliest_expiry&in_stock=eq.true&order=cip.asc`,
       { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + BATCH_SIZE - 1}`, "Prefer": "count=exact" } }
     );
     const totalInStock = parseInt(stockRes.headers.get("content-range")?.split("/")?.[1] || "0");
@@ -79,36 +79,49 @@ export const handler = async (event) => {
 
     // 4. Charger les lots et mettre à jour Supabase
     let updated = 0;
+    let cleared = 0;
     const now = new Date().toISOString();
+
+    // Garde-fou : si AUCUN produit du batch n'a de lot valide, on ne nettoie rien
+    // (probable souci de requête Odoo) — évite d'effacer des dates à tort.
+    const anyLots = Object.keys(lotIdsByPid).length > 0;
 
     for (const prod of batch) {
       const pid = cipToPid[prod.cip];
-      if (!pid) continue;
-      const validLotIds = lotIdsByPid[pid];
-      if (!validLotIds || validLotIds.size === 0) continue;
+      const validLotIds = pid ? lotIdsByPid[pid] : null;
 
-      try {
-        const lots = await odooCall(uid, "stock.lot", "search_read",
-          [["product_id", "=", pid], ["expiration_date", "!=", false]],
-          { fields: ["id", "name", "expiration_date"], limit: 50 }
-        );
-        if (!Array.isArray(lots) || lots.length === 0) continue;
+      let parsed = [];
+      let errored = false;
+      if (validLotIds && validLotIds.size > 0) {
+        try {
+          const lots = await odooCall(uid, "stock.lot", "search_read",
+            [["product_id", "=", pid], ["expiration_date", "!=", false]],
+            { fields: ["id", "name", "expiration_date"], limit: 50 }
+          );
+          const arr = Array.isArray(lots) ? lots : [];
+          const filtered = arr.filter(l => validLotIds.has(parseInt(l.id)));
+          parsed = filtered.map(l => ({
+            lot_name: l.name || "",
+            qty: lotQty[parseInt(l.id)] || 0,
+            expiry: (l.expiration_date || "").split(" ")[0],
+          })).filter(l => l.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry));
+        } catch (e) { errored = true; }
+      }
 
-        const filtered = lots.filter(l => validLotIds.has(parseInt(l.id)));
-        const parsed = filtered.map(l => ({
-          lot_name: l.name || "",
-          qty: lotQty[parseInt(l.id)] || 0,
-          expiry: (l.expiration_date || "").split(" ")[0],
-        })).filter(l => l.expiry).sort((a, b) => a.expiry.localeCompare(b.expiry));
-
-        if (parsed.length > 0) {
-          const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(prod.cip)}`, {
-            method: "PATCH", headers: SB,
-            body: JSON.stringify({ earliest_expiry: parsed[0].expiry, lots: JSON.stringify(parsed.slice(0, 10)), updated_at: now }),
-          });
-          if (res.ok) updated++;
-        }
-      } catch (e) { /* skip this product */ }
+      if (parsed.length > 0) {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(prod.cip)}`, {
+          method: "PATCH", headers: SB,
+          body: JSON.stringify({ earliest_expiry: parsed[0].expiry, lots: JSON.stringify(parsed.slice(0, 10)), updated_at: now }),
+        });
+        if (res.ok) updated++;
+      } else if (!errored && anyLots && prod.earliest_expiry) {
+        // Plus de lot court daté → effacer la date de péremption obsolète
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(prod.cip)}`, {
+          method: "PATCH", headers: SB,
+          body: JSON.stringify({ earliest_expiry: null, lots: null, updated_at: now }),
+        });
+        if (res.ok) cleared++;
+      }
     }
 
     const nextOffset = offset + batch.length;
@@ -116,7 +129,7 @@ export const handler = async (event) => {
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({
       done, offset, next_offset: done ? null : nextOffset,
-      batch_size: batch.length, updated, total_in_stock: totalInStock,
+      batch_size: batch.length, updated, cleared, total_in_stock: totalInStock,
     })};
 
   } catch (err) {
