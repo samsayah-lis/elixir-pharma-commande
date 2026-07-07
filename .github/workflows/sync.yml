@@ -1,0 +1,41 @@
+name: Sync Odoo
+on:
+  schedule:
+    - cron: "0 */3 * * *"   # stock — toutes les 3 heures
+    - cron: "20 2 * * *"    # prix — chaque nuit 02:20 UTC
+    - cron: "50 2 * * *"    # péremption — chaque nuit 02:50 UTC
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Sync à lancer manuellement"
+        required: true
+        default: stock
+        type: choice
+        options: [stock, price, expiry]
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Déterminer la cible
+        id: t
+        run: |
+          if [ -n "${{ github.event.inputs.target }}" ]; then
+            echo "target=${{ github.event.inputs.target }}" >> "$GITHUB_OUTPUT"
+          else
+            case "${{ github.event.schedule }}" in
+              "0 */3 * * *") echo "target=stock"  >> "$GITHUB_OUTPUT" ;;
+              "20 2 * * *")  echo "target=price"  >> "$GITHUB_OUTPUT" ;;
+              "50 2 * * *")  echo "target=expiry" >> "$GITHUB_OUTPUT" ;;
+              *)             echo "target=stock"  >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
+      - name: Lancer la sync
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SITE_URL: https://elixir-commandes.expepharma.com
+        run: node elixir-commande/scripts/run-sync.mjs "${{ steps.t.outputs.target }}"
