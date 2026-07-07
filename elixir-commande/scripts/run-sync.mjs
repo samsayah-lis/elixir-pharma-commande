@@ -8,8 +8,8 @@ const SECRET = process.env.CRON_SECRET;
 const target = process.argv[2];
 
 if (!SECRET) { console.error("✗ CRON_SECRET manquant"); process.exit(1); }
-if (!["stock", "price", "expiry"].includes(target)) {
-  console.error("Usage: node scripts/run-sync.mjs stock|price|expiry");
+if (!["stock", "stock-quick", "price", "expiry"].includes(target)) {
+  console.error("Usage: node scripts/run-sync.mjs stock|stock-quick|price|expiry");
   process.exit(1);
 }
 
@@ -58,12 +58,22 @@ async function loop(fn, step) {
 }
 
 async function syncStock() {
-  console.log("== STOCK ==");
+  console.log("== STOCK (complet) ==");
   await loop("odoo-stock-sync", "products");
+  await stockRefresh();
+}
+
+// Rafraîchit uniquement la disponibilité (saute le rechargement des 27k produits).
+async function stockRefresh() {
   console.log("  → stock_prep", JSON.stringify(await call("odoo-stock-sync", "step=stock_prep")).slice(0, 160));
   console.log("  → stock",      JSON.stringify(await call("odoo-stock-sync", "step=stock")).slice(0, 160));
   await loop("odoo-stock-sync", "apply");
   console.log("  → reset_absent", JSON.stringify(await call("odoo-stock-sync", "step=reset_absent")));
+}
+
+async function syncStockQuick() {
+  console.log("== STOCK (rapide) ==");
+  await stockRefresh();
 }
 
 async function syncPrice() {
@@ -77,7 +87,7 @@ async function syncExpiry() {
   await loop("odoo-expiry-sync", null);
 }
 
-const runners = { stock: syncStock, price: syncPrice, expiry: syncExpiry };
+const runners = { stock: syncStock, "stock-quick": syncStockQuick, price: syncPrice, expiry: syncExpiry };
 runners[target]()
   .then(() => console.log(`✓ Sync « ${target} » terminée`))
   .catch((e) => { console.error(`✗ Sync « ${target} » échouée :`, e.message); process.exit(1); });

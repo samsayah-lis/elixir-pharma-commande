@@ -193,7 +193,7 @@ export const handler = async (event) => {
     // ══ STEP 3 : Appliquer le stock depuis kv_store ═════════════════════
     if (step === "apply") {
       const offset = parseInt(params.offset || "0");
-      const BATCH = 100; // 100 PATCH/invocation → reste sous le timeout Netlify (10s)
+      const BATCH = 500; // écriture groupée (upsert) → 1 seule requête par lot
 
       const mapRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.stock_map&select=value`, { headers: SB });
       const mapRows = await mapRes.json();
@@ -208,20 +208,23 @@ export const handler = async (event) => {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "apply", done: true, offset, total: allCips.length }) };
       }
 
-      let updated = 0;
-      for (const cip of batch) {
+      const rows = batch.map(cip => {
         const available = Math.round(Math.max(0, stockByCip[cip]));
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(cip)}`, {
-          method: "PATCH", headers: SB,
-          body: JSON.stringify({ available, in_stock: available > 0 }),
-        });
-        if (res.ok) updated++;
+        return { cip, available, in_stock: available > 0 };
+      });
+      const upRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
+        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+        body: JSON.stringify(rows),
+      });
+      if (!upRes.ok) {
+        const t = await upRes.text();
+        return { statusCode: 502, headers: cors, body: JSON.stringify({ error: `upsert stock échoué: ${t.slice(0, 200)}`, step: "apply", offset }) };
       }
 
       const nextOffset = offset + batch.length;
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "apply", done: nextOffset >= allCips.length,
-        offset, next_offset: nextOffset, updated, total: allCips.length,
+        offset, next_offset: nextOffset, updated: batch.length, total: allCips.length,
       })};
     }
 

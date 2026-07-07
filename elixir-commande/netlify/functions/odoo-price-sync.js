@@ -96,7 +96,7 @@ export const handler = async (event) => {
       // Charger 200 produits
       const prodRes = await fetch(
         `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price,discounted_price&order=cip.asc`,
-        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 99}`, "Prefer": "count=exact" } }
+        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 499}`, "Prefer": "count=exact" } }
       );
       const total = parseInt(prodRes.headers.get("content-range")?.split("/")?.[1] || "0");
       const products = await prodRes.json();
@@ -104,61 +104,49 @@ export const handler = async (event) => {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "apply", done: true, offset, total }) };
       }
 
-      // Appliquer les prix avec priorité
-      let updated = 0;
+      // Calcul des prix (priorité produit > template > catégorie > global),
+      // accumulés puis écrits en UN SEUL upsert groupé par lot.
+      const rows = [];
       for (const p of products) {
         const listPrice = parseFloat(p.list_price) || 0;
         if (listPrice <= 0) continue;
 
-        // Priorité : produit > template > catégorie > règle globale Elixir
         const rule = (p.odoo_pid ? byPid[p.odoo_pid] : null)
           || (p.odoo_tmpl_id ? byTid[p.odoo_tmpl_id] : null)
           || (p.categ_id ? byCid[p.categ_id] : null)
           || null;
 
         let discountedPrice = null;
-
         if (rule) {
-          // Règle spécifique (produit, template, catégorie)
-          if (rule.cp === "fixed" && rule.fp > 0) {
-            discountedPrice = rule.fp;
-          } else if (rule.pp > 0) {
-            discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
-          }
+          if (rule.cp === "fixed" && rule.fp > 0) discountedPrice = rule.fp;
+          else if (rule.pp > 0) discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
         } else {
           // Règle globale Elixir (3 paliers)
-          if (listPrice < 4.63) {
-            // Forfait 0,23€ de remise par boîte
-            discountedPrice = Math.round((listPrice - 0.23) * 100) / 100;
-          } else if (listPrice <= 463) {
-            // 4,51% de remise
-            discountedPrice = Math.round(listPrice * (1 - 4.51 / 100) * 100) / 100;
-          } else {
-            // Forfait 25€ de remise par boîte
-            discountedPrice = Math.round((listPrice - 25) * 100) / 100;
-          }
+          if (listPrice < 4.63) discountedPrice = Math.round((listPrice - 0.23) * 100) / 100;
+          else if (listPrice <= 463) discountedPrice = Math.round(listPrice * (1 - 4.51 / 100) * 100) / 100;
+          else discountedPrice = Math.round((listPrice - 25) * 100) / 100;
         }
 
         if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) {
           // Pas de remise valable → effacer une remise obsolète éventuelle
-          // (le fallback global produit toujours une remise valide, donc on
-          // n'arrive ici que pour de vrais cas « sans remise »).
-          if (p.discounted_price != null) {
-            const clr = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {
-              method: "PATCH", headers: SB,
-              body: JSON.stringify({ discounted_price: null, discount_pct: null }),
-            });
-            if (clr.ok) updated++;
-          }
+          if (p.discounted_price != null) rows.push({ cip: p.cip, discounted_price: null, discount_pct: null });
           continue;
         }
-
         const discountPct = Math.round((1 - discountedPrice / listPrice) * 1000) / 10;
-        const res = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=eq.${encodeURIComponent(p.cip)}`, {
-          method: "PATCH", headers: SB,
-          body: JSON.stringify({ discounted_price: discountedPrice, discount_pct: discountPct }),
+        rows.push({ cip: p.cip, discounted_price: discountedPrice, discount_pct: discountPct });
+      }
+
+      let updated = 0;
+      if (rows.length > 0) {
+        const upRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
+          method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify(rows),
         });
-        if (res.ok) updated++;
+        if (!upRes.ok) {
+          const t = await upRes.text();
+          return { statusCode: 502, headers: cors, body: JSON.stringify({ error: `upsert prix échoué: ${t.slice(0, 200)}`, step: "apply", offset }) };
+        }
+        updated = rows.length;
       }
 
       const nextOffset = offset + products.length;
