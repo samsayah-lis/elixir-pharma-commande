@@ -44,52 +44,29 @@ export const handler = async (event) => {
       .map(([id, count]) => ({ pricelist_id: parseInt(id), name: nameOf(parseInt(id)), pharmacies: count }))
       .sort((a, b) => b.pharmacies - a.pharmacies);
 
-    // 3. Prendre des produits QUI ONT une règle dans #15, + compter les règles par liste
-    const [rules15, rules5] = await Promise.all([
-      odooCall(uid, "product.pricelist.item", "search_read", [["pricelist_id", "=", 15]],
-        { fields: ["product_id", "fixed_price", "compute_price", "percent_price", "price_discount", "min_quantity", "applied_on"], limit: 2000 }),
-      odooCall(uid, "product.pricelist.item", "search_read", [["pricelist_id", "=", 5]],
-        { fields: ["product_id", "fixed_price", "compute_price", "min_quantity"], limit: 2000 }),
-    ]);
-    const count15 = Array.isArray(rules15) ? rules15.length : 0;
-    const count5 = Array.isArray(rules5) ? rules5.length : 0;
+    // 3. Détail complet des règles de #5 (globales + catégories) + arbre des catégories
+    const PL = parseInt(event.queryStringParameters?.pl) || 5;
+    const items = await odooCall(uid, "product.pricelist.item", "search_read",
+      [["pricelist_id", "=", PL]],
+      { fields: ["applied_on", "compute_price", "base", "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity", "categ_id", "product_id"], limit: 2000 });
+    const arr = Array.isArray(items) ? items : [];
+    const isApplied = (r, code) => String(r.applied_on || "").includes(code);
+    const global_rules = arr.filter(r => isApplied(r, "3"));
+    const category_rules = arr.filter(r => isApplied(r, "2"));
+    const product_rules = arr.filter(r => isApplied(r, "0") || isApplied(r, "1"));
 
-    const price5 = {};
-    (Array.isArray(rules5) ? rules5 : []).forEach(it => {
-      const pid = parseInt(it.product_id);
-      if (pid && it.compute_price === "fixed") price5[pid] = it.fixed_price;
-    });
-
-    const sample15 = (Array.isArray(rules15) ? rules15 : [])
-      .filter(it => parseInt(it.product_id) > 0 && it.compute_price === "fixed")
-      .slice(0, 12);
-    const pids15 = sample15.map(it => parseInt(it.product_id));
-    const prods = pids15.length ? await odooCall(uid, "product.product", "search_read",
-      [["id", "in", pids15]], { fields: ["id", "default_code", "name", "list_price"], limit: 50 }) : [];
-    const prodById = {};
-    (Array.isArray(prods) ? prods : []).forEach(p => { prodById[parseInt(p.id)] = p; });
-
-    const comparison = sample15.map(it => {
-      const pid = parseInt(it.product_id);
-      const p = prodById[pid] || {};
-      const lp = parseFloat(p.list_price) || null;
-      const f15 = parseFloat(it.fixed_price);
-      return {
-        cip: p.default_code || `pid:${pid}`,
-        name: (p.name || "").slice(0, 40),
-        list_price: p.list_price,
-        prix_liste15: `${it.fixed_price} €`,
-        remise_15_pct: (lp && f15) ? Math.round((1 - f15 / lp) * 1000) / 10 : null,
-        prix_liste5: price5[pid] != null ? `${price5[pid]} €` : "—",
-      };
-    });
+    const categTree = await odooCall(uid, "product.category", "search_read", [],
+      { fields: ["id", "parent_id", "complete_name"], limit: 500 });
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({
-      partners_scanned: scanned,
-      usage: usageSorted,
-      rule_counts: { liste_5: count5 >= 2000 ? "2000+" : count5, liste_15: count15 >= 2000 ? "2000+" : count15 },
-      comparison,
-      note: "comparison = produits qui ONT un prix dans #15 : prix négocié #15 (+ remise %) vs #5. Dites-moi si prix_liste15 correspond au VRAI prix remisé attendu.",
+      pricelist: PL,
+      total_rules: arr.length,
+      counts: { global: global_rules.length, category: category_rules.length, product: product_rules.length },
+      global_rules,
+      category_rules,
+      product_rules_sample: product_rules.slice(0, 6),
+      category_tree: (Array.isArray(categTree) ? categTree : []).map(c => ({ id: parseInt(c.id), parent_id: parseInt(c.parent_id) || null, name: c.complete_name })),
+      note: "global_rules = barème par palier de prix ; category_rules = remises par catégorie (+ arbre pour la hiérarchie) ; product_rules = prix spécifiques. Sert à répliquer exactement le calcul de #5.",
     }, null, 2) };
   } catch (err) {
     console.error("[pricelists-audit]", err.message);
