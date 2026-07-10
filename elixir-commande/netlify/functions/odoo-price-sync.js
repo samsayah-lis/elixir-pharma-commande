@@ -1,18 +1,39 @@
 import { verifyAdmin, isCronAuthorized } from "./auth.js";
-// ── Sync prix — charge toutes les règles (batch 200) + matching complet ──
-// step=load&offset=0  → charge 200 règles Odoo, accumule dans kv_store
-// step=apply&offset=0 → applique aux produits (product > template > catégorie > global)
+// ── Sync prix — réplique fidèlement la liste de prix Odoo #5 ─────────────
+// step=load           → charge toutes les règles de #5 + l'arbre des catégories
+// step=apply&offset=0 → calcule le prix par produit et l'écrit (upsert groupé)
+//
+// Ordre d'évaluation (comme Odoo) : règle PRODUIT > règle CATÉGORIE (avec
+// hiérarchie) > barème GLOBAL par palier de prix. Prix unité (min_quantity ≤ 1).
 import { authenticate, odooCall } from "./odoo.js";
 import { getCors } from "./cors.js";
 
-const PRICELIST_ID = 5;
+const PRICELIST_ID = parseInt(process.env.PRICELIST_ID || "5");
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
+
+const round2 = (n) => Math.round(n * 100) / 100;
+
+// Barème global par palier (bornes 4,63 / 500 — champ de plage non lisible en RPC,
+// valeurs stables issues de la config #5). Priorité au + spécifique ci-dessous.
+function globalPrice(lp) {
+  if (lp < 4.63) return round2(lp - 0.23);
+  if (lp <= 500) return round2(lp * (1 - 4.51 / 100));
+  return round2(lp - 25.1);
+}
+
+// Applique une règle Odoo (fixed / percentage / formula) à un prix catalogue.
+function applyRule(r, lp) {
+  if (r.cp === "fixed") return r.fp > 0 ? round2(r.fp) : null;
+  if (r.cp === "percentage") return round2(lp * (1 - (r.pp || 0) / 100));
+  if (r.cp === "formula") return round2(lp * (1 - (r.pd || 0) / 100) + (r.ps || 0));
+  return null;
+}
+
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
-
   if (!isCronAuthorized(event)) {
     const auth = await verifyAdmin(event);
     if (auth.error) return auth.error;
@@ -21,82 +42,93 @@ export const handler = async (event) => {
   const step = params.step || "load";
 
   try {
-    // ══ STEP LOAD : charger les règles par batch de 200 ═════════════════
+    // ══ STEP LOAD : règles de #5 + arbre des catégories → kv_store ═══════
     if (step === "load") {
-      const offset = parseInt(params.offset || "0");
       const uid = await authenticate();
 
-      const items = await odooCall(uid, "product.pricelist.item", "search_read",
-        [["pricelist_id", "=", PRICELIST_ID]],
-        { fields: ["product_id", "product_tmpl_id", "categ_id", "fixed_price", "percent_price", "price_discount", "compute_price", "applied_on"], limit: 200, offset }
-      );
-      if (!Array.isArray(items) || items.length === 0) {
-        return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "load", done: true, offset }) };
+      const rules = [];
+      let offset = 0;
+      while (true) {
+        const items = await odooCall(uid, "product.pricelist.item", "search_read",
+          [["pricelist_id", "=", PRICELIST_ID]],
+          { fields: ["applied_on", "compute_price", "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity", "product_id", "product_tmpl_id", "categ_id"], limit: 500, offset });
+        if (!Array.isArray(items) || items.length === 0) break;
+        items.forEach(it => rules.push({
+          ao: it.applied_on || "",
+          cp: it.compute_price || "",
+          fp: parseFloat(it.fixed_price) || 0,
+          pp: parseFloat(it.percent_price) || 0,
+          pd: parseFloat(it.price_discount) || 0,
+          ps: parseFloat(it.price_surcharge) || 0,
+          mq: parseFloat(it.min_quantity) || 0,
+          pid: parseInt(it.product_id) || 0,
+          tid: parseInt(it.product_tmpl_id) || 0,
+          cid: parseInt(it.categ_id) || 0,
+        }));
+        if (items.length < 500) break;
+        offset += 500;
       }
 
-      // Lire les règles existantes (ou commencer vide si offset=0)
-      let allRules = [];
-      if (offset > 0) {
-        try {
-          const existing = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB });
-          const rows = await existing.json();
-          if (rows?.[0]?.value) allRules = JSON.parse(rows[0].value);
-        } catch (e) { /* start fresh */ }
-      }
+      // Arbre des catégories (pour la hiérarchie)
+      const cats = await odooCall(uid, "product.category", "search_read", [],
+        { fields: ["id", "parent_id"], limit: 1000 });
+      const parentMap = {};
+      (Array.isArray(cats) ? cats : []).forEach(c => { parentMap[parseInt(c.id)] = parseInt(c.parent_id) || 0; });
 
-      // Ajouter les nouvelles
-      items.forEach(item => {
-        allRules.push({
-          pid: parseInt(item.product_id) || 0,
-          tid: parseInt(item.product_tmpl_id) || 0,
-          cid: parseInt(item.categ_id) || 0,
-          ap: item.applied_on || "",
-          cp: item.compute_price || "",
-          fp: parseFloat(item.fixed_price) || 0,
-          pp: parseFloat(item.percent_price) || parseFloat(item.price_discount) || 0,
-        });
-      });
-
-      // Sauver
-      await fetch(`${SUPABASE_URL}/rest/v1/kv_store`, {
-        method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-        body: JSON.stringify({ key: "pricelist_rules", value: JSON.stringify(allRules), updated_at: new Date().toISOString() }),
-      });
+      await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store`, { method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ key: "pricelist_rules", value: JSON.stringify(rules), updated_at: new Date().toISOString() }) }),
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store`, { method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
+          body: JSON.stringify({ key: "category_parents", value: JSON.stringify(parentMap), updated_at: new Date().toISOString() }) }),
+      ]);
 
       return { statusCode: 200, headers: cors, body: JSON.stringify({
-        step: "load", done: items.length < 200,
-        offset, next_offset: offset + items.length, total_rules: allRules.length,
+        step: "load", done: true, pricelist: PRICELIST_ID, total_rules: rules.length,
+        categories: Object.keys(parentMap).length,
       })};
     }
 
-    // ══ STEP APPLY : appliquer les règles aux produits ══════════════════
+    // ══ STEP APPLY : calcul du prix par produit (upsert groupé) ═════════
     if (step === "apply") {
       const offset = parseInt(params.offset || "0");
+      const BATCH = 500;
 
-      // Charger les règles
-      const rulesRes = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB });
+      const [rulesRes, parRes] = await Promise.all([
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.pricelist_rules&select=value`, { headers: SB }),
+        fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=eq.category_parents&select=value`, { headers: SB }),
+      ]);
       const rulesRows = await rulesRes.json();
       if (!rulesRows?.[0]?.value) {
         return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Lancez step=load d'abord" }) };
       }
-      const allRules = JSON.parse(rulesRows[0].value);
+      const rules = JSON.parse(rulesRows[0].value);
+      const parRows = await parRes.json();
+      const parentMap = parRows?.[0]?.value ? JSON.parse(parRows[0].value) : {};
 
-      // Indexer les règles par type
-      const byPid = {};    // product_id → rule
-      const byTid = {};    // product_tmpl_id → rule
-      const byCid = {};    // categ_id → rule
-      const globals = [];  // applied_on = 3_global
-      allRules.forEach(r => {
-        if (r.pid > 0) byPid[r.pid] = r;
+      // Index par cible (prix UNITÉ → on ignore les paliers de quantité mq>1)
+      const byPid = {}, byTid = {}, byCid = {};
+      let globals = [];
+      rules.forEach(r => {
+        if (r.mq > 1) return; // palier quantité : non affiché en prix unité
+        if (r.ao.includes("3")) globals.push(r);
+        else if (r.pid > 0) byPid[r.pid] = r;
         else if (r.tid > 0) byTid[r.tid] = r;
         else if (r.cid > 0) byCid[r.cid] = r;
-        else if (r.ap.includes("3")) globals.push(r);
       });
 
-      // Charger 200 produits
+      // Remonte la hiérarchie de catégories pour trouver une règle applicable
+      const categoryRule = (cid) => {
+        let c = parseInt(cid) || 0, guard = 0;
+        while (c > 0 && guard++ < 20) {
+          if (byCid[c]) return byCid[c];
+          c = parentMap[c] || 0;
+        }
+        return null;
+      };
+
       const prodRes = await fetch(
         `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price,discounted_price&order=cip.asc`,
-        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Range": `${offset}-${offset + 499}`, "Prefer": "count=exact" } }
+        { headers: { ...SB, "Range": `${offset}-${offset + BATCH - 1}`, "Prefer": "count=exact" } }
       );
       const total = parseInt(prodRes.headers.get("content-range")?.split("/")?.[1] || "0");
       const products = await prodRes.json();
@@ -104,36 +136,26 @@ export const handler = async (event) => {
         return { statusCode: 200, headers: cors, body: JSON.stringify({ step: "apply", done: true, offset, total }) };
       }
 
-      // Calcul des prix (priorité produit > template > catégorie > global),
-      // accumulés puis écrits en UN SEUL upsert groupé par lot.
       const rows = [];
       for (const p of products) {
-        const listPrice = parseFloat(p.list_price) || 0;
-        if (listPrice <= 0) continue;
+        const lp = parseFloat(p.list_price) || 0;
+        if (lp <= 0) continue;
 
-        const rule = (p.odoo_pid ? byPid[p.odoo_pid] : null)
-          || (p.odoo_tmpl_id ? byTid[p.odoo_tmpl_id] : null)
-          || (p.categ_id ? byCid[p.categ_id] : null)
-          || null;
+        // Priorité : produit > template > catégorie (hiérarchie) > barème global
+        let price = null;
+        const pr = (p.odoo_pid && byPid[p.odoo_pid])
+          || (p.odoo_tmpl_id && byTid[p.odoo_tmpl_id])
+          || categoryRule(p.categ_id);
+        if (pr) price = applyRule(pr, lp);
+        if (price == null) price = globalPrice(lp);
 
-        let discountedPrice = null;
-        if (rule) {
-          if (rule.cp === "fixed" && rule.fp > 0) discountedPrice = rule.fp;
-          else if (rule.pp > 0) discountedPrice = Math.round(listPrice * (1 - rule.pp / 100) * 100) / 100;
-        } else {
-          // Règle globale Elixir (3 paliers)
-          if (listPrice < 4.63) discountedPrice = Math.round((listPrice - 0.23) * 100) / 100;
-          else if (listPrice <= 463) discountedPrice = Math.round(listPrice * (1 - 4.51 / 100) * 100) / 100;
-          else discountedPrice = Math.round((listPrice - 25) * 100) / 100;
-        }
-
-        if (!discountedPrice || discountedPrice >= listPrice || discountedPrice <= 0) {
-          // Pas de remise valable → effacer une remise obsolète éventuelle
+        // Garde-fous : prix valable et < prix catalogue, sinon pas de remise
+        if (price == null || price <= 0 || price >= lp) {
           if (p.discounted_price != null) rows.push({ cip: p.cip, discounted_price: null, discount_pct: null });
           continue;
         }
-        const discountPct = Math.round((1 - discountedPrice / listPrice) * 1000) / 10;
-        rows.push({ cip: p.cip, discounted_price: discountedPrice, discount_pct: discountPct });
+        const discountPct = Math.round((1 - price / lp) * 1000) / 10;
+        rows.push({ cip: p.cip, discounted_price: price, discount_pct: discountPct });
       }
 
       let updated = 0;
@@ -151,12 +173,7 @@ export const handler = async (event) => {
 
       const nextOffset = offset + products.length;
       return { statusCode: 200, headers: cors, body: JSON.stringify({
-        step: "apply", done: nextOffset >= total,
-        offset, next_offset: nextOffset, updated, total,
-        rules_by_product: Object.keys(byPid).length,
-        rules_by_template: Object.keys(byTid).length,
-        rules_by_category: Object.keys(byCid).length,
-        rules_global: globals.length,
+        step: "apply", done: nextOffset >= total, offset, next_offset: nextOffset, updated, total,
       })};
     }
 
