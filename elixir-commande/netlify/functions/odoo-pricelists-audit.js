@@ -9,7 +9,10 @@ import { getCors } from "./cors.js";
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
-  if (!isCronAuthorized(event)) {
+  // Diagnostic lecture seule : secret via header (cron) OU via ?secret= (navigateur), sinon admin.
+  const qsSecret = event.queryStringParameters?.secret;
+  const secretOk = isCronAuthorized(event) || (process.env.CRON_SECRET && qsSecret === process.env.CRON_SECRET);
+  if (!secretOk) {
     const auth = await verifyAdmin(event);
     if (auth.error) return auth.error;
   }
