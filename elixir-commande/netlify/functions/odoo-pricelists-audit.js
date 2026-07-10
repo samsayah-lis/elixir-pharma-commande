@@ -44,23 +44,17 @@ export const handler = async (event) => {
       .map(([id, count]) => ({ pricelist_id: parseInt(id), name: nameOf(parseInt(id)), pharmacies: count }))
       .sort((a, b) => b.pharmacies - a.pharmacies);
 
-    // 3. Test du calcul de prix : 3 produits témoins, prix sous chaque liste utilisée
-    const sampleProds = await odooCall(uid, "product.product", "search_read",
-      [["default_code", "!=", false], ["list_price", ">", 20], ["sale_ok", "=", true]],
-      { fields: ["id", "default_code", "name", "list_price"], limit: 3 });
-    const sampleIds = sampleProds.map(p => parseInt(p.id));
-
-    const priceTest = {};
+    // 3. Règles (items) de chaque liste utilisée par les pharmacies
+    const rulesByPl = {};
     const topPls = usageSorted.slice(0, 6).map(u => u.pricelist_id);
     for (const plId of topPls) {
-      const priced = await odooCall(uid, "product.product", "search_read",
-        [["id", "in", sampleIds]],
-        { fields: ["default_code", "list_price", "price"], limit: 5, context: { pricelist: plId } });
-      priceTest[plId] = {
+      const items = await odooCall(uid, "product.pricelist.item", "search_read",
+        [["pricelist_id", "=", plId]],
+        { fields: ["applied_on", "compute_price", "fixed_price", "percent_price", "price_discount", "min_quantity", "product_id", "product_tmpl_id", "categ_id"], limit: 60 });
+      rulesByPl[plId] = {
         name: nameOf(plId),
-        products: (priced || []).map(p => ({
-          cip: p.default_code, list_price: p.list_price, price_liste: p.price,
-        })),
+        rule_count: Array.isArray(items) ? items.length : 0,
+        sample: (Array.isArray(items) ? items : []).slice(0, 12),
       };
     }
 
@@ -68,9 +62,8 @@ export const handler = async (event) => {
       pricelists: pricelists.map(p => ({ id: parseInt(p.id), name: p.name })),
       partners_scanned: scanned,
       usage: usageSorted,
-      sample_products: sampleProds.map(p => ({ cip: p.default_code, name: p.name, list_price: p.list_price })),
-      price_test: priceTest,
-      note: "price_liste = prix calculé par Odoo pour cette liste (champ `price` avec la liste en contexte). S'il diffère de list_price, le calcul par contexte fonctionne.",
+      rules_by_pricelist: rulesByPl,
+      note: "Structure des règles par liste (applied_on, compute_price, fixed/percent/discount, cibles product/template/categ) — sert à répliquer le calcul par tier.",
     }, null, 2) };
   } catch (err) {
     console.error("[pricelists-audit]", err.message);
