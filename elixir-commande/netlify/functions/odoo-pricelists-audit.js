@@ -44,45 +44,52 @@ export const handler = async (event) => {
       .map(([id, count]) => ({ pricelist_id: parseInt(id), name: nameOf(parseInt(id)), pharmacies: count }))
       .sort((a, b) => b.pharmacies - a.pharmacies);
 
-    // 3. Comparaison #5 vs #15 (et listes détectées) sur des produits témoins
-    const sampleProds = await odooCall(uid, "product.product", "search_read",
-      [["default_code", "!=", false], ["list_price", ">", 10]],
-      { fields: ["id", "default_code", "name", "list_price"], limit: 8 });
-    const sampleIds = sampleProds.map(p => parseInt(p.id));
+    // 3. Prendre des produits QUI ONT une règle dans #15, + compter les règles par liste
+    const [rules15, rules5] = await Promise.all([
+      odooCall(uid, "product.pricelist.item", "search_read", [["pricelist_id", "=", 15]],
+        { fields: ["product_id", "fixed_price", "compute_price", "percent_price", "price_discount", "min_quantity", "applied_on"], limit: 2000 }),
+      odooCall(uid, "product.pricelist.item", "search_read", [["pricelist_id", "=", 5]],
+        { fields: ["product_id", "fixed_price", "compute_price", "min_quantity"], limit: 2000 }),
+    ]);
+    const count15 = Array.isArray(rules15) ? rules15.length : 0;
+    const count5 = Array.isArray(rules5) ? rules5.length : 0;
 
-    const listsToCompare = [...new Set([5, 15, ...usageSorted.slice(0, 3).map(u => u.pricelist_id)])];
-    const rowByListPid = {}; // plId → { pid → item }
-    for (const plId of listsToCompare) {
-      const items = await odooCall(uid, "product.pricelist.item", "search_read",
-        [["pricelist_id", "=", plId], ["product_id", "in", sampleIds]],
-        { fields: ["product_id", "fixed_price", "compute_price", "percent_price", "price_discount", "min_quantity"], limit: 60 });
-      const m = {};
-      (Array.isArray(items) ? items : []).forEach(it => {
-        const pid = parseInt(it.product_id);
-        const mq = parseFloat(it.min_quantity) || 0;
-        if (!m[pid] || mq < (parseFloat(m[pid].min_quantity) || 0)) m[pid] = it;
-      });
-      rowByListPid[plId] = m;
-    }
+    const price5 = {};
+    (Array.isArray(rules5) ? rules5 : []).forEach(it => {
+      const pid = parseInt(it.product_id);
+      if (pid && it.compute_price === "fixed") price5[pid] = it.fixed_price;
+    });
 
-    const comparison = sampleProds.map(p => {
-      const pid = parseInt(p.id);
-      const row = { cip: p.default_code, name: (p.name || "").slice(0, 40), list_price: p.list_price };
-      listsToCompare.forEach(plId => {
-        const it = rowByListPid[plId]?.[pid];
-        row[`liste_${plId}`] = it
-          ? (it.compute_price === "fixed" ? `${it.fixed_price} €` : `${it.compute_price} disc=${it.price_discount} pct=${it.percent_price}`)
-          : "—";
-      });
-      return row;
+    const sample15 = (Array.isArray(rules15) ? rules15 : [])
+      .filter(it => parseInt(it.product_id) > 0 && it.compute_price === "fixed")
+      .slice(0, 12);
+    const pids15 = sample15.map(it => parseInt(it.product_id));
+    const prods = pids15.length ? await odooCall(uid, "product.product", "search_read",
+      [["id", "in", pids15]], { fields: ["id", "default_code", "name", "list_price"], limit: 50 }) : [];
+    const prodById = {};
+    (Array.isArray(prods) ? prods : []).forEach(p => { prodById[parseInt(p.id)] = p; });
+
+    const comparison = sample15.map(it => {
+      const pid = parseInt(it.product_id);
+      const p = prodById[pid] || {};
+      const lp = parseFloat(p.list_price) || null;
+      const f15 = parseFloat(it.fixed_price);
+      return {
+        cip: p.default_code || `pid:${pid}`,
+        name: (p.name || "").slice(0, 40),
+        list_price: p.list_price,
+        prix_liste15: `${it.fixed_price} €`,
+        remise_15_pct: (lp && f15) ? Math.round((1 - f15 / lp) * 1000) / 10 : null,
+        prix_liste5: price5[pid] != null ? `${price5[pid]} €` : "—",
+      };
     });
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({
       partners_scanned: scanned,
       usage: usageSorted,
-      lists_compared: listsToCompare.map(id => ({ id, name: nameOf(id) })),
+      rule_counts: { liste_5: count5 >= 2000 ? "2000+" : count5, liste_15: count15 >= 2000 ? "2000+" : count15 },
       comparison,
-      note: "Pour chaque produit : prix catalogue + prix dans chaque liste (— = pas de règle). Dites-moi quelle colonne (liste_5, liste_15…) correspond au VRAI prix remisé attendu.",
+      note: "comparison = produits qui ONT un prix dans #15 : prix négocié #15 (+ remise %) vs #5. Dites-moi si prix_liste15 correspond au VRAI prix remisé attendu.",
     }, null, 2) };
   } catch (err) {
     console.error("[pricelists-audit]", err.message);
