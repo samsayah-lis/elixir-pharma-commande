@@ -7,7 +7,7 @@ import { authenticate, odooCall } from "./odoo.js";
 import { getCors } from "./cors.js";
 
 export const handler = async (event) => {
-  const cors = getCors(event);
+  const cors = { ...getCors(event), "Cache-Control": "no-store", "Content-Type": "application/json" };
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   // Diagnostic lecture seule : secret via header (cron) OU via ?secret= (navigateur), sinon admin.
   const qsSecret = event.queryStringParameters?.secret;
