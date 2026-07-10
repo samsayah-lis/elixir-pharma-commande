@@ -49,7 +49,11 @@ function parse(xml) {
   if (xml.includes("<fault>")) {
     const s = xml.match(/faultString[\s\S]*?<string>([\s\S]*?)<\/string>/)?.[1]
            || xml.match(/<string>([\s\S]{5,300})<\/string>/)?.[1] || "Odoo fault";
-    throw new Error(String(s).substring(0, 400));
+    // Le message utile d'un traceback Python est à la FIN → garder les dernières lignes.
+    const decoded = String(s).replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+    const lines = decoded.trim().split("\n").map(l => l.trim()).filter(Boolean);
+    const tail = lines.slice(-3).join(" | ");
+    throw new Error((tail || decoded).substring(0, 500));
   }
   // Try scalar int
   if (!xml.includes("<struct>")) {
