@@ -44,26 +44,45 @@ export const handler = async (event) => {
       .map(([id, count]) => ({ pricelist_id: parseInt(id), name: nameOf(parseInt(id)), pharmacies: count }))
       .sort((a, b) => b.pharmacies - a.pharmacies);
 
-    // 3. Règles (items) de chaque liste utilisée par les pharmacies
-    const rulesByPl = {};
-    const topPls = usageSorted.slice(0, 6).map(u => u.pricelist_id);
-    for (const plId of topPls) {
+    // 3. Comparaison #5 vs #15 (et listes détectées) sur des produits témoins
+    const sampleProds = await odooCall(uid, "product.product", "search_read",
+      [["default_code", "!=", false], ["list_price", ">", 10]],
+      { fields: ["id", "default_code", "name", "list_price"], limit: 8 });
+    const sampleIds = sampleProds.map(p => parseInt(p.id));
+
+    const listsToCompare = [...new Set([5, 15, ...usageSorted.slice(0, 3).map(u => u.pricelist_id)])];
+    const rowByListPid = {}; // plId → { pid → item }
+    for (const plId of listsToCompare) {
       const items = await odooCall(uid, "product.pricelist.item", "search_read",
-        [["pricelist_id", "=", plId]],
-        { fields: ["applied_on", "compute_price", "fixed_price", "percent_price", "price_discount", "min_quantity", "product_id", "product_tmpl_id", "categ_id"], limit: 60 });
-      rulesByPl[plId] = {
-        name: nameOf(plId),
-        rule_count: Array.isArray(items) ? items.length : 0,
-        sample: (Array.isArray(items) ? items : []).slice(0, 12),
-      };
+        [["pricelist_id", "=", plId], ["product_id", "in", sampleIds]],
+        { fields: ["product_id", "fixed_price", "compute_price", "percent_price", "price_discount", "min_quantity"], limit: 60 });
+      const m = {};
+      (Array.isArray(items) ? items : []).forEach(it => {
+        const pid = parseInt(it.product_id);
+        const mq = parseFloat(it.min_quantity) || 0;
+        if (!m[pid] || mq < (parseFloat(m[pid].min_quantity) || 0)) m[pid] = it;
+      });
+      rowByListPid[plId] = m;
     }
 
+    const comparison = sampleProds.map(p => {
+      const pid = parseInt(p.id);
+      const row = { cip: p.default_code, name: (p.name || "").slice(0, 40), list_price: p.list_price };
+      listsToCompare.forEach(plId => {
+        const it = rowByListPid[plId]?.[pid];
+        row[`liste_${plId}`] = it
+          ? (it.compute_price === "fixed" ? `${it.fixed_price} €` : `${it.compute_price} disc=${it.price_discount} pct=${it.percent_price}`)
+          : "—";
+      });
+      return row;
+    });
+
     return { statusCode: 200, headers: cors, body: JSON.stringify({
-      pricelists: pricelists.map(p => ({ id: parseInt(p.id), name: p.name })),
       partners_scanned: scanned,
       usage: usageSorted,
-      rules_by_pricelist: rulesByPl,
-      note: "Structure des règles par liste (applied_on, compute_price, fixed/percent/discount, cibles product/template/categ) — sert à répliquer le calcul par tier.",
+      lists_compared: listsToCompare.map(id => ({ id, name: nameOf(id) })),
+      comparison,
+      note: "Pour chaque produit : prix catalogue + prix dans chaque liste (— = pas de règle). Dites-moi quelle colonne (liste_5, liste_15…) correspond au VRAI prix remisé attendu.",
     }, null, 2) };
   } catch (err) {
     console.error("[pricelists-audit]", err.message);
