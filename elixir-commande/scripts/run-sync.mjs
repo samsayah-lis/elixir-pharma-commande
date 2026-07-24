@@ -8,8 +8,8 @@ const SECRET = process.env.CRON_SECRET;
 const target = process.argv[2];
 
 if (!SECRET) { console.error("✗ CRON_SECRET manquant"); process.exit(1); }
-if (!["stock", "stock-quick", "price", "expiry"].includes(target)) {
-  console.error("Usage: node scripts/run-sync.mjs stock|stock-quick|price|expiry");
+if (!["stock", "stock-quick", "price", "expiry", "pharmacies"].includes(target)) {
+  console.error("Usage: node scripts/run-sync.mjs stock|stock-quick|price|expiry|pharmacies");
   process.exit(1);
 }
 
@@ -87,7 +87,12 @@ async function syncExpiry() {
   await loop("odoo-expiry-sync", null);
 }
 
-const runners = { stock: syncStock, "stock-quick": syncStockQuick, price: syncPrice, expiry: syncExpiry };
+async function syncPharmacies() {
+  console.log("== PHARMACIES ==");
+  console.log("  →", JSON.stringify(await call("pharmacy-sync-now", "")));
+}
+
+const runners = { stock: syncStock, "stock-quick": syncStockQuick, price: syncPrice, expiry: syncExpiry, pharmacies: syncPharmacies };
 runners[target]()
   .then(() => console.log(`✓ Sync « ${target} » terminée`))
   .catch((e) => { console.error(`✗ Sync « ${target} » échouée :`, e.message); process.exit(1); });
