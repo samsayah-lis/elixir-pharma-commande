@@ -3,8 +3,8 @@ import React, { useState, useEffect, useRef } from "react";
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart }) {
-  const [query, setQuery] = useState("");
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery }) {
+  const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [catalogInfo, setCatalogInfo] = useState(null);

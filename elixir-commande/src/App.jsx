@@ -176,7 +176,14 @@ function CipCell({ cip }) {
 }
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState(() => getDisplayConfig().defaultTab || "expert");
+  // Lien direct vers un produit : ?cip=... (ou ?produit=) → ouvre la Saisie de commande pré-remplie
+  const [initialProductQuery] = useState(() => {
+    try { const p = new URLSearchParams(window.location.search); return p.get("cip") || p.get("produit") || ""; } catch { return ""; }
+  });
+  const [activeTab, setActiveTab] = useState(() => {
+    try { const p = new URLSearchParams(window.location.search); if (p.get("cip") || p.get("produit")) return "saisie"; } catch {}
+    return getDisplayConfig().defaultTab || "expert";
+  });
   // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
   const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
@@ -1576,6 +1583,7 @@ export default function App() {
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
               onAddToCart={addItemToCart}
+              initialQuery={initialProductQuery}
             />
           )}
 
