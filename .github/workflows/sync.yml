@@ -1,21 +1,23 @@
 name: Sync Odoo
 on:
   schedule:
-    - cron: "0 */3 * * *"
-    - cron: "20 2 * * *"
-    - cron: "50 2 * * *"
+    - cron: "0 */3 * * *"   # dispo rapide toutes les 3 h (stock-quick)
+    - cron: "10 1 * * *"    # chaine de nuit complete (~03:10 Paris ete / 02:10 hiver)
   workflow_dispatch:
     inputs:
       target:
-        description: "Sync à lancer"
+        description: "Sync a lancer"
         required: true
-        default: stock
+        default: stock-quick
         type: choice
-        options: [stock, price, expiry]
+        options: [stock-quick, stock, price, expiry, pharmacies, nightly]
+concurrency:
+  group: sync-odoo
+  cancel-in-progress: false
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,13 +30,17 @@ jobs:
           INPUT_TARGET: ${{ github.event.inputs.target }}
           SCHEDULE: ${{ github.event.schedule }}
         run: |
+          run() { echo "-> Sync : $1"; node elixir-commande/scripts/run-sync.mjs "$1"; }
           T="$INPUT_TARGET"
-          if [ -z "$T" ]; then
-            case "$SCHEDULE" in
-              "20 2 * * *") T=price ;;
-              "50 2 * * *") T=expiry ;;
-              *) T=stock ;;
-            esac
+          if [ "$T" = "nightly" ] || [ "$SCHEDULE" = "10 1 * * *" ]; then
+            rc=0
+            run stock      || rc=1
+            run price      || rc=1
+            run expiry     || rc=1
+            run pharmacies || rc=1
+            exit $rc
+          elif [ -n "$T" ]; then
+            run "$T"
+          else
+            run stock-quick
           fi
-          echo "Sync cible : $T"
-          node elixir-commande/scripts/run-sync.mjs "$T"
