@@ -29,6 +29,23 @@ export default function AdminEdit({
     );
   }
 
+  // Bouton « copier le lien » : génère le lien profond vers la fiche produit
+  // (ouvre la Saisie de commande pré-remplie côté client). Utilise l'origine
+  // courante → le lien colle au domaine où l'admin est ouvert (netlify ou expepharma).
+  function LinkCopy({ cip }) {
+    const [copied, setCopied] = React.useState(false);
+    if (!cip || cip === "–") return null;
+    const link = `${window.location.origin}/?cip=${encodeURIComponent(cip)}`;
+    const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }); };
+    return (
+      <button onClick={copy} title={`Copier le lien produit :\n${link}`} style={{
+        background: copied ? "#dcfce7" : "#eef2ff", border:"none", borderRadius:4,
+        padding:"1px 6px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#4f46e5",
+        fontWeight:700, lineHeight:"14px", whiteSpace:"nowrap"
+      }}>{copied ? "✓ Lien copié" : "🔗 Lien"}</button>
+    );
+  }
+
   const startEdit = (p) => {
     const pv = parseFloat(p.pv) || 0;
     const pct = parseFloat(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")) || 0;
@@ -158,7 +175,7 @@ export default function AdminEdit({
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
                       </div>
                       <div style={{fontSize:11,color:"#888",marginTop:2}}>
-                        {p._sectionLabel}{p.cip && <> · <CipCopy cip={p.cip}/></>}
+                        {p._sectionLabel}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}
                         {" · "}
                         <span style={{color:hasOv?"#d97706":"#555",fontWeight:600}}>
                           {fmt(ov?.pn??p.pn)} net

@@ -26,6 +26,22 @@ function CipCopy({ cip }) {
   );
 }
 
+// Bouton « copier le lien » : lien profond vers la fiche produit (?cip=…),
+// collé au domaine courant (netlify ou expepharma).
+function LinkCopy({ cip }) {
+  const [copied, setCopied] = useState(false);
+  if (!cip) return null;
+  const link = `${window.location.origin}/?cip=${encodeURIComponent(cip)}`;
+  const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }); };
+  return (
+    <button onClick={copy} title={`Copier le lien produit :\n${link}`} style={{
+      background: copied ? "#dcfce7" : "#eef2ff", border:"none", borderRadius:4,
+      padding:"1px 6px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#4f46e5",
+      fontWeight:700, lineHeight:"14px", whiteSpace:"nowrap"
+    }}>{copied ? "✓ Lien copié" : "🔗 Lien"}</button>
+  );
+}
+
 export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProducts, products, medipimLookup, setMedipimLookup }) {
   const [form, setForm] = useState(EMPTY_FORM);
   const [catSearch, setCatSearch] = useState("");
@@ -466,7 +482,7 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                   <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",background:"#fafbfc",borderRadius:10,padding:"10px 14px",marginBottom:8,border:"1px solid #f0f2f5"}}>
                     <div>
                       <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d"}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{allSectionsList.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/></>}</div>
+                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{allSectionsList.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}</div>
                     </div>
                     <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
                   </div>
