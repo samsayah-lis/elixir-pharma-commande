@@ -42,8 +42,9 @@ export const handler = async (event) => {
       .split(",").map(e => e.trim().toLowerCase());
     ADMIN_EMAILS.push("sam.sayah@elixir-pharma.fr");
 
+    // Pas de user_metadata.role : modifiable par l'utilisateur → escalade de
+    // privilèges. Seuls app_metadata.role (serveur) et ADMIN_EMAILS font foi.
     const isAdmin = data.user?.app_metadata?.role === "admin" ||
-                    data.user?.user_metadata?.role === "admin" ||
                     ADMIN_EMAILS.includes(data.user?.email?.toLowerCase());
 
     if (!isAdmin) {

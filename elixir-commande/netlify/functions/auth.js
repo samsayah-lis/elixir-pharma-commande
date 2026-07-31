@@ -16,8 +16,10 @@ async function verifySupabaseToken(token) {
     if (!res.ok) return null;
     const user = await res.json();
     if (!user?.id) return null;
+    // NB: on n'accepte PAS user_metadata.role — il est modifiable par
+    // l'utilisateur lui-même (self-promotion possible). Seuls app_metadata.role
+    // (écrit côté serveur uniquement) et la liste ADMIN_EMAILS font foi.
     const isAdmin = user.app_metadata?.role === "admin" ||
-                    user.user_metadata?.role === "admin" ||
                     ADMIN_EMAILS.includes(user.email?.toLowerCase());
     // Pour une pharmacie (non-admin), on résout le CIP à partir de l'email
     // VÉRIFIÉ du jeton → impossible d'usurper le CIP d'une autre pharmacie.
