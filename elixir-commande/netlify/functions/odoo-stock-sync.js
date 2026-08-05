@@ -56,18 +56,41 @@ export const handler = async (event) => {
         });
       });
 
-      // Upsert Supabase
-      if (rows.length > 0) {
-        await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
+      // Dédoublonnage par CIP AVANT l'upsert : si deux produits Odoo portent le
+      // même CIP dans un même lot, Postgres rejette TOUT le lot
+      // ("ON CONFLICT DO UPDATE command cannot affect row a second time")
+      // → 500 produits non mis à jour (noms/prix figés). Le dernier gagne.
+      const byCip = new Map();
+      const dupCips = [];
+      rows.forEach(r => {
+        if (byCip.has(r.cip)) dupCips.push(r.cip);
+        byCip.set(r.cip, r);
+      });
+      const unique = [...byCip.values()];
+
+      // Upsert Supabase — l'échec doit être visible, pas silencieux.
+      if (unique.length > 0) {
+        const upRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
           method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify(rows),
+          body: JSON.stringify(unique),
         });
+        if (!upRes.ok) {
+          const t = await upRes.text();
+          return { statusCode: 502, headers: cors, body: JSON.stringify({
+            error: `upsert produits échoué: ${t.slice(0, 300)}`,
+            step: "products", offset, batch: unique.length,
+            duplicate_cips: [...new Set(dupCips)].slice(0, 20),
+          })};
+        }
       }
 
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "products", done: page.length < 500,
         offset, next_offset: offset + page.length,
-        odoo_loaded: page.length, cip13_saved: rows.length,
+        odoo_loaded: page.length, cip13_saved: unique.length,
+        // Remonte les CIP en double pour qu'ils soient corrigeables dans Odoo
+        duplicates: dupCips.length,
+        duplicate_cips: [...new Set(dupCips)].slice(0, 20),
       })};
     }
 
