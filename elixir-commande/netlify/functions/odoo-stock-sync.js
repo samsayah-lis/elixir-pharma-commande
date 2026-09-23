@@ -98,19 +98,23 @@ export const handler = async (event) => {
     if (step === "stock_prep") {
       const uid = await authenticate();
 
-      // Charger les emplacements exclus
-      // Règle d'exclusion : do_not_export = true OU scrap_location = true
-      // (do_not_export est le champ géré directement dans Odoo sur la fiche emplacement)
+      // Charger les emplacements exclus (fermés) : do_not_export = true OU
+      // scrap_location = true (do_not_export est géré dans Odoo sur la fiche
+      // emplacement). Filtrés côté Odoo et PAGINÉS sans plafond : Elixir compte
+      // plus de 11 000 emplacements internes et l'ancien « limit: 2000 » laissait
+      // ~430 emplacements fermés hors champ → leur stock était compté et des
+      // produits apparaissaient « en stock » à tort.
       const excludedLocIds = new Set();
-      const exclLocs = await odooCall(uid, "stock.location", "search_read",
-        [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"]],
-        { fields: ["id", "complete_name", "scrap_location", "do_not_export"], limit: 2000 }
-      );
-      (Array.isArray(exclLocs) ? exclLocs : []).forEach(loc => {
-        const isScrap     = loc.scrap_location === "1" || loc.scrap_location === true;
-        const isDoNotExp  = loc.do_not_export   === "1" || loc.do_not_export   === true;
-        if (isScrap || isDoNotExp) excludedLocIds.add(parseInt(loc.id));
-      });
+      for (let locOffset = 0; ; locOffset += 500) {
+        const page = await odooCall(uid, "stock.location", "search_read",
+          [["company_id", "=", COMPANY_ID], ["usage", "=", "internal"],
+           "|", ["do_not_export", "=", true], ["scrap_location", "=", true]],
+          { fields: ["id"], limit: 500, offset: locOffset }
+        );
+        if (!Array.isArray(page) || page.length === 0) break;
+        page.forEach(loc => excludedLocIds.add(parseInt(loc.id)));
+        if (page.length < 500) break;
+      }
 
       // Charger pidMap depuis Supabase
       const pidMap = {};
