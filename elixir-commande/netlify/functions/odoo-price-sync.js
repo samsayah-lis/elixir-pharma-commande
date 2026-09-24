@@ -149,9 +149,11 @@ export const handler = async (event) => {
         if (pr) price = applyRule(pr, lp);
         if (price == null) price = globalPrice(lp);
 
-        // Garde-fous : prix valable et < prix catalogue, sinon pas de remise
+        // Garde-fous : prix valable et < prix catalogue, sinon pas de remise.
+        // discount_pct est NOT NULL en base : on efface avec 0, jamais null
+        // (un null faisait rejeter le lot entier de 500 → étape prix à l'arrêt).
         if (price == null || price <= 0 || price >= lp) {
-          if (p.discounted_price != null) rows.push({ cip: p.cip, discounted_price: null, discount_pct: null });
+          if (p.discounted_price != null) rows.push({ cip: p.cip, discounted_price: null, discount_pct: 0 });
           continue;
         }
         const discountPct = Math.round((1 - price / lp) * 1000) / 10;
@@ -159,21 +161,34 @@ export const handler = async (event) => {
       }
 
       let updated = 0;
+      const failed = [];
       if (rows.length > 0) {
-        const upRes = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
+        const upsert = (body) => fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
           method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-          body: JSON.stringify(rows),
+          body: JSON.stringify(body),
         });
-        if (!upRes.ok) {
-          const t = await upRes.text();
-          return { statusCode: 502, headers: cors, body: JSON.stringify({ error: `upsert prix échoué: ${t.slice(0, 200)}`, step: "apply", offset }) };
+        const upRes = await upsert(rows);
+        if (upRes.ok) {
+          updated = rows.length;
+        } else {
+          // Lot refusé : on réessaie ligne par ligne pour isoler la ou les
+          // lignes fautives au lieu de perdre les 500 autres prix.
+          const firstErr = (await upRes.text()).slice(0, 200);
+          for (const r of rows) {
+            const one = await upsert([r]);
+            if (one.ok) updated++;
+            else failed.push({ cip: r.cip, error: (await one.text()).slice(0, 160) });
+          }
+          if (updated === 0) {
+            return { statusCode: 502, headers: cors, body: JSON.stringify({ error: `upsert prix échoué: ${firstErr}`, step: "apply", offset, failed: failed.slice(0, 5) }) };
+          }
         }
-        updated = rows.length;
       }
 
       const nextOffset = offset + products.length;
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "apply", done: nextOffset >= total, offset, next_offset: nextOffset, updated, total,
+        ...(failed.length ? { failed_count: failed.length, failed: failed.slice(0, 10) } : {}),
       })};
     }
 
