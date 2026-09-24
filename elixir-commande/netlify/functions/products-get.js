@@ -23,11 +23,15 @@ export const handler = async (event) => {
   for (let i = 0; i < cips.length; i += 200) {
     const chunk = cips.slice(i, i + 200).map(c => encodeURIComponent(c)).join(",");
     try {
-      const r = await fetch(
-        `${SUPABASE_URL}/rest/v1/odoo_catalog?cip=in.(${chunk})&select=cip,list_price,discounted_price,discount_pct`,
+      let r = await fetch(
+        `${SUPABASE_URL}/rest/v1/odoo_catalog?cip=in.(${chunk})&select=cip,list_price,discounted_price,discount_pct,price_tiers`,
         { headers: SB }
       );
-      if (!r.ok) continue;
+      if (!r.ok) {
+        // Colonne price_tiers pas encore créée → prix sans paliers.
+        r = await fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?cip=in.(${chunk})&select=cip,list_price,discounted_price,discount_pct`, { headers: SB });
+        if (!r.ok) continue;
+      }
       const rows = await r.json();
       (Array.isArray(rows) ? rows : []).forEach(row => { odoo[row.cip] = row; });
     } catch { /* on garde le prix manuel pour ce lot */ }
@@ -46,6 +50,7 @@ export const handler = async (event) => {
         pn,
         pct: o.discount_pct != null ? parseFloat(o.discount_pct) : p.pct,
         remise_eur: Math.round((pv - pn) * 100) / 100,
+        price_tiers: Array.isArray(o.price_tiers) && o.price_tiers.length ? o.price_tiers : null,
         _price_source: "odoo",
       };
     }

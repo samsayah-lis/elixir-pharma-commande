@@ -65,7 +65,7 @@ export const handler = async (event) => {
     }
 
     // Champs retournés : inclut discounted_price et discount_pct (calculés pendant le sync)
-    const fields = "cip,barcode,name,list_price,discounted_price,discount_pct,in_stock,earliest_expiry,updated_at";
+    const fields = "cip,barcode,name,list_price,discounted_price,discount_pct,price_tiers,in_stock,earliest_expiry,updated_at";
     let url;
     if (/^\d+$/.test(q)) {
       url = `${SUPABASE_URL}/rest/v1/odoo_catalog?select=${fields}&or=(cip.like.${q}*,barcode.like.${q}*)`;
@@ -75,8 +75,14 @@ export const handler = async (event) => {
     if (stockOnly) url += "&in_stock=eq.true";
     url += `&order=name.asc&limit=${limit}`;
 
-    const res = await fetch(url, { headers: SB });
-    if (!res.ok) throw new Error(await res.text());
+    let res = await fetch(url, { headers: SB });
+    if (!res.ok) {
+      const t = await res.text();
+      // Colonne price_tiers pas encore créée → on sert la recherche sans les paliers.
+      if (!/price_tiers/.test(t)) throw new Error(t);
+      res = await fetch(url.replace(",price_tiers", ""), { headers: SB });
+      if (!res.ok) throw new Error(await res.text());
+    }
     const products = await res.json();
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ products: Array.isArray(products) ? products : [], total: products.length }) };

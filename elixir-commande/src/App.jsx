@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
+import { applyTiers, TierBadge } from "./tiers.jsx";
 import AdminPanel from "./AdminPanel";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 import OrderEntry from "./components/OrderEntry";
@@ -533,6 +534,7 @@ export default function App() {
           note: p.note,
           source: p.source,
           image_url: p.image_url || null,
+          price_tiers: p.price_tiers || null,
           _dbId: p.cip,
         }));
       merged[k] = { ...meta, products: sectionProducts };
@@ -546,7 +548,7 @@ export default function App() {
       if (!SECTION_META[camp.id]) {
         const campProducts = dbProducts
           .filter(p => p.section === camp.id)
-          .map(p => ({ cip:p.cip, name:p.name, pv:p.pv, pct:p.pct, pn:p.pn, remise_eur:p.remise_eur, colis:p.colis, carton:p.carton, note:p.note, source:p.source, image_url:p.image_url||null, _dbId:p.cip }));
+          .map(p => ({ cip:p.cip, name:p.name, pv:p.pv, pct:p.pct, pn:p.pn, remise_eur:p.remise_eur, colis:p.colis, carton:p.carton, note:p.note, source:p.source, image_url:p.image_url||null, price_tiers:p.price_tiers||null, _dbId:p.cip }));
         merged[camp.id] = {
           label: camp.label, subtitle: camp.subtitle||"", color: camp.color||"#0d4f3c",
           accent: camp.accent||"#059669", icon: camp.icon||"🤝", columns: [], isCampaign: true,
@@ -600,7 +602,7 @@ export default function App() {
         if (!cs.key || merged[cs.key]) return; // skip if key missing or already exists
         const sectionProducts = dbProducts.filter(p => p.section === cs.key).map(p => ({
           cip: p.cip, name: p.name, pv: p.pv, pct: p.pct, pn: p.pn, remise_eur: p.remise_eur,
-          colis: p.colis, carton: p.carton, note: p.note, source: p.source, image_url: p.image_url || null, _dbId: p.cip,
+          colis: p.colis, carton: p.carton, note: p.note, source: p.source, image_url: p.image_url || null, price_tiers: p.price_tiers || null, _dbId: p.cip,
         }));
         merged[cs.key] = {
           label: cs.label || cs.key, subtitle: cs.subtitle || "", color: cs.color || "#333",
@@ -713,7 +715,7 @@ export default function App() {
           n[i] = { ...n[i], qty: n[i].qty + item.qty };
           return n;
         }
-        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null }];
+        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null }];
       });
     }
     flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
@@ -746,16 +748,22 @@ export default function App() {
               grat = { livrées: Math.floor(qty/6)*2, type: "6+2" };
           }
           const qtyUG = grat.livrées || 0;
+          // Paliers de quantité Odoo (hors campagnes, qui ont leur propre logique)
+          const basePn = pnNet ?? p.pn;
+          const tiered = camp ? { pn: basePn, tier: null, next: null } : applyTiers(basePn, p.price_tiers, qty);
           items.push({
             key,
             cat: cat.label,
             catKey,
             name: p.name,
             cip: p.cip || null,
-            pn: pnNet ?? p.pn,
+            pn: tiered.pn,
+            basePn,
+            tier: tiered.tier,
+            nextTier: tiered.next,
             qty,
             qtyUG,
-            total: (pnNet ?? p.pn) * qty,
+            total: tiered.pn * qty,
             color: cat.accent,
             step: getStep(catKey, p),
             isCampaign: !!camp,
@@ -766,7 +774,8 @@ export default function App() {
     // Produits hors catalogue curaté (Saisie de commande / Péremption courte)
     specialItems.forEach((s, i) => {
       if (!(s.qty > 0)) return;
-      const pn = s.pn ?? null;
+      const tiered = applyTiers(s.pn ?? null, s.tiers, s.qty);
+      const pn = tiered.pn;
       items.push({
         key: `special-${s.cip || i}`,
         cat: "Hors catalogue",
@@ -774,6 +783,9 @@ export default function App() {
         name: s.name,
         cip: s.cip || null,
         pn,
+        basePn: s.pn ?? null,
+        tier: tiered.tier,
+        nextTier: tiered.next,
         qty: s.qty,
         qtyUG: 0,
         total: (pn || 0) * s.qty,
@@ -2033,7 +2045,7 @@ export default function App() {
                           {p.note && <span style={{ marginLeft: 5, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
                           {isRupture && <span style={{ marginLeft: 5, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span>}
                         </div>
-                        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{fmt(p.pn)} {p.pct ? <span style={{ color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</span> : null}</div>
+                        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{fmt(p.pn)} {p.pct ? <span style={{ color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</span> : null}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <button onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
@@ -2099,7 +2111,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : fmt(30)}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -2110,7 +2122,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                           <td style={{ ...tdStyle, textAlign: "right", color: "#666" }}>{fmt(p.carton)}</td>
                         </>}
                         {activeTab === "master" && <>
@@ -2122,7 +2134,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "obeso" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -2135,7 +2147,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: "#3b82f6", fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "nr" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -2145,19 +2157,19 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "molnlycke" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 350 }}>{p.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: cat.accent }}>{fmt(p.pn)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: cat.accent }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "blanche" && <>
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 300 }}>{p.name}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "center", color: "#666" }}>{p.colis}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.carton != null ? fmt(p.carton) : "–"}</td>
                         </>}
                         {activeTab === "covid" && <>
@@ -2165,14 +2177,14 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 320 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {activeTab === "otc" && <>
                           <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 260 }}>{p.name}{ruptureBadge}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
                         {cat.isPromo && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -2183,7 +2195,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
                         </>}
 
                         {/* Qty input */}
@@ -2423,6 +2435,15 @@ export default function App() {
                         </div>
                         <span style={{ fontWeight: 800, color: "#1a2a3a", fontSize: 13 }}>{fmt(item.total)}</span>
                       </div>
+                      {/* Palier de quantité : appliqué, ou à viser */}
+                      {(item.tier || item.nextTier) && (
+                        <div style={{ marginTop: 6, fontSize: 11, borderRadius: 6, padding: "4px 8px", lineHeight: 1.4,
+                                      background: item.tier ? "#ecfdf5" : "#fffbeb", color: item.tier ? "#065f46" : "#92400e" }}>
+                          {item.tier && (<>✓ Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</>)}
+                          {item.tier && item.nextTier && <br />}
+                          {item.nextTier && (<>🎯 Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></>)}
+                        </div>
+                      )}
                       {/* Avertissement rupture */}
                       {item.cip && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
                         <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", background: "#fff5f5", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>

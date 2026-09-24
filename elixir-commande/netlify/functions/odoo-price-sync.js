@@ -105,11 +105,18 @@ export const handler = async (event) => {
       const parRows = await parRes.json();
       const parentMap = parRows?.[0]?.value ? JSON.parse(parRows[0].value) : {};
 
-      // Index par cible (prix UNITÉ → on ignore les paliers de quantité mq>1)
+      // Index par cible (prix UNITÉ = règles mq ≤ 1). Les paliers de quantité
+      // (règles produit avec mq ≥ 2) sont indexés à part → colonne price_tiers.
       const byPid = {}, byTid = {}, byCid = {};
+      const tiersByPid = {}, tiersByTid = {};
       let globals = [];
       rules.forEach(r => {
-        if (r.mq > 1) return; // palier quantité : non affiché en prix unité
+        if (r.mq > 1) {
+          if (!Number.isInteger(r.mq) || r.mq < 2) return; // ex. « 5,92 » : saisie erronée
+          if (r.pid > 0) (tiersByPid[r.pid] ||= []).push(r);
+          else if (r.tid > 0) (tiersByTid[r.tid] ||= []).push(r);
+          return;
+        }
         if (r.ao.includes("3")) globals.push(r);
         else if (r.pid > 0) byPid[r.pid] = r;
         else if (r.tid > 0) byTid[r.tid] = r;
@@ -152,28 +159,53 @@ export const handler = async (event) => {
         // Garde-fous : prix valable et < prix catalogue, sinon pas de remise.
         // discount_pct est NOT NULL en base : on efface avec 0, jamais null
         // (un null faisait rejeter le lot entier de 500 → étape prix à l'arrêt).
+        // Paliers de quantité (« moins cher dès N unités ») : règles produit mq ≥ 2,
+        // on ne garde que celles STRICTEMENT meilleures que le prix unitaire.
+        const unit = (price != null && price > 0 && price < lp) ? price : lp;
+        const tiers = [];
+        for (const r of [...(tiersByPid[p.odoo_pid] || []), ...(tiersByTid[p.odoo_tmpl_id] || [])]) {
+          const tp = applyRule(r, lp);
+          if (tp == null || tp <= 0 || tp >= unit) continue;
+          const prev = tiers.find(t => t.min_qty === r.mq);
+          if (prev) { if (tp < prev.price) prev.price = tp; }
+          else tiers.push({ min_qty: r.mq, price: tp });
+        }
+        tiers.sort((a, b) => a.min_qty - b.min_qty);
+        tiers.forEach(t => { t.pct = Math.round((1 - t.price / lp) * 1000) / 10; });
+        const priceTiers = tiers.length ? tiers : null;
+
+        // Chaque ligne est réécrite (remise ou effacement) → plus de valeur périmée.
         if (price == null || price <= 0 || price >= lp) {
-          if (p.discounted_price != null) rows.push({ cip: p.cip, discounted_price: null, discount_pct: 0 });
+          rows.push({ cip: p.cip, discounted_price: null, discount_pct: 0, price_tiers: priceTiers });
           continue;
         }
         const discountPct = Math.round((1 - price / lp) * 1000) / 10;
-        rows.push({ cip: p.cip, discounted_price: price, discount_pct: discountPct });
+        rows.push({ cip: p.cip, discounted_price: price, discount_pct: discountPct, price_tiers: priceTiers });
       }
 
       let updated = 0;
       const failed = [];
+      let tiersColumnMissing = false;
       if (rows.length > 0) {
         const upsert = (body) => fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog`, {
           method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
           body: JSON.stringify(body),
         });
-        const upRes = await upsert(rows);
+        let upRes = await upsert(rows);
+        let firstErr = upRes.ok ? "" : (await upRes.text()).slice(0, 200);
+        if (!upRes.ok && /price_tiers/.test(firstErr)) {
+          // Colonne pas encore créée (alter table odoo_catalog add column price_tiers jsonb)
+          // → on écrit sans les paliers plutôt que de bloquer les prix.
+          tiersColumnMissing = true;
+          rows.forEach(r => { delete r.price_tiers; });
+          upRes = await upsert(rows);
+          firstErr = upRes.ok ? "" : (await upRes.text()).slice(0, 200);
+        }
         if (upRes.ok) {
           updated = rows.length;
         } else {
           // Lot refusé : on réessaie ligne par ligne pour isoler la ou les
           // lignes fautives au lieu de perdre les 500 autres prix.
-          const firstErr = (await upRes.text()).slice(0, 200);
           for (const r of rows) {
             const one = await upsert([r]);
             if (one.ok) updated++;
@@ -189,6 +221,7 @@ export const handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({
         step: "apply", done: nextOffset >= total, offset, next_offset: nextOffset, updated, total,
         ...(failed.length ? { failed_count: failed.length, failed: failed.slice(0, 10) } : {}),
+        ...(tiersColumnMissing ? { tiers_column_missing: true } : {}),
       })};
     }
 

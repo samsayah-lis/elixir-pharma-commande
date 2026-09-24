@@ -3,6 +3,8 @@ import React, { useState, useEffect, useRef } from "react";
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
+import { applyTiers, TierBadge } from "../tiers.jsx";
+
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
@@ -80,7 +82,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     if (qty <= 0) return;
     const hasDiscount = product.discounted_price && product.discount_pct > 0;
     const price = hasDiscount ? product.discounted_price : product.list_price;
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0 });
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0, tiers: product.price_tiers || null });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
     // Track add-to-cart
     fetch("/.netlify/functions/search-track", {
@@ -156,6 +158,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               const isAlert = alerts[p.cip];
               const hasDiscount = p.discounted_price && p.discount_pct > 0;
               const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
+              const tiered = applyTiers(displayPrice, p.price_tiers, qty); // prix effectif selon la quantité saisie
 
               return (
                 <div key={p.cip} style={{
@@ -192,6 +195,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
                     )}
                     <div style={{ fontSize: 10, color: "#bbb" }}>Prix HT</div>
+                    <TierBadge tiers={p.price_tiers} pn={displayPrice} />
                   </div>
 
                   {/* Actions */}
@@ -208,7 +212,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       {qty > 0 && (
                         <button onClick={() => handleAdd(p)}
                           style={{ background: "#10b981", color: "white", border: "none", borderRadius: 8, padding: "5px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                          Ajouter {fmt(displayPrice * qty)}
+                          Ajouter {fmt(tiered.pn * qty)}{tiered.tier ? " ★" : ""}
                         </button>
                       )}
                     </>) : (
