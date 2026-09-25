@@ -4,6 +4,7 @@ import AdminPanel from "./AdminPanel";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
+import WheelchairOrder from "./components/WheelchairOrder";
 import MyOrdersPanel from "./components/MyOrdersPanel";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
@@ -28,6 +29,7 @@ const SECTION_META = {
   ulabs:    { label: "Commande groupée U-Labs",       subtitle: "",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: [] },
   saisie:   { label: "Saisie de commande",  subtitle: "Recherche par CIP ou nom — stock temps réel Odoo", color: "#0f2d3d", accent: "#2d9cbc", icon: "📝", columns: [], specialView: "orderEntry" },
   peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
+  fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 
@@ -182,7 +184,12 @@ export default function App() {
     try { const p = new URLSearchParams(window.location.search); return p.get("cip") || p.get("produit") || ""; } catch { return ""; }
   });
   const [activeTab, setActiveTab] = useState(() => {
-    try { const p = new URLSearchParams(window.location.search); if (p.get("cip") || p.get("produit")) return "saisie"; } catch {}
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
+      if (outil && ["fauteuil", "saisie", "peremption"].includes(outil)) return outil;
+      if (p.get("cip") || p.get("produit")) return "saisie";
+    } catch {}
     return getDisplayConfig().defaultTab || "expert";
   });
   // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
@@ -1327,8 +1334,8 @@ export default function App() {
           )}
         </div>
         {[
-          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "ulabs"].includes(k)) },
-          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "ulabs"].includes(k)) },
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "ulabs"].includes(k)) },
+          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "ulabs"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
           <div key={group.title} style={{ marginBottom: 4 }}>
             <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
@@ -1597,6 +1604,10 @@ export default function App() {
               onAddToCart={addItemToCart}
               initialQuery={initialProductQuery}
             />
+          )}
+
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (
+            <WheelchairOrder onAddToCart={addItemToCart} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "shortExpiry" && (
