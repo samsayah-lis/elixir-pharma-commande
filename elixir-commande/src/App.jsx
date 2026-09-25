@@ -1131,6 +1131,7 @@ export default function App() {
             csvContent,
             items: order.items,
             pharmacyName, pharmacyEmail, pharmacyCip, orderId: order.id,
+            via: "auto",
           });
           const endpoints = [
             { url: "http://localhost:3001", label: "agent local" },
@@ -1145,7 +1146,8 @@ export default function App() {
                   ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` }
                   : { "Content-Type": "application/json" },
                 body: payload,
-                signal: AbortSignal.timeout(5000),
+                // agent local : réponse immédiate ou rien ; Netlify : laisser le temps à PharmaML
+                signal: AbortSignal.timeout(ep.label === "agent local" ? 4000 : 15000),
               });
               const json = await res.json().catch(() => ({}));
               if (res.ok && json.success) {

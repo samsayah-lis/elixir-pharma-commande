@@ -499,6 +499,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
       pharmacyEmail: order.pharmacyEmail,
       pharmacyCip: cip,
       orderId: order.id,
+      via: "admin",
     });
     const endpoints = [
       { url: "http://localhost:3001", label: "agent local" },
