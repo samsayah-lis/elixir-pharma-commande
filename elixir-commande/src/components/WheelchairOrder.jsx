@@ -186,29 +186,74 @@ export default function WheelchairOrder({ onAddToCart }) {
         )}
       </div>
 
-      {/* Tuto */}
-      <details style={card}>
-        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}>📏 Comment prendre la mesure</summary>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16, marginTop: 12, fontSize: 13, color: "#1e293b" }}>
-          <div>
-            <div style={{ fontWeight: 800, marginBottom: 6 }}>La bonne méthode</div>
-            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-              <li>Matériel : un mètre ruban souple suffit.</li>
-              <li>Patient <strong>assis</strong> bien au fond, dos droit, genoux à 90°, pieds à plat — jamais debout.</li>
-              <li>Mesurer à l'horizontale au point le plus large (hanches ou haut des cuisses).</li>
-              <li>Vêtements habituels, sans comprimer ; mesurer 2 fois et garder la moyenne.</li>
-              <li>Ajouter 2,5 à 5 cm de jeu pour obtenir la largeur d'assise.</li>
+      {/* Tuto — infographie de prise de mesure (reprise du guide de référence) */}
+      <details open={method === "mesure"} style={card}>
+        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}>📏 Comment prendre la mesure — guide illustré</summary>
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14, color: "#16242A", fontSize: 14 }}>
+          <div style={{ fontSize: 13, color: "#5B6E72" }}>Une mesure fiable des hanches, prise en position assise, donne le résultat le plus précis. Voici comment la prendre correctement.</div>
+
+          {[
+            ["1", "Matériel", <p style={{ margin: 0 }}>Un simple mètre ruban souple (mètre de couturière) suffit — aucun équipement spécialisé n'est nécessaire.</p>],
+            ["2", "Installer le patient", (
+              <ul style={{ margin: 0, paddingLeft: 20, lineHeight: 1.55 }}>
+                <li>Faire asseoir la personne bien au fond d'une chaise ou d'un fauteuil, dos droit contre le dossier.</li>
+                <li>Cuisses posées à plat, genoux fléchis à 90°, pieds à plat au sol.</li>
+                <li>Toujours mesurer <strong>assis</strong>, jamais debout : la répartition des tissus change en position assise.</li>
+              </ul>
+            )],
+            ["3", "Repérer et mesurer", (
+              <div>
+                <p style={{ margin: "0 0 10px" }}>Faire passer le mètre à l'horizontale, au point le plus large entre les deux hanches (ou le haut des cuisses si celles-ci dépassent davantage).</p>
+                <figure style={{ margin: 0 }}>
+                  <svg viewBox="0 0 300 260" role="img" aria-label="Schéma d'une personne assise de face : la largeur se mesure à l'horizontale, au point le plus large entre les deux hanches."
+                       style={{ width: "100%", maxWidth: 340, display: "block", margin: "0 auto", color: "#16242A" }}>
+                    <rect x="90" y="30" width="120" height="8" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
+                    <line x1="95" y1="38" x2="95" y2="230" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
+                    <line x1="205" y1="38" x2="205" y2="230" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
+                    <rect x="90" y="150" width="120" height="10" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
+                    <circle cx="150" cy="55" r="18" fill="none" stroke="currentColor" strokeWidth="2.5" />
+                    <path d="M128,80 C122,100 120,120 124,150 L176,150 C180,120 178,100 172,80 Z" fill="none" stroke="currentColor" strokeWidth="2.5" />
+                    <path d="M126,150 L118,225" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                    <path d="M174,150 L182,225" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
+                    <defs>
+                      <marker id="wcArrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                        <path d="M0,0 L10,5 L0,10 z" fill="#0B4F49" />
+                      </marker>
+                    </defs>
+                    <line x1="118" y1="145" x2="182" y2="145" stroke="#0B4F49" strokeWidth="2" strokeDasharray="4 3" markerStart="url(#wcArrow)" markerEnd="url(#wcArrow)" />
+                    <text x="150" y="132" textAnchor="middle" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="600" fill="#0B4F49">largeur mesurée ici</text>
+                  </svg>
+                  <figcaption style={{ textAlign: "center", fontSize: 13, color: "#5B6E72", marginTop: 10 }}>Vue de face, patient assis : la mesure se prend au point le plus large des hanches ou des cuisses.</figcaption>
+                </figure>
+              </div>
+            )],
+            ["4", "Bonnes pratiques", (
+              <ul style={{ margin: 0, paddingLeft: 0, listStyle: "none", lineHeight: 1.55 }}>
+                {["Mesurer avec les vêtements habituels du quotidien (ni gros manteau, ni sous-vêtements).",
+                  "Laisser le mètre à plat contre le corps sans comprimer les tissus mous.",
+                  "Prendre la mesure deux fois ; en cas d'écart, garder la moyenne.",
+                  "Noter la valeur immédiatement et la reporter dans le champ « Mesure » ci-dessus, puis ajouter 2,5 à 5 cm de jeu (le calcul le fait pour vous)."
+                ].map(t => <li key={t} style={{ position: "relative", paddingLeft: 26, marginBottom: 6 }}><span style={{ position: "absolute", left: 0, top: 0, color: "#0F6E66", fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>✓</span>{t}</li>)}
+              </ul>
+            )],
+          ].map(([n, title, body]) => (
+            <section key={n} style={{ background: "white", border: "1px solid #D7E0DD", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 2px rgba(20,40,38,0.06), 0 6px 20px rgba(20,40,38,0.05)" }}>
+              <h3 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 700, color: "#16242A", display: "flex", alignItems: "baseline", gap: 10 }}>
+                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, fontWeight: 600, color: "#0F6E66", background: "#DCEEEC", borderRadius: 999, padding: "2px 10px" }}>{n}</span>{title}
+              </h3>
+              {body}
+            </section>
+          ))}
+
+          <div style={{ background: "#FBEEE4", border: "1px solid #E3B98B", color: "#8A4A1E", borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 13.5, fontWeight: 600, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Erreurs fréquentes</div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.5 }}>
+              <li>Mesurer la personne debout au lieu d'assise.</li>
+              <li>Mesurer par-dessus un manteau épais ou plusieurs couches de vêtements.</li>
+              <li>Serrer le mètre comme un tour de taille — cela sous-estime la largeur réelle.</li>
             </ul>
           </div>
-          <div>
-            <div style={{ fontWeight: 800, marginBottom: 6, color: "#9a3412" }}>Erreurs à éviter</div>
-            <ul style={{ margin: 0, paddingLeft: 18, lineHeight: 1.6 }}>
-              <li>Mesurer debout (les hanches s'élargissent assis).</li>
-              <li>Mesurer par-dessus un gros manteau.</li>
-              <li>Trop serrer le mètre.</li>
-              <li>Se fier au poids seul quand une mesure est possible : la mesure directe reste toujours préférable.</li>
-            </ul>
-          </div>
+          <div style={{ fontSize: 12.5, color: "#5B6E72", textAlign: "center" }}>Sans possibilité de mesurer directement, l'estimation par le poids (et la taille, en option) reste disponible ci-dessus — la mesure directe est toujours préférable.</div>
         </div>
       </details>
 
