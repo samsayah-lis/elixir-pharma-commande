@@ -1,5 +1,5 @@
 // Recherche une pharmacie : Supabase cache → Odoo fallback → met à jour le cache
-import { authenticate, odooCall } from "./odoo.js";
+import { findElixirPharmacy } from "./_pharmacies.js";
 import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -42,50 +42,28 @@ export const handler = async (event) => {
     })};
   }
 
-  // ── 2. Cache absent ou CIP invalide → interroger Odoo ────────────────────
+  // ── 2. Cache absent ou CIP invalide → fiche cliente Elixir (société 2) dans Odoo ──
+  const found = (p) => ({ statusCode: 200, headers: cors, body: JSON.stringify({ found: true,
+    pharmacy: { name: p.name, email: p.email, cip: p.cip || "", street: p.street || "", cp: p.cp || "", ville: p.ville || "", tel: p.tel || "" } }) });
   try {
-    const uid = await authenticate();
-    const partners = await odooCall(uid, "res.partner", "search_read",
-      [["email", "ilike", emailNorm], ["active", "=", true]],
-      { fields: ["id", "name", "email", "ref", "cip", "street", "zip", "city", "phone", "mobile"], limit: 5 }
-    );
-
-    const match = (partners || []).find(p => p.email?.trim().toLowerCase() === emailNorm);
-    if (!match) {
+    const row = await findElixirPharmacy(emailNorm);
+    if (!row) {
+      // Aucune fiche Elixir ne porte cette adresse : le cache, tenu par la synchronisation
+      // (clients Elixir uniquement), fait foi — ancienne adresse d'une pharmacie Elixir ou ajout manuel.
+      if (cached) return found(cached);
       return { statusCode: 200, headers: cors, body: JSON.stringify({ found: false }) };
     }
-
-    // Priorité : cip > ref (ref contient souvent "0")
-    const cipValue = validCip(match.cip) ? match.cip : validCip(match.ref) ? match.ref : "";
-
-    const pharmacy = {
-      name:   match.name || "",
-      email:  emailNorm,
-      cip:    cipValue,
-      street: match.street || "",
-      cp:     match.zip  || "",
-      ville:  match.city || "",
-      tel:    match.mobile || match.phone || "",
-    };
-
-    // ── 3. Sauvegarder / mettre à jour le cache Supabase ────────────────
-    await fetch(`${SUPABASE_URL}/rest/v1/elixir_pharmacies`, {
+    // ── 3. Mettre à jour le cache Supabase ──────────────────────────────
+    await fetch(`${SUPABASE_URL}/rest/v1/elixir_pharmacies?on_conflict=email`, {
       method: "POST",
       headers: { ...SB, "Prefer": "resolution=merge-duplicates" },
-      body: JSON.stringify(pharmacy),
+      body: JSON.stringify(row),
     });
-
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ found: true, pharmacy }) };
-
+    return found(row);
   } catch (e) {
     console.error("[pharmacy-lookup] Odoo error:", e.message);
     // Si on a un cache même avec CIP mauvais, le renvoyer quand même (mieux que rien)
-    if (cached) {
-      return { statusCode: 200, headers: cors, body: JSON.stringify({
-        found: true,
-        pharmacy: { name: cached.name, email: cached.email, cip: cached.cip||"", street: cached.street||"", cp: cached.cp||"", ville: cached.ville||"", tel: cached.tel||"" }
-      })};
-    }
+    if (cached) return found(cached);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ found: false }) };
   }
 };

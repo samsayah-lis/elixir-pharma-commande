@@ -9,10 +9,18 @@ const store = new Map(); // IP → { count, resetAt }
 const DEFAULT_LIMIT = 60;   // requêtes max
 const DEFAULT_WINDOW = 60;  // secondes
 
+// IP du client : en-tête posé par Netlify (non falsifiable par le navigateur) en priorité ;
+// x-forwarded-for peut être prérempli par le client, il ne sert qu'en repli.
+export function clientIp(event) {
+  const h = event.headers || {};
+  return String(h["x-nf-client-connection-ip"] || "").trim()
+      || String(h["x-forwarded-for"] || "").split(",")[0].trim()
+      || String(h["client-ip"] || "").trim()
+      || "unknown";
+}
+
 export function rateLimit(event, limit = DEFAULT_LIMIT, windowSec = DEFAULT_WINDOW) {
-  const ip = event.headers?.["x-forwarded-for"]?.split(",")[0]?.trim()
-          || event.headers?.["client-ip"]
-          || "unknown";
+  const ip = clientIp(event);
 
   const now = Date.now();
   const entry = store.get(ip);

@@ -66,6 +66,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
   // Helper : fetch avec JWT Supabase + auto-refresh
+  const gpDirtyRef = useRef(false);   // saisie non enregistrée dans l'onglet Commandes groupées
+  const onGpDirty = useCallback((d) => { gpDirtyRef.current = d; }, []);
   const adminFetch = useCallback(async (url, options = {}) => {
     const token = localStorage.getItem("admin_token") || "";
     const headers = { "Authorization": `Bearer ${token}`, ...(options.headers || {}) };
@@ -210,7 +212,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     if (!q.trim()) return;
     setPharmSearching(true);
     const url = `${process.env.REACT_APP_SUPABASE_URL || ""}`; // will use netlify fn instead
-    const r = await fetch(`/.netlify/functions/pharmacy-search?q=${encodeURIComponent(q.trim())}`);
+    const r = await adminFetch(`/.netlify/functions/pharmacy-search?q=${encodeURIComponent(q.trim())}`);
     const d = await r.json();
     setPharmResults(Array.isArray(d) ? d : []);
     setPharmSearching(false);
@@ -222,7 +224,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const r = await adminFetch("/.netlify/functions/pharmacy-sync-now");
     const d = await r.json();
     setPharmSyncing(false);
-    flash(d.inserted != null ? `✅ Sync terminée — ${d.inserted} pharmacies mises à jour` : "✅ Sync terminée");
+    flash(d.error ? `❌ ${d.error}` : `✅ ${d.message || "Sync terminée"}`);
   };
 
   const savePharmManual = async () => {
@@ -873,7 +875,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {products.filter(p=>p.source==="admin").length} ajoutés · {products.length} produits · {orders.length} commandes
           </div>
         </div>
-        <button onClick={onClose} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+        <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
           ← Retour au catalogue
         </button>
       </div>
@@ -884,7 +886,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         {/* Sidebar */}
         <div style={{width:200,background:"white",borderRight:"1px solid #e2e8f0",display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
           {TABS.map(t=>(
-            <button key={t.k} onClick={()=>{ setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
+            <button key={t.k} onClick={()=>{ if (tab==="gp" && t.k!=="gp" && gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'onglet ?")) return; setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
               style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?"#f0f9ff":"transparent",color:tab===t.k?"#0f2d3d":"#555",fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?"3px solid #0ea5e9":"3px solid transparent",position:"relative"}}>
               <span style={{fontSize:16}}>{t.icon}</span>
               <span style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
@@ -1318,7 +1320,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
           </div>
         )}
         {tab==="gp"&&(
-          <AdminGroupPurchases adminFetch={adminFetch} flash={flash} />
+          <AdminGroupPurchases adminFetch={adminFetch} flash={flash} onDirtyChange={onGpDirty} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

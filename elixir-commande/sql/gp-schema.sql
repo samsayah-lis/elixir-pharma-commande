@@ -15,7 +15,7 @@ create table if not exists gp_operations (
   tier_mode        text not null default 'collectif',   -- collectif (paliers sur le total du groupe) | individuel
   fee_pct          numeric not null default 2,          -- frais de traitement Elixir (%)
   centralizer_type text not null default 'elixir',      -- elixir | pharmacie
-  centralizer_cip  text,
+  centralizer_id   text,                                -- fiche Odoo de la pharmacie centralisatrice
   centralizer_name text,
   objective_type   text not null default 'aucun',       -- aucun | unites | montant_brut | montant_net
   objective_value  numeric,
@@ -53,7 +53,8 @@ create index if not exists gp_lines_op on gp_lines(operation_id);
 
 -- Pharmacies autorisées à voir l'onglet « Commandes groupées »
 create table if not exists gp_access (
-  pharmacy_cip  text primary key,
+  pharmacy_id   text primary key,                       -- fiche client Odoo Elixir (fiche commerciale)
+  pharmacy_cip  text,
   pharmacy_name text,
   email         text,
   created_at    timestamptz not null default now()
@@ -62,17 +63,18 @@ create table if not exists gp_access (
 -- Pharmacies participant à une opération
 create table if not exists gp_participants (
   operation_id  uuid not null references gp_operations(id) on delete cascade,
-  pharmacy_cip  text not null,
+  pharmacy_id   text not null,
+  pharmacy_cip  text,
   pharmacy_name text,
   email         text,
   fee_pct       numeric,                                -- frais spécifiques (sinon ceux de l'opération)
-  primary key (operation_id, pharmacy_cip)
+  primary key (operation_id, pharmacy_id)
 );
 
 -- Commande d'une pharmacie pour une opération (en-tête)
 create table if not exists gp_orders (
   operation_id  uuid not null references gp_operations(id) on delete cascade,
-  pharmacy_cip  text not null,
+  pharmacy_id   text not null,
   pharmacy_name text,
   email         text,
   status        text not null default 'brouillon',      -- brouillon | confirmee
@@ -81,17 +83,17 @@ create table if not exists gp_orders (
   confirmed_at  timestamptz,
   email_sent_at timestamptz,
   updated_at    timestamptz not null default now(),
-  primary key (operation_id, pharmacy_cip)
+  primary key (operation_id, pharmacy_id)
 );
 
 -- Quantités : une ligne par produit × date de livraison (slot_id = 'immediat' ou id de la date)
 create table if not exists gp_order_lines (
   operation_id uuid not null references gp_operations(id) on delete cascade,
-  pharmacy_cip text not null,
-  line_id      uuid not null references gp_lines(id) on delete cascade,
+  pharmacy_id  text not null,
+  line_id      uuid not null references gp_lines(id),    -- pas de cascade : un produit commandé ne s'efface pas par erreur
   slot_id      text not null,
   qty          integer not null default 0,
-  primary key (operation_id, pharmacy_cip, line_id, slot_id)
+  primary key (operation_id, pharmacy_id, line_id, slot_id)
 );
 create index if not exists gp_order_lines_op on gp_order_lines(operation_id);
 
@@ -99,10 +101,10 @@ create index if not exists gp_order_lines_op on gp_order_lines(operation_id);
 create table if not exists gp_triggers (
   operation_id       uuid not null references gp_operations(id) on delete cascade,
   slot_id            text not null,
-  pharmacy_cip       text not null,
-  odoo_sale_order_id integer,
+  pharmacy_id        text not null,
+  odoo_sale_order_id integer,                           -- null = création en cours (réservation)
   created_at         timestamptz not null default now(),
-  primary key (operation_id, slot_id, pharmacy_cip)
+  primary key (operation_id, slot_id, pharmacy_id)
 );
 
 -- Accès : comme les autres tables du site, ces tables ne sont lues et écrites que

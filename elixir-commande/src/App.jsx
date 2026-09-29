@@ -200,8 +200,9 @@ export default function App() {
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   // Commandes groupées (nouveau module) : null = vérification en cours
   const [gpAllowed, setGpAllowed] = useState(null);
+  const [gpDirty, setGpDirty] = useState(false);   // saisie de commande groupée non confirmée
   useEffect(() => {
-    if (!pharmacyCip || !pharmacyEmail) { setGpAllowed(false); return; }
+    if (!pharmacyEmail) { setGpAllowed(false); return; }   // identité = compte (e-mail) → fiche Odoo, le CIP peut manquer
     let cancelled = false;
     const tok = localStorage.getItem("pharmacy_token");
     fetch("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
@@ -1365,7 +1366,7 @@ export default function App() {
               if (!c) return null;
               const active = activeTab === key;
               return (
-                <button key={key} onClick={() => { setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
                   display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left",
                   background: active ? "#f5f6f7" : "transparent", border: "none",
                   borderLeft: active ? "2px solid #111" : "2px solid transparent",
@@ -1628,7 +1629,7 @@ export default function App() {
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (
-            <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} />
+            <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (

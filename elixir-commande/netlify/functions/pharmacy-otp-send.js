@@ -4,12 +4,11 @@
 // Parité avec pharmacy-lookup : cache Supabase PUIS fallback Odoo.
 import { getCors } from "./cors.js";
 import { rateLimit } from "./rate-limit.js";
-import { authenticate, odooCall } from "./odoo.js";
+import { findElixirPharmacy } from "./_pharmacies.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY; // anon key
 const SB = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
-const validCip = (cip) => cip && cip !== "0" && cip !== "false" && cip !== "";
 
 export const handler = async (event) => {
   const cors = getCors(event);
@@ -37,26 +36,15 @@ export const handler = async (event) => {
     if (Array.isArray(rows) && rows[0]) known = true;
   } catch { /* on tente Odoo ci-dessous */ }
 
-  // 2. Fallback Odoo (comme pharmacy-lookup) + mise en cache
+  // 2. Fallback Odoo (comme pharmacy-lookup) : fiche cliente Elixir (société 2) + mise en cache
   if (!known) {
     try {
-      const uid = await authenticate();
-      const partners = await odooCall(uid, "res.partner", "search_read",
-        [["email", "ilike", email], ["active", "=", true]],
-        { fields: ["name", "email", "ref", "cip", "street", "zip", "city", "phone", "mobile"], limit: 5 }
-      );
-      const match = (partners || []).find(p => p.email?.trim().toLowerCase() === email);
-      if (match) {
+      const row = await findElixirPharmacy(email);
+      if (row) {
         known = true;
-        const cipValue = validCip(match.cip) ? match.cip : validCip(match.ref) ? match.ref : "";
         try {
-          await fetch(`${SUPABASE_URL}/rest/v1/elixir_pharmacies`, {
-            method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
-            body: JSON.stringify({
-              name: match.name || "", email, cip: cipValue,
-              street: match.street || "", cp: match.zip || "", ville: match.city || "",
-              tel: match.mobile || match.phone || "",
-            }),
+          await fetch(`${SUPABASE_URL}/rest/v1/elixir_pharmacies?on_conflict=email`, {
+            method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" }, body: JSON.stringify(row),
           });
         } catch { /* le cache n'est pas bloquant */ }
       }

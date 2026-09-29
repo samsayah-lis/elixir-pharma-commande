@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { priceOrder, priceLine, objectiveProgress, sumSlots, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const pct = (n) => `${round2(n || 0).toLocaleString("fr-FR")} %`;
-const dfr = (d, opts = { day: "numeric", month: "long" }) => d ? new Date(d + "T00:00:00").toLocaleDateString("fr-FR", opts) : "";
-const today = () => new Date().toISOString().slice(0, 10);
-const daysLeft = (d) => Math.round((new Date(d + "T00:00:00") - new Date(today() + "T00:00:00")) / 86400e3);
+const dfr = (d, opts = { day: "numeric", month: "long" }) => d ? new Date(d.slice(0, 10) + "T00:00:00").toLocaleDateString("fr-FR", opts) : "";
+const dts = (t) => t ? new Date(t).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long" }) : "";
+const daysLeft = (d) => Math.round((Date.parse(d + "T12:00:00Z") - Date.parse(parisToday() + "T12:00:00Z")) / 86400e3);
 
 const card = { background: "white", borderRadius: 14, padding: "18px 22px", border: "1px solid #e8ecf0" };
 const h2 = { fontSize: 13, fontWeight: 800, color: "#0f2d3d", letterSpacing: 0.3, textTransform: "uppercase", margin: "0 0 12px" };
@@ -14,10 +14,11 @@ const btn = (primary) => ({ border: "none", borderRadius: 10, padding: "10px 18p
   background: primary ? "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)" : "#eef2f5", color: primary ? "white" : "#0f2d3d" });
 const chip = (on) => ({ display: "inline-block", fontSize: 11, fontWeight: 700, borderRadius: 99, padding: "2px 8px", margin: "2px 4px 2px 0",
   background: on ? "#dcfce7" : "#f1f5f9", color: on ? "#166534" : "#475569", border: on ? "1px solid #86efac" : "1px solid transparent" });
-const STATUS = { ouverte: "Ouverte aux commandes", cloturee: "Clôturée", commandee: "Commandée au laboratoire", terminee: "Terminée" };
+const PHASE = { ouverte: "Ouverte aux commandes", a_venir: "Pas encore ouverte", cloturee: "Clôturée", commandee: "Commandée au laboratoire", terminee: "Terminée" };
+const hasQty = (grid) => Object.values(grid || {}).some(s => Object.values(s || {}).some(q => Number(q) > 0));
 
 // Onglet « Commandes groupées » côté pharmacie
-export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
+export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange }) {
   const [ops, setOps] = useState(null);
   const [selId, setSelId] = useState(null);
   const [view, setView] = useState(null);
@@ -28,52 +29,80 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
   const [msg, setMsg] = useState(null);         // { type: ok|err|info, text }
   const [imp, setImp] = useState(null);         // résultat d'import LGO
   const fileRef = useRef(null);
+  const reqRef = useRef(0);
+  const [stale, setStale] = useState(false);   // commande modifiée ailleurs : recharger
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    if (!dirty) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
   const headers = useMemo(() => { const t = localStorage.getItem("pharmacy_token"); return t ? { Authorization: `Bearer ${t}` } : {}; }, []);
-  const api = useCallback(async (body) => {
-    const r = await fetch("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json", ...headers },
+  const call = useCallback(async (fn, body) => {
+    const r = await fetch(`/.netlify/functions/${fn}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers },
       body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...body }) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
     return j;
   }, [headers, pharmacyCip, pharmacyEmail]);
+  const api = useCallback((body) => call("gp-pharmacy", body), [call]);
 
   useEffect(() => {
     api({ action: "list" }).then(j => {
-      setOps(j.operations || []);
-      const open = (j.operations || []).filter(o => o.status === "ouverte");
-      if (open.length === 1 || (j.operations || []).length === 1) setSelId((open[0] || j.operations[0]).id);
+      const list = j.operations || [];
+      setOps(list);
+      const open = list.filter(o => o.phase === "ouverte");
+      if (open.length === 1 || list.length === 1) setSelId((open[0] || list[0]).id);
     }).catch(e => { setOps([]); setMsg({ type: "err", text: e.message }); });
   }, [api]);
 
   const loadView = useCallback((id) => {
-    setBusy("load"); setImp(null);
+    const req = ++reqRef.current;
+    setBusy("load"); setImp(null); setMsg(null); setStale(false);
     api({ action: "get", id }).then(v => {
+      if (req !== reqRef.current) return;          // une autre opération a été choisie entre-temps
       setView(v); setGrid(JSON.parse(JSON.stringify(v.my_order?.bySlot || {}))); setDirty(false);
       setSource({ source: "formulaire", file_name: null });
-    }).catch(e => setMsg({ type: "err", text: e.message })).finally(() => setBusy(""));
+    }).catch(e => { if (req === reqRef.current) setMsg({ type: "err", text: e.message }); })
+      .finally(() => { if (req === reqRef.current) setBusy(""); });
   }, [api]);
   useEffect(() => { if (selId) loadView(selId); else setView(null); }, [selId, loadView]);
 
+  const choose = (id) => {
+    if (id === selId) return;
+    if (dirty && !window.confirm("Vos quantités non confirmées seront perdues. Changer d'opération ?")) return;
+    setSelId(id);
+  };
+
   const op = view?.operation;
   const lines = view?.lines || [];
-  const editable = !!op && op.status === "ouverte" && (!op.start_date || today() >= op.start_date) && (!op.end_date || today() <= op.end_date);
+  const editable = op?.phase === "ouverte";
   const inStock = (l) => !!view?.products?.[l.cip]?.in_stock;
   const slots = useMemo(() => {
     if (!op) return [];
-    const ds = (op.delivery_slots || []).map(s => ({ id: s.id, label: s.label || `Livraison ${dfr(s.date, { day: "numeric", month: "short" })}`, date: s.date }));
+    const ds = (op.delivery_slots || []).map(s => ({ id: s.id, label: s.label || `Livraison ${dfr(s.date, { day: "numeric", month: "short" })}`, sub: s.label ? dfr(s.date, { day: "numeric", month: "short" }) : "" }));
     if (!ds.length) return [{ id: IMMEDIATE_SLOT, label: "Quantité", any: true }];
-    return lines.some(inStock) ? [{ id: IMMEDIATE_SLOT, label: "Immédiat (en stock)" }, ...ds] : ds;
-  }, [op, lines, view]);
+    const immediateNeeded = lines.some(inStock) || lines.some(l => Number(grid[l.id]?.[IMMEDIATE_SLOT]) > 0);
+    return immediateNeeded ? [{ id: IMMEDIATE_SLOT, label: "Immédiat", sub: "produits en stock" }, ...ds] : ds;
+  }, [op, lines, view, grid]);
 
   // ── Calcul en direct (même moteur que le serveur) ──
   const calc = useMemo(() => {
     if (!view) return null;
+    const collectif = op.tier_mode !== "individuel";
     const mine = sumSlots(grid);
-    const group = Object.fromEntries(lines.map(l => [l.id, (view.group_others[l.id] || 0) + (mine[l.id] || 0)]));
-    const noCoop = priceOrder({ ...op, coop_mode: "aucune" }, lines, mine, group, { feePct: view.fee_pct });
-    const summary = priceOrder(op, lines, mine, group, { groupNetAfterRfa: view.group_net_others + noCoop.totals.net, feePct: view.fee_pct });
-    return { mine, group, summary, objective: objectiveProgress(op, lines, group) };
+    const group = Object.fromEntries(lines.map(l => [l.id, (view.group_others?.[l.id] || 0) + (mine[l.id] || 0)]));
+    const noCoop = (qty) => priceOrder({ ...op, coop_mode: "aucune" }, lines, qty, group, { feePct: view.fee_pct }).totals.net;
+    // Base de répartition de la coopération « montant global » : tout le groupe, après RFA
+    const groupNet = collectif ? lines.reduce((s, l) => s + noCoop({ [l.id]: group[l.id] || 0 }), 0) : (view.others_net || 0) + noCoop(mine);
+    const summary = priceOrder(op, lines, mine, group, { groupNetAfterRfa: groupNet, feePct: view.fee_pct });
+    const objective = objectiveIsAdditive(op)
+      ? (view.objective_others != null ? objectiveFrom(op, view.objective_others + objectiveContribution(op, lines, mine)) : null)
+      : objectiveProgress(op, lines, group);
+    return { mine, group, summary, objective };
   }, [view, grid, lines, op]);
 
   const setQty = (lineId, slotId, v) => {
@@ -83,39 +112,55 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
   };
 
   const confirm = async () => {
+    const opId = op.id, req = reqRef.current;
     setBusy("save"); setMsg(null);
     try {
       const entries = [];
       for (const [line_id, s] of Object.entries(grid)) for (const [slot_id, qty] of Object.entries(s || {})) entries.push({ line_id, slot_id, qty: Number(qty) || 0 });
-      const r = await api({ action: "save", id: op.id, entries, ...source });
+      const r = await api({ action: "save", id: opId, entries, ...source, resend: !dirty, loaded_updated_at: view.my_order?.updated_at || null });
+      if (req !== reqRef.current) return;         // une autre opération a été ouverte entre-temps
       setView(r); setGrid(JSON.parse(JSON.stringify(r.my_order?.bySlot || {}))); setDirty(false); setImp(null);
+      setSource({ source: "formulaire", file_name: null });
       setOps(list => (list || []).map(o => o.id === op.id ? { ...o, my_order: { status: r.my_order.status } } : o));
-      if (!r.total) setMsg({ type: "info", text: "Votre commande est vide : rien n'a été envoyé." });
-      else setMsg({ type: "ok", text: r.mail?.sent ? `Commande enregistrée. Une confirmation a été envoyée à ${r.pharmacy.email}.` : `Commande enregistrée. (E-mail de confirmation non envoyé : ${r.mail?.reason || "erreur"})` });
-    } catch (e) { setMsg({ type: "err", text: e.message }); }
+      const mailNote = r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
+      if (r.cancelled) setMsg({ type: "info", text: `Votre commande est annulée : vous avez retiré toutes vos quantités.${mailNote}` });
+      else if (!r.total) setMsg({ type: "info", text: "Votre commande est vide : rien n'a été enregistré." });
+      else if (!r.changed) setMsg({ type: "ok", text: `Aucune modification.${mailNote}` });
+      else setMsg({ type: "ok", text: `Commande enregistrée.${mailNote}` });
+    } catch (e) { setMsg({ type: "err", text: e.message }); if (/rechargez/.test(e.message)) setStale(true); }
     setBusy("");
   };
 
   const importLgo = async (file) => {
+    if (fileRef.current) fileRef.current.value = "";
     if (!file) return;
+    if (hasQty(grid) && !window.confirm("Les quantités de votre fichier remplaceront votre saisie actuelle. Continuer ?")) return;
+    const opId = op.id, req = reqRef.current;
     setBusy("import"); setMsg({ type: "info", text: "Analyse de votre bon de commande…" }); setImp(null);
     try {
-      const r = await analyzeFile({ file, kind: "lgo", opId: op.id, headers, identity: { cip: pharmacyCip, email: pharmacyEmail },
+      const r = await analyzeFile({ file, kind: "lgo", opId, post: (body) => call("gp-upload", body),
         onProgress: (s) => setMsg({ type: "info", text: `Analyse de votre bon de commande… ${s} s` }) });
+      if (req !== reqRef.current || op.id !== opId) return;   // l'opération affichée a changé pendant l'analyse
       const next = {};
+      const slotIds = new Set((op.delivery_slots || []).map(s => s.id));
       const firstSlot = (op.delivery_slots || [])[0]?.id;
-      for (const [lineId, q] of Object.entries(r.result.qty || {})) {
+      const auto = (l) => !firstSlot || inStock(l) ? IMMEDIATE_SLOT : firstSlot;
+      // bon échelonné : chaque ligne va sur sa date de livraison ; sans date, livraison immédiate si en stock, sinon 1re date
+      const src = r.result?.grid || Object.fromEntries(Object.entries(r.result?.qty || {}).map(([k, q]) => [k, { _auto: q }]));
+      for (const [lineId, bySlot] of Object.entries(src)) {
         const l = lines.find(x => x.id === lineId);
-        if (!l || !q) continue;
-        const slot = !firstSlot || inStock(l) ? IMMEDIATE_SLOT : firstSlot;
-        next[lineId] = { [slot]: q };
+        if (!l) continue;
+        for (const [slot, q] of Object.entries(bySlot || {})) {
+          if (!q) continue;
+          const target = slotIds.has(slot) ? slot : auto(l);
+          (next[lineId] ||= {})[target] = (next[lineId][target] || 0) + q;
+        }
       }
       setGrid(next); setDirty(true); setSource({ source: "fichier", file_name: r.file_name });
-      setImp({ matched: Object.keys(next).length, unmatched: r.result.unmatched || [], warnings: r.result.warnings || [] });
-      setMsg({ type: "info", text: `${Object.keys(next).length} produit(s) repris de « ${r.file_name} ». Vérifiez les quantités et les dates, puis confirmez.` });
-    } catch (e) { setMsg({ type: "err", text: e.message }); }
-    setBusy("");
-    if (fileRef.current) fileRef.current.value = "";
+      setImp({ unmatched: r.result?.unmatched || [], warnings: r.result?.warnings || [] });
+      setMsg({ type: "info", text: `${Object.keys(next).length} produit(s) repris de « ${r.file_name} ». Vérifiez les quantités et les dates de livraison, puis confirmez.` });
+    } catch (e) { if (req === reqRef.current) setMsg({ type: "err", text: e.message }); }
+    if (req === reqRef.current) setBusy("");
   };
 
   if (ops === null) return <div style={card}>Chargement des commandes groupées…</div>;
@@ -128,6 +173,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
   );
 
   const t = calc?.summary?.totals;
+  const confirmed = view?.my_order?.status === "confirmee";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
@@ -138,15 +184,15 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
       {ops.length > 1 && (
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {ops.map(o => (
-            <button key={o.id} onClick={() => setSelId(o.id)} style={{ ...btn(o.id === selId), padding: "8px 14px", textAlign: "left" }}>
-              {o.name}<span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 6 }}>{o.my_order?.status === "confirmee" ? "✓ commandé" : STATUS[o.status]}</span>
+            <button key={o.id} disabled={!!busy} aria-pressed={o.id === selId} onClick={() => choose(o.id)} style={{ ...btn(o.id === selId), padding: "8px 14px", textAlign: "left" }}>
+              {o.name}<span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 6 }}>{o.my_order?.status === "confirmee" ? "✓ commandé" : PHASE[o.phase] || o.phase}</span>
             </button>
           ))}
         </div>
       )}
 
       {busy === "load" && <div style={card}>Chargement…</div>}
-      {op && busy !== "load" && (<>
+      {op && calc && busy !== "load" && (<>
         <div style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
@@ -154,9 +200,9 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
               <div style={{ fontSize: 13, color: "#475569" }}>{op.supplier_name ? `${op.supplier_name} · ` : ""}{op.start_date ? `du ${dfr(op.start_date)} ` : ""}{op.end_date ? `au ${dfr(op.end_date, { day: "numeric", month: "long", year: "numeric" })}` : ""}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: editable ? "#166534" : "#92400e" }}>{editable ? "Ouverte aux commandes" : STATUS[op.status] || op.status}</div>
-              {editable && op.end_date && <div style={{ fontSize: 12, color: "#475569" }}>{daysLeft(op.end_date) === 0 ? "Clôture ce soir" : `Clôture dans ${daysLeft(op.end_date)} jour${daysLeft(op.end_date) > 1 ? "s" : ""}`}</div>}
-              {view.my_order?.status === "confirmee" && <div style={{ fontSize: 12, color: "#166534" }}>✓ Commande confirmée le {dfr(view.my_order.confirmed_at?.slice(0, 10))}</div>}
+              <div style={{ fontSize: 12, fontWeight: 800, color: editable ? "#166534" : "#92400e" }}>{PHASE[op.phase] || op.phase}{op.phase === "a_venir" && op.start_date ? ` (le ${dfr(op.start_date)})` : ""}</div>
+              {editable && op.end_date && <div style={{ fontSize: 12, color: "#475569" }}>{daysLeft(op.end_date) <= 0 ? "Clôture ce soir" : `Clôture dans ${daysLeft(op.end_date)} jour${daysLeft(op.end_date) > 1 ? "s" : ""}`}</div>}
+              {confirmed && <div style={{ fontSize: 12, color: "#166534" }}>✓ Commande confirmée le {dts(view.my_order.confirmed_at)}</div>}
             </div>
           </div>
           <div style={{ fontSize: 13, color: "#334155", display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
@@ -166,17 +212,18 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
             <span>Frais de traitement : <b>{pct(view.fee_pct)}</b></span>
           </div>
           {op.conditions_text && <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "8px 12px", whiteSpace: "pre-wrap" }}>{op.conditions_text}</div>}
-          {calc?.objective && <Objective o={calc.objective} />}
+          {calc.objective && <Objective o={calc.objective} />}
+          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Les quantités sont des <b>unités reçues, gratuités comprises</b> : pour « 12 + 2 UG », saisissez 14.</div>}
         </div>
 
         <div style={{ ...card, padding: 0, overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, minWidth: 720 }}>
             <thead>
               <tr style={{ background: "#f8fafc", color: "#475569", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                <th style={{ textAlign: "left", padding: "10px 14px" }}>Produit</th>
+                <th style={{ textAlign: "left", padding: "10px 14px", position: "sticky", left: 0, background: "#f8fafc", zIndex: 1 }}>Produit</th>
                 <th style={{ textAlign: "right", padding: "10px 8px" }}>Prix brut</th>
                 <th style={{ textAlign: "left", padding: "10px 8px" }}>Conditions</th>
-                {slots.map(s => <th key={s.id} style={{ textAlign: "center", padding: "10px 6px", minWidth: 86 }}>{s.label}</th>)}
+                {slots.map(s => <th key={s.id} style={{ textAlign: "center", padding: "10px 6px", minWidth: 86 }}>{s.label}{s.sub && <div style={{ fontWeight: 500, textTransform: "none" }}>{s.sub}</div>}</th>)}
                 <th style={{ textAlign: "right", padding: "10px 8px" }}>Prix net</th>
                 <th style={{ textAlign: "right", padding: "10px 14px" }}>Total net</th>
               </tr>
@@ -188,9 +235,10 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
                 const row = calc.summary.rows.find(r => r.line.id === l.id);
                 const stock = inStock(l);
                 const tiers = (l.discount_mode === "paliers" ? l.discount_tiers : []) || [];
+                const netPct = row ? row.totalDiscountPct : (1 - p.unitAfterRfa / (p.gross || 1)) * 100;
                 return (
                   <tr key={l.id} style={{ borderTop: "1px solid #eef2f5", verticalAlign: "top" }}>
-                    <td style={{ padding: "10px 14px" }}>
+                    <td style={{ padding: "10px 14px", position: "sticky", left: 0, background: "white", zIndex: 1, minWidth: 150, maxWidth: 220, boxShadow: "1px 0 0 #eef2f5" }}>
                       <div style={{ fontWeight: 700, color: "#0f2d3d" }}>{l.name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>CIP {l.cip} · {stock ? <span style={{ color: "#166534", fontWeight: 700 }}>En stock</span> : <span style={{ color: "#b45309", fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
                       {l.notes && <div style={{ fontSize: 11, color: "#64748b" }}>{l.notes}</div>}
@@ -205,20 +253,23 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
                       {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: "#94a3b8" }}>Groupe : {calc.group[l.id] || 0} u.</div>}
                     </td>
                     {slots.map(s => {
-                      const allowed = s.any || s.id !== IMMEDIATE_SLOT || stock;
                       const v = grid[l.id]?.[s.id] || "";
+                      const allowed = s.any || s.id !== IMMEDIATE_SLOT || stock;
+                      // une quantité déjà saisie reste visible et modifiable même si le produit n'est plus en stock
+                      const show = allowed || Number(v) > 0;
                       return (
                         <td key={s.id} style={{ padding: "8px 6px", textAlign: "center" }}>
-                          {allowed ? (
-                            <input value={v} inputMode="numeric" disabled={!editable} onChange={e => setQty(l.id, s.id, e.target.value)} placeholder="0"
-                              style={{ width: 64, border: "1.5px solid #d6dde3", borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
-                          ) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                          {show ? (<>
+                            <input value={v} inputMode="numeric" disabled={!editable || busy === "import" || busy === "save"} onChange={e => setQty(l.id, s.id, e.target.value)} placeholder="0" aria-label={`${l.name} — ${s.label}`}
+                              style={{ width: 64, border: `1.5px solid ${allowed ? "#d6dde3" : "#f59e0b"}`, borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
+                            {!allowed && <div style={{ fontSize: 10, color: "#b45309" }}>plus en stock</div>}
+                          </>) : <span style={{ color: "#cbd5e1" }}>—</span>}
                         </td>
                       );
                     })}
                     <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
                       <b>{eur(row ? row.unitNet : p.unitAfterRfa)}</b>
-                      {(row ? row.totalDiscountPct : (1 - p.unitAfterRfa / (p.gross || 1)) * 100) > 0.05 && <div style={{ fontSize: 11, color: "#166534" }}>−{pct(row ? row.totalDiscountPct : (1 - p.unitAfterRfa / (p.gross || 1)) * 100)}</div>}
+                      {netPct > 0.05 && <div style={{ fontSize: 11, color: "#166534" }}>−{pct(netPct)}</div>}
                     </td>
                     <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 700 }}>{row ? eur(row.totalNet) : "—"}</td>
                   </tr>
@@ -253,13 +304,14 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
             </tbody>
           </table>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-            {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture.</div>}
+            {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture.</div>}
+            {dirty && editable && <div style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Modifications non confirmées</div>}
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
+                <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
                 <button style={btn(false)} disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy === "import" ? "Analyse…" : "📄 Importer mon bon de commande (LGO)"}</button>
-                <button style={{ ...btn(true), opacity: busy ? 0.6 : 1 }} disabled={!!busy} onClick={confirm}>
-                  {busy === "save" ? "Envoi…" : view.my_order?.status === "confirmee" ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
+                <button style={{ ...btn(true), opacity: busy || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || (!dirty && !confirmed && !hasQty(grid))} onClick={confirm}>
+                  {busy === "save" ? "Envoi…" : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
                 </button>
               </div>
             )}
@@ -267,6 +319,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail }) {
         </div>
       </>)}
       {msg && <Msg m={msg} />}
+      {stale && <button style={{ ...btn(true), alignSelf: "flex-start" }} onClick={() => loadView(selId)}>↻ Recharger ma commande</button>}
     </div>
   );
 }
@@ -277,7 +330,7 @@ function Tot({ label, v, strong }) {
 
 function Msg({ m }) {
   const c = { ok: ["#dcfce7", "#166534"], err: ["#fee2e2", "#991b1b"], info: ["#e0f2fe", "#075985"] }[m.type] || ["#f1f5f9", "#334155"];
-  return <div style={{ background: c[0], color: c[1], borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>{m.text}</div>;
+  return <div role="status" style={{ background: c[0], color: c[1], borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>{m.text}</div>;
 }
 
 export function Objective({ o }) {
@@ -286,7 +339,7 @@ export function Objective({ o }) {
   const label = { unites: "Objectif du groupe", montant_brut: "Objectif du groupe (montant brut)", montant_net: "Objectif du groupe (montant remisé)" }[o.type];
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
         <span>{label} : {f(o.target)}{unit}</span>
         <span style={{ color: o.reached ? "#166534" : "#0369a1" }}>{o.reached ? "✓ Objectif atteint" : `${f(o.value)}${unit} · encore ${f(o.missing)}${unit}`}</span>
       </div>

@@ -1,23 +1,34 @@
 // ── Commandes groupées : administration ─────────────────────────────────
-// GET  ?action=list | get&id= | access | pharmacies&q= | suppliers&q= | import_status&job=
-// POST { action: save | delete | status | access_add | access_remove | participants |
-//        lookup | order_save | po_create | trigger }
+// GET  ?action=list | get&id= | access | pharmacies&q= | suppliers&q= | trigger_status&id=&slot_id=
+// POST { action: save | delete | status | access_add | access_remove | lookup | order_save | po_create | trigger }
 import crypto from "node:crypto";
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
-import { json, sb, inList, odoo, productInfo, loadOperation, summarize, saveOrder, today, COMPANY_ID } from "./_gp.js";
-import { priceLine, priceOrder, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
+import { labUnitNet, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 
-const OP_FIELDS = ["name", "supplier_name", "supplier_odoo_id", "status", "start_date", "end_date", "tier_mode", "fee_pct",
-  "centralizer_type", "centralizer_cip", "centralizer_name", "objective_type", "objective_value", "delivery_slots",
+// Le statut ne change que par l'action « status » (ou la création du bon labo), jamais par « save »
+const OP_FIELDS = ["name", "supplier_name", "supplier_odoo_id", "start_date", "end_date", "tier_mode", "fee_pct",
+  "centralizer_type", "centralizer_id", "centralizer_name", "objective_type", "objective_value", "delivery_slots",
   "rfa_pct", "coop_mode", "coop_amount", "coop_label", "conditions_text", "notes"];
-const LINE_FIELDS = ["cip", "name", "odoo_product_id", "price_gross", "discount_mode", "discount_pct", "discount_tiers",
-  "ug_tiers", "weight", "vat_rate", "notes"];
-const STATUSES = ["brouillon", "ouverte", "cloturee", "commandee", "terminee", "annulee"];
+const TRANSITIONS = { brouillon: ["ouverte"], ouverte: ["cloturee", "annulee"], cloturee: ["ouverte", "annulee"], commandee: ["terminee", "annulee"], terminee: [], annulee: [] };
+const LOCKED = ["commandee", "terminee", "annulee"];
 const pick = (o, keys) => Object.fromEntries(keys.filter(k => o[k] !== undefined).map(k => [k, o[k] === "" ? null : o[k]]));
-const slotDate = (op, slotId) => slotId === IMMEDIATE_SLOT ? today() : ((op.delivery_slots || []).find(s => s.id === slotId)?.date || op.end_date || today());
-const slotLabel = (op, slotId) => slotId === IMMEDIATE_SLOT ? "livraison immédiate" : ((op.delivery_slots || []).find(s => s.id === slotId)?.label || `livraison du ${slotDate(op, slotId)}`);
+const num = (v, def = 0) => { const n = parseFloat(String(v ?? "").replace(",", ".")); return Number.isFinite(n) ? n : def; };
+const slotOf = (op, slotId) => (op.delivery_slots || []).find(s => s.id === slotId);
+const slotLabel = (op, slotId) => slotId === IMMEDIATE_SLOT ? ((op.delivery_slots || []).length ? "livraison immédiate" : "livraison à réception") : (slotOf(op, slotId)?.label || `livraison du ${slotOf(op, slotId)?.date || ""}`);
 const lineLabel = (l) => l.cip ? `[${l.cip}] ${l.name}` : l.name;
+const newSlotId = () => crypto.randomUUID().slice(0, 8);
+// Ligne gp_lines avec toujours les mêmes colonnes (PostgREST refuse un envoi groupé aux clés différentes)
+const lineRow = (l, opId, position) => ({
+  id: l.id, operation_id: opId, position, cip: l.cip, name: l.name,
+  odoo_product_id: l.odoo_product_id || null, price_gross: num(l.price_gross, 0),
+  discount_mode: ["aucune", "unitaire", "paliers"].includes(l.discount_mode) ? l.discount_mode : "aucune",
+  discount_pct: num(l.discount_pct, 0),
+  discount_tiers: (Array.isArray(l.discount_tiers) ? l.discount_tiers : []).map(t => ({ min_qty: num(t.min_qty), pct: num(t.pct) })).filter(t => t.min_qty > 0 && t.pct > 0),
+  ug_tiers: (Array.isArray(l.ug_tiers) ? l.ug_tiers : []).map(t => ({ min_qty: num(t.min_qty), free_qty: num(t.free_qty) })).filter(t => t.min_qty > 0 && t.free_qty > 0),
+  weight: num(l.weight, 1) || 1, vat_rate: l.vat_rate == null || l.vat_rate === "" ? null : num(l.vat_rate, null), notes: l.notes || null,
+});
 
 export const handler = async (event) => {
   const cors = getCors(event);
@@ -29,44 +40,66 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") return json(cors, 200, await post(JSON.parse(event.body || "{}"), event));
     return json(cors, 405, { error: "Méthode non autorisée" });
   } catch (e) {
-    console.error("gp-admin", e);
-    return json(cors, e.status || 500, { error: e.message || String(e) });
+    if (!e.status) console.error("gp-admin", e);
+    return json(cors, e.status || 500, { error: e.message || String(e), ...(e.extra || {}) });
   }
 };
 
-const fail = (msg, status = 400) => Object.assign(new Error(msg), { status });
+// ── Livraisons restant à déclencher (pharmacies avec quantités − devis créés) ──
+function slotProgress(op, qtyRows, confirmedIds, triggers) {
+  const out = {};
+  const need = {};
+  for (const r of qtyRows) if (r.operation_id === op.id && confirmedIds.has(r.pharmacy_id)) (need[r.slot_id] ||= new Set()).add(r.pharmacy_id);
+  const done = {};
+  for (const t of triggers) if (t.operation_id === op.id && t.odoo_sale_order_id) (done[t.slot_id] ||= new Set()).add(t.pharmacy_id);
+  for (const [slot, set] of Object.entries(need)) out[slot] = { pharmacies: set.size, done: [...set].filter(id => done[slot]?.has(id)).length };
+  return out;
+}
 
 async function get(q) {
   switch (q.action) {
     case "list": {
-      const [ops, parts, orders] = await Promise.all([
-        sb("gp_operations?order=created_at.desc"),
-        sb("gp_participants?select=operation_id"),
-        sb("gp_orders?status=eq.confirmee&select=operation_id"),
-      ]);
-      const count = (rows) => rows.reduce((m, r) => (m[r.operation_id] = (m[r.operation_id] || 0) + 1, m), {});
-      const p = count(parts || []), o = count(orders || []);
-      const trig = await sb("gp_triggers?select=operation_id,slot_id");
-      const done = new Set((trig || []).map(t => `${t.operation_id}|${t.slot_id}`));
-      return { operations: (ops || []).map(op => ({ ...op, participants_count: p[op.id] || 0, orders_count: o[op.id] || 0,
-        pending_slots: pendingSlots(op, done) })) };
+      const ops = await sbAll("gp_operations?order=created_at.desc");
+      const [parts, orders] = await Promise.all([sbAll("gp_participants?select=operation_id,pharmacy_id"), sbAll("gp_orders?status=eq.confirmee&select=operation_id,pharmacy_id")]);
+      const active = ops.filter(o => ["cloturee", "commandee"].includes(o.status)).map(o => o.id);
+      const [qty, trig] = active.length ? await Promise.all([
+        sbAll(`gp_order_lines?operation_id=in.${encodeURIComponent(inList(active))}&qty=gt.0&select=operation_id,pharmacy_id,slot_id`),
+        sbAll(`gp_triggers?operation_id=in.${encodeURIComponent(inList(active))}&select=operation_id,slot_id,pharmacy_id,odoo_sale_order_id`),
+      ]) : [[], []];
+      const limit = new Date(Date.now() + 2 * 86400e3).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+      return { operations: ops.map(op => {
+        const pIds = new Set(parts.filter(p => p.operation_id === op.id).map(p => p.pharmacy_id));
+        const conf = new Set(orders.filter(o => o.operation_id === op.id && pIds.has(o.pharmacy_id)).map(o => o.pharmacy_id));
+        const prog = active.includes(op.id) ? slotProgress(op, qty, conf, trig) : {};
+        const pending = (op.delivery_slots || []).filter(s => s.date && s.date <= limit && prog[s.id] && prog[s.id].done < prog[s.id].pharmacies).map(s => s.id);
+        if (prog[IMMEDIATE_SLOT] && prog[IMMEDIATE_SLOT].done < prog[IMMEDIATE_SLOT].pharmacies) pending.push(IMMEDIATE_SLOT);
+        return { ...op, participants_count: pIds.size, orders_count: conf.size, pending_slots: pending };
+      }) };
     }
     case "get": {
       const data = await loadOperation(q.id);
       if (!data) throw fail("Opération introuvable", 404);
       const [products, triggers] = await Promise.all([
         productInfo(data.lines.map(l => l.cip)).catch(e => ({ _error: e.message })),
-        sb(`gp_triggers?operation_id=eq.${data.op.id}`),
+        sbAll(`gp_triggers?operation_id=eq.${data.op.id}`),
       ]);
       return { ...data, products, triggers, summary: summarize(data) };
     }
     case "access":
-      return { access: await sb("gp_access?order=pharmacy_name.asc") };
+      return { access: await sbAll("gp_access?order=pharmacy_name.asc") };
     case "pharmacies": {
-      const s = String(q.q || "").trim().replace(/[*,()]/g, " ");
+      // Comptes pharmacies du site = clients Elixir uniquement (voir pharmacy-sync-now), regroupés par fiche Odoo
+      const s = String(q.q || "").trim().replace(/[*,()"\\:]/g, " ").trim();
       if (s.length < 2) return { pharmacies: [] };
-      const f = /^\d+$/.test(s) ? `cip=like.${encodeURIComponent(s)}*` : `or=(name.ilike.*${encodeURIComponent(s)}*,ville.ilike.*${encodeURIComponent(s)}*,email.ilike.*${encodeURIComponent(s)}*)`;
-      return { pharmacies: await sb(`elixir_pharmacies?${f}&select=cip,name,email,ville,odoo_id&order=name.asc&limit=25`) };
+      const v = encodeURIComponent(`*${s}*`);
+      const rows = await sb(`elixir_pharmacies?or=(name.ilike.${v},ville.ilike.${v},email.ilike.${v},cip.ilike.${v})&odoo_id=not.is.null&select=cip,name,email,ville,odoo_id&order=name.asc&limit=80`);
+      const by = new Map();
+      for (const r of rows || []) {
+        const k = String(r.odoo_id);
+        if (!by.has(k)) by.set(k, { id: k, name: r.name, ville: r.ville, cip: r.cip && r.cip !== "0" ? r.cip : "", email: r.email, emails: [] });
+        by.get(k).emails.push(r.email);
+      }
+      return { pharmacies: [...by.values()].slice(0, 30) };
     }
     case "suppliers": {
       const s = String(q.q || "").trim();
@@ -75,194 +108,300 @@ async function get(q) {
         { fields: ["id", "name"], limit: 20, order: "supplier_rank desc" });
       return { suppliers: rows };
     }
-    case "import_status": {
-      const [row] = await sb(`kv_store?key=eq.${encodeURIComponent("gp_import:" + q.job)}&select=value`);
-      return row ? row.value : { status: "inconnu" };
+    case "trigger_status": {
+      const [row] = await sb(`kv_store?key=${eq(`gp_trigger:${q.id}:${q.slot_id}`)}&select=value`);
+      if (!row) return { status: "aucun" };
+      const v = row.value;
+      // fonction d'arrière-plan tuée ou jamais démarrée : on rend la main (la relance ne crée pas de doublon)
+      if (v.status === "en_cours" && Date.now() - Date.parse(v.started_at) > 16 * 60e3) return { ...v, status: "erreur", error: "Création interrompue : relancez (les devis déjà créés ne seront pas dupliqués)" };
+      return v;
     }
     default:
       throw fail("Action inconnue");
   }
 }
 
-// Livraisons (hors immédiat) dont la date est atteinte et pas encore déclenchées
-function pendingSlots(op, done) {
-  if (!["cloturee", "commandee"].includes(op.status)) return [];
-  const limit = new Date(Date.now() + 2 * 86400e3).toISOString().slice(0, 10);
-  return (op.delivery_slots || []).filter(s => s.date && s.date <= limit && !done.has(`${op.id}|${s.id}`)).map(s => s.id);
-}
-
 async function post(b, event) {
   switch (b.action) {
-    case "save": return saveOperation(b.operation || {}, b.lines || []);
-    case "delete":
-      await sb(`gp_operations?id=eq.${encodeURIComponent(b.id)}`, { method: "DELETE" });
+    case "save": return saveOperation(b);
+    case "delete": {
+      const [op] = await sb(`gp_operations?id=${eq(b.id)}&select=status`);
+      if (!op) throw fail("Opération introuvable", 404);
+      if (op.status !== "brouillon") throw fail("Seule une opération en brouillon peut être supprimée ; sinon, annulez-la.");
+      await sb(`gp_operations?id=${eq(b.id)}`, { method: "DELETE" });
       return { ok: true };
-    case "status": {
-      if (!STATUSES.includes(b.status)) throw fail("Statut invalide");
-      const [op] = await sb(`gp_operations?id=eq.${encodeURIComponent(b.id)}`, { method: "PATCH", prefer: "return=representation",
-        body: { status: b.status, updated_at: new Date().toISOString() } });
-      return { operation: op };
     }
+    case "status": return changeStatus(b.id, b.status);
     case "access_add": {
-      const rows = (b.pharmacies || []).filter(p => p.cip).map(p => ({ pharmacy_cip: String(p.cip), pharmacy_name: p.name || null, email: p.email || null }));
-      if (rows.length) await sb("gp_access?on_conflict=pharmacy_cip", { method: "POST", prefer: "resolution=merge-duplicates", body: rows });
-      return { access: await sb("gp_access?order=pharmacy_name.asc") };
+      const rows = (b.pharmacies || []).filter(p => p.id).map(p => ({ pharmacy_id: String(p.id), pharmacy_name: p.name || null, email: p.email || null, pharmacy_cip: p.cip || null }));
+      if (rows.length) await sb("gp_access?on_conflict=pharmacy_id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows });
+      return { access: await sbAll("gp_access?order=pharmacy_name.asc") };
     }
     case "access_remove":
-      await sb(`gp_access?pharmacy_cip=eq.${encodeURIComponent(b.cip)}`, { method: "DELETE" });
-      return { access: await sb("gp_access?order=pharmacy_name.asc") };
-    case "participants": {
-      const id = b.id;
-      const wanted = (b.pharmacies || []).filter(p => p.cip).map(p => ({ operation_id: id, pharmacy_cip: String(p.cip),
-        pharmacy_name: p.name || null, email: p.email || null, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : Number(p.fee_pct) }));
-      const current = await sb(`gp_participants?operation_id=eq.${id}&select=pharmacy_cip`);
-      const keep = new Set(wanted.map(w => w.pharmacy_cip));
-      const gone = (current || []).map(c => c.pharmacy_cip).filter(c => !keep.has(c));
-      if (gone.length) await sb(`gp_participants?operation_id=eq.${id}&pharmacy_cip=in.${inList(gone)}`, { method: "DELETE" });
-      if (wanted.length) await sb("gp_participants?on_conflict=operation_id,pharmacy_cip", { method: "POST", prefer: "resolution=merge-duplicates", body: wanted });
-      // un participant voit forcément l'onglet
-      if (wanted.length) await sb("gp_access?on_conflict=pharmacy_cip", { method: "POST", prefer: "resolution=ignore-duplicates",
-        body: wanted.map(w => ({ pharmacy_cip: w.pharmacy_cip, pharmacy_name: w.pharmacy_name, email: w.email })) });
-      return { participants: await sb(`gp_participants?operation_id=eq.${id}&order=pharmacy_name.asc`) };
-    }
+      await sb(`gp_access?pharmacy_id=${eq(b.id)}`, { method: "DELETE" });
+      return { access: await sbAll("gp_access?order=pharmacy_name.asc") };
     case "lookup":
       return { products: await productInfo(b.cips || []) };
     case "order_save": {
       // saisie par Elixir pour le compte d'une pharmacie (commande reçue par téléphone, mail…)
       const data = await loadOperation(b.id);
       if (!data) throw fail("Opération introuvable", 404);
-      const part = data.participants.find(p => p.pharmacy_cip === b.cip);
+      if (!["ouverte", "cloturee"].includes(data.op.status)) throw fail("Les commandes ne sont plus modifiables à ce stade");
+      const part = data.participants.find(p => p.pharmacy_id === String(b.pharmacy_id));
       if (!part) throw fail("Cette pharmacie ne participe pas à l'opération");
-      const r = await saveOrder({ data, pharmacy: { cip: part.pharmacy_cip, name: part.pharmacy_name, email: part.email }, entries: b.entries, source: "formulaire" });
+      const r = await saveOrder({ data, pharmacy: { id: part.pharmacy_id, name: part.pharmacy_name, email: part.email }, entries: b.entries, source: "formulaire" });
       return { ok: true, ...r };
     }
     case "po_create": return createPurchaseOrder(b.id);
-    case "trigger": return triggerSlot(b.id, b.slot_id);
+    case "trigger": return startTrigger(b.id, b.slot_id, event);
     default:
       throw fail("Action inconnue");
   }
 }
 
-// ── Création / mise à jour d'une opération et de ses lignes ─────────────
-async function saveOperation(opIn, linesIn) {
+// ── Changement de statut ────────────────────────────────────────────────
+async function changeStatus(id, status) {
+  const data = await loadOperation(id);
+  if (!data) throw fail("Opération introuvable", 404);
+  const { op, lines, participants } = data;
+  if (!(TRANSITIONS[op.status] || []).includes(status)) throw fail(`Passage de « ${op.status} » à « ${status} » impossible`);
+  if (status === "ouverte") {
+    const problems = [];
+    if (!lines.length) problems.push("aucun produit");
+    if (!participants.length) problems.push("aucune pharmacie participante");
+    if (!op.end_date) problems.push("date de fin (clôture) manquante");
+    const noPrice = lines.filter(l => !(Number(l.price_gross) > 0)).map(l => l.name);
+    if (noPrice.length) problems.push(`prix brut manquant : ${noPrice.slice(0, 5).join(", ")}${noPrice.length > 5 ? "…" : ""}`);
+    const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => l.cip);
+    if (noOdoo.length) problems.push(`produits sans fiche Odoo : ${noOdoo.slice(0, 5).join(", ")}${noOdoo.length > 5 ? "…" : ""}`);
+    if ((op.delivery_slots || []).some(s => !s.date)) problems.push("une date de livraison n'a pas de date");
+    if (op.status === "cloturee") {
+      const trig = await sb(`gp_triggers?operation_id=eq.${id}&select=slot_id&limit=1`);
+      if (op.po_odoo_id || op.po_created_at || trig.length) problems.push("le bon labo ou des devis ont déjà été créés");
+    }
+    if (problems.length) throw fail(`Impossible d'ouvrir l'opération : ${problems.join(" ; ")}`);
+  }
+  const [saved] = await sb(`gp_operations?id=eq.${id}&status=${eq(op.status)}`, { method: "PATCH", prefer: "return=representation",
+    body: { status, updated_at: new Date().toISOString() } });
+  if (!saved) throw fail("Le statut a été modifié entre-temps : rechargez l'opération", 409, { code: "stale" });
+  return { operation: saved };
+}
+
+// ── Création / mise à jour d'une opération, de ses produits et participants ──
+async function saveOperation(b) {
+  const opIn = b.operation || {};
+  const isNew = !opIn.id;
   const id = opIn.id || crypto.randomUUID();
-  const op = { id, ...pick(opIn, OP_FIELDS), updated_at: new Date().toISOString() };
-  if (!op.name) throw fail("Nom de l'opération requis");
-  for (const [k, def] of [["fee_pct", 2], ["rfa_pct", 0], ["coop_amount", 0]]) if (k in op) op[k] = op[k] == null || isNaN(Number(op[k])) ? def : Number(op[k]);
-  if ("objective_value" in op) op.objective_value = op.objective_value == null || isNaN(Number(op.objective_value)) ? null : Number(op.objective_value);
-  if (op.status && !STATUSES.includes(op.status)) delete op.status;
-  if (op.delivery_slots) op.delivery_slots = (op.delivery_slots || []).map(s => ({ id: s.id || crypto.randomUUID().slice(0, 8), date: s.date || null, label: s.label || null }));
-  // fiches Odoo manquantes (id produit, TVA) complétées automatiquement
-  const missing = linesIn.filter(l => l.cip && (!l.odoo_product_id || l.vat_rate == null || l.vat_rate === "")).map(l => l.cip);
-  const info = missing.length ? await productInfo(missing).catch(() => ({})) : {};
-  const lines = linesIn.filter(l => String(l.cip || "").trim() && String(l.name || "").trim()).map((l, i) => {
-    const x = info[String(l.cip).trim()] || {};
-    return { id: l.id || crypto.randomUUID(), operation_id: id, position: i, ...pick(l, LINE_FIELDS),
-      cip: String(l.cip).trim(),
+  const force = !!b.force;
+  const now = new Date().toISOString();
+  const cur = isNew ? { op: null, lines: [], qty: [], participants: [], orders: [] } : await loadOperation(id);
+  if (!cur) throw fail("Opération introuvable", 404);
+  if (!isNew && b.loaded_updated_at && cur.op.updated_at !== b.loaded_updated_at)
+    throw fail("Cette opération a été modifiée ailleurs (autre onglet ou autre personne) : rechargez-la avant d'enregistrer.", 409, { code: "stale" });
+  const status = cur.op?.status || "brouillon";
+
+  // Opération verrouillée : seules les notes et les conditions restent modifiables
+  if (LOCKED.includes(status)) {
+    const [saved] = await sb(`gp_operations?id=eq.${id}`, { method: "PATCH", prefer: "return=representation",
+      body: { notes: opIn.notes ?? cur.op.notes, conditions_text: opIn.conditions_text ?? cur.op.conditions_text, updated_at: now } });
+    return { operation: saved, locked: true };
+  }
+
+  // ── Opération ──
+  const op = { id, ...pick(opIn, OP_FIELDS), updated_at: now };
+  if (!String(op.name || "").trim()) throw fail("Nom de l'opération requis");
+  for (const [k, def] of [["fee_pct", 2], ["rfa_pct", 0], ["coop_amount", 0]]) if (k in op) op[k] = op[k] == null ? def : num(op[k], def);
+  if ("objective_value" in op) op.objective_value = op.objective_value == null ? null : num(op.objective_value, null);
+  const isDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d)) && !isNaN(Date.parse(d + "T00:00:00Z"));
+  for (const k of ["start_date", "end_date"]) if (op[k] != null && !isDate(op[k])) throw fail(`Date invalide : ${op[k]}`);
+  if (op.start_date && op.end_date && op.end_date < op.start_date) throw fail("La date de fin est avant la date de début");
+  const triggers = isNew ? [] : await sb(`gp_triggers?operation_id=eq.${id}&select=slot_id`);
+  let removedSlots = [];
+  if (Array.isArray(op.delivery_slots)) {
+    op.delivery_slots = op.delivery_slots.map(s => ({ id: s.id || newSlotId(), date: s.date || null, label: s.label || null }));
+    if (op.delivery_slots.some(s => !s.date)) throw fail("Chaque livraison doit avoir une date");
+    const bad = op.delivery_slots.filter(s => !isDate(s.date));
+    if (bad.length) throw fail(`Date de livraison invalide : ${bad.map(s => s.date).join(", ")}`);
+    const keepSlots = new Set(op.delivery_slots.map(s => s.id));
+    removedSlots = (cur.op?.delivery_slots || []).filter(s => !keepSlots.has(s.id));
+    const trig = removedSlots.filter(s => triggers.some(t => t.slot_id === s.id));
+    if (trig.length) throw fail(`Livraison déjà déclenchée, impossible de la supprimer : ${trig.map(s => s.label || s.date).join(", ")}`);
+  }
+
+  // ── Produits ──
+  const byIdCur = new Map(cur.lines.map(l => [l.id, l]));
+  let lines = (b.lines || []).map(l => ({ ...l, cip: String(l.cip || "").replace(/\s/g, ""), name: String(l.name || "").trim() })).filter(l => l.cip || l.name);
+  const noCip = lines.filter(l => !l.cip);
+  if (noCip.length) throw fail(`CIP manquant pour : ${noCip.map(l => l.name).join(", ")}`);
+  const seen = new Set(), dups = new Set();
+  for (const l of lines) { if (seen.has(l.cip)) dups.add(l.cip); seen.add(l.cip); }
+  if (dups.size) throw fail(`Produit en double dans l'opération : ${[...dups].join(", ")}`);
+  // CIP modifié sur une ligne existante : la fiche Odoo et la TVA de l'ancien produit ne valent plus
+  lines = lines.map(l => { const prev = l.id && byIdCur.get(l.id); return prev && prev.cip !== l.cip ? { ...l, odoo_product_id: null, vat_rate: null } : l; });
+  const toResolve = lines.filter(l => !l.odoo_product_id || l.vat_rate == null || l.vat_rate === "" || !l.name).map(l => l.cip);
+  const info = toResolve.length ? await productInfo(toResolve).catch(() => ({})) : {};
+  const noName = [];
+  lines = lines.map((l, i) => {
+    const x = info[l.cip] || {};
+    const name = l.name || x.odoo_name || "";
+    if (!name) noName.push(l.cip);
+    const price = num(l.price_gross, 0);
+    return lineRow({ ...l, name, price_gross: price,
+      id: l.id && /^[0-9a-f-]{36}$/i.test(l.id) ? l.id : crypto.randomUUID(),
       odoo_product_id: l.odoo_product_id || x.odoo_product_id || null,
-      vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? null) : Number(l.vat_rate),
-      price_gross: Number(l.price_gross) || 0, discount_pct: Number(l.discount_pct) || 0, weight: Number(l.weight) || 1,
-      discount_mode: l.discount_mode || "aucune", discount_tiers: l.discount_tiers || [], ug_tiers: l.ug_tiers || [] };
+      vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? null) : num(l.vat_rate, null) }, id, i);
   });
-  const [saved] = await sb("gp_operations?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates,return=representation", body: op });
-  const current = await sb(`gp_lines?operation_id=eq.${id}&select=id`);
-  const keep = new Set(lines.map(l => l.id));
-  const gone = (current || []).map(c => c.id).filter(x => !keep.has(x));
-  if (gone.length) await sb(`gp_lines?id=in.${inList(gone)}`, { method: "DELETE" });
-  if (lines.length) await sb("gp_lines?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates", body: lines });
-  return { operation: saved, lines: await sb(`gp_lines?operation_id=eq.${id}&order=position.asc`) };
+  if (noName.length) throw fail(`Désignation manquante (produit introuvable dans Odoo) pour : ${noName.join(", ")}`);
+  if (status !== "brouillon") {
+    const noPrice = lines.filter(l => !(l.price_gross > 0)).map(l => l.name);
+    if (noPrice.length) throw fail(`Prix brut manquant pour : ${noPrice.join(", ")}`);
+    const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
+    if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. Créez d'abord la fiche dans Odoo.`);
+  }
+  // Suppressions : seulement les lignes que l'écran connaissait (un produit ajouté ailleurs n'est pas effacé)
+  const known = new Set(Array.isArray(b.loaded_line_ids) ? b.loaded_line_ids : cur.lines.map(l => l.id));
+  const keepLines = new Set(lines.map(l => l.id));
+  const goneLines = cur.lines.filter(l => known.has(l.id) && !keepLines.has(l.id));
+  const extra = cur.lines.filter(l => !known.has(l.id) && !keepLines.has(l.id));
+  for (const l of extra) lines.push(lineRow(l, id, lines.length));
+
+  // ── Participants ──
+  let wanted = null, goneParts = [];
+  if (Array.isArray(b.participants)) {
+    wanted = b.participants.filter(p => p.id).map(p => ({ operation_id: id, pharmacy_id: String(p.id), pharmacy_name: p.name || null, email: p.email || null,
+      pharmacy_cip: p.cip || null, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : num(p.fee_pct, null) }));
+    const keepP = new Set(wanted.map(w => w.pharmacy_id));
+    goneParts = cur.participants.filter(p => !keepP.has(p.pharmacy_id));
+  }
+  if (op.centralizer_type === "pharmacie" && op.centralizer_id && wanted && !wanted.some(w => w.pharmacy_id === String(op.centralizer_id)))
+    throw fail("La pharmacie centralisatrice doit faire partie des participantes");
+
+  // ── Quantités touchées : confirmation explicite requise ──
+  const goneLineIds = new Set(goneLines.map(l => l.id)), goneSlotIds = new Set(removedSlots.map(s => s.id)), gonePartIds = new Set(goneParts.map(p => p.pharmacy_id));
+  const hit = cur.qty.filter(r => goneLineIds.has(r.line_id) || goneSlotIds.has(r.slot_id) || gonePartIds.has(r.pharmacy_id));
+  if (hit.length) {
+    const units = (rows) => rows.reduce((s, r) => s + r.qty, 0);
+    const phs = (rows) => new Set(rows.map(r => r.pharmacy_id)).size;
+    const details = [
+      ...goneLines.map(l => { const r = hit.filter(x => x.line_id === l.id); return r.length ? `produit « ${l.name} » : ${units(r)} u. commandées par ${phs(r)} pharmacie(s)` : null; }),
+      ...removedSlots.map(s => { const r = hit.filter(x => x.slot_id === s.id); return r.length ? `livraison « ${s.label || s.date} » : ${units(r)} u. commandées par ${phs(r)} pharmacie(s)` : null; }),
+      ...goneParts.map(p => { const r = hit.filter(x => x.pharmacy_id === p.pharmacy_id); return r.length ? `pharmacie « ${p.pharmacy_name} » : ${units(r)} u. commandées` : null; }),
+    ].filter(Boolean);
+    // Suppression forcée seulement si elle porte exactement sur ce qui a été annoncé à l'écran
+    if (!force || b.confirmed_details !== JSON.stringify(details))
+      throw fail(force ? "Des quantités ont changé depuis votre confirmation" : "Ces modifications effacent des quantités déjà commandées", 409, { code: "confirm", details });
+  }
+
+  // ── Écritures ──
+  let saved;
+  if (isNew) {
+    [saved] = await sb("gp_operations", { method: "POST", prefer: "return=representation", body: { ...op, status: "brouillon" } });
+  } else {
+    [saved] = await sb(`gp_operations?id=eq.${id}&updated_at=${eq(cur.op.updated_at)}`, { method: "PATCH", prefer: "return=representation", body: op });
+    if (!saved) throw fail("Cette opération a été modifiée ailleurs : rechargez-la avant d'enregistrer.", 409, { code: "stale" });
+  }
+  if (hit.length) {
+    for (const lid of goneLineIds) await sb(`gp_order_lines?operation_id=eq.${id}&line_id=eq.${lid}`, { method: "DELETE" });
+    for (const sid of goneSlotIds) await sb(`gp_order_lines?operation_id=eq.${id}&slot_id=${eq(sid)}`, { method: "DELETE" });
+    for (const pid of gonePartIds) await sb(`gp_order_lines?operation_id=eq.${id}&pharmacy_id=${eq(pid)}`, { method: "DELETE" });
+  }
+  if (goneLines.length) await sb(`gp_lines?id=in.${encodeURIComponent(inList(goneLines.map(l => l.id)))}`, { method: "DELETE" });
+  if (lines.length) await sb("gp_lines?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: lines });
+  if (wanted) {
+    if (goneParts.length) {
+      await sb(`gp_orders?operation_id=eq.${id}&pharmacy_id=in.${encodeURIComponent(inList([...gonePartIds]))}`, { method: "DELETE" });
+      await sb(`gp_participants?operation_id=eq.${id}&pharmacy_id=in.${encodeURIComponent(inList([...gonePartIds]))}`, { method: "DELETE" });
+    }
+    if (wanted.length) await sb("gp_participants?on_conflict=operation_id,pharmacy_id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: wanted });
+    // seules les NOUVELLES participantes reçoivent l'accès à l'onglet (un retrait d'accès reste acquis)
+    const before = new Set(cur.participants.map(p => p.pharmacy_id));
+    const added = wanted.filter(w => !before.has(w.pharmacy_id));
+    if (added.length) await sb("gp_access?on_conflict=pharmacy_id", { method: "POST", prefer: "resolution=ignore-duplicates,return=minimal",
+      body: added.map(w => ({ pharmacy_id: w.pharmacy_id, pharmacy_name: w.pharmacy_name, email: w.email, pharmacy_cip: w.pharmacy_cip })) });
+  }
+  if (hit.length) await refreshOrderStatus(id, [...new Set(hit.map(r => r.pharmacy_id))].filter(pid => !gonePartIds.has(pid)));
+  return { operation: saved, id };
 }
 
 // ── Bon de commande au laboratoire (Odoo, brouillon) ────────────────────
 // Une ligne par produit et par date de livraison ; prix brut + remise = remise
 // sur facture et UG converties (la RFA et la coopération ne sont pas sur le bon).
+// Protégé contre les doublons : réservation en base, puis repère dans l'origine du bon.
 async function createPurchaseOrder(id) {
   const data = await loadOperation(id);
   if (!data) throw fail("Opération introuvable", 404);
   const { op, lines } = data;
-  if (op.po_odoo_id) throw fail(`Bon de commande déjà créé (Odoo #${op.po_odoo_id})`);
+  if (op.status !== "cloturee") throw fail("Clôturez l'opération avant de créer le bon de commande");
   if (!op.supplier_odoo_id) throw fail("Choisissez d'abord le fournisseur Odoo de l'opération");
-  const s = summarize(data);
-  const noRfa = { ...op, rfa_pct: 0 };
-  const pids = lines.map(l => l.odoo_product_id).filter(Boolean);
-  const uoms = pids.length ? await odoo("product.product", "read", [pids], { fields: ["uom_id"] }) : [];
-  const uomOf = Object.fromEntries(uoms.map(p => [p.id, p.uom_id?.[0]]));
-  const orderLines = [], skipped = [];
-  for (const l of lines) {
-    const total = s.group[l.id] || 0;
-    if (!total) continue;
-    if (!l.odoo_product_id) { skipped.push(l.cip); continue; }
-    // prix net labo moyen (mode individuel : chaque pharmacie a son propre palier)
-    let value = 0;
-    if (op.tier_mode === "individuel") for (const qs of Object.values(s.perPharmacyTotal)) { const q = qs[l.id] || 0; if (q) value += q * priceLine(noRfa, l, q, q).unitAfterUg; }
-    else value = total * priceLine(noRfa, l, total, total).unitAfterUg;
-    const gross = Number(l.price_gross) || 0;
-    const discount = gross > 0 ? round2(Math.max(0, (1 - value / total / gross) * 100)) : 0;
-    for (const [slotId, q] of Object.entries(s.groupBySlot[l.id] || {})) {
-      if (!q) continue;
-      const slot = slotId === IMMEDIATE_SLOT ? (op.end_date || today()) : slotDate(op, slotId);
-      orderLines.push([0, 0, { product_id: l.odoo_product_id, name: lineLabel(l), product_qty: q, price_unit: gross, discount,
-        date_planned: `${slot} 08:00:00`, ...(uomOf[l.odoo_product_id] ? { product_uom: uomOf[l.odoo_product_id] } : {}) }]);
+  const sumCheck = summarize(data);
+  const missing = lines.filter(l => (sumCheck.group[l.id] || 0) > 0 && !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
+  if (missing.length) throw fail(`Produits commandés sans fiche Odoo : ${missing.join(", ")}. Créez les fiches dans Odoo et reliez-les avant de créer le bon.`);
+  // Réservation ; une réservation de plus de 2 min sans bon enregistré vient d'un essai coupé : on la reprend
+  // (horodatage entre guillemets : « . » et « : » sont réservés dans un filtre or=(…) de PostgREST)
+  const staleClaim = new Date(Date.now() - 2 * 60e3).toISOString();
+  const [claimed] = await sb(`gp_operations?id=eq.${id}&status=eq.cloturee&po_odoo_id=is.null&or=${encodeURIComponent(`(po_created_at.is.null,po_created_at.lt."${staleClaim}")`)}`,
+    { method: "PATCH", prefer: "return=representation", body: { po_created_at: new Date().toISOString() } });
+  if (!claimed) throw fail("Le bon de commande est déjà créé ou en cours de création (réessayez dans 2 minutes si rien ne se passe)");
+  const marker = `CG-${id.slice(0, 8)}`;
+  try {
+    const s = summarize(data);
+    const pids = lines.map(l => l.odoo_product_id).filter(Boolean);
+    const uoms = pids.length ? await odoo("product.product", "read", [pids], { fields: ["uom_id"] }) : [];
+    const uomOf = Object.fromEntries(uoms.map(p => [p.id, p.uom_id?.[0]]));
+    const orderLines = [], skipped = [];
+    for (const l of lines) {
+      const total = s.group[l.id] || 0;
+      if (!total) continue;
+      if (!l.odoo_product_id) { skipped.push(l.cip); continue; }
+      const gross = Number(l.price_gross) || 0;
+      const net = labUnitNet(op, l, total, s.perPharmacyTotal);
+      const discount = gross > 0 ? round2(Math.max(0, (1 - net / gross) * 100)) : 0;
+      for (const [slotId, q] of Object.entries(s.groupBySlot[l.id] || {})) {
+        if (!q) continue;
+        const date = slotId === IMMEDIATE_SLOT ? (op.end_date || today()) : (slotOf(op, slotId)?.date || op.end_date || today());
+        orderLines.push([0, 0, { product_id: l.odoo_product_id, name: lineLabel(l), product_qty: q, price_unit: gross, discount,
+          date_planned: `${date} 08:00:00`, ...(uomOf[l.odoo_product_id] ? { product_uom: uomOf[l.odoo_product_id] } : {}) }]);
+      }
     }
+    if (!orderLines.length) throw fail("Aucune quantité confirmée à commander");
+    const ctx = { context: { allowed_company_ids: [COMPANY_ID] } };
+    const [already] = await odoo("purchase.order", "search_read", [[["origin", "ilike", `[${marker}]`], ["company_id", "=", COMPANY_ID], ["state", "!=", "cancel"]]], { fields: ["id"], limit: 1 });
+    const poId = already?.id || await odoo("purchase.order", "create", [{ partner_id: op.supplier_odoo_id, company_id: COMPANY_ID,
+      origin: `Commande groupée — ${op.name}`.slice(0, 200) + ` [${marker}]`, order_line: orderLines }], ctx);
+    const [po] = await odoo("purchase.order", "read", [[poId]], { fields: ["name", "amount_untaxed"] });
+    await sb(`gp_operations?id=eq.${id}`, { method: "PATCH", body: { po_odoo_id: poId, status: "commandee", updated_at: new Date().toISOString() } });
+    return { ok: true, po_id: poId, po_name: po?.name, amount_ht: po?.amount_untaxed, lines: orderLines.length, skipped, reused: !!already };
+  } catch (e) {
+    await sb(`gp_operations?id=eq.${id}&po_odoo_id=is.null`, { method: "PATCH", body: { po_created_at: null } }).catch(() => {});
+    throw e;
   }
-  if (!orderLines.length) throw fail("Aucune quantité confirmée à commander");
-  const ctx = { context: { allowed_company_ids: [COMPANY_ID] } };
-  const poId = await odoo("purchase.order", "create", [{ partner_id: op.supplier_odoo_id, company_id: COMPANY_ID,
-    origin: `Commande groupée — ${op.name}`.slice(0, 250), order_line: orderLines }], ctx);
-  const [po] = await odoo("purchase.order", "read", [[poId]], { fields: ["name", "amount_untaxed"] });
-  await sb(`gp_operations?id=eq.${op.id}`, { method: "PATCH", body: { po_odoo_id: poId, po_created_at: new Date().toISOString(), status: "commandee", updated_at: new Date().toISOString() } });
-  return { ok: true, po_id: poId, po_name: po?.name, amount_ht: po?.amount_untaxed, lines: orderLines.length, skipped };
 }
 
-// ── Déclenchement d'une livraison : devis Odoo par pharmacie ────────────
-// Toutes les remises hors facture (UG, RFA, coopération) sont converties en
-// remise sur facture ; les frais de traitement sont inclus dans le prix net.
-async function triggerSlot(id, slotId) {
+// ── Déclenchement d'une livraison : devis Odoo créés en arrière-plan ─────
+async function startTrigger(id, slotId, event) {
   const data = await loadOperation(id);
   if (!data) throw fail("Opération introuvable", 404);
-  const { op, lines } = data;
-  if (slotId !== IMMEDIATE_SLOT && !(op.delivery_slots || []).some(s => s.id === slotId)) throw fail("Date de livraison inconnue");
-  const s = summarize(data);
-  const done = new Set((await sb(`gp_triggers?operation_id=eq.${op.id}&slot_id=eq.${encodeURIComponent(slotId)}`) || []).map(t => t.pharmacy_cip));
-  const targets = s.pharmacies.filter(p => p.order?.status === "confirmee" && Object.values(p.bySlot).some(sl => (sl[slotId] || 0) > 0) && !done.has(p.cip));
-  if (!targets.length) return { ok: true, created: [], errors: [], already: done.size };
-  const partners = await sb(`elixir_pharmacies?cip=in.${inList(targets.map(t => t.cip))}&select=cip,odoo_id`);
-  const odooId = Object.fromEntries((partners || []).map(p => [p.cip, p.odoo_id]));
-  const ctx = { context: { allowed_company_ids: [COMPANY_ID] } };
-  const created = [], errors = [];
-  for (const p of targets) {
-    try {
-      if (!odooId[p.cip]) throw new Error("fiche client Odoo absente (odoo_id)");
-      const mine = s.perPharmacyTotal[p.cip] || {};
-      const sum = priceOrder(op, lines, mine, s.group, { groupNetAfterRfa: s.groupNetAfterRfa, feePct: p.fee_pct ?? op.fee_pct });
-      const orderLines = [], expected = [];
-      for (const r of sum.rows) {
-        const q = p.bySlot[r.line.id]?.[slotId] || 0;
-        if (!q) continue;
-        if (!r.line.odoo_product_id) throw new Error(`produit ${r.line.cip} sans fiche Odoo`);
-        let price = r.gross, discount = r.gross > 0 ? round2((1 - r.unitWithFee / r.gross) * 100) : 0;
-        if (discount < 0) { price = round2(r.unitWithFee); discount = 0; }   // frais > remises : pas de remise négative
-        orderLines.push([0, 0, { product_id: r.line.odoo_product_id, name: lineLabel(r.line), product_uom_qty: q, price_unit: price, discount }]);
-        expected.push({ product_id: r.line.odoo_product_id, price, discount });
-      }
-      if (!orderLines.length) continue;
-      const soId = await odoo("sale.order", "create", [{ partner_id: odooId[p.cip], company_id: COMPANY_ID,
-        client_order_ref: `CG ${op.name}`.slice(0, 250), origin: `Commande groupée — ${op.name} — ${slotLabel(op, slotId)}`.slice(0, 250),
-        commitment_date: `${slotDate(op, slotId)} 08:00:00`, order_line: orderLines }], ctx);
-      // garde-fou : la liste de prix du client ne doit pas écraser nos prix
-      const sol = await odoo("sale.order.line", "search_read", [[["order_id", "=", soId]]], { fields: ["id", "product_id", "price_unit", "discount"] });
-      for (const l of sol) {
-        const e = expected.find(x => x.product_id === l.product_id?.[0]);
-        if (e && (Math.abs(l.price_unit - e.price) > 0.001 || Math.abs(l.discount - e.discount) > 0.001)) {
-          await odoo("sale.order.line", "write", [[l.id], { price_unit: e.price, discount: e.discount }], ctx);
-        }
-      }
-      const [so] = await odoo("sale.order", "read", [[soId]], { fields: ["name", "amount_untaxed"] });
-      await sb("gp_triggers", { method: "POST", body: { operation_id: op.id, slot_id: slotId, pharmacy_cip: p.cip, odoo_sale_order_id: soId } });
-      created.push({ cip: p.cip, name: p.name, so_id: soId, so_name: so?.name, amount_ht: so?.amount_untaxed });
-    } catch (e) {
-      errors.push({ cip: p.cip, name: p.name, error: e.message });
-    }
+  const { op } = data;
+  if (!["cloturee", "commandee", "terminee"].includes(op.status)) throw fail("Clôturez l'opération avant de créer les commandes des pharmacies");
+  if (slotId !== IMMEDIATE_SLOT && !slotOf(op, slotId)) throw fail("Date de livraison inconnue");
+  if (!process.env.CRON_SECRET) throw fail("CRON_SECRET absent des variables Netlify : impossible de lancer la création en arrière-plan", 500);
+  const key = `gp_trigger:${id}:${slotId}`;
+  const [row] = await sb(`kv_store?key=${eq(key)}&select=value`);
+  if (row?.value?.status === "en_cours" && Date.now() - Date.parse(row.value.started_at) < 16 * 60e3) return { job: { id, slot_id: slotId }, already_running: true };
+  await sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal",
+    body: { key, value: { status: "en_cours", started_at: new Date().toISOString(), slot: slotLabel(op, slotId), created: [], errors: [], skipped: 0 } } });
+  // le secret n'est envoyé qu'à une adresse du site, jamais à un hôte tiré de la requête
+  const h = String(event.headers?.host || "").toLowerCase();
+  const base = `https://${["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"].includes(h) || /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/.test(h) ? h : "commandes-elixir.netlify.app"}`;
+  let r;
+  try {
+    r = await fetch(`${base}/.netlify/functions/gp-trigger-background`, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET }, body: JSON.stringify({ id, slot_id: slotId }),
+    });
+  } catch (e) { r = { ok: false, status: e.message }; }
+  if (!r.ok && r.status !== 202) {
+    await sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { key, value: { status: "erreur", error: `Lancement impossible (HTTP ${r.status})` } } });
+    throw fail(`Lancement impossible (HTTP ${r.status})`, 500);
   }
-  return { ok: errors.length === 0, created, errors, already: done.size };
+  return { job: { id, slot_id: slotId } };
 }

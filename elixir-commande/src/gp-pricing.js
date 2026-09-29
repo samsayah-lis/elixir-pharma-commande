@@ -138,3 +138,39 @@ export function objectiveProgress(op, lines, groupQty, perPharmacy = null) {
 // ── Aides ───────────────────────────────────────────────────────────────
 // { lineId: { slotId: qty } } → { lineId: total }
 export const sumSlots = (bySlot) => Object.fromEntries(Object.entries(bySlot || {}).map(([k, s]) => [k, Object.values(s || {}).reduce((a, q) => a + num(q), 0)]));
+
+// Date du jour à Paris (AAAA-MM-JJ) : ouverture et clôture s'entendent en heure française
+export const parisToday = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+
+// Prix net labo moyen d'un produit (remise sur facture + UG, sans RFA ni coopération) :
+// en mode individuel chaque pharmacie a son propre palier, d'où une moyenne pondérée.
+// perPharmacyTotals : { pharmacie: { lineId: quantité } }
+export function labUnitNet(op, line, groupTotal, perPharmacyTotals) {
+  const noRfa = { ...op, rfa_pct: 0 };
+  const total = num(groupTotal);
+  if (total <= 0) return priceLine(noRfa, line, 0, 0).unitAfterUg;
+  if (op.tier_mode !== "individuel") return priceLine(noRfa, line, total, total).unitAfterUg;
+  let value = 0, qty = 0;
+  for (const qs of Object.values(perPharmacyTotals || {})) { const q = num(qs[line.id]); if (q > 0) { value += q * priceLine(noRfa, line, q, q).unitAfterUg; qty += q; } }
+  return qty > 0 ? value / qty : priceLine(noRfa, line, total, total).unitAfterUg;
+}
+
+// Contribution d'une pharmacie à l'objectif, quand elle s'additionne (tout sauf
+// « montant remisé » en paliers collectifs, qui dépend du total du groupe)
+export function objectiveContribution(op, lines, myQty) {
+  let v = 0;
+  for (const l of lines) {
+    const q = num(myQty[l.id]);
+    if (q <= 0) continue;
+    if (op.objective_type === "unites") v += q * (num(l.weight) || 1);
+    else if (op.objective_type === "montant_brut") v += q * num(l.price_gross);
+    else if (op.objective_type === "montant_net") v += q * priceLine({ ...op, rfa_pct: 0 }, l, q, q).unitAfterUg;
+  }
+  return v;
+}
+export const objectiveIsAdditive = (op) => op.objective_type !== "montant_net" || op.tier_mode === "individuel";
+export function objectiveFrom(op, value) {
+  const target = num(op.objective_value);
+  if (!op.objective_type || op.objective_type === "aucun" || target <= 0) return null;
+  return { type: op.objective_type, value, target, pct: Math.min(100, (value / target) * 100), reached: value >= target, missing: Math.max(0, target - value) };
+}
