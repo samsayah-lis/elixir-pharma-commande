@@ -5,6 +5,7 @@ import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendatio
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
 import WheelchairOrder from "./components/WheelchairOrder";
+import GroupOrders from "./components/GroupOrders";
 import MyOrdersPanel from "./components/MyOrdersPanel";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
@@ -187,7 +188,7 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
-      if (outil && ["fauteuil", "saisie", "peremption"].includes(outil)) return outil;
+      if (outil && ["fauteuil", "saisie", "peremption", "groupees"].includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
     } catch {}
     return getDisplayConfig().defaultTab || "expert";
@@ -197,6 +198,18 @@ export default function App() {
   const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
   const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
+  // Commandes groupées (nouveau module) : null = vérification en cours
+  const [gpAllowed, setGpAllowed] = useState(null);
+  useEffect(() => {
+    if (!pharmacyCip || !pharmacyEmail) { setGpAllowed(false); return; }
+    let cancelled = false;
+    const tok = localStorage.getItem("pharmacy_token");
+    fetch("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+      body: JSON.stringify({ action: "access", cip: pharmacyCip, email: pharmacyEmail }) })
+      .then(r => r.ok ? r.json() : { allowed: false }).then(j => { if (!cancelled) setGpAllowed(!!j.allowed); })
+      .catch(() => { if (!cancelled) setGpAllowed(false); });
+    return () => { cancelled = true; };
+  }, [pharmacyCip, pharmacyEmail]);
   const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: cip[]} commandes déjà validées
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsConfirming, setUlabsConfirming] = useState(false);
@@ -619,8 +632,13 @@ export default function App() {
         };
       });
     }
+    // Commandes groupées : onglet visible uniquement des pharmacies autorisées
+    if (gpAllowed) {
+      merged.groupees = { label: "Commandes groupées", subtitle: "Achats groupés et précommandes aux conditions négociées",
+        color: "#0f2d3d", accent: "#2d9cbc", icon: "🤝", columns: [], specialView: "groupPurchases", products: [] };
+    }
     return merged;
-  }, [dbProducts, promoSections, campaigns, pharmacyEmail, configLoaded]);
+  }, [dbProducts, promoSections, campaigns, pharmacyEmail, configLoaded, gpAllowed]);
 
   // Onboarding
   const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
@@ -845,11 +863,12 @@ export default function App() {
   // Garde-fou : si l'onglet actif n'existe plus (ex. defaultTab supprimé côté admin),
   // rebasculer sur le premier onglet valide au lieu de crasher au render.
   useEffect(() => {
+    if (activeTab === "groupees" && gpAllowed === null) return; // accès en cours de vérification
     if (activeTab && CATALOG_WITH_ADMIN && !CATALOG_WITH_ADMIN[activeTab]) {
       const first = getOrderedTabs(CATALOG_WITH_ADMIN)[0];
       if (first) setActiveTab(first);
     }
-  }, [activeTab, CATALOG_WITH_ADMIN]);
+  }, [activeTab, CATALOG_WITH_ADMIN, gpAllowed]);
 
   const cat = CATALOG_WITH_ADMIN[activeTab];
   // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
@@ -1336,8 +1355,8 @@ export default function App() {
           )}
         </div>
         {[
-          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "ulabs"].includes(k)) },
-          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "ulabs"].includes(k)) },
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "ulabs", "groupees"].includes(k)) },
+          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "ulabs", "groupees"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
           <div key={group.title} style={{ marginBottom: 4 }}>
             <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
@@ -1606,6 +1625,10 @@ export default function App() {
               onAddToCart={addItemToCart}
               initialQuery={initialProductQuery}
             />
+          )}
+
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (
+            <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (

@@ -7,6 +7,7 @@ import AdminDisplay from "./components/AdminDisplay";
 import AdminCampaigns from "./components/AdminCampaigns";
 import AdminEdit from "./components/AdminEdit";
 import AdminAdd from "./components/AdminAdd";
+import AdminGroupPurchases from "./components/AdminGroupPurchases";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
@@ -851,6 +852,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     {k:"edit",     label:"✏️ Modifier",   icon:"✏️"},
     {k:"promos",   label:"🎯 Promos",     icon:"🎯", badge: promos.length||null},
     {k:"orders",   label:"📋 Commandes",  icon:"📋", badge: orders.filter(o=>!o.processed).length||null},
+    {k:"gp",       label:"🛒 Commandes groupées",icon:"🛒"},
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
@@ -1314,6 +1316,9 @@ export default function AdminPanel({ onClose, sectionMeta }) {
               </div>
             )}
           </div>
+        )}
+        {tab==="gp"&&(
+          <AdminGroupPurchases adminFetch={adminFetch} flash={flash} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

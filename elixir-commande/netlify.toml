@@ -12,3 +12,7 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Commandes groupées : rappels quotidiens (≈ 8 h, heure de Paris)
+[functions."gp-reminders"]
+  schedule = "0 6 * * *"
