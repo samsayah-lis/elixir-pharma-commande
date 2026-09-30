@@ -59,7 +59,7 @@ export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockB
     ${line(`Frais de traitement (${String(t.feePct).replace(".", ",")} %)`, "+ " + eur(t.fee))}
     ${line("Total HT", eur(t.totalHT), true)}
   </table>
-  ${t.freeUnits ? `<p style="font-size:13px">Unités : ${t.units} facturées <b>+ ${t.freeUnits} gratuites</b> = ${t.receivedUnits} reçues (valeur des gratuites : ${eur(t.ugValue)}).</p>` : ""}
+  ${t.freeUnits ? `<p style="font-size:13px">Unités : ${t.units} facturées <b>+ ${t.freeUnits} gratuites</b> = ${t.receivedUnits} reçues (valeur des gratuites : ${eur(t.ugValue)}).${collectif ? " Vous gardez au moins vos propres gratuités ; la part des gratuités gagnées en plus par le groupe peut évoluer jusqu'à la clôture." : ""}</p>` : ""}
   ${collectif ? `<p style="font-size:12px;color:#546e7a">Les paliers de remise s'appliquent au total du groupe : les prix indiqués correspondent au palier atteint à ce jour et peuvent encore s'améliorer d'ici la clôture${op.end_date ? ` du ${dfr(op.end_date)}` : ""}.</p>` : ""}
   ${hasPre ? `<p style="font-size:12px;color:#546e7a">Les produits en précommande vous seront livrés aux dates indiquées, après réception du stock chez Elixir Pharma.</p>` : ""}
   <p>Vous pouvez modifier votre ${kind} jusqu'à la clôture de l'opération depuis votre espace de commande Elixir.</p>

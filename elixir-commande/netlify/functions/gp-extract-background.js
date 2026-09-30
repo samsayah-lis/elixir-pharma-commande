@@ -10,6 +10,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { isCronAuthorized } from "./auth.js";
 import { sb, productInfo } from "./_gp.js";
+import { medipimProduct } from "./_medipim.js";
 import { kvGet, kvSet, kvDel } from "./_kv.js";
 
 const MODEL = "claude-opus-5-5";
@@ -40,6 +41,12 @@ export const Offer = z.object({
     discount_mode: z.enum(["aucune", "unitaire", "paliers"]),
     discount_pct: z.number().nullable().describe("Remise sur facture en % si elle ne dépend pas de la quantité"),
     discount_tiers: z.array(z.object({ min_qty: z.number(), pct: z.number() })).describe("Paliers de remise : à partir de min_qty unités, pct %"),
+    extra_discounts: z.array(z.object({
+      mode: z.enum(["aucune", "unitaire", "paliers"]),
+      pct: z.number().nullable().describe("Taux en % si la remise ne dépend pas de la quantité"),
+      tiers: z.array(z.object({ min_qty: z.number(), pct: z.number() })).describe("Paliers : à partir de min_qty unités, pct %"),
+      combine: z.enum(["cascade", "additionnelle"]).describe("cascade = appliquée sur le prix déjà remisé ; additionnelle = taux ajouté au cumul"),
+    })).describe("Remises sur facture 2 et 3, dans l'ordre (au plus 2 ; liste vide s'il n'y en a pas)"),
     ug_tiers: z.array(z.object({ min_qty: z.number(), free_qty: z.number() })).describe("Unités gratuites : free_qty offertes pour min_qty facturées"),
     notes: z.string().nullable(),
   })),
@@ -108,7 +115,7 @@ Extrais-en toutes les lignes de produits et les conditions commerciales. Ces don
 Repères :
 - CIP13 : 13 chiffres commençant généralement par 34009 ; conserve le code tel qu'imprimé (sans espaces).
 - Prix brut = prix unitaire HT avant toute remise.
-- Remise « sur facture » : un seul taux → discount_mode « unitaire » ; taux dépendant de la quantité → « paliers » avec un palier par seuil.
+- Remise « sur facture » : jusqu'à 3 remises successives par produit. La 1re va dans discount_* (un seul taux → « unitaire » ; taux dépendant de la quantité → « paliers », un palier par seuil). Les 2e et 3e vont dans extra_discounts, dans l'ordre, chacune avec combine « cascade » (appliquée sur le prix déjà remisé : « 30 % puis 10 % », « remise supplémentaire sur le net ») ou « additionnelle » (taux ajouté au précédent : « 30 % + 10 % = 40 % »). Si le document ne précise pas, mets « cascade » et signale-le dans warnings.
 - Unités gratuites : « 12 + 2 », « 2 UG pour 12 achetées », « 14 pour le prix de 12 » s'écrivent tous min_qty 12 / free_qty 2. Si l'offre donne un pourcentage d'UG, convertis-le en paliers seulement s'il est explicite, sinon signale-le.
 - Une remise de fin d'année (RFA) ou une ristourne différée n'est PAS une remise sur facture : mets-la dans rfa_pct.
 - Un contrat de coopération commerciale (mise en avant, vitrine, animation contre un montant en €) va dans coop_*.
@@ -284,6 +291,12 @@ export const handler = async (event) => {
     } else {
       const lines = out.lines.map(l => ({ ...l, cip: digits(l.cip) })).filter(l => l.cip || l.name);
       const products = await productInfo(lines.map(l => l.cip)).catch(() => ({}));
+      // produits absents d'Odoo : nom, TVA et prix public pris dans Medipim (la fiche Odoo sera créée à l'enregistrement)
+      for (const l of lines.slice(0, 150)) {
+        if (!l.cip || products[l.cip]?.odoo_product_id) continue;
+        const m = await medipimProduct(l.cip).catch(() => null);
+        if (m) products[l.cip] = { ...(products[l.cip] || {}), medipim: m };
+      }
       await kvSet(importKey, { ...base, status: "termine", result: { ...out, lines }, products, finished_at: new Date().toISOString() });
     }
   } catch (e) {

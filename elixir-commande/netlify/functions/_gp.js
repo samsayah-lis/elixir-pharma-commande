@@ -2,7 +2,8 @@
 // Une pharmacie est identifiée par sa fiche client Odoo Elixir (fiche commerciale,
 // colonne pharmacy_id), jamais par son CIP : la plupart des fiches ont un CIP vide ou « 0 ».
 import { verifyTokenAsync } from "./auth.js";
-import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, orderKey, slotOrder, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import crypto from "node:crypto";
+import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 
 export { odoo, COMPANY_ID };
@@ -125,6 +126,11 @@ export function countedQty(data) {
   return { counted, orphans, confirmed };
 }
 
+// Clé d'une pharmacie dans une opération : signée avec un secret du serveur, elle sert à
+// départager les UG et ne permet pas de retrouver la pharmacie (ni de la suivre d'une opération à l'autre).
+const KEY_SECRET = process.env.GP_KEY_SECRET || process.env.CRON_SECRET || process.env.SUPABASE_KEY || "gp";
+export const pharmacyKey = (opId, pharmacyId) => crypto.createHmac("sha256", KEY_SECRET).update(`${opId}:${pharmacyId}`).digest("hex").slice(0, 16);
+
 // Unités gratuites : répartition entre pharmacies (clé anonyme, même calcul qu'à l'écran),
 // puis entre les dates de livraison de chaque pharmacie.
 // perPharmacyTotal : { id: { lineId: facturées } } ; perPharmacy : { id: { lineId: { slot: facturées } } }
@@ -133,7 +139,7 @@ export function allocateAllFree(op, lines, perPharmacyTotal, perPharmacy) {
   for (const l of lines) {
     if (!(l.ug_tiers || []).length) continue;
     const billedByKey = {}, idByKey = {};
-    for (const [pid, qs] of Object.entries(perPharmacyTotal)) if ((qs[l.id] || 0) > 0) { const k = orderKey(op.id, pid); billedByKey[k] = qs[l.id]; idByKey[k] = pid; }
+    for (const [pid, qs] of Object.entries(perPharmacyTotal)) if ((qs[l.id] || 0) > 0) { const k = pharmacyKey(op.id, pid); billedByKey[k] = qs[l.id]; idByKey[k] = pid; }
     for (const [k, f] of Object.entries(allocateFree(op, l, billedByKey))) {
       const pid = idByKey[k];
       (free[pid] ||= {})[l.id] = f;

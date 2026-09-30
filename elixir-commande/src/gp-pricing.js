@@ -28,14 +28,45 @@ const sortTiers = (tiers, key = "min_qty") =>
     .filter(t => t[key] > 0)
     .sort((a, b) => a[key] - b[key]);
 
-// ── Remise sur facture ──────────────────────────────────────────────────
-export function invoiceDiscount(line, basis) {
-  if (line.discount_mode === "unitaire") return { pct: num(line.discount_pct), tier: null, next: null };
-  if (line.discount_mode !== "paliers") return { pct: 0, tier: null, next: null };
-  const tiers = sortTiers(line.discount_tiers).map(t => ({ min_qty: t.min_qty, pct: num(t.pct) }));
+// ── Remise sur facture : jusqu'à 3 remises par produit ─────────────────
+// Remise 1 : colonnes discount_mode / discount_pct / discount_tiers.
+// Remises 2 et 3 : extra_discounts = [{ mode, pct, tiers, combine }].
+// Chaque remise est un taux fixe (« unitaire ») ou des paliers de quantité (« paliers »).
+// Elles se combinent dans l'ordre 1, 2, 3 : « cascade » = appliquée sur le prix déjà
+// remisé (30 % puis 10 % → 37 %) ; « additionnelle » = taux ajouté au cumul (30 % + 10 % → 40 %).
+const DISCOUNT_MODES = ["aucune", "unitaire", "paliers"];
+export function lineDiscounts(line) {
+  const first = { mode: line.discount_mode, pct: line.discount_pct, tiers: line.discount_tiers, combine: null };
+  const extra = (Array.isArray(line.extra_discounts) ? line.extra_discounts : []).slice(0, 2)
+    .map(d => ({ mode: d?.mode, pct: d?.pct, tiers: d?.tiers, combine: d?.combine === "additionnelle" ? "additionnelle" : "cascade" }));
+  return [first, ...extra];
+}
+function oneDiscount(d, basis) {
+  const mode = DISCOUNT_MODES.includes(d.mode) ? d.mode : "aucune";
+  if (mode === "unitaire") return { pct: Math.max(0, num(d.pct)), tier: null, next: null };
+  if (mode !== "paliers") return { pct: 0, tier: null, next: null };
+  const tiers = sortTiers(d.tiers).map(t => ({ min_qty: t.min_qty, pct: num(t.pct) }));
   const reached = tiers.filter(t => basis >= t.min_qty).pop() || null;
   const next = tiers.find(t => t.min_qty > basis && t.pct > (reached ? reached.pct : 0)) || null;
   return { pct: reached ? reached.pct : 0, tier: reached, next: next ? { ...next, missing: next.min_qty - basis } : null };
+}
+// Cumul des remises (en %), dans l'ordre
+export function combineDiscounts(parts) {
+  let total = 0;
+  for (const p of parts) total = p.combine === "additionnelle" ? total + p.pct : total + p.pct - total * p.pct / 100;
+  return Math.min(100, Math.max(0, total));
+}
+export function invoiceDiscount(line, basis) {
+  const parts = lineDiscounts(line).map((d, i) => ({ rank: i + 1, combine: d.combine, ...oneDiscount(d, basis) }));
+  const pct = combineDiscounts(parts);
+  // prochain palier le plus proche (toutes remises confondues), avec la remise totale qu'il donnerait
+  let next = null;
+  for (const p of parts) {
+    if (!p.next || (next && p.next.missing >= next.missing)) continue;
+    const totalPct = combineDiscounts(parts.map(q => (q.rank === p.rank ? { ...q, pct: p.next.pct } : q)));
+    if (totalPct > pct) next = { rank: p.rank, min_qty: p.next.min_qty, pct: p.next.pct, missing: p.next.missing, totalPct };
+  }
+  return { pct, parts, tier: parts[0].tier, next };
 }
 
 // ── Unités gratuites ────────────────────────────────────────────────────
@@ -79,20 +110,30 @@ export function splitInteger(total, entries) {
   return out;
 }
 
-// Clé stable et anonyme d'une pharmacie dans une opération (FNV-1a) : l'écran peut
-// refaire la répartition des UG sans connaître l'identité des autres pharmacies.
-export function orderKey(opId, pharmacyId) {
-  let h = 0x811c9dc5;
-  for (const c of `${opId}:${pharmacyId}`) { h ^= c.charCodeAt(0); h = Math.imul(h, 0x01000193) >>> 0; }
-  return h.toString(16).padStart(8, "0");
-}
+// Les clés des pharmacies (ordre de départage des UG) sont calculées côté serveur avec un
+// secret (voir _gp.js, pharmacyKey) : l'écran les reçoit toutes faites et ne peut pas en
+// déduire l'identité des autres pharmacies.
 
 // UG d'une ligne pour chaque pharmacie. billedByKey : { clé: unités facturées }.
+// Collectif : chaque pharmacie garde AU MOINS ses propres gratuités (celles de sa quantité
+// seule) ; le surplus obtenu grâce au groupe est réparti au prorata des unités qui n'ont pas
+// encore donné de gratuité, au plus fort reste. Une pharmacie qui rejoint le groupe ne fait
+// donc jamais baisser la part des autres sous leurs propres gratuités.
 export function allocateFree(op, line, billedByKey) {
   const entries = Object.entries(billedByKey || {}).map(([key, q]) => ({ key, weight: Math.max(0, Math.floor(num(q))) }));
-  if (op.tier_mode === "individuel") return Object.fromEntries(entries.map(e => [e.key, ugFor(line, e.weight).free]));
+  const own = Object.fromEntries(entries.map(e => [e.key, ugFor(line, e.weight).free]));
+  if (op.tier_mode === "individuel") return own;
   const total = entries.reduce((s, e) => s + e.weight, 0);
-  return splitInteger(ugFor(line, total).free, entries);
+  const groupFree = ugFor(line, total).free;
+  const surplus = groupFree - Object.values(own).reduce((s, n) => s + n, 0);
+  // plusieurs paliers d'UG : la somme des gratuités individuelles peut dépasser celles du groupe ;
+  // on ne distribue jamais plus que ce que le labo livre (répartition au prorata)
+  if (surplus < 0) return splitInteger(groupFree, entries);
+  if (surplus === 0) return own;
+  // unités non encore récompensées : facturées − tranches complètes du meilleur palier individuel
+  const leftover = entries.map(e => { const t = ugFor(line, e.weight).tier; return { key: e.key, weight: t ? e.weight - Math.floor(e.weight / t.min_qty) * t.min_qty : e.weight }; });
+  const extra = splitInteger(surplus, leftover.some(e => e.weight > 0) ? leftover : entries);
+  return Object.fromEntries(entries.map(e => [e.key, own[e.key] + (extra[e.key] || 0)]));
 }
 
 // UG d'une pharmacie réparties entre ses dates de livraison (ordre : immédiat, puis les dates)
@@ -169,14 +210,16 @@ export function priceOrder(op, lines, myBilled, groupBilled, ctx = {}) {
 }
 
 // ── Ligne Odoo : unités reçues au prix brut, remise unique = montant attendu ──
-// Précision Odoo : remise à 2 décimales. Si le montant dépasse le brut (frais sans
-// remise), pas de remise négative : prix unitaire net, remise 0.
+// Montant à quelques centimes près : Odoo arrondit la remise à 2 décimales (écart borné
+// par unités × prix × 0,005 %). Si le montant dépasse le brut (frais sans remise), pas de
+// remise négative : prix net au centime supérieur et petite remise pour tomber juste.
 export function odooLine(gross, received, amount) {
-  const g = num(gross), r = Math.max(0, num(received)), a = num(amount);
-  if (r <= 0) return { qty: 0, price_unit: round2(g), discount: 0 };
-  const discount = g > 0 ? round2((1 - a / (r * g)) * 100) : 0;
-  if (discount < 0 || g <= 0) return { qty: r, price_unit: round2(a / r), discount: 0 };
-  return { qty: r, price_unit: round2(g), discount };
+  const r = Math.max(0, num(received)), a = num(amount);
+  let price = round2(num(gross));                              // prix réellement envoyé à Odoo
+  if (r <= 0) return { qty: 0, price_unit: price, discount: 0 };
+  if (price <= 0 || a > r * price) price = Math.ceil((a / r) * 100 - 1e-9) / 100;   // frais > remises : prix net au centime supérieur
+  const discount = price > 0 ? Math.max(0, round2((1 - a / (r * price)) * 100)) : 0;
+  return { qty: r, price_unit: price, discount };
 }
 
 // ── Objectif du groupe (sur les unités facturées) ──────────────────────

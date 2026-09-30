@@ -45,6 +45,7 @@ create table if not exists gp_lines (
   discount_pct    numeric not null default 0,
   discount_tiers  jsonb not null default '[]'::jsonb,   -- [{min_qty, pct}]
   ug_tiers        jsonb not null default '[]'::jsonb,   -- [{min_qty (facturées), free_qty}]
+  extra_discounts jsonb not null default '[]'::jsonb,   -- remises 2 et 3 : [{mode, pct, tiers, combine: cascade|additionnelle}]
   weight          numeric not null default 1,           -- 2 = compte double dans l'objectif en unités
   vat_rate        numeric,
   notes           text

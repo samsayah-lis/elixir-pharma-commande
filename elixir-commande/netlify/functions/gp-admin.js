@@ -7,6 +7,8 @@ import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
 import { priceLine, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvGet, kvSet } from "./_kv.js";
+import { medipimProduct } from "./_medipim.js";
+import { ensureOdooProduct } from "./_odoo-products.js";
 
 // Le statut ne change que par l'action « status » (ou la création du bon labo), jamais par « save »
 const OP_FIELDS = ["name", "supplier_name", "supplier_odoo_id", "start_date", "end_date", "tier_mode", "fee_pct",
@@ -28,6 +30,11 @@ const lineRow = (l, opId, position) => ({
   discount_pct: num(l.discount_pct, 0),
   discount_tiers: (Array.isArray(l.discount_tiers) ? l.discount_tiers : []).map(t => ({ min_qty: num(t.min_qty), pct: num(t.pct) })).filter(t => t.min_qty > 0 && t.pct > 0),
   ug_tiers: (Array.isArray(l.ug_tiers) ? l.ug_tiers : []).map(t => ({ min_qty: num(t.min_qty), free_qty: num(t.free_qty) })).filter(t => t.min_qty > 0 && t.free_qty > 0),
+  // remises 2 et 3 : taux fixe ou paliers, en cascade ou additionnelle
+  extra_discounts: (Array.isArray(l.extra_discounts) ? l.extra_discounts : []).slice(0, 2).map(d => ({
+    mode: ["aucune", "unitaire", "paliers"].includes(d?.mode) ? d.mode : "aucune", pct: num(d?.pct),
+    tiers: (Array.isArray(d?.tiers) ? d.tiers : []).map(t => ({ min_qty: num(t.min_qty), pct: num(t.pct) })).filter(t => t.min_qty > 0 && t.pct > 0),
+    combine: d?.combine === "additionnelle" ? "additionnelle" : "cascade" })),
   weight: num(l.weight, 1) || 1, vat_rate: l.vat_rate == null || l.vat_rate === "" ? null : num(l.vat_rate, null), notes: l.notes || null,
 });
 
@@ -140,8 +147,16 @@ async function post(b, event) {
     case "access_remove":
       await sb(`gp_access?pharmacy_id=${eq(b.id)}`, { method: "DELETE" });
       return { access: await sbAll("gp_access?order=pharmacy_name.asc") };
-    case "lookup":
-      return { products: await productInfo(b.cips || []) };
+    case "lookup": {
+      // Odoo d'abord ; pour un produit absent d'Odoo, fiche Medipim (nom, TVA, prix, CIP7)
+      const products = await productInfo(b.cips || []);
+      for (const c of (b.cips || []).map(x => String(x || "").replace(/\D/g, "")).filter(Boolean).slice(0, 40)) {
+        if (products[c]?.odoo_product_id) continue;
+        const m = await medipimProduct(c).catch(() => null);
+        if (m) products[c] = { ...(products[c] || {}), medipim: m };
+      }
+      return { products };
+    }
     case "order_save": {
       // saisie par Elixir pour le compte d'une pharmacie (commande reçue par téléphone, mail…)
       const data = await loadOperation(b.id);
@@ -240,23 +255,24 @@ async function saveOperation(b) {
   lines = lines.map(l => { const prev = l.id && byIdCur.get(l.id); return prev && prev.cip !== l.cip ? { ...l, odoo_product_id: null, vat_rate: null } : l; });
   const toResolve = lines.filter(l => !l.odoo_product_id || l.vat_rate == null || l.vat_rate === "" || !l.name).map(l => l.cip);
   const info = toResolve.length ? await productInfo(toResolve).catch(() => ({})) : {};
+  // produits absents d'Odoo : fiche Medipim (nom, TVA, CIP7, prix public)
+  const medipim = {};
+  for (const l of lines) if (!l.odoo_product_id && !info[l.cip]?.odoo_product_id && !(l.cip in medipim)) medipim[l.cip] = await medipimProduct(l.cip).catch(() => null);
   const noName = [];
   lines = lines.map((l, i) => {
     const x = info[l.cip] || {};
-    const name = l.name || x.odoo_name || "";
+    const name = l.name || x.odoo_name || medipim[l.cip]?.name || "";
     if (!name) noName.push(l.cip);
     const price = num(l.price_gross, 0);
     return lineRow({ ...l, name, price_gross: price,
       id: l.id && /^[0-9a-f-]{36}$/i.test(l.id) ? l.id : crypto.randomUUID(),
       odoo_product_id: l.odoo_product_id || x.odoo_product_id || null,
-      vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? null) : num(l.vat_rate, null) }, id, i);
+      vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? medipim[l.cip]?.vat ?? null) : num(l.vat_rate, null) }, id, i);
   });
-  if (noName.length) throw fail(`Désignation manquante (produit introuvable dans Odoo) pour : ${noName.join(", ")}`);
+  if (noName.length) throw fail(`Désignation manquante (produit introuvable dans Odoo et Medipim) pour : ${noName.join(", ")}`);
   if (status !== "brouillon") {
     const noPrice = lines.filter(l => !(l.price_gross > 0)).map(l => l.name);
     if (noPrice.length) throw fail(`Prix brut manquant pour : ${noPrice.join(", ")}`);
-    const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
-    if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. Créez d'abord la fiche dans Odoo.`);
   }
   // Suppressions : seulement les lignes que l'écran connaissait (un produit ajouté ailleurs n'est pas effacé)
   const known = new Set(Array.isArray(b.loaded_line_ids) ? b.loaded_line_ids : cur.lines.map(l => l.id));
@@ -292,6 +308,25 @@ async function saveOperation(b) {
       throw fail(force ? "Des quantités ont changé depuis votre confirmation" : "Ces modifications effacent des quantités déjà commandées", 409, { code: "confirm", details });
   }
 
+  // Produits absents d'Odoo : fiche créée (prix de vente = prix brut de l'offre, TVA, CIP7, prix public
+  // Medipim, tarif du fournisseur de l'opération). Sans prix brut ou sans TVA, création au prochain enregistrement.
+  const createdProducts = [], productWarnings = [];
+  for (const l of lines.filter(x => !x.odoo_product_id)) {
+    const m = l.cip in medipim ? medipim[l.cip] : await medipimProduct(l.cip).catch(() => null);
+    const vat = l.vat_rate ?? m?.vat ?? null;
+    if (!(l.price_gross > 0) || vat == null) { productWarnings.push(`${l.name} (${l.cip}) : fiche Odoo créée dès que le prix brut et la TVA seront renseignés`); continue; }
+    try {
+      const r = await ensureOdooProduct({ cip: l.cip, name: l.name, vat, list_price: l.price_gross, supplier_id: op.supplier_odoo_id ?? cur.op?.supplier_odoo_id ?? null,
+        supplier_price: l.price_gross, cip7: m?.cip7 || (l.cip.length === 13 && l.cip.startsWith("34009") ? l.cip.slice(5, 12) : null), public_price: m?.public_price || null });
+      l.odoo_product_id = r.id; l.vat_rate = vat;
+      if (r.created) createdProducts.push({ cip: l.cip, name: l.name, id: r.id });
+      if (r.archived) productWarnings.push(`${l.name} (${l.cip}) : la fiche Odoo existante est archivée`);
+    } catch (e) { productWarnings.push(`${l.name} (${l.cip}) : création Odoo impossible (${e.message})`); }
+  }
+  if (status !== "brouillon") {
+    const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
+    if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. ${productWarnings.join(" ; ")}`);
+  }
   // ── Écritures ──
   let saved;
   if (isNew) {
@@ -306,7 +341,10 @@ async function saveOperation(b) {
     for (const pid of gonePartIds) await sb(`gp_order_lines?operation_id=eq.${id}&pharmacy_id=${eq(pid)}`, { method: "DELETE" });
   }
   if (goneLines.length) await sb(`gp_lines?id=in.${encodeURIComponent(inList(goneLines.map(l => l.id)))}`, { method: "DELETE" });
-  if (lines.length) await sb("gp_lines?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: lines });
+  // Sans remise 2 ou 3 sur aucun produit, la colonne n'est pas envoyée (opération enregistrable
+  // même si la migration SQL 2 n'est pas encore passée ; clés identiques pour tout l'envoi)
+  const rows = lines.some(l => (l.extra_discounts || []).length) ? lines : lines.map(({ extra_discounts, ...rest }) => rest);
+  if (rows.length) await sb("gp_lines?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows });
   if (wanted) {
     if (goneParts.length) {
       await sb(`gp_orders?operation_id=eq.${id}&pharmacy_id=in.${encodeURIComponent(inList([...gonePartIds]))}`, { method: "DELETE" });
@@ -320,7 +358,7 @@ async function saveOperation(b) {
       body: added.map(w => ({ pharmacy_id: w.pharmacy_id, pharmacy_name: w.pharmacy_name, email: w.email, pharmacy_cip: w.pharmacy_cip })) });
   }
   if (hit.length) await refreshOrderStatus(id, [...new Set(hit.map(r => r.pharmacy_id))].filter(pid => !gonePartIds.has(pid)));
-  return { operation: saved, id };
+  return { operation: saved, id, created_products: createdProducts, product_warnings: productWarnings };
 }
 
 // ── Bon de commande au laboratoire (Odoo, brouillon) ────────────────────

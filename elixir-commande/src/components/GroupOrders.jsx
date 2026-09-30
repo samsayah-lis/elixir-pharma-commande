@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -222,7 +222,8 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
           </div>
           {op.conditions_text && <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "8px 12px", whiteSpace: "pre-wrap" }}>{op.conditions_text}</div>}
           {calc.objective && <Objective o={calc.objective} />}
-          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).</div>}
+          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).
+            {op.tier_mode !== "individuel" && <> Vous gardez toujours au moins vos propres gratuités ; celles que le groupe gagne en plus sont partagées au prorata et votre part peut évoluer jusqu'à la clôture.</>}</div>}
         </div>
 
         <div style={{ ...card, padding: 0, overflowX: "auto" }}>
@@ -244,6 +245,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                 const row = calc.summary.rows.find(r => r.line.id === l.id);
                 const stock = inStock(l);
                 const tiers = (l.discount_mode === "paliers" ? l.discount_tiers : []) || [];
+                const inv = invoiceDiscount(l, p.basis);   // détail des 3 remises au palier actuel
                 const netPct = row ? row.totalDiscountPct : (1 - p.unitAfterRfa / (p.gross || 1)) * 100;
                 return (
                   <tr key={l.id} style={{ borderTop: "1px solid #eef2f5", verticalAlign: "top" }}>
@@ -251,14 +253,22 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                       <div style={{ fontWeight: 700, color: "#0f2d3d" }}>{l.name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>CIP {l.cip} · {stock ? <span style={{ color: "#166534", fontWeight: 700 }}>En stock</span> : <span style={{ color: "#b45309", fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
                       {l.notes && <div style={{ fontSize: 11, color: "#64748b" }}>{l.notes}</div>}
-                      {row?.free > 0 && <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues</div>}
+                      {row?.free > 0 && <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues{op.tier_mode !== "individuel" && row.free > ugFor(l, row.qty).free ? " (dont part du groupe, provisoire)" : ""}</div>}
                     </td>
                     <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>{eur(l.price_gross)}</td>
                     <td style={{ padding: "10px 8px", maxWidth: 240 }}>
                       {l.discount_mode === "unitaire" && Number(l.discount_pct) > 0 && <span style={chip(true)}>−{pct(l.discount_pct)}</span>}
                       {tiers.map((t, i) => <span key={i} style={chip(p.invoiceTier && Number(t.min_qty) === p.invoiceTier.min_qty)}>dès {t.min_qty} : −{pct(t.pct)}</span>)}
+                      {(l.extra_discounts || []).map((d, k) => {
+                        const part = inv.parts[k + 1] || {};
+                        const word = d.combine === "additionnelle" ? "+" : "puis";
+                        return d.mode === "paliers"
+                          ? (d.tiers || []).map((t, j) => <span key={`x${k}-${j}`} style={chip(part.tier && Number(t.min_qty) === part.tier.min_qty)}>{word} dès {t.min_qty} : −{pct(t.pct)}</span>)
+                          : Number(d.pct) > 0 ? <span key={`x${k}`} style={chip(true)}>{word} −{pct(d.pct)}</span> : null;
+                      })}
+                      {(l.extra_discounts || []).length > 0 && inv.pct > 0 && <div style={{ fontSize: 11, color: "#0f2d3d", fontWeight: 700 }}>Remise totale : −{pct(inv.pct)}</div>}
                       {(l.ug_tiers || []).map((t, i) => <span key={"u" + i} style={chip(p.ug.tier && Number(t.min_qty) === p.ug.tier.min_qty)}>{t.min_qty} + {t.free_qty} UG</span>)}
-                      {p.nextInvoiceTier && <div style={{ fontSize: 11, color: "#0369a1", marginTop: 2 }}>Encore {p.nextInvoiceTier.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → −{pct(p.nextInvoiceTier.pct)}</div>}
+                      {p.nextInvoiceTier && <div style={{ fontSize: 11, color: "#0369a1", marginTop: 2 }}>Encore {p.nextInvoiceTier.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → remise totale −{pct(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct)}</div>}
                       {p.ug.next && <div style={{ fontSize: 11, color: "#15803d", marginTop: 2 }}>Encore {p.ug.next.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → +{p.ug.next.gain} UG{op.tier_mode !== "individuel" ? " pour le groupe" : ""}</div>}
                       {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: "#94a3b8" }}>Groupe : {calc.group[l.id] || 0} u.</div>}
                     </td>
@@ -316,7 +326,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
             </tbody>
           </table>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-            {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture.</div>}
+            {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture. La part des gratuités gagnées par le groupe est provisoire.</div>}
             {dirty && editable && <div style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Modifications non confirmées</div>}
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>

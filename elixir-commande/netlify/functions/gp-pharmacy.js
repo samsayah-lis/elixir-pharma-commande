@@ -2,8 +2,8 @@
 // POST { action: access | list | get | save, cip, email, ... }
 // Identité : jeton de connexion (Authorization) ou e-mail du compte pharmacie de la session.
 import { getCors } from "./cors.js";
-import { json, sb, sbAll, eq, productInfo, identifyPharmacy, loadOperation, summarize, saveOrder, countedQty, aggregate, today, fail } from "./_gp.js";
-import { priceOrder, objectiveContribution, objectiveIsAdditive, objectiveFrom, ugFor, allocateFree, freeBySlot, orderKey, slotOrder } from "../../src/gp-pricing.js";
+import { json, sb, sbAll, eq, productInfo, identifyPharmacy, loadOperation, summarize, saveOrder, countedQty, aggregate, today, fail, pharmacyKey } from "./_gp.js";
+import { priceOrder, objectiveContribution, objectiveIsAdditive, objectiveFrom, ugFor, allocateFree, freeBySlot, slotOrder } from "../../src/gp-pricing.js";
 import { sendMail, confirmationEmail, cancellationEmail, ADMIN_MAIL } from "./_gp-mail.js";
 import { rateLimit } from "./rate-limit.js";
 
@@ -130,13 +130,13 @@ async function view(data, ph) {
     : (othersNet || 0) + noCoop.totals.net;
   // Unités gratuites de la pharmacie (répartition exacte avec les autres, clés anonymes) ;
   // l'écran refait le même calcul en direct à partir de ug_others et my_key.
-  const myKey = orderKey(op.id, ph.id), ugOthers = {}, myFree = {};
+  const myKey = pharmacyKey(op.id, ph.id), ugOthers = {}, myFree = {};
   for (const l of lines) {
     if (!(l.ug_tiers || []).length) continue;
     const q = mine[l.id] || 0;
     if (!collectif) { myFree[l.id] = ugFor(l, q).free; continue; }
     const byKey = {};
-    for (const [pid, qs] of Object.entries(others.perPharmacyTotal)) if ((qs[l.id] || 0) > 0) byKey[orderKey(op.id, pid)] = qs[l.id];
+    for (const [pid, qs] of Object.entries(others.perPharmacyTotal)) if ((qs[l.id] || 0) > 0) byKey[pharmacyKey(op.id, pid)] = qs[l.id];
     ugOthers[l.id] = byKey;
     myFree[l.id] = q > 0 ? (allocateFree(op, l, { ...byKey, [myKey]: q })[myKey] || 0) : 0;
   }
@@ -146,7 +146,7 @@ async function view(data, ph) {
   return {
     operation: publicOp(op),
     lines: lines.map(l => ({ id: l.id, cip: l.cip, name: l.name, price_gross: l.price_gross, discount_mode: l.discount_mode, discount_pct: l.discount_pct,
-      discount_tiers: l.discount_tiers, ug_tiers: l.ug_tiers, weight: l.weight, vat_rate: l.vat_rate, notes: l.notes })),
+      discount_tiers: l.discount_tiers, extra_discounts: l.extra_discounts || [], ug_tiers: l.ug_tiers, weight: l.weight, vat_rate: l.vat_rate, notes: l.notes })),
     products: Object.fromEntries(Object.entries(products).map(([cip, p]) => [cip, { in_stock: !!p.in_stock }])),
     group_others: collectif ? others.group : {},
     ug_others: ugOthers,

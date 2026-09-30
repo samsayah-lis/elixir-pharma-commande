@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
-import { priceLine, ugLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceLine, ugLabel, invoiceDiscount, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 import { Objective } from "./GroupOrders.jsx";
 
@@ -42,7 +42,13 @@ const parseUg = (s) => ugParts(s).map(p => { const parts = p.split("+"); return 
   .filter(t => t.min_qty > 0 && t.free_qty > 0).sort((a, b) => a.min_qty - b.min_qty);
 const tiersToText = (t) => (t || []).map(x => `${x.min_qty}:${fr(x.pct)}`).join(" ; ");
 const ugToText = (t) => (t || []).map(x => `${x.min_qty}+${x.free_qty}`).join(", ");
-const withText = (l) => ({ ...l, price_gross: l.price_gross === "" || l.price_gross == null ? "" : fr(l.price_gross), _tiers: tiersToText(l.discount_tiers), _ug: ugToText(l.ug_tiers) });
+const withText = (l) => ({ ...l, price_gross: l.price_gross === "" || l.price_gross == null ? "" : fr(l.price_gross), _tiers: tiersToText(l.discount_tiers), _ug: ugToText(l.ug_tiers),
+  _extra: (Array.isArray(l.extra_discounts) ? l.extra_discounts : []).slice(0, 2).map(d => ({ mode: d.mode || "aucune", pct: d.pct ?? "", combine: d.combine === "additionnelle" ? "additionnelle" : "cascade", _tiers: tiersToText(d.tiers) })) });
+// remises 2 et 3 : texte d'édition → valeurs enregistrées
+const extraToSave = (x) => (x || []).filter(d => d.mode !== "aucune").map(d => ({ mode: d.mode, pct: d.mode === "unitaire" ? (toNum(d.pct) || 0) : 0,
+  tiers: d.mode === "paliers" ? parseTiers(d._tiers) : [], combine: d.combine === "additionnelle" ? "additionnelle" : "cascade" }));
+// remise totale pour une quantité donnée (aperçu)
+const previewDiscount = (l, q) => invoiceDiscount({ discount_mode: l.discount_mode, discount_pct: toNum(l.discount_pct) || 0, discount_tiers: parseTiers(l._tiers), extra_discounts: extraToSave(l._extra) }, q).pct;
 const okDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d ?? "")) && !isNaN(Date.parse(d + "T00:00:00Z"));
 const newSlotId = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 8);
 
@@ -58,6 +64,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
   const [snapshot, setSnapshot] = useState("");   // état chargé, pour détecter les modifications non enregistrées
   const [access, setAccess] = useState([]);
   const [busy, setBusy] = useState("");
+  const [notice, setNotice] = useState(null);     // fiches produits créées / à compléter
 
   const call = useCallback(async (qs, body) => {
     const r = await adminFetch(body ? API : `${API}?${qs}`, body ? { method: "POST", body: JSON.stringify(body) } : {});
@@ -126,6 +133,10 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       if (l.discount_mode === "paliers" && parseTiers(l._tiers).length !== tierParts(l._tiers).length) problems.push(`palier de remise illisible pour « ${label} » (format 10:5 ; 50:7,5)`);
       if (l.discount_mode === "unitaire" && !(toNum(l.discount_pct) >= 0 && toNum(l.discount_pct) < 100)) problems.push(`remise illisible pour « ${label} »`);
       if (parseUg(l._ug).length !== ugParts(l._ug).length) problems.push(`UG illisibles pour « ${label} » (format 12+2)`);
+      (l._extra || []).forEach((d, k) => {
+        if (d.mode === "unitaire" && !(toNum(d.pct) >= 0 && toNum(d.pct) < 100)) problems.push(`remise ${k + 2} illisible pour « ${label} »`);
+        if (d.mode === "paliers" && (!tierParts(d._tiers).length || parseTiers(d._tiers).length !== tierParts(d._tiers).length)) problems.push(`paliers de la remise ${k + 2} illisibles pour « ${label} »`);
+      });
     }
     if (problems.length) { setErr(`À corriger avant d'enregistrer : ${problems.join(" ; ")}`); return; }
     setBusy("save");
@@ -134,11 +145,13 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         operation: { ...form, objective_value: form.objective_value === "" ? null : toNum(form.objective_value), fee_pct: toNum(form.fee_pct), rfa_pct: toNum(form.rfa_pct) || 0, coop_amount: toNum(form.coop_amount) || 0 },
         lines: lines.map(l => ({ ...l, price_gross: String(l.price_gross ?? "").trim() === "" ? 0 : toNum(l.price_gross), discount_pct: toNum(l.discount_pct) || 0,
           weight: toNum(l.weight) || 1, vat_rate: String(l.vat_rate ?? "").trim() === "" ? null : toNum(l.vat_rate),
-          discount_tiers: parseTiers(l._tiers), ug_tiers: parseUg(l._ug) })),
+          discount_tiers: parseTiers(l._tiers), ug_tiers: parseUg(l._ug), extra_discounts: extraToSave(l._extra) })),
         participants: parts.map(p => ({ id: p.pharmacy_id, name: p.pharmacy_name, email: p.email, cip: p.pharmacy_cip, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : toNum(p.fee_pct) })),
         loaded_updated_at: form.updated_at || null, loaded_line_ids: (detail?.lines || []).map(l => l.id) });
       setForm(x => ({ ...x, id: r.id || r.operation?.id, updated_at: r.operation?.updated_at || x.updated_at }));   // pas de doublon si le rechargement échoue
-      flash?.(r.locked ? "✅ Notes enregistrées" : "✅ Opération enregistrée");
+      flash?.(r.locked ? "✅ Notes enregistrées" : `✅ Opération enregistrée${r.created_products?.length ? ` — ${r.created_products.length} fiche(s) produit créée(s) dans Odoo` : ""}`);
+      if (r.created_products?.length || r.product_warnings?.length)
+        setNotice([...(r.created_products || []).map(x => `Fiche Odoo créée : ${x.name} (${x.cip})`), ...(r.product_warnings || [])]);
       setBusy("");
       await open(r.id || r.operation.id); loadList(); loadAccess();
       return;
@@ -224,6 +237,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         </div>
       </div>
       {err && <Err text={err} />}
+      {notice && <div style={{ ...card, background: "#f0fdf4", borderColor: "#86efac", fontSize: 13 }}>{notice.map((t, i) => <div key={i}>{t}</div>)}<button type="button" style={{ ...btn(), marginTop: 8, padding: "5px 10px" }} onClick={() => setNotice(null)}>OK</button></div>}
       {locked && <div style={{ ...card, background: "#f8fafc", fontSize: 13, color: "#475569" }}>Opération {stLabel.toLowerCase()} : seules les notes et les conditions affichées restent modifiables.</div>}
 
       {!locked && <OfferImport adminFetch={adminFetch} form={form} setForm={setForm} setLines={setLines} lines={lines} />}
@@ -353,13 +367,14 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
     if (lines.some(l => l.cip === c)) { setMsg(`Le CIP ${c} est déjà dans la liste.`); return; }
     let p = {};
     try { p = (await call(null, { action: "lookup", cips: [c] })).products?.[c] || {}; setInfo(i => ({ ...i, [c]: p })); } catch {}
-    setMsg(p.odoo_product_id ? "" : `CIP ${c} introuvable dans Odoo : saisissez la désignation (le bon labo et les devis exigent une fiche Odoo).`);
-    setLines(ls => [...ls, withText({ cip: c, name: p.odoo_name || "", odoo_product_id: p.odoo_product_id || null, price_gross: "", discount_mode: "aucune", discount_pct: 0, discount_tiers: [], ug_tiers: [], weight: 1, vat_rate: p.vat_rate ?? null, notes: "" })]);
+    setMsg(p.odoo_product_id ? "" : p.medipim ? `CIP ${c} absent d'Odoo : désignation et TVA reprises de Medipim ; la fiche Odoo sera créée à l'enregistrement (saisissez le prix brut).`
+      : `CIP ${c} introuvable dans Odoo et Medipim : saisissez la désignation et la TVA ; la fiche Odoo sera créée à l'enregistrement.`);
+    setLines(ls => [...ls, withText({ cip: p.medipim?.cip13 && c.length === 7 ? p.medipim.cip13 : c, name: p.odoo_name || p.medipim?.name || "", odoo_product_id: p.odoo_product_id || null, price_gross: "", discount_mode: "aucune", discount_pct: 0, discount_tiers: [], ug_tiers: [], weight: 1, vat_rate: p.vat_rate ?? p.medipim?.vat ?? null, notes: "" })]);
     setCip("");
   };
   const refresh = async () => {
     try { const p = (await call(null, { action: "lookup", cips: lines.map(l => l.cip) })).products || {}; setInfo(p);
-      setLines(ls => ls.map(l => ({ ...l, odoo_product_id: l.odoo_product_id || p[l.cip]?.odoo_product_id || null, vat_rate: l.vat_rate ?? p[l.cip]?.vat_rate ?? null, name: l.name || p[l.cip]?.odoo_name || "" }))); } catch {}
+      setLines(ls => ls.map(l => ({ ...l, odoo_product_id: l.odoo_product_id || p[l.cip]?.odoo_product_id || null, vat_rate: l.vat_rate ?? p[l.cip]?.vat_rate ?? p[l.cip]?.medipim?.vat ?? null, name: l.name || p[l.cip]?.odoo_name || p[l.cip]?.medipim?.name || "" }))); } catch {}
   };
   const th = { textAlign: "left", padding: "6px 6px", fontSize: 11, color: "#64748b", fontWeight: 700 };
   return (
@@ -385,20 +400,45 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
                   <td style={{ padding: 4 }}><input style={{ ...CI, borderColor: l.name ? "#e2e8f0" : "#f59e0b" }} value={l.name} onChange={e => set(i, "name", e.target.value)} placeholder="Désignation" aria-label="Désignation" />
                     <input style={{ ...CI, marginTop: 4, fontSize: 11 }} value={l.notes || ""} onChange={e => set(i, "notes", e.target.value)} placeholder="note visible des pharmacies" /></td>
                   <td style={{ padding: 4, width: 96 }}><input inputMode="decimal" style={{ ...CI, borderColor: badPrice ? "#ef4444" : "#e2e8f0" }} value={l.price_gross ?? ""} onChange={e => set(i, "price_gross", e.target.value)} placeholder="0,00" aria-label="Prix brut" /></td>
-                  <td style={{ padding: 4, width: 200 }}>
-                    <select style={CI} value={l.discount_mode} onChange={e => set(i, "discount_mode", e.target.value)}><option value="aucune">Aucune</option><option value="unitaire">Taux unique</option><option value="paliers">Paliers</option></select>
-                    {l.discount_mode === "unitaire" && <input inputMode="decimal" style={{ ...CI, marginTop: 4 }} value={l.discount_pct} onChange={e => set(i, "discount_pct", e.target.value)} placeholder="%" />}
+                  <td style={{ padding: 4, width: 250 }}>
+                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>Remise 1</div>
+                    <select style={CI} value={l.discount_mode} onChange={e => set(i, "discount_mode", e.target.value)} aria-label="Remise 1"><option value="aucune">Aucune</option><option value="unitaire">Taux unique</option><option value="paliers">Paliers</option></select>
+                    {l.discount_mode === "unitaire" && <input inputMode="decimal" style={{ ...CI, marginTop: 4 }} value={l.discount_pct} onChange={e => set(i, "discount_pct", e.target.value)} placeholder="%" aria-label="Taux de la remise 1" />}
                     {l.discount_mode === "paliers" && <>
-                      <input style={{ ...CI, marginTop: 4, borderColor: badTiers ? "#ef4444" : "#e2e8f0" }} value={l._tiers} onChange={e => set(i, "_tiers", e.target.value)} placeholder="10:5 ; 50:7,5" />
+                      <input style={{ ...CI, marginTop: 4, borderColor: badTiers ? "#ef4444" : "#e2e8f0" }} value={l._tiers} onChange={e => set(i, "_tiers", e.target.value)} placeholder="10:5 ; 50:7,5" aria-label="Paliers de la remise 1" />
                       <div style={{ fontSize: 10, color: badTiers ? "#b91c1c" : "#64748b" }}>{badTiers ? "Palier illisible" : tiers.map(t => `dès ${t.min_qty} : −${fr(t.pct)} %`).join(" · ")}</div>
                     </>}
+                    {(l._extra || []).map((d, k) => {
+                      const setX = (key, v) => set(i, "_extra", (l._extra || []).map((x, j) => j === k ? { ...x, [key]: v } : x));
+                      return (
+                        <div key={k} style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed #e2e8f0" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#64748b", fontWeight: 700 }}>
+                            <span>Remise {k + 2}</span>
+                            <button type="button" onClick={() => set(i, "_extra", (l._extra || []).filter((_, j) => j !== k))} style={{ border: "none", background: "none", color: "#b91c1c", cursor: "pointer", fontSize: 10 }} aria-label={`Retirer la remise ${k + 2}`}>retirer</button>
+                          </div>
+                          <div style={{ display: "flex", gap: 4 }}>
+                            <select style={CI} value={d.combine} onChange={e => setX("combine", e.target.value)} aria-label={`Combinaison de la remise ${k + 2}`}><option value="cascade">En cascade</option><option value="additionnelle">Additionnelle</option></select>
+                            <select style={CI} value={d.mode} onChange={e => setX("mode", e.target.value)} aria-label={`Type de la remise ${k + 2}`}><option value="unitaire">Taux</option><option value="paliers">Paliers</option></select>
+                          </div>
+                          {d.mode === "unitaire" && <input inputMode="decimal" style={{ ...CI, marginTop: 4 }} value={d.pct} onChange={e => setX("pct", e.target.value)} placeholder="%" aria-label={`Taux de la remise ${k + 2}`} />}
+                          {d.mode === "paliers" && <input style={{ ...CI, marginTop: 4 }} value={d._tiers} onChange={e => setX("_tiers", e.target.value)} placeholder="50:5 ; 100:8" aria-label={`Paliers de la remise ${k + 2}`} />}
+                        </div>
+                      );
+                    })}
+                    <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
+                      {(l._extra || []).length < 2 && <button type="button" style={{ ...btn(), padding: "3px 8px", fontSize: 11 }} onClick={() => set(i, "_extra", [...(l._extra || []), { mode: "unitaire", pct: "", combine: "cascade", _tiers: "" }])}>＋ Remise {(l._extra || []).length + 2}</button>}
+                      {lines.length > 1 && <button type="button" style={{ ...btn(), padding: "3px 8px", fontSize: 11 }} onClick={() => window.confirm("Appliquer les remises de ce produit à tous les produits de l'opération ?") && setLines(ls => ls.map(x => ({ ...x, discount_mode: l.discount_mode, discount_pct: l.discount_pct, _tiers: l._tiers, _extra: (l._extra || []).map(e => ({ ...e })) })))}>Appliquer à tous</button>}
+                      {(l.discount_mode !== "aucune" || (l._extra || []).length > 0) && <span style={{ fontSize: 10, color: "#0f2d3d", fontWeight: 700 }}>Total : −{fr(round2(previewDiscount(l, 1e9)))} %{(l.discount_mode === "paliers" || (l._extra || []).some(d => d.mode === "paliers")) ? " (paliers max.)" : ""}</span>}
+                    </div>
                   </td>
                   <td style={{ padding: 4, width: 140 }}><input style={{ ...CI, borderColor: badUg ? "#ef4444" : "#e2e8f0" }} value={l._ug} onChange={e => set(i, "_ug", e.target.value)} placeholder="12+2" />
                     {badUg ? <div style={{ fontSize: 10, color: "#b91c1c" }}>UG illisibles</div> : ugs.map((t, k) => <div key={k} style={{ fontSize: 10, color: "#64748b" }}>{ugLabel(t)}</div>)}</td>
                   <td style={{ padding: 4, width: 56 }}><input inputMode="decimal" style={CI} value={l.weight} onChange={e => set(i, "weight", e.target.value)} aria-label="Poids dans l'objectif" /></td>
                   <td style={{ padding: 4, width: 64 }}><input inputMode="decimal" style={CI} value={l.vat_rate ?? ""} onChange={e => set(i, "vat_rate", e.target.value)} placeholder="auto" aria-label="TVA" /></td>
                   <td style={{ padding: "8px 4px", fontSize: 11, width: 120 }}>
-                    {l.odoo_product_id || p.odoo_product_id ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ fiche</span> : <span style={{ color: "#b91c1c", fontWeight: 700 }}>✕ absente</span>}
+                    {l.odoo_product_id || p.odoo_product_id ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ fiche</span>
+                      : <span style={{ color: "#b45309", fontWeight: 700 }} title="La fiche sera créée dans Odoo à l'enregistrement (prix de vente = prix brut, TVA, tarif fournisseur)">➕ à créer{p.medipim ? " (Medipim)" : ""}</span>}
+                    {!(l.odoo_product_id || p.odoo_product_id) && p.medipim?.public_price != null && <div style={{ color: "#64748b" }}>PPTTC {eur(p.medipim.public_price)}</div>}
                     {p.in_stock != null && <div style={{ color: p.in_stock ? "#16a34a" : "#b45309" }}>{p.in_stock ? `stock ${p.available}` : "précommande"}</div>}
                     {p.elixir_price != null && <div style={{ color: "#64748b" }}>Elixir {eur(p.elixir_price)}</div>}
                   </td>
@@ -448,9 +488,10 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
     const byCip = new Map(lines.map(l => [l.cip, l]));
     const imported = result.lines.map(l => {
       const prev = byCip.get(l.cip), p = products[l.cip] || {};
-      return withText({ id: prev?.id, cip: l.cip, name: l.name || prev?.name || p.odoo_name || "", odoo_product_id: p.odoo_product_id || prev?.odoo_product_id || null,
-        price_gross: l.price_gross ?? prev?.price_gross ?? "", discount_mode: l.discount_mode, discount_pct: l.discount_pct || 0, discount_tiers: l.discount_tiers || [], ug_tiers: l.ug_tiers || [],
-        weight: prev?.weight ?? 1, vat_rate: p.vat_rate ?? prev?.vat_rate ?? null, notes: l.notes || prev?.notes || "" });
+      return withText({ id: prev?.id, cip: l.cip, name: p.odoo_name || l.name || prev?.name || p.medipim?.name || "", odoo_product_id: p.odoo_product_id || prev?.odoo_product_id || null,
+        price_gross: l.price_gross ?? prev?.price_gross ?? "", discount_mode: l.discount_mode, discount_pct: l.discount_pct || 0, discount_tiers: l.discount_tiers || [],
+        extra_discounts: l.extra_discounts || [], ug_tiers: l.ug_tiers || [],
+        weight: prev?.weight ?? 1, vat_rate: p.vat_rate ?? prev?.vat_rate ?? p.medipim?.vat ?? null, notes: l.notes || prev?.notes || "" });
     });
     if (mode === "remplacer") {
       const kept = lines.filter(l => !imported.some(x => x.cip === l.cip));
@@ -509,8 +550,8 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
                       <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{l.cip}</td>
                       <td style={{ padding: "5px 8px" }}>{l.name}</td>
                       <td style={{ padding: "5px 8px", textAlign: "right" }}>{l.price_gross != null ? eur(l.price_gross) : "prix ?"}</td>
-                      <td style={{ padding: "5px 8px" }}>{l.discount_mode === "unitaire" ? `−${fr(l.discount_pct)} %` : l.discount_mode === "paliers" ? tiersToText(l.discount_tiers) : ""} {ugToText(l.ug_tiers) && `UG ${ugToText(l.ug_tiers)}`}</td>
-                      <td style={{ padding: "5px 8px", color: p.odoo_product_id ? "#16a34a" : "#b91c1c", fontWeight: 700 }}>{p.odoo_product_id ? (p.in_stock ? "✓ en stock" : "✓ précommande") : "✕ pas de fiche Odoo"}</td>
+                      <td style={{ padding: "5px 8px" }}>{l.discount_mode === "unitaire" ? `−${fr(l.discount_pct)} %` : l.discount_mode === "paliers" ? tiersToText(l.discount_tiers) : ""}{(l.extra_discounts || []).map((d, k) => ` ${d.combine === "additionnelle" ? "+" : "puis"} ${d.mode === "paliers" ? tiersToText(d.tiers) : `−${fr(d.pct || 0)} %`}`).join("")} {ugToText(l.ug_tiers) && `UG ${ugToText(l.ug_tiers)}`}</td>
+                      <td style={{ padding: "5px 8px", color: p.odoo_product_id ? "#16a34a" : "#b45309", fontWeight: 700 }}>{p.odoo_product_id ? (p.in_stock ? "✓ en stock" : "✓ précommande") : p.medipim ? "➕ fiche à créer (Medipim)" : "➕ fiche à créer"}</td>
                     </tr>
                   );
                 })}
@@ -603,7 +644,7 @@ function Dashboard({ detail }) {
         ? Object.values(s.perPharmacyTotal).reduce((a, qs) => a + (qs[l.id] || 0) * priceLine(noRfa, l, qs[l.id] || 0, qs[l.id] || 0).unitAfterInvoice, 0)
         : q * priceLine(noRfa, l, q, q).unitAfterInvoice;
       return { CIP: l.cip, Produit: l.name, Facturees_groupe: q, UG_groupe: f, Recues_groupe: q + f,
-        ...Object.fromEntries(slots.map(sl => [sl.label, (s.groupBySlot[l.id]?.[sl.id] || 0) + (s.groupFreeBySlot?.[l.id]?.[sl.id] ? ` (+${s.groupFreeBySlot[l.id][sl.id]} UG)` : "")])),
+        ...Object.fromEntries(slots.flatMap(sl => [[sl.label, s.groupBySlot[l.id]?.[sl.id] || 0], ...(Object.keys(s.groupFree || {}).length ? [[`${sl.label} UG`, s.groupFreeBySlot?.[l.id]?.[sl.id] || 0]] : [])])),
         Prix_brut_HT: gross, Remise_facture_labo_pct: q > 0 && gross > 0 ? round2((1 - amount / (q * gross)) * 100) : 0, Montant_labo_HT: round2(amount) };
     });
     const wb = XLSX.utils.book_new();
@@ -635,8 +676,8 @@ function Dashboard({ detail }) {
                   {usedSlots.map(sl => <td key={sl.id} style={{ ...td, textAlign: "right" }}>{s.groupBySlot[l.id]?.[sl.id] || ""}{s.groupFreeBySlot?.[l.id]?.[sl.id] ? <span style={{ color: "#15803d" }}> +{s.groupFreeBySlot[l.id][sl.id]}</span> : null}</td>)}
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{q}</td>
                   <td style={{ ...td, textAlign: "right", color: "#15803d", fontWeight: 700 }}>{s.groupFree?.[l.id] ? `+${s.groupFree[l.id]}` : ""}</td>
-                  <td style={td}>{op.tier_mode === "individuel" ? "par pharmacie" : [p.invoicePct ? `−${fr(p.invoicePct)} %` : "", p.ug.free ? `${p.ug.free} UG` : ""].filter(Boolean).join(" · ") || "—"}</td>
-                  <td style={{ ...td, color: "#0369a1" }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → −${fr(p.nextInvoiceTier.pct)} %` : p.ug.next ? `encore ${p.ug.next.missing} → +${p.ug.next.gain} UG` : ""}</td>
+                  <td style={td}>{op.tier_mode === "individuel" ? "par pharmacie" : [p.invoicePct ? `−${fr(round2(p.invoicePct))} %` : "", p.ug.free ? `${p.ug.free} UG` : ""].filter(Boolean).join(" · ") || "—"}</td>
+                  <td style={{ ...td, color: "#0369a1" }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → remise totale −${fr(round2(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct))} %` : p.ug.next ? `encore ${p.ug.next.missing} → +${p.ug.next.gain} UG` : ""}</td>
                 </tr>
               );
             })}

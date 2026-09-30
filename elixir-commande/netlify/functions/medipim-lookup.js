@@ -1,10 +1,6 @@
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
-const MEDIPIM_BASE = "https://api.medipim.fr/v4";
-const MEDIPIM_USER = process.env.MEDIPIM_USER || "288";
-const MEDIPIM_KEY  = process.env.MEDIPIM_KEY  || "094fc1eed6142243036e51b3fa54b4dd6a25088cee8e5ed1e9f7036099cbf696";
-const AUTH = "Basic " + Buffer.from(`${MEDIPIM_USER}:${MEDIPIM_KEY}`).toString("base64");
-const H = { Authorization: AUTH, "Content-Type": "application/json" };
+import { MEDIPIM_BASE, MEDIPIM_HEADERS as H } from "./_medipim.js";
 async function tryFind(param, value) {
   if (!value) return null;
   const res = await fetch(`${MEDIPIM_BASE}/products/find?${param}=${value}`, { headers: H });
