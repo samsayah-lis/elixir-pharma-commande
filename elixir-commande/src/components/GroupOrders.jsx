@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, packCheck, packIssues, packLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -113,6 +113,8 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
       : objectiveProgress(op, lines, group);
     return { mine, group, summary, objective, freeSlots };
   }, [view, grid, lines, op]);
+  // Colisage : chaque livraison saisie doit respecter la règle du produit (même contrôle qu'au serveur)
+  const packProblems = useMemo(() => packIssues(lines, grid), [lines, grid]);
 
   const setQty = (lineId, slotId, v) => {
     const q = Math.max(0, Math.floor(Number(String(v).replace(/\D/g, "")) || 0));
@@ -167,7 +169,9 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
       }
       setGrid(next); setDirty(true); setSource({ source: "fichier", file_name: r.file_name });
       setImp({ unmatched: r.result?.unmatched || [], warnings: r.result?.warnings || [] });
-      setMsg({ type: "info", text: `${Object.keys(next).length} produit(s) repris de « ${r.file_name} ». Vérifiez les quantités et les dates de livraison, puis confirmez.` });
+      const offPack = packIssues(lines, next).length;
+      setMsg({ type: "info", text: `${Object.keys(next).length} produit(s) repris de « ${r.file_name} ». Vérifiez les quantités et les dates de livraison, puis confirmez.`
+        + (offPack ? ` ${offPack} quantité(s) ne respectent pas le colisage (cases en rouge) : ajustez-les avant de confirmer.` : "") });
     } catch (e) { if (req === reqRef.current) setMsg({ type: "err", text: e.message }); }
     if (req === reqRef.current) setBusy("");
   };
@@ -224,6 +228,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
           {calc.objective && <Objective o={calc.objective} />}
           {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).
             {op.tier_mode !== "individuel" && <> Vous gardez toujours au moins vos propres gratuités ; celles que le groupe gagne en plus sont partagées au prorata et votre part peut évoluer jusqu'à la clôture.</>}</div>}
+          {lines.some(l => packCheck(l, 1)) && <div style={{ fontSize: 12, color: "#475569" }}>📦 Certains produits se commandent par colis : la règle indiquée sous le produit s'applique à <b>chaque date de livraison</b>, sur les unités facturées que vous saisissez.</div>}
         </div>
 
         <div style={{ ...card, padding: 0, overflowX: "auto" }}>
@@ -252,6 +257,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                     <td style={{ padding: "10px 14px", position: "sticky", left: 0, background: "white", zIndex: 1, minWidth: 150, maxWidth: 220, boxShadow: "1px 0 0 #eef2f5" }}>
                       <div style={{ fontWeight: 700, color: "#0f2d3d" }}>{l.name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>CIP {l.cip} · {stock ? <span style={{ color: "#166534", fontWeight: 700 }}>En stock</span> : <span style={{ color: "#b45309", fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
+                      {packLabel(l) && <div style={{ fontSize: 11, color: "#0f2d3d", fontWeight: 700 }}>📦 {packLabel(l)}</div>}
                       {l.notes && <div style={{ fontSize: 11, color: "#64748b" }}>{l.notes}</div>}
                       {row?.free > 0 && <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues{op.tier_mode !== "individuel" && row.free > ugFor(l, row.qty).free ? " (dont part du groupe, provisoire)" : ""}</div>}
                     </td>
@@ -274,6 +280,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                     </td>
                     {slots.map(s => {
                       const v = grid[l.id]?.[s.id] || "";
+                      const pb = packCheck(l, v);
                       const allowed = s.any || s.id !== IMMEDIATE_SLOT || stock;
                       // une quantité déjà saisie reste visible et modifiable même si le produit n'est plus en stock
                       const show = allowed || Number(v) > 0;
@@ -281,7 +288,11 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                         <td key={s.id} style={{ padding: "8px 6px", textAlign: "center" }}>
                           {show ? (<>
                             <input value={v} inputMode="numeric" disabled={!editable || busy === "import" || busy === "save"} onChange={e => setQty(l.id, s.id, e.target.value)} placeholder="0" aria-label={`${l.name} — ${s.label}`}
-                              style={{ width: 64, border: `1.5px solid ${allowed ? "#d6dde3" : "#f59e0b"}`, borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
+                              aria-invalid={pb ? true : undefined}
+                              style={{ width: 64, border: `1.5px solid ${pb ? "#dc2626" : allowed ? "#d6dde3" : "#f59e0b"}`, borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: pb ? "#fef2f2" : editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
+                            {pb && <div style={{ fontSize: 10, color: "#b91c1c", fontWeight: 700 }}>{pb.text}
+                              {editable && <button type="button" disabled={!!busy} onClick={() => setQty(l.id, s.id, pb.suggestion)} title={`Passer à ${pb.suggestion}`}
+                                style={{ display: "block", margin: "2px auto 0", border: "1px solid #fca5a5", background: "white", color: "#b91c1c", borderRadius: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ {pb.suggestion}</button>}</div>}
                             {calc.freeSlots[l.id]?.[s.id] > 0 && <div style={{ fontSize: 11, color: "#15803d", fontWeight: 700 }}>+{calc.freeSlots[l.id][s.id]} UG</div>}
                             {!allowed && <div style={{ fontSize: 10, color: "#b45309" }}>plus en stock</div>}
                           </>) : <span style={{ color: "#cbd5e1" }}>—</span>}
@@ -328,11 +339,12 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
           <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
             {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture. La part des gratuités gagnées par le groupe est provisoire.</div>}
             {dirty && editable && <div style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Modifications non confirmées</div>}
+            {editable && packProblems.length > 0 && <div role="alert" style={{ fontSize: 12, color: "#991b1b", fontWeight: 700, maxWidth: 420, textAlign: "right" }}>📦 {packProblems.length} quantité{packProblems.length > 1 ? "s" : ""} hors colisage (cases en rouge) : corrigez-{packProblems.length > 1 ? "les" : "la"} pour confirmer.</div>}
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
                 <button style={btn(false)} disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy === "import" ? "Analyse…" : "📄 Importer mon bon de commande (LGO)"}</button>
-                <button style={{ ...btn(true), opacity: busy || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || (!dirty && !confirmed && !hasQty(grid))} onClick={confirm}>
+                <button style={{ ...btn(true), opacity: busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid))} onClick={confirm}>
                   {busy === "save" ? "Envoi…" : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
                 </button>
               </div>

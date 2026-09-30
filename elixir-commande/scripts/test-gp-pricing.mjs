@@ -1,6 +1,6 @@
 // Tests du moteur de prix des commandes groupées : node scripts/test-gp-pricing.mjs
 // Convention : quantités saisies = unités FACTURÉES ; les UG sont calculées et ajoutées.
-import { priceLine, priceOrder, objectiveProgress, ugFor, invoiceDiscount, splitInteger, allocateFree, freeBySlot, odooLine, round2 } from "../src/gp-pricing.js";
+import { priceLine, priceOrder, objectiveProgress, ugFor, invoiceDiscount, splitInteger, allocateFree, freeBySlot, odooLine, round2, packCheck, packIssues, packLabel } from "../src/gp-pricing.js";
 let ok = 0, ko = 0;
 const eq = (label, got, exp) => { const g = typeof got === "number" ? round2(got) : got; const x = typeof exp === "number" ? round2(exp) : exp; if (JSON.stringify(g) === JSON.stringify(x)) ok++; else { ko++; console.log("✗", label, "→", JSON.stringify(g), "attendu", JSON.stringify(x)); } };
 const L1 = { id: "a", price_gross: 10, discount_mode: "paliers", discount_tiers: [{ min_qty: 50, pct: 5 }, { min_qty: 100, pct: 10 }], ug_tiers: [{ min_qty: 12, free_qty: 2 }], weight: 1, vat_rate: 2.1 };
@@ -103,5 +103,17 @@ const g = { a: 100, b: 5 };
 eq("objectif unités : 100 + 5×2 = 110", objectiveProgress({ ...opC, objective_type: "unites", objective_value: 200 }, [L1, L2], g).value, 110);
 eq("objectif brut : 100×10 + 5×20", objectiveProgress({ ...opC, objective_type: "montant_brut", objective_value: 5000 }, [L1, L2], g).value, 1100);
 eq("objectif net collectif : facturé après remise facture", objectiveProgress({ ...opC, objective_type: "montant_net", objective_value: 5000 }, [L1, L2], g).value, 100 * 9 + 5 * 19.4);
+
+// ── Colisage (par livraison, sur la quantité saisie)
+const PM = { id: "m", pack_size: 12, pack_rule: "multiple" }, PN = { id: "n", pack_size: 12, pack_rule: "minimum" }, PI = { id: "i", pack_size: 12, pack_rule: "aucune" };
+eq("multiple : 24 accepté", packCheck(PM, 24), null);
+eq("multiple : 18 refusé → 24", [packCheck(PM, 18).text, packCheck(PM, 18).suggestion], ["par 12", 24]);
+eq("multiple : 6 refusé → 12", packCheck(PM, 6).suggestion, 12);
+eq("0 toujours permis", [packCheck(PM, 0), packCheck(PN, 0)], [null, null]);
+eq("minimum : 13 accepté, 11 refusé → 12", [packCheck(PN, 13), packCheck(PN, 11).suggestion], [null, 12]);
+eq("indicatif : jamais bloquant", packCheck(PI, 5), null);
+eq("sans colisage ou colis de 1 : jamais bloquant", [packCheck({ pack_rule: "multiple" }, 5), packCheck({ pack_size: 1, pack_rule: "multiple" }, 5)], [null, null]);
+eq("chaque livraison vérifiée séparément", packIssues([PM, PN], { m: { s1: 12, s2: 6 }, n: { s1: 5, s2: 0 } }).map(x => `${x.line.id}:${x.slot_id}:${x.suggestion}`), ["m:s2:12", "n:s1:12"]);
+eq("libellés", [packLabel(PM), packLabel(PN), packLabel(PI), packLabel({})], ["Colis de 12 · commande par 12", "Colis de 12 · minimum 12", "Colis de 12", ""]);
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);

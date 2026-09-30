@@ -3,7 +3,7 @@
 // colonne pharmacy_id), jamais par son CIP : la plupart des fiches ont un CIP vide ou « 0 ».
 import { verifyTokenAsync } from "./auth.js";
 import crypto from "node:crypto";
-import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, packIssues, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 
 export { odoo, COMPANY_ID };
@@ -203,6 +203,17 @@ export async function saveOrder({ data, pharmacy, entries, source = "formulaire"
   const existing = (data.qty || []).filter(r => r.pharmacy_id === id);
   for (const r of existing) if (!clean.has(`${r.line_id}|${r.slot_id}`)) clean.set(`${r.line_id}|${r.slot_id}`, 0);
   const rows = [...clean.entries()].map(([k, q]) => { const [line_id, slot_id] = k.split("|"); return { operation_id: op.id, pharmacy_id: id, line_id, slot_id, qty: q }; });
+  // Colisage : chaque livraison de la commande entière (une quantité devenue hors règle après un
+  // changement de colisage bloque aussi : la pharmacie la corrige avant d'enregistrer)
+  const bySlot = {};
+  for (const r of rows) (bySlot[r.line_id] ||= {})[r.slot_id] = r.qty;
+  const pack = packIssues(lines, bySlot);
+  if (pack.length) {
+    const label = (sid) => { if (sid === IMMEDIATE_SLOT) return (op.delivery_slots || []).length ? "livraison immédiate" : "";
+      const s = (op.delivery_slots || []).find(x => x.id === sid); return s ? s.label || `livraison du ${String(s.date).split("-").reverse().join("/")}` : ""; };
+    const details = pack.map(x => `${x.line.name}${label(x.slot_id) ? ` (${label(x.slot_id)})` : ""} : ${x.qty} ${x.rule === "multiple" ? `au lieu d'un multiple de ${x.size}` : `au lieu de ${x.size} minimum`}`);
+    throw fail(`Colisage non respecté : ${details.join(" ; ")}`, 400, { code: "pack", details, cells: pack.map(x => ({ line_id: x.line.id, slot_id: x.slot_id, suggestion: x.suggestion })) });
+  }
   const total = rows.reduce((s, r) => s + r.qty, 0);
   const before = Object.fromEntries(existing.map(r => [`${r.line_id}|${r.slot_id}`, r.qty]));
   const changed = rows.some(r => (before[`${r.line_id}|${r.slot_id}`] || 0) !== r.qty);

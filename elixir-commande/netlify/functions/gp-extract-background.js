@@ -48,6 +48,8 @@ export const Offer = z.object({
       combine: z.enum(["cascade", "additionnelle"]).describe("cascade = appliquée sur le prix déjà remisé ; additionnelle = taux ajouté au cumul"),
     })).describe("Remises sur facture 2 et 3, dans l'ordre (au plus 2 ; liste vide s'il n'y en a pas)"),
     ug_tiers: z.array(z.object({ min_qty: z.number(), free_qty: z.number() })).describe("Unités gratuites : free_qty offertes pour min_qty facturées"),
+    pack_size: z.number().nullable().describe("Colisage : nombre d'unités par colis / carton / PCB si l'offre l'indique, sinon null"),
+    pack_rule: z.enum(["aucune", "minimum", "multiple"]).describe("multiple = commandes par colis entiers imposées ; minimum = au moins un colis imposé ; aucune = colisage seulement indicatif ou absent"),
     notes: z.string().nullable(),
   })),
   warnings: z.array(z.string()).describe("Ambiguïtés à vérifier par l'utilisateur"),
@@ -117,6 +119,7 @@ Repères :
 - Prix brut = prix unitaire HT avant toute remise.
 - Remise « sur facture » : jusqu'à 3 remises successives par produit. La 1re va dans discount_* (un seul taux → « unitaire » ; taux dépendant de la quantité → « paliers », un palier par seuil). Les 2e et 3e vont dans extra_discounts, dans l'ordre, chacune avec combine « cascade » (appliquée sur le prix déjà remisé : « 30 % puis 10 % », « remise supplémentaire sur le net ») ou « additionnelle » (taux ajouté au précédent : « 30 % + 10 % = 40 % »). Si le document ne précise pas, mets « cascade » et signale-le dans warnings.
 - Unités gratuites : « 12 + 2 », « 2 UG pour 12 achetées », « 14 pour le prix de 12 » s'écrivent tous min_qty 12 / free_qty 2. Si l'offre donne un pourcentage d'UG, convertis-le en paliers seulement s'il est explicite, sinon signale-le.
+- Colisage : relève le nombre d'unités par colis (colonne « colisage », « PCB », « carton », « UV », « par 6 »…) dans pack_size. pack_rule = « multiple » si l'offre impose de commander par colis entiers (« par colis de 6 », « multiples de 12 »), « minimum » si elle impose seulement un colis minimum, sinon « aucune ».
 - Une remise de fin d'année (RFA) ou une ristourne différée n'est PAS une remise sur facture : mets-la dans rfa_pct.
 - Un contrat de coopération commerciale (mise en avant, vitrine, animation contre un montant en €) va dans coop_*.
 - Dates au format AAAA-MM-JJ ; si l'année manque, déduis-la du contexte du document et signale-le.`;

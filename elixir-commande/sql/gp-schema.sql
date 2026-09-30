@@ -46,6 +46,8 @@ create table if not exists gp_lines (
   discount_tiers  jsonb not null default '[]'::jsonb,   -- [{min_qty, pct}]
   ug_tiers        jsonb not null default '[]'::jsonb,   -- [{min_qty (facturées), free_qty}]
   extra_discounts jsonb not null default '[]'::jsonb,   -- remises 2 et 3 : [{mode, pct, tiers, combine: cascade|additionnelle}]
+  pack_size       integer check (pack_size is null or pack_size between 1 and 100000),   -- colisage (unités par colis)
+  pack_rule       text not null default 'aucune' check (pack_rule in ('aucune', 'minimum', 'multiple')),   -- par livraison, sur les unités facturées
   weight          numeric not null default 1,           -- 2 = compte double dans l'objectif en unités
   vat_rate        numeric,
   notes           text

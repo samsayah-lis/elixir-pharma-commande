@@ -146,7 +146,7 @@ async function view(data, ph) {
   return {
     operation: publicOp(op),
     lines: lines.map(l => ({ id: l.id, cip: l.cip, name: l.name, price_gross: l.price_gross, discount_mode: l.discount_mode, discount_pct: l.discount_pct,
-      discount_tiers: l.discount_tiers, extra_discounts: l.extra_discounts || [], ug_tiers: l.ug_tiers, weight: l.weight, vat_rate: l.vat_rate, notes: l.notes })),
+      discount_tiers: l.discount_tiers, extra_discounts: l.extra_discounts || [], ug_tiers: l.ug_tiers, weight: l.weight, vat_rate: l.vat_rate, notes: l.notes, pack_size: l.pack_size ?? null, pack_rule: l.pack_rule || "aucune" })),
     products: Object.fromEntries(Object.entries(products).map(([cip, p]) => [cip, { in_stock: !!p.in_stock }])),
     group_others: collectif ? others.group : {},
     ug_others: ugOthers,

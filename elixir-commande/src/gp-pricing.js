@@ -271,3 +271,34 @@ export const parisToday = () => new Date().toLocaleDateString("sv-SE", { timeZon
 
 // Ordre des colonnes de livraison d'une opération
 export const slotOrder = (op) => [IMMEDIATE_SLOT, ...((op && op.delivery_slots) || []).map(s => s.id)];
+
+// ── Colisage ────────────────────────────────────────────────────────────
+// pack_size = unités par colis ; pack_rule : « aucune » (indicatif), « minimum » (au moins
+// 1 colis), « multiple » (colis entiers). Règle appliquée à CHAQUE livraison, sur la quantité
+// saisie (unités facturées, sans les UG) ; 0 = produit non commandé, toujours permis.
+export const PACK_RULES = ["aucune", "minimum", "multiple"];
+export const packSize = (line) => { const n = Math.floor(num(line && line.pack_size)); return n >= 1 ? n : null; };
+export function packCheck(line, qty) {
+  const size = packSize(line), q = Math.floor(num(qty));
+  const rule = line && line.pack_rule;
+  if (!size || size < 2 || q <= 0 || (rule !== "minimum" && rule !== "multiple")) return null;
+  if (rule === "minimum" && q < size) return { rule, size, qty: q, suggestion: size, text: `minimum ${size}` };
+  if (rule === "multiple" && q % size) return { rule, size, qty: q, suggestion: Math.ceil(q / size) * size, text: `par ${size}` };
+  return null;
+}
+// Libellé pour la pharmacie : « Colis de 12 · par 12 » / « Colis de 12 · minimum 12 »
+export const packLabel = (line) => {
+  const size = packSize(line);
+  if (!size) return "";
+  const rule = line.pack_rule;
+  return `Colis de ${size}` + (size >= 2 && rule === "multiple" ? ` · commande par ${size}` : size >= 2 && rule === "minimum" ? ` · minimum ${size}` : "");
+};
+// Toutes les quantités hors colisage d'une commande { ligne: { livraison: qté } }
+export function packIssues(lines, bySlot) {
+  const out = [];
+  for (const l of lines || []) for (const [slot, q] of Object.entries((bySlot && bySlot[l.id]) || {})) {
+    const pb = packCheck(l, q);
+    if (pb) out.push({ line: l, slot_id: slot, ...pb });
+  }
+  return out;
+}

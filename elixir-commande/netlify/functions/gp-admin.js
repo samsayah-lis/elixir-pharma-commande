@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
-import { priceLine, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceLine, odooLine, packIssues, PACK_RULES, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvGet, kvSet } from "./_kv.js";
 import { medipimProduct } from "./_medipim.js";
 
@@ -35,6 +35,9 @@ const lineRow = (l, opId, position) => ({
     tiers: (Array.isArray(d?.tiers) ? d.tiers : []).map(t => ({ min_qty: num(t.min_qty), pct: num(t.pct) })).filter(t => t.min_qty > 0 && t.pct > 0),
     combine: d?.combine === "additionnelle" ? "additionnelle" : "cascade" })),
   weight: num(l.weight, 1) || 1, vat_rate: l.vat_rate == null || l.vat_rate === "" ? null : num(l.vat_rate, null), notes: l.notes || null,
+  // colisage : unités par colis (entier ≥ 1) et règle appliquée à chaque livraison
+  pack_size: Math.floor(num(l.pack_size, 0)) >= 1 ? Math.floor(num(l.pack_size, 0)) : null,
+  pack_rule: PACK_RULES.includes(l.pack_rule) ? l.pack_rule : "aucune",
 });
 
 export const handler = async (event) => {
@@ -274,6 +277,11 @@ async function saveOperation(b, event) {
       vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? medipim[l.cip]?.vat ?? null) : num(l.vat_rate, null) }, id, i);
   });
   if (noName.length) throw fail(`Désignation manquante (produit introuvable dans Odoo et Medipim) pour : ${noName.join(", ")}`);
+  const badPack = lines.filter(l => l.pack_rule !== "aucune" && !(l.pack_size >= 2)).map(l => l.name);
+  if (badPack.length) throw fail(`Colisage à renseigner (2 unités ou plus) pour appliquer la règle « minimum » ou « multiple » : ${badPack.join(", ")}`);
+  // borne = plafond des quantités d'une commande (saveOrder) ; évite aussi un CIP collé par erreur (hors entier SQL)
+  const hugePack = lines.filter(l => l.pack_size > 100000).map(l => l.name);
+  if (hugePack.length) throw fail(`Colisage invraisemblable (100 000 unités maximum par colis) pour : ${hugePack.join(", ")}`);
   if (status !== "brouillon") {
     const noPrice = lines.filter(l => !(l.price_gross > 0)).map(l => l.name);
     if (noPrice.length) throw fail(`Prix brut manquant pour : ${noPrice.join(", ")}`);
@@ -320,6 +328,21 @@ async function saveOperation(b, event) {
     const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
     if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. Enregistrez d'abord en brouillon : les fiches manquantes sont créées automatiquement dans Odoo.`);
   }
+  // Colonnes des migrations SQL 2 (remises 2 et 3) et 3 (colisage) : envoyées seulement si un produit
+  // les utilise, à l'écran OU déjà en base — l'opération reste enregistrable tant que la migration
+  // n'est pas passée, et retirer la dernière valeur l'efface bien en base. Clés identiques pour tout l'envoi.
+  const used = (f) => lines.some(f) || cur.lines.some(f);
+  const drop = [...(used(l => (l.extra_discounts || []).length) ? [] : ["extra_discounts"]),
+    ...(used(l => l.pack_size != null || (l.pack_rule && l.pack_rule !== "aucune")) ? [] : ["pack_size", "pack_rule"])];
+  const rows = drop.length ? lines.map(l => Object.fromEntries(Object.entries(l).filter(([k]) => !drop.includes(k)))) : lines;
+  // Migration pas encore passée : refus AVANT toute écriture (sinon opération à moitié enregistrée)
+  for (const [col, file, what] of [["extra_discounts", "gp-migration-2-trois-remises.sql", "remises 2 et 3"], ["pack_size", "gp-migration-3-colisage.sql", "colisage"]]) {
+    if (drop.includes(col) || !lines.length) continue;
+    await sb(`gp_lines?select=${col}&limit=1`).catch(e => {
+      if (!/column|schema cache/i.test(e.message)) throw e;   // autre panne : message d'origine
+      throw fail(`${what[0].toUpperCase() + what.slice(1)} : la base n'est pas encore à jour. Exécutez sql/${file} dans Supabase, puis réenregistrez.`);
+    });
+  }
   // ── Écritures ──
   let saved;
   if (isNew) {
@@ -334,9 +357,6 @@ async function saveOperation(b, event) {
     for (const pid of gonePartIds) await sb(`gp_order_lines?operation_id=eq.${id}&pharmacy_id=${eq(pid)}`, { method: "DELETE" });
   }
   if (goneLines.length) await sb(`gp_lines?id=in.${encodeURIComponent(inList(goneLines.map(l => l.id)))}`, { method: "DELETE" });
-  // Sans remise 2 ou 3 sur aucun produit, la colonne n'est pas envoyée (opération enregistrable
-  // même si la migration SQL 2 n'est pas encore passée ; clés identiques pour tout l'envoi)
-  const rows = lines.some(l => (l.extra_discounts || []).length) ? lines : lines.map(({ extra_discounts, ...rest }) => rest);
   if (rows.length) await sb("gp_lines?on_conflict=id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows });
   if (wanted) {
     if (goneParts.length) {
@@ -351,9 +371,17 @@ async function saveOperation(b, event) {
       body: added.map(w => ({ pharmacy_id: w.pharmacy_id, pharmacy_name: w.pharmacy_name, email: w.email, pharmacy_cip: w.pharmacy_cip })) });
   }
   if (hit.length) await refreshOrderStatus(id, [...new Set(hit.map(r => r.pharmacy_id))].filter(pid => !gonePartIds.has(pid)));
+  // Commandes déjà passées hors colisage (règle ajoutée ou modifiée) : signalées ; la pharmacie devra
+  // les corriger avant de pouvoir modifier sa commande
+  const byPh = {};
+  for (const r of cur.qty) if (r.qty > 0 && !gonePartIds.has(r.pharmacy_id) && !goneSlotIds.has(r.slot_id)) ((byPh[r.pharmacy_id] ||= {})[r.line_id] ||= {})[r.slot_id] = r.qty;
+  const packWarnings = Object.entries(byPh).map(([pid, bySlot]) => {
+    const iss = packIssues(lines, bySlot);
+    return iss.length ? `${cur.participants.find(p => p.pharmacy_id === pid)?.pharmacy_name || pid} : ${iss.map(x => `${x.line.name} ${x.qty} u. (${x.text})`).join(", ")}` : null;
+  }).filter(Boolean);
   const pending = lines.filter(l => !l.odoo_product_id && l.price_gross > 0 && l.vat_rate != null).length;
   const productsJob = pending ? await startProductsJob(id, event, pending).catch(e => ({ error: e.message })) : null;
-  return { operation: saved, id, products_pending: pending, products_job: productsJob, product_warnings: productWarnings };
+  return { operation: saved, id, products_pending: pending, products_job: productsJob, product_warnings: productWarnings, pack_warnings: packWarnings };
 }
 
 // ── Bon de commande au laboratoire (Odoo, brouillon) ────────────────────

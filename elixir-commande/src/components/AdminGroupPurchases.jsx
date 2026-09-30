@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
-import { priceLine, ugLabel, invoiceDiscount, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceLine, ugLabel, invoiceDiscount, packIssues, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 import { Objective } from "./GroupOrders.jsx";
 
@@ -43,12 +43,17 @@ const parseUg = (s) => ugParts(s).map(p => { const parts = p.split("+"); return 
 const tiersToText = (t) => (t || []).map(x => `${x.min_qty}:${fr(x.pct)}`).join(" ; ");
 const ugToText = (t) => (t || []).map(x => `${x.min_qty}+${x.free_qty}`).join(", ");
 const withText = (l) => ({ ...l, price_gross: l.price_gross === "" || l.price_gross == null ? "" : fr(l.price_gross), _tiers: tiersToText(l.discount_tiers), _ug: ugToText(l.ug_tiers),
+  pack_size: l.pack_size == null ? "" : String(l.pack_size), pack_rule: l.pack_rule || "aucune",
   _extra: (Array.isArray(l.extra_discounts) ? l.extra_discounts : []).slice(0, 2).map(d => ({ mode: d.mode || "aucune", pct: d.pct ?? "", combine: d.combine === "additionnelle" ? "additionnelle" : "cascade", _tiers: tiersToText(d.tiers) })) });
 // remises 2 et 3 : texte d'édition → valeurs enregistrées
 const extraToSave = (x) => (x || []).filter(d => d.mode !== "aucune").map(d => ({ mode: d.mode, pct: d.mode === "unitaire" ? (toNum(d.pct) || 0) : 0,
   tiers: d.mode === "paliers" ? parseTiers(d._tiers) : [], combine: d.combine === "additionnelle" ? "additionnelle" : "cascade" }));
 // remise totale pour une quantité donnée (aperçu)
 const previewDiscount = (l, q) => invoiceDiscount({ discount_mode: l.discount_mode, discount_pct: toNum(l.discount_pct) || 0, discount_tiers: parseTiers(l._tiers), extra_discounts: extraToSave(l._extra) }, q).pct;
+// Colisage saisi : entier ≥ 1, ou vide
+const packNum = (v) => { const t = String(v ?? "").trim(); return t === "" ? null : /^\d+$/.test(t) && Number(t) >= 1 && Number(t) <= 100000 ? Number(t) : NaN; };
+const packBad = (l) => { const n = packNum(l.pack_size); return Number.isNaN(n) ? "colisage illisible (nombre entier d'unités, 100 000 au plus)" : l.pack_rule !== "aucune" && !(n >= 2) ? "colisage de 2 unités ou plus requis pour cette règle" : ""; };
+const okPack = (n) => n >= 1 && n <= 100000;   // colisage relevé par l'IA dans une offre
 const okDate = (d) => /^\d{4}-\d{2}-\d{2}$/.test(String(d ?? "")) && !isNaN(Date.parse(d + "T00:00:00Z"));
 const newSlotId = () => (crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36)).slice(0, 8);
 
@@ -170,6 +175,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       if (l.discount_mode === "paliers" && parseTiers(l._tiers).length !== tierParts(l._tiers).length) problems.push(`palier de remise illisible pour « ${label} » (format 10:5 ; 50:7,5)`);
       if (l.discount_mode === "unitaire" && !(toNum(l.discount_pct) >= 0 && toNum(l.discount_pct) < 100)) problems.push(`remise illisible pour « ${label} »`);
       if (parseUg(l._ug).length !== ugParts(l._ug).length) problems.push(`UG illisibles pour « ${label} » (format 12+2)`);
+      if (packBad(l)) problems.push(`${packBad(l)} pour « ${label} »`);
       (l._extra || []).forEach((d, k) => {
         if (d.mode === "unitaire" && !(toNum(d.pct) >= 0 && toNum(d.pct) < 100)) problems.push(`remise ${k + 2} illisible pour « ${label} »`);
         if (d.mode === "paliers" && (!tierParts(d._tiers).length || parseTiers(d._tiers).length !== tierParts(d._tiers).length)) problems.push(`paliers de la remise ${k + 2} illisibles pour « ${label} »`);
@@ -182,13 +188,15 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         operation: { ...form, objective_value: form.objective_value === "" ? null : toNum(form.objective_value), fee_pct: toNum(form.fee_pct), rfa_pct: toNum(form.rfa_pct) || 0, coop_amount: toNum(form.coop_amount) || 0 },
         lines: lines.map(l => ({ ...l, price_gross: String(l.price_gross ?? "").trim() === "" ? 0 : toNum(l.price_gross), discount_pct: toNum(l.discount_pct) || 0,
           weight: toNum(l.weight) || 1, vat_rate: String(l.vat_rate ?? "").trim() === "" ? null : toNum(l.vat_rate),
-          discount_tiers: parseTiers(l._tiers), ug_tiers: parseUg(l._ug), extra_discounts: extraToSave(l._extra) })),
+          discount_tiers: parseTiers(l._tiers), ug_tiers: parseUg(l._ug), extra_discounts: extraToSave(l._extra), pack_size: packNum(l.pack_size), pack_rule: l.pack_rule || "aucune" })),
         participants: parts.map(p => ({ id: p.pharmacy_id, name: p.pharmacy_name, email: p.email, cip: p.pharmacy_cip, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : toNum(p.fee_pct) })),
         loaded_updated_at: form.updated_at || null, loaded_line_ids: (detail?.lines || []).map(l => l.id) });
       setForm(x => ({ ...x, id: r.id || r.operation?.id, updated_at: r.operation?.updated_at || x.updated_at }));   // pas de doublon si le rechargement échoue
       const opId = r.id || r.operation?.id;
       flash?.(r.locked ? "✅ Notes enregistrées" : `✅ Opération enregistrée${r.products_pending ? ` — création de ${r.products_pending} fiche(s) produit dans Odoo en cours` : ""}`);
-      setNotice(r.product_warnings?.length || r.products_job?.error ? [...(r.product_warnings || []).map(w => `⚠️ ${w}`), ...(r.products_job?.error ? [`❌ ${r.products_job.error}`] : [])] : null);
+      const notes = [...(r.product_warnings || []).map(w => `⚠️ ${w}`), ...(r.products_job?.error ? [`❌ ${r.products_job.error}`] : []),
+        ...(r.pack_warnings?.length ? ["📦 Commandes déjà passées hors colisage (la pharmacie devra les corriger avant de modifier sa commande) :", ...r.pack_warnings.map(w => `• ${w}`)] : [])];
+      setNotice(notes.length ? notes : null);
       if (r.products_pending && !r.products_job?.error) setProdJob({ id: opId, status: "en_cours", done: 0, total: r.products_pending });
       setBusy("");
       await open(opId); loadList(); loadAccess();
@@ -410,7 +418,7 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
     try { p = (await call(null, { action: "lookup", cips: [c] })).products?.[c] || {}; setInfo(i => ({ ...i, [c]: p })); } catch {}
     setMsg(p.odoo_product_id ? "" : p.medipim ? `CIP ${c} absent d'Odoo : désignation et TVA reprises de Medipim ; la fiche Odoo sera créée à l'enregistrement (saisissez le prix brut).`
       : `CIP ${c} introuvable dans Odoo et Medipim : saisissez la désignation et la TVA ; la fiche Odoo sera créée à l'enregistrement.`);
-    setLines(ls => [...ls, withText({ cip: p.medipim?.cip13 && c.length === 7 ? p.medipim.cip13 : c, name: p.odoo_name || p.medipim?.name || "", odoo_product_id: p.odoo_product_id || null, price_gross: "", discount_mode: "aucune", discount_pct: 0, discount_tiers: [], ug_tiers: [], weight: 1, vat_rate: p.vat_rate ?? p.medipim?.vat ?? null, notes: "" })]);
+    setLines(ls => [...ls, withText({ cip: p.medipim?.cip13 && c.length === 7 ? p.medipim.cip13 : c, name: p.odoo_name || p.medipim?.name || "", odoo_product_id: p.odoo_product_id || null, price_gross: "", discount_mode: "aucune", discount_pct: 0, discount_tiers: [], ug_tiers: [], weight: 1, vat_rate: p.vat_rate ?? p.medipim?.vat ?? null, notes: "", pack_size: null, pack_rule: "aucune" })]);
     setCip("");
   };
   const refresh = async () => {
@@ -424,10 +432,10 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
         <div style={{ ...h3, margin: 0 }}>Produits ({lines.length})</div>
         {!locked && <button type="button" style={btn()} onClick={refresh}>↻ Stock et fiches Odoo</button>}
       </div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 offertes par tranche de 12 facturées, 5 par tranche de 24 (la pharmacie saisit 12, le site ajoute les 2 gratuites). « ×obj. » = poids dans l'objectif en unités (2 = compte double).</div>
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 offertes par tranche de 12 facturées, 5 par tranche de 24 (la pharmacie saisit 12, le site ajoute les 2 gratuites). « ×obj. » = poids dans l'objectif en unités (2 = compte double). Colisage : « Minimum 1 colis » ou « Colis entiers » s'imposent aux pharmacies à chaque livraison, sur les unités facturées saisies.</div>
       <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1050 }}>
-          <thead><tr><th style={th}>CIP</th><th style={th}>Désignation</th><th style={th}>Prix brut HT</th><th style={th}>Remise sur facture</th><th style={th}>UG</th><th style={th}>×obj.</th><th style={th}>TVA %</th><th style={th}>Odoo</th><th /></tr></thead>
+        <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1180 }}>
+          <thead><tr><th style={th}>CIP</th><th style={th}>Désignation</th><th style={th}>Prix brut HT</th><th style={th}>Remise sur facture</th><th style={th}>UG</th><th style={th}>Colisage</th><th style={th}>×obj.</th><th style={th}>TVA %</th><th style={th}>Odoo</th><th /></tr></thead>
           <tbody>
             {lines.map((l, i) => {
               const p = info[l.cip] || {};
@@ -474,6 +482,14 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
                   </td>
                   <td style={{ padding: 4, width: 140 }}><input style={{ ...CI, borderColor: badUg ? "#ef4444" : "#e2e8f0" }} value={l._ug} onChange={e => set(i, "_ug", e.target.value)} placeholder="12+2" />
                     {badUg ? <div style={{ fontSize: 10, color: "#b91c1c" }}>UG illisibles</div> : ugs.map((t, k) => <div key={k} style={{ fontSize: 10, color: "#64748b" }}>{ugLabel(t)}</div>)}</td>
+                  <td style={{ padding: 4, width: 128 }}>
+                    <input inputMode="numeric" style={{ ...CI, borderColor: packBad(l) ? "#ef4444" : "#e2e8f0" }} value={l.pack_size ?? ""} onChange={e => set(i, "pack_size", e.target.value)} placeholder="u. / colis" aria-label="Colisage (unités par colis)" />
+                    <select style={{ ...CI, marginTop: 4 }} value={l.pack_rule || "aucune"} onChange={e => set(i, "pack_rule", e.target.value)} aria-label="Règle de colisage">
+                      <option value="aucune">Indicatif</option><option value="minimum">Minimum 1 colis</option><option value="multiple">Colis entiers</option>
+                    </select>
+                    {packBad(l) ? <div style={{ fontSize: 10, color: "#b91c1c" }}>{packBad(l)}</div>
+                      : packNum(l.pack_size) >= 2 && l.pack_rule !== "aucune" && <div style={{ fontSize: 10, color: "#64748b" }}>{l.pack_rule === "multiple" ? `par ${packNum(l.pack_size)} à chaque livraison` : `au moins ${packNum(l.pack_size)} par livraison`}</div>}
+                  </td>
                   <td style={{ padding: 4, width: 56 }}><input inputMode="decimal" style={CI} value={l.weight} onChange={e => set(i, "weight", e.target.value)} aria-label="Poids dans l'objectif" /></td>
                   <td style={{ padding: 4, width: 64 }}><input inputMode="decimal" style={CI} value={l.vat_rate ?? ""} onChange={e => set(i, "vat_rate", e.target.value)} placeholder="auto" aria-label="TVA" /></td>
                   <td style={{ padding: "8px 4px", fontSize: 11, width: 120 }}>
@@ -532,6 +548,8 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
       return withText({ id: prev?.id, cip: l.cip, name: p.odoo_name || l.name || prev?.name || p.medipim?.name || "", odoo_product_id: p.odoo_product_id || prev?.odoo_product_id || null,
         price_gross: l.price_gross ?? prev?.price_gross ?? "", discount_mode: l.discount_mode, discount_pct: l.discount_pct || 0, discount_tiers: l.discount_tiers || [],
         extra_discounts: l.extra_discounts || [], ug_tiers: l.ug_tiers || [],
+        // colisage de l'offre s'il est indiqué, sinon celui déjà saisi
+        pack_size: okPack(l.pack_size) ? Math.round(l.pack_size) : prev?.pack_size ?? null, pack_rule: okPack(l.pack_size) ? (Math.round(l.pack_size) >= 2 ? l.pack_rule || "aucune" : "aucune") : prev?.pack_rule || "aucune",
         weight: prev?.weight ?? 1, vat_rate: p.vat_rate ?? prev?.vat_rate ?? p.medipim?.vat ?? null, notes: l.notes || prev?.notes || "" });
     });
     if (mode === "remplacer") {
@@ -591,7 +609,7 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
                       <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{l.cip}</td>
                       <td style={{ padding: "5px 8px" }}>{l.name}</td>
                       <td style={{ padding: "5px 8px", textAlign: "right" }}>{l.price_gross != null ? eur(l.price_gross) : "prix ?"}</td>
-                      <td style={{ padding: "5px 8px" }}>{l.discount_mode === "unitaire" ? `−${fr(l.discount_pct)} %` : l.discount_mode === "paliers" ? tiersToText(l.discount_tiers) : ""}{(l.extra_discounts || []).map((d, k) => ` ${d.combine === "additionnelle" ? "+" : "puis"} ${d.mode === "paliers" ? tiersToText(d.tiers) : `−${fr(d.pct || 0)} %`}`).join("")} {ugToText(l.ug_tiers) && `UG ${ugToText(l.ug_tiers)}`}</td>
+                      <td style={{ padding: "5px 8px" }}>{l.discount_mode === "unitaire" ? `−${fr(l.discount_pct)} %` : l.discount_mode === "paliers" ? tiersToText(l.discount_tiers) : ""}{(l.extra_discounts || []).map((d, k) => ` ${d.combine === "additionnelle" ? "+" : "puis"} ${d.mode === "paliers" ? tiersToText(d.tiers) : `−${fr(d.pct || 0)} %`}`).join("")} {ugToText(l.ug_tiers) && `UG ${ugToText(l.ug_tiers)}`}{okPack(l.pack_size) ? ` · colis de ${Math.round(l.pack_size)}${Math.round(l.pack_size) < 2 ? "" : l.pack_rule === "multiple" ? " (colis entiers)" : l.pack_rule === "minimum" ? " (minimum 1 colis)" : ""}` : ""}</td>
                       <td style={{ padding: "5px 8px", color: p.odoo_product_id ? "#16a34a" : "#b45309", fontWeight: 700 }}>{p.odoo_product_id ? (p.in_stock ? "✓ en stock" : "✓ précommande") : p.medipim ? "➕ fiche à créer (Medipim)" : "➕ fiche à créer"}</td>
                     </tr>
                   );
@@ -668,6 +686,9 @@ function Dashboard({ detail }) {
   const slots = [{ id: IMMEDIATE_SLOT, label: (op.delivery_slots || []).length ? "Immédiat" : "Quantité" }, ...(op.delivery_slots || []).map(x => ({ id: x.id, label: x.label ? `${x.label} (${dfr(x.date)})` : dfr(x.date) }))];
   const usedSlots = slots.filter(sl => detail.lines.some(l => (s.groupBySlot[l.id]?.[sl.id] || 0) > 0));
   const confirmed = s.pharmacies.filter(p => p.totals);
+  // commandes hors colisage (règle ajoutée ou modifiée après la commande)
+  const slotName = (id) => slots.find(x => x.id === id)?.label || id;
+  const packAlerts = confirmed.map(p => ({ p, iss: packIssues(detail.lines, p.bySlot) })).filter(x => x.iss.length);
   const tot = confirmed.reduce((a, p) => { for (const k of ["gross", "net", "fee", "totalHT", "rfaValue", "coop", "units"]) a[k] = (a[k] || 0) + (p.totals?.[k] || 0); return a; }, {});
   const exportXlsx = () => {
     const rows = [];
@@ -684,7 +705,7 @@ function Dashboard({ detail }) {
       const amount = op.tier_mode === "individuel"
         ? Object.values(s.perPharmacyTotal).reduce((a, qs) => a + (qs[l.id] || 0) * priceLine(noRfa, l, qs[l.id] || 0, qs[l.id] || 0).unitAfterInvoice, 0)
         : q * priceLine(noRfa, l, q, q).unitAfterInvoice;
-      return { CIP: l.cip, Produit: l.name, Facturees_groupe: q, UG_groupe: f, Recues_groupe: q + f,
+      return { CIP: l.cip, Produit: l.name, Colisage: l.pack_size || "", Facturees_groupe: q, UG_groupe: f, Recues_groupe: q + f,
         ...Object.fromEntries(slots.flatMap(sl => [[sl.label, s.groupBySlot[l.id]?.[sl.id] || 0], ...(Object.keys(s.groupFree || {}).length ? [[`${sl.label} UG`, s.groupFreeBySlot?.[l.id]?.[sl.id] || 0]] : [])])),
         Prix_brut_HT: gross, Remise_facture_labo_pct: q > 0 && gross > 0 ? round2((1 - amount / (q * gross)) * 100) : 0, Montant_labo_HT: round2(amount) };
     });
@@ -702,6 +723,10 @@ function Dashboard({ detail }) {
         <div style={{ ...h3, margin: 0 }}>Suivi — {confirmed.length}/{s.pharmacies.length} commande(s) · {tot.units || 0} unités · {eur(tot.totalHT)} HT</div>
         <button type="button" style={btn()} onClick={exportXlsx}>⬇ Excel</button>
       </div>
+      {packAlerts.length > 0 && <div style={{ fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+        <b>📦 {packAlerts.length} commande(s) hors colisage</b> — {op.status === "ouverte" ? "la pharmacie devra corriger avant de pouvoir modifier sa commande" : "opération fermée aux pharmacies : rouvrez-la pour qu'elles corrigent, ou voyez avec elles"} :
+        {packAlerts.map(({ p, iss }) => <div key={p.id}>• {p.name} : {iss.map(x => `${x.line.name} — ${slotName(x.slot_id)} : ${x.qty} u. (${x.text})`).join(" ; ")}</div>)}
+      </div>}
       {s.orphans > 0 && <div style={{ fontSize: 12, color: "#b45309", marginBottom: 10 }}>⚠️ {s.orphans} quantité(s) enregistrée(s) ne comptent plus (produit, date ou pharmacie retirés).</div>}
       {s.objective && <div style={{ marginBottom: 14 }}><Objective o={s.objective} /></div>}
       <div style={{ overflowX: "auto", marginBottom: 16 }}>
