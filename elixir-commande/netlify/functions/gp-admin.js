@@ -331,6 +331,7 @@ async function createPurchaseOrder(id) {
   const data = await loadOperation(id);
   if (!data) throw fail("Opération introuvable", 404);
   const { op, lines } = data;
+  if (op.po_odoo_id) throw fail(`Le bon de commande est déjà créé (Odoo #${op.po_odoo_id})`);
   if (op.status !== "cloturee") throw fail("Clôturez l'opération avant de créer le bon de commande");
   if (!op.supplier_odoo_id) throw fail("Choisissez d'abord le fournisseur Odoo de l'opération");
   const sumCheck = summarize(data);
@@ -356,7 +357,10 @@ async function createPurchaseOrder(id) {
       const gross = Number(l.price_gross) || 0;
       const net = labUnitNet(op, l, total, s.perPharmacyTotal);
       const discount = gross > 0 ? round2(Math.max(0, (1 - net / gross) * 100)) : 0;
-      for (const [slotId, q] of Object.entries(s.groupBySlot[l.id] || {})) {
+      // lignes dans l'ordre des livraisons : immédiat d'abord, puis les dates prévues
+      const bySlot = s.groupBySlot[l.id] || {};
+      for (const slotId of [IMMEDIATE_SLOT, ...(op.delivery_slots || []).map(x => x.id)]) {
+        const q = bySlot[slotId] || 0;
         if (!q) continue;
         const date = slotId === IMMEDIATE_SLOT ? (op.end_date || today()) : (slotOf(op, slotId)?.date || op.end_date || today());
         orderLines.push([0, 0, { product_id: l.odoo_product_id, name: lineLabel(l), product_qty: q, price_unit: gross, discount,
