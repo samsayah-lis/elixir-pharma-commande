@@ -2,7 +2,7 @@
 // POST { action: access | list | get | save, cip, email, ... }
 // Identité : jeton de connexion (Authorization) ou e-mail du compte pharmacie de la session.
 import { getCors } from "./cors.js";
-import { json, sb, sbAll, eq, productInfo, identifyPharmacy, loadOperation, summarize, saveOrder, countedQty, aggregate, today, fail, pharmacyKey } from "./_gp.js";
+import { json, sb, sbAll, eq, productInfo, identifyPharmacy, loadOperation, summarize, saveOrder, countedQty, aggregate, today, fail, pharmacyKey, slotIds } from "./_gp.js";
 import { priceOrder, objectiveContribution, objectiveIsAdditive, objectiveFrom, ugFor, allocateFree, freeBySlot, slotOrder } from "../../src/gp-pricing.js";
 import { sendMail, confirmationEmail, cancellationEmail, ADMIN_MAIL } from "./_gp-mail.js";
 import { rateLimit } from "./rate-limit.js";
@@ -26,9 +26,21 @@ export const handler = async (event) => {
       }
       case "list": {
         const ops = await myOperations(ph.id, VISIBLE);
-        const orders = ops.length ? await sbAll(`gp_orders?pharmacy_id=${eq(ph.id)}&select=operation_id,status,confirmed_at`) : [];
+        const inOps = `operation_id=in.(${ops.map(o => o.id).join(",")})`;
+        const [orders, qty, lines] = ops.length ? await Promise.all([
+          sbAll(`gp_orders?pharmacy_id=${eq(ph.id)}&${inOps}&select=operation_id,status,confirmed_at`),
+          sbAll(`gp_order_lines?pharmacy_id=${eq(ph.id)}&${inOps}&qty=gt.0&select=operation_id,line_id,slot_id,qty&order=operation_id.asc,line_id.asc,slot_id.asc`),
+          sbAll(`gp_lines?${inOps}&select=id,operation_id&order=id.asc`),
+        ]) : [[], [], []];
         const byOp = Object.fromEntries(orders.map(o => [o.operation_id, o]));
-        return json(cors, 200, { operations: ops.map(op => ({ ...publicOp(op), my_order: byOp[op.id] || null })) });
+        // Liste : unités commandées (produits et dates encore présents) et nombre de produits par opération
+        const lineOp = Object.fromEntries(lines.map(l => [l.id, l.operation_id]));
+        const slotsOf = Object.fromEntries(ops.map(op => [op.id, slotIds(op)]));
+        const units = {}, nProducts = {};
+        for (const l of lines) nProducts[l.operation_id] = (nProducts[l.operation_id] || 0) + 1;
+        for (const r of qty) if (lineOp[r.line_id] === r.operation_id && slotsOf[r.operation_id]?.has(r.slot_id)) units[r.operation_id] = (units[r.operation_id] || 0) + r.qty;
+        return json(cors, 200, { operations: ops.map(op => ({ ...publicOp(op), products_count: nProducts[op.id] || 0,
+          my_order: byOp[op.id] ? { ...byOp[op.id], units: units[op.id] || 0 } : null })) });
       }
       case "get": {
         const data = await loadForPharmacy(b.id, ph.id);

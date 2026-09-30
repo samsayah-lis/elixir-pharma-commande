@@ -50,14 +50,20 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
   }, [headers, pharmacyCip, pharmacyEmail]);
   const api = useCallback((body) => call("gp-pharmacy", body), [call]);
 
-  useEffect(() => {
-    api({ action: "list" }).then(j => {
-      const list = j.operations || [];
-      setOps(list);
-      const open = list.filter(o => o.phase === "ouverte");
-      if (open.length === 1 || list.length === 1) setSelId((open[0] || list[0]).id);
-    }).catch(e => { setOps([]); setMsg({ type: "err", text: e.message }); });
+  const listReq = useRef(0);
+  const loadList = useCallback((quiet) => {
+    const req = ++listReq.current;
+    api({ action: "list" }).then(j => { if (req === listReq.current) setOps(j.operations || []); })
+      .catch(e => { if (req !== listReq.current) return; if (!quiet) { setOps([]); setMsg({ type: "err", text: e.message }); } });
   }, [api]);
+  useEffect(() => { loadList(false); }, [loadList]);
+  // accessibilité : focus sur « retour » à l'ouverture, sur la ligne quittée au retour
+  const backRef = useRef(null), lastOpened = useRef(null);
+  useEffect(() => {
+    if (selId) { lastOpened.current = selId; backRef.current?.focus(); return; }
+    const id = lastOpened.current;
+    if (id) requestAnimationFrame(() => document.querySelector(`[data-gp-open="${id}"]`)?.focus());
+  }, [selId]);
 
   const loadView = useCallback((id) => {
     const req = ++reqRef.current;
@@ -73,7 +79,8 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
 
   const choose = (id) => {
     if (id === selId) return;
-    if (dirty && !window.confirm("Vos quantités non confirmées seront perdues. Changer d'opération ?")) return;
+    if (dirty && !window.confirm(id ? "Vos quantités non confirmées seront perdues. Changer d'opération ?" : "Vos quantités non confirmées seront perdues. Revenir à la liste ?")) return;
+    if (!id) { reqRef.current++; setDirty(false); setGrid({}); setImp(null); setMsg(null); setStale(false); setBusy(""); loadList(true); }
     setSelId(id);
   };
 
@@ -132,7 +139,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
       if (req !== reqRef.current) return;         // une autre opération a été ouverte entre-temps
       setView(r); setGrid(JSON.parse(JSON.stringify(r.my_order?.bySlot || {}))); setDirty(false); setImp(null);
       setSource({ source: "formulaire", file_name: null });
-      setOps(list => (list || []).map(o => o.id === op.id ? { ...o, my_order: { status: r.my_order.status } } : o));
+      setOps(list => (list || []).map(o => o.id === op.id ? { ...o, my_order: { status: r.my_order.status, confirmed_at: r.my_order.confirmed_at, units: r.total || 0 } } : o));
       const mailNote = r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
       if (r.cancelled) setMsg({ type: "info", text: `Votre commande est annulée : vous avez retiré toutes vos quantités.${mailNote}` });
       else if (!r.total) setMsg({ type: "info", text: "Votre commande est vide : rien n'a été enregistré." });
@@ -194,18 +201,15 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
         <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues.</div>
       </div>
 
-      {ops.length > 1 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          {ops.map(o => (
-            <button key={o.id} disabled={!!busy} aria-pressed={o.id === selId} onClick={() => choose(o.id)} style={{ ...btn(o.id === selId), padding: "8px 14px", textAlign: "left" }}>
-              {o.name}<span style={{ fontWeight: 500, opacity: 0.75, marginLeft: 6 }}>{o.my_order?.status === "confirmee" ? "✓ commandé" : PHASE[o.phase] || o.phase}</span>
-            </button>
-          ))}
+      {!selId && <OpsList ops={ops} onOpen={choose} />}
+      {selId && (
+        <div>
+          <button ref={backRef} style={{ ...btn(false), padding: "8px 14px" }} disabled={busy === "save" || busy === "import"} onClick={() => choose(null)}>← Toutes les opérations</button>
         </div>
       )}
 
-      {busy === "load" && <div style={card}>Chargement…</div>}
-      {op && calc && busy !== "load" && (<>
+      {selId && busy === "load" && <div style={card}>Chargement…</div>}
+      {selId && op && calc && busy !== "load" && (<>
         <div style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
@@ -356,6 +360,69 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
       {stale && <button style={{ ...btn(true), alignSelf: "flex-start" }} onClick={() => loadView(selId)}>↻ Recharger ma commande</button>}
     </div>
   );
+}
+
+// ── Liste des opérations : une ligne par opération (période, statut, participation) ──
+const sdate = (d, year) => dfr(d, { day: "numeric", month: "short", ...(year ? { year: "numeric" } : {}) });
+const period = (o) => o.start_date && o.end_date ? `du ${sdate(o.start_date, o.start_date.slice(0, 4) !== o.end_date.slice(0, 4))} au ${sdate(o.end_date, true)}`
+  : o.end_date ? `jusqu'au ${sdate(o.end_date, true)}` : o.start_date ? `à partir du ${sdate(o.start_date, true)}` : "—";
+const RANK = { ouverte: 0, a_venir: 1, cloturee: 2, commandee: 3, terminee: 4 };
+const PHASE_COLOR = { ouverte: ["#dcfce7", "#166534"], a_venir: ["#e0f2fe", "#075985"], cloturee: ["#fef3c7", "#92400e"], commandee: ["#e0e7ff", "#3730a3"], terminee: ["#f1f5f9", "#475569"] };
+const badge = ([bg, fg]) => ({ display: "inline-block", background: bg, color: fg, borderRadius: 99, padding: "3px 10px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" });
+
+function OpsList({ ops, onOpen }) {
+  const current = ops.filter(o => o.phase === "ouverte" || o.phase === "a_venir")
+    .sort((a, b) => RANK[a.phase] - RANK[b.phase] || String(a.phase === "a_venir" ? a.start_date : a.end_date || "9").localeCompare(String(b.phase === "a_venir" ? b.start_date : b.end_date || "9")));
+  const past = ops.filter(o => !(o.phase === "ouverte" || o.phase === "a_venir")).sort((a, b) => String(b.end_date || "").localeCompare(String(a.end_date || "")));
+  const cell = { padding: "12px 14px", verticalAlign: "middle" };
+  const th = { textAlign: "left", padding: "8px 14px", fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" };
+  const section = (title, list) => list.length > 0 && (
+    <div style={{ ...card, padding: 0, overflowX: "auto" }}>
+      <div style={{ ...h2, padding: "14px 14px 0" }}>{title} ({list.length})</div>
+      <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontSize: 14, tableLayout: "fixed" }}>
+        <colgroup><col style={{ width: "31%" }} /><col style={{ width: "19%" }} /><col style={{ width: "17%" }} /><col style={{ width: "18%" }} /><col style={{ width: "15%" }} /></colgroup>
+        <thead><tr><th style={th}>Opération</th><th style={th}>Période</th><th style={th}>Statut</th><th style={th}>Ma commande</th><th style={th} /></tr></thead>
+        <tbody>
+          {list.map(o => {
+            const mine = o.my_order?.status === "confirmee";
+            const open = o.phase === "ouverte";
+            const slots = (o.delivery_slots || []).filter(x => x.date).sort((a, b) => a.date.localeCompare(b.date));
+            const left = open && o.end_date ? daysLeft(o.end_date) : null;
+            return (
+              <tr key={o.id} onClick={() => onOpen(o.id)}
+                style={{ borderTop: "1px solid #eef2f5", cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.background = "#f8fafc")} onMouseLeave={e => (e.currentTarget.style.background = "")}>
+                <td style={cell}>
+                  <div style={{ fontWeight: 800, color: "#0f2d3d" }}>{o.name}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{[o.supplier_name, o.products_count ? `${o.products_count} produit${o.products_count > 1 ? "s" : ""}` : "",
+                    slots.length > 1 ? `${slots.length} livraisons à partir du ${sdate(slots[0].date)}` : slots.length === 1 ? `livraison le ${sdate(slots[0].date)}` : ""].filter(Boolean).join(" · ")}</div>
+                </td>
+                <td style={{ ...cell, color: "#334155" }}>{period(o)}</td>
+                <td style={cell}>
+                  <span style={badge(PHASE_COLOR[o.phase] || PHASE_COLOR.terminee)}>{PHASE[o.phase] || o.phase}</span>
+                  {left != null && <div style={{ fontSize: 12, color: left <= 2 ? "#b45309" : "#64748b", fontWeight: left <= 2 ? 700 : 500, marginTop: 3 }}>{left < 0 ? "Clôturée" : left === 0 ? "Clôture ce soir" : `Clôture dans ${left} jour${left > 1 ? "s" : ""}`}</div>}
+                  {o.phase === "a_venir" && o.start_date && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>Ouverture le {sdate(o.start_date)}</div>}
+                </td>
+                <td style={cell}>
+                  {mine ? (<>
+                    <span style={badge(["#dcfce7", "#166534"])}>✓ {open || o.phase === "a_venir" ? "Commandé" : "Participé"}{o.my_order.units ? ` · ${o.my_order.units} u.` : ""}</span>
+                    {o.my_order.confirmed_at && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>le {dts(o.my_order.confirmed_at)}</div>}
+                  </>) : open ? <span style={badge(["#fff7ed", "#c2410c"])}>Pas encore commandé</span>
+                    : o.phase === "a_venir" ? <span style={{ fontSize: 13, color: "#94a3b8" }}>—</span>
+                    : <span style={badge(["#f1f5f9", "#64748b"])}>Non participé</span>}
+                </td>
+                <td style={{ ...cell, textAlign: "right", whiteSpace: "nowrap" }}>
+                  <button type="button" data-gp-open={o.id} onClick={e => { e.stopPropagation(); onOpen(o.id); }} aria-label={`${open ? (mine ? "Modifier ma commande" : "Commander") : "Voir"} : ${o.name}`}
+                    style={open ? { ...btn(!mine), padding: "7px 12px" } : { border: "none", background: "none", fontSize: 13, fontWeight: 700, color: "#0f2d3d", cursor: "pointer", padding: "7px 4px", fontFamily: "inherit" }}>
+                    {open ? (mine ? "Modifier" : "Commander") : "Voir"} →</button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+  return (<>{section("En cours", current)}{section("Opérations passées", past)}</>);
 }
 
 function Tot({ label, v, strong }) {
