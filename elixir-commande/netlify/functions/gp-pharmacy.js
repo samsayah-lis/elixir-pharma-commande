@@ -3,7 +3,7 @@
 // Identité : jeton de connexion (Authorization) ou e-mail du compte pharmacie de la session.
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, eq, productInfo, identifyPharmacy, loadOperation, summarize, saveOrder, countedQty, aggregate, today, fail } from "./_gp.js";
-import { priceOrder, objectiveContribution, objectiveIsAdditive, objectiveFrom } from "../../src/gp-pricing.js";
+import { priceOrder, objectiveContribution, objectiveIsAdditive, objectiveFrom, ugFor, allocateFree, freeBySlot, orderKey, slotOrder } from "../../src/gp-pricing.js";
 import { sendMail, confirmationEmail, cancellationEmail, ADMIN_MAIL } from "./_gp-mail.js";
 import { rateLimit } from "./rate-limit.js";
 
@@ -51,7 +51,7 @@ export const handler = async (event) => {
           const owed = !prevOrder?.email_sent_at || (prevOrder.confirmed_at && lastSent < Date.parse(prevOrder.confirmed_at));
           if (r.changed || owed || (b.resend && Date.now() - lastSent > RESEND_DELAY)) {
             const stockByLine = Object.fromEntries(fresh.lines.map(l => [l.id, !!v.products[l.cip]?.in_stock]));
-            const m = confirmationEmail({ op: fresh.op, summary: v.my_summary, bySlot: v.my_order.bySlot, stockByLine });
+            const m = confirmationEmail({ op: fresh.op, summary: v.my_summary, bySlot: v.my_order.bySlot, freeBySlot: v.my_order.freeBySlot, stockByLine });
             mail = await sendMail({ to: ph.email, subject: m.subject, html: m.html });
             if (mail.sent) await sb(`gp_orders?operation_id=eq.${data.op.id}&pharmacy_id=${eq(ph.id)}`, { method: "PATCH", body: { email_sent_at: new Date().toISOString() } });
             if (r.changed || owed) await sendMail({ to: ADMIN_MAIL, subject: `[Commande groupée] ${ph.name} — ${fresh.op.name}`,
@@ -101,7 +101,6 @@ const publicOp = (op) => ({ id: op.id, name: op.name, supplier_name: op.supplier
 
 async function view(data, ph) {
   const { op, lines } = data;
-  const s = summarize(data);
   const me = data.participants.find(p => p.pharmacy_id === ph.id);
   const order = data.orders.find(o => o.pharmacy_id === ph.id) || null;
   const bySlot = {};
@@ -129,7 +128,20 @@ async function view(data, ph) {
   const noCoop = priceOrder({ ...op, coop_mode: "aucune" }, lines, mine, group, { feePct });
   const groupNet = collectif ? lines.reduce((sum, l) => sum + priceOrder({ ...op, coop_mode: "aucune" }, lines, { [l.id]: group[l.id] || 0 }, group).totals.net, 0)
     : (othersNet || 0) + noCoop.totals.net;
-  const summary = priceOrder(op, lines, mine, group, { groupNetAfterRfa: groupNet, feePct });
+  // Unités gratuites de la pharmacie (répartition exacte avec les autres, clés anonymes) ;
+  // l'écran refait le même calcul en direct à partir de ug_others et my_key.
+  const myKey = orderKey(op.id, ph.id), ugOthers = {}, myFree = {};
+  for (const l of lines) {
+    if (!(l.ug_tiers || []).length) continue;
+    const q = mine[l.id] || 0;
+    if (!collectif) { myFree[l.id] = ugFor(l, q).free; continue; }
+    const byKey = {};
+    for (const [pid, qs] of Object.entries(others.perPharmacyTotal)) if ((qs[l.id] || 0) > 0) byKey[orderKey(op.id, pid)] = qs[l.id];
+    ugOthers[l.id] = byKey;
+    myFree[l.id] = q > 0 ? (allocateFree(op, l, { ...byKey, [myKey]: q })[myKey] || 0) : 0;
+  }
+  const myFreeSlots = Object.fromEntries(Object.entries(myFree).filter(([, f]) => f > 0).map(([lid, f]) => [lid, freeBySlot(f, bySlot[lid] || {}, slotOrder(op))]));
+  const summary = priceOrder(op, lines, mine, group, { free: myFree, groupNetAfterRfa: groupNet, feePct });
   const products = await productInfo(lines.map(l => l.cip)).catch(() => ({}));
   return {
     operation: publicOp(op),
@@ -137,11 +149,13 @@ async function view(data, ph) {
       discount_tiers: l.discount_tiers, ug_tiers: l.ug_tiers, weight: l.weight, vat_rate: l.vat_rate, notes: l.notes })),
     products: Object.fromEntries(Object.entries(products).map(([cip, p]) => [cip, { in_stock: !!p.in_stock }])),
     group_others: collectif ? others.group : {},
+    ug_others: ugOthers,
+    my_key: myKey,
     others_net: othersNet,
     objective_others: objectiveOthers,
     participants_count: data.participants.length,
     fee_pct: feePct,
-    my_order: { status: order?.status || null, confirmed_at: order?.confirmed_at || null, email_sent_at: order?.email_sent_at || null, updated_at: order?.updated_at || null, bySlot },
+    my_order: { status: order?.status || null, confirmed_at: order?.confirmed_at || null, email_sent_at: order?.email_sent_at || null, updated_at: order?.updated_at || null, bySlot, freeBySlot: myFreeSlots },
     my_summary: summary,
     pharmacy: { name: ph.name, email: ph.email },
   };

@@ -8,7 +8,7 @@
 // [CG-xxxxxxxx-date] dans la référence client, retrouvé si un essai a été coupé.
 import { isCronAuthorized } from "./auth.js";
 import { sb, sbAll, eq, odoo, loadOperation, summarize, COMPANY_ID } from "./_gp.js";
-import { priceOrder, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceOrder, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvSet } from "./_kv.js";
 
 const lineLabel = (l) => l.cip ? `[${l.cip}] ${l.name}` : l.name;
@@ -52,16 +52,17 @@ export const handler = async (event) => {
           ["company_id", "=", COMPANY_ID], ["state", "!=", "cancel"]]], { fields: ["id", "name", "amount_untaxed"], limit: 1 });
         let so = found;
         if (!so) {
-          const sum = priceOrder(op, lines, s.perPharmacyTotal[p.id] || {}, s.group, { groupNetAfterRfa: s.groupNetAfterRfa, feePct: p.fee_pct ?? op.fee_pct });
+          const sum = priceOrder(op, lines, s.perPharmacyTotal[p.id] || {}, s.group, { free: s.free[p.id] || {}, groupNetAfterRfa: s.groupNetAfterRfa, feePct: p.fee_pct ?? op.fee_pct });
           const orderLines = [], expected = [];
           for (const r of sum.rows) {
-            const q = p.bySlot[r.line.id]?.[slotId] || 0;
-            if (!q) continue;
+            const billed = p.bySlot[r.line.id]?.[slotId] || 0;
+            if (!billed) continue;
             if (!r.line.odoo_product_id) throw new Error(`produit ${r.line.cip} sans fiche Odoo`);
-            let price = round2(r.gross), discount = r.gross > 0 ? round2((1 - r.unitWithFee / r.gross) * 100) : 0;
-            if (discount < 0) { price = round2(r.unitWithFee); discount = 0; }   // frais > remises : pas de remise négative
-            orderLines.push([0, 0, { product_id: r.line.odoo_product_id, name: lineLabel(r.line), product_uom_qty: q, price_unit: price, discount }]);
-            expected.push({ price, discount });
+            // unités reçues (facturées + gratuites de cette livraison) au prix brut, remise = montant dû
+            const free = p.freeBySlot?.[r.line.id]?.[slotId] || 0;
+            const l = odooLine(r.gross, billed + free, billed * r.unitWithFee);
+            orderLines.push([0, 0, { product_id: r.line.odoo_product_id, name: lineLabel(r.line) + (free ? ` (dont ${free} UG)` : ""), product_uom_qty: l.qty, price_unit: l.price_unit, discount: l.discount }]);
+            expected.push({ price: l.price_unit, discount: l.discount });
           }
           if (!orderLines.length) { report.skipped++; await sb(`gp_triggers?operation_id=eq.${id}&slot_id=${eq(slotId)}&pharmacy_id=${eq(p.id)}&odoo_sale_order_id=is.null`, { method: "DELETE" }); continue; }
           const soId = await odoo("sale.order", "create", [{ partner_id: partnerId, company_id: COMPANY_ID,

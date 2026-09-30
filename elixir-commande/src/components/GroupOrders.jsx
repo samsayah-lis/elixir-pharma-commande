@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
@@ -98,11 +98,20 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
     const noCoop = (qty) => priceOrder({ ...op, coop_mode: "aucune" }, lines, qty, group, { feePct: view.fee_pct }).totals.net;
     // Base de répartition de la coopération « montant global » : tout le groupe, après RFA
     const groupNet = collectif ? lines.reduce((s, l) => s + noCoop({ [l.id]: group[l.id] || 0 }), 0) : (view.others_net || 0) + noCoop(mine);
-    const summary = priceOrder(op, lines, mine, group, { groupNetAfterRfa: groupNet, feePct: view.fee_pct });
+    // Unités gratuites : individuel = tranches de la pharmacie ; collectif = part des UG du groupe
+    // (répartition au plus fort reste avec les autres pharmacies, clés anonymes, comme au serveur)
+    const free = {}, freeSlots = {};
+    for (const l of lines) {
+      if (!(l.ug_tiers || []).length) continue;
+      const q = mine[l.id] || 0;
+      free[l.id] = !q ? 0 : !collectif ? ugFor(l, q).free : (allocateFree(op, l, { ...(view.ug_others?.[l.id] || {}), [view.my_key]: q })[view.my_key] || 0);
+      if (free[l.id]) freeSlots[l.id] = freeBySlot(free[l.id], grid[l.id] || {}, slotOrder(op));
+    }
+    const summary = priceOrder(op, lines, mine, group, { free, groupNetAfterRfa: groupNet, feePct: view.fee_pct });
     const objective = objectiveIsAdditive(op)
       ? (view.objective_others != null ? objectiveFrom(op, view.objective_others + objectiveContribution(op, lines, mine)) : null)
       : objectiveProgress(op, lines, group);
-    return { mine, group, summary, objective };
+    return { mine, group, summary, objective, freeSlots };
   }, [view, grid, lines, op]);
 
   const setQty = (lineId, slotId, v) => {
@@ -213,7 +222,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
           </div>
           {op.conditions_text && <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "8px 12px", whiteSpace: "pre-wrap" }}>{op.conditions_text}</div>}
           {calc.objective && <Objective o={calc.objective} />}
-          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Les quantités sont des <b>unités reçues, gratuités comprises</b> : pour « 12 + 2 UG », saisissez 14.</div>}
+          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).</div>}
         </div>
 
         <div style={{ ...card, padding: 0, overflowX: "auto" }}>
@@ -242,6 +251,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                       <div style={{ fontWeight: 700, color: "#0f2d3d" }}>{l.name}</div>
                       <div style={{ fontSize: 11, color: "#64748b" }}>CIP {l.cip} · {stock ? <span style={{ color: "#166534", fontWeight: 700 }}>En stock</span> : <span style={{ color: "#b45309", fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
                       {l.notes && <div style={{ fontSize: 11, color: "#64748b" }}>{l.notes}</div>}
+                      {row?.free > 0 && <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues</div>}
                     </td>
                     <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>{eur(l.price_gross)}</td>
                     <td style={{ padding: "10px 8px", maxWidth: 240 }}>
@@ -249,7 +259,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                       {tiers.map((t, i) => <span key={i} style={chip(p.invoiceTier && Number(t.min_qty) === p.invoiceTier.min_qty)}>dès {t.min_qty} : −{pct(t.pct)}</span>)}
                       {(l.ug_tiers || []).map((t, i) => <span key={"u" + i} style={chip(p.ug.tier && Number(t.min_qty) === p.ug.tier.min_qty)}>{t.min_qty} + {t.free_qty} UG</span>)}
                       {p.nextInvoiceTier && <div style={{ fontSize: 11, color: "#0369a1", marginTop: 2 }}>Encore {p.nextInvoiceTier.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → −{pct(p.nextInvoiceTier.pct)}</div>}
-                      {!p.nextInvoiceTier && p.ug.next && <div style={{ fontSize: 11, color: "#0369a1", marginTop: 2 }}>Encore {p.ug.next.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → {p.ug.next.min_qty} + {p.ug.next.free_qty} UG</div>}
+                      {p.ug.next && <div style={{ fontSize: 11, color: "#15803d", marginTop: 2 }}>Encore {p.ug.next.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → +{p.ug.next.gain} UG{op.tier_mode !== "individuel" ? " pour le groupe" : ""}</div>}
                       {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: "#94a3b8" }}>Groupe : {calc.group[l.id] || 0} u.</div>}
                     </td>
                     {slots.map(s => {
@@ -262,6 +272,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                           {show ? (<>
                             <input value={v} inputMode="numeric" disabled={!editable || busy === "import" || busy === "save"} onChange={e => setQty(l.id, s.id, e.target.value)} placeholder="0" aria-label={`${l.name} — ${s.label}`}
                               style={{ width: 64, border: `1.5px solid ${allowed ? "#d6dde3" : "#f59e0b"}`, borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
+                            {calc.freeSlots[l.id]?.[s.id] > 0 && <div style={{ fontSize: 11, color: "#15803d", fontWeight: 700 }}>+{calc.freeSlots[l.id][s.id]} UG</div>}
                             {!allowed && <div style={{ fontSize: 10, color: "#b45309" }}>plus en stock</div>}
                           </>) : <span style={{ color: "#cbd5e1" }}>—</span>}
                         </td>
@@ -269,6 +280,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
                     })}
                     <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
                       <b>{eur(row ? row.unitNet : p.unitAfterRfa)}</b>
+                      {row?.free > 0 && <div style={{ fontSize: 11, color: "#15803d" }}>soit {eur(row.receivedUnitNet)} / u. reçue</div>}
                       {netPct > 0.05 && <div style={{ fontSize: 11, color: "#166534" }}>−{pct(netPct)}</div>}
                     </td>
                     <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 700 }}>{row ? eur(row.totalNet) : "—"}</td>
@@ -292,13 +304,13 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
         <div style={{ ...card, display: "flex", gap: 24, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
           <table style={{ fontSize: 13, borderCollapse: "collapse", minWidth: 280 }}>
             <tbody>
-              <Tot label={`Montant brut HT (${t.units} u.)`} v={eur(t.gross)} />
+              <Tot label={`Montant brut HT (${t.units} u. facturées)`} v={eur(t.gross)} />
               {t.invoiceDiscount > 0.004 && <Tot label="Remises sur facture" v={"− " + eur(t.invoiceDiscount)} />}
-              {t.ugValue > 0.004 && <Tot label="Unités gratuites (converties en remise)" v={"− " + eur(t.ugValue)} />}
               {t.rfaValue > 0.004 && <Tot label="Remise de fin d'année" v={"− " + eur(t.rfaValue)} />}
               {t.coop > 0.004 && <Tot label="Coopération commerciale" v={"− " + eur(t.coop)} />}
               <Tot label={`Frais de traitement (${pct(t.feePct)})`} v={"+ " + eur(t.fee)} />
               <Tot label="Total HT" v={eur(t.totalHT)} strong />
+              {t.freeUnits > 0 && <tr><td colSpan={2} style={{ padding: "4px 0", color: "#15803d", fontSize: 12, fontWeight: 700 }}>+ {t.freeUnits} unités gratuites (valeur {eur(t.ugValue)}) : {t.receivedUnits} unités reçues</td></tr>}
               {t.vat > 0 && <Tot label="TVA" v={eur(t.vat)} />}
               {t.vat > 0 && <Tot label="Total TTC" v={eur(t.totalTTC)} />}
             </tbody>

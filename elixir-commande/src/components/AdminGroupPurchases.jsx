@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
-import { priceLine, labUnitNet, ugLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceLine, ugLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
 import { Objective } from "./GroupOrders.jsx";
 
@@ -368,7 +368,7 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
         <div style={{ ...h3, margin: 0 }}>Produits ({lines.length})</div>
         {!locked && <button type="button" style={btn()} onClick={refresh}>↻ Stock et fiches Odoo</button>}
       </div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 gratuites pour 12 facturées, 5 pour 24. « ×obj. » = poids dans l'objectif en unités (2 = compte double).</div>
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 offertes par tranche de 12 facturées, 5 par tranche de 24 (la pharmacie saisit 12, le site ajoute les 2 gratuites). « ×obj. » = poids dans l'objectif en unités (2 = compte double).</div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1050 }}>
           <thead><tr><th style={th}>CIP</th><th style={th}>Désignation</th><th style={th}>Prix brut HT</th><th style={th}>Remise sur facture</th><th style={th}>UG</th><th style={th}>×obj.</th><th style={th}>TVA %</th><th style={th}>Odoo</th><th /></tr></thead>
@@ -591,13 +591,20 @@ function Dashboard({ detail }) {
     const rows = [];
     for (const p of confirmed) for (const l of detail.lines) for (const sl of slots) {
       const q = p.bySlot[l.id]?.[sl.id] || 0;
-      if (q) rows.push({ Pharmacie: p.name, Fiche_Odoo: p.id, CIP_pharmacie: p.cip || "", Livraison: sl.label, CIP: l.cip, Produit: l.name, Quantite: q, Prix_brut_HT: Number(l.price_gross) });
+      const f = p.freeBySlot?.[l.id]?.[sl.id] || 0;
+      if (q) rows.push({ Pharmacie: p.name, Fiche_Odoo: p.id, CIP_pharmacie: p.cip || "", Livraison: sl.label, CIP: l.cip, Produit: l.name, Facturees: q, UG: f, Recues: q + f, Prix_brut_HT: Number(l.price_gross) });
     }
-    const perPh = confirmed.map(p => ({ Pharmacie: p.name, Fiche_Odoo: p.id, Unites: p.totals.units, Brut_HT: round2(p.totals.gross), Net_HT: round2(p.totals.net), RFA: round2(p.totals.rfaValue), Cooperation: round2(p.totals.coop), Frais: round2(p.totals.fee), Total_HT: round2(p.totals.totalHT), Confirmee_le: p.order?.confirmed_at?.slice(0, 10) }));
+    const perPh = confirmed.map(p => ({ Pharmacie: p.name, Fiche_Odoo: p.id, Unites_facturees: p.totals.units, UG: p.totals.freeUnits, Unites_recues: p.totals.receivedUnits, Brut_HT: round2(p.totals.gross), Net_HT: round2(p.totals.net), RFA: round2(p.totals.rfaValue), Cooperation: round2(p.totals.coop), Frais: round2(p.totals.fee), Total_HT: round2(p.totals.totalHT), Confirmee_le: p.order?.confirmed_at?.slice(0, 10) }));
     const perLine = detail.lines.map(l => {
-      const q = s.group[l.id] || 0, net = labUnitNet(op, l, q, s.perPharmacyTotal), gross = Number(l.price_gross) || 0;
-      return { CIP: l.cip, Produit: l.name, Quantite_groupe: q, ...Object.fromEntries(slots.map(sl => [sl.label, s.groupBySlot[l.id]?.[sl.id] || 0])),
-        Prix_brut_HT: gross, Remise_labo_pct: gross > 0 ? round2((1 - net / gross) * 100) : 0, Prix_net_labo: round2(net), Montant_labo_HT: round2(net * q) };
+      const q = s.group[l.id] || 0, f = s.groupFree?.[l.id] || 0, gross = Number(l.price_gross) || 0;
+      // montant labo = unités facturées × prix après remise sur facture (palier du groupe, ou de chaque pharmacie)
+      const noRfa = { ...op, rfa_pct: 0 };
+      const amount = op.tier_mode === "individuel"
+        ? Object.values(s.perPharmacyTotal).reduce((a, qs) => a + (qs[l.id] || 0) * priceLine(noRfa, l, qs[l.id] || 0, qs[l.id] || 0).unitAfterInvoice, 0)
+        : q * priceLine(noRfa, l, q, q).unitAfterInvoice;
+      return { CIP: l.cip, Produit: l.name, Facturees_groupe: q, UG_groupe: f, Recues_groupe: q + f,
+        ...Object.fromEntries(slots.map(sl => [sl.label, (s.groupBySlot[l.id]?.[sl.id] || 0) + (s.groupFreeBySlot?.[l.id]?.[sl.id] ? ` (+${s.groupFreeBySlot[l.id][sl.id]} UG)` : "")])),
+        Prix_brut_HT: gross, Remise_facture_labo_pct: q > 0 && gross > 0 ? round2((1 - amount / (q * gross)) * 100) : 0, Montant_labo_HT: round2(amount) };
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(perLine), "Par produit");
@@ -617,7 +624,7 @@ function Dashboard({ detail }) {
       {s.objective && <div style={{ marginBottom: 14 }}><Objective o={s.objective} /></div>}
       <div style={{ overflowX: "auto", marginBottom: 16 }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
-          <thead><tr><th style={th}>Produit</th>{usedSlots.map(sl => <th key={sl.id} style={{ ...th, textAlign: "right" }}>{sl.label}</th>)}<th style={{ ...th, textAlign: "right" }}>Total</th><th style={th}>Palier atteint</th><th style={th}>Prochain palier</th></tr></thead>
+          <thead><tr><th style={th}>Produit</th>{usedSlots.map(sl => <th key={sl.id} style={{ ...th, textAlign: "right" }}>{sl.label}</th>)}<th style={{ ...th, textAlign: "right" }}>Facturées</th><th style={{ ...th, textAlign: "right" }}>UG</th><th style={th}>Palier atteint</th><th style={th}>Prochain palier</th></tr></thead>
           <tbody>
             {detail.lines.map(l => {
               const q = s.group[l.id] || 0;
@@ -625,10 +632,11 @@ function Dashboard({ detail }) {
               return (
                 <tr key={l.id}>
                   <td style={td}>{l.name}</td>
-                  {usedSlots.map(sl => <td key={sl.id} style={{ ...td, textAlign: "right" }}>{s.groupBySlot[l.id]?.[sl.id] || ""}</td>)}
+                  {usedSlots.map(sl => <td key={sl.id} style={{ ...td, textAlign: "right" }}>{s.groupBySlot[l.id]?.[sl.id] || ""}{s.groupFreeBySlot?.[l.id]?.[sl.id] ? <span style={{ color: "#15803d" }}> +{s.groupFreeBySlot[l.id][sl.id]}</span> : null}</td>)}
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{q}</td>
+                  <td style={{ ...td, textAlign: "right", color: "#15803d", fontWeight: 700 }}>{s.groupFree?.[l.id] ? `+${s.groupFree[l.id]}` : ""}</td>
                   <td style={td}>{op.tier_mode === "individuel" ? "par pharmacie" : [p.invoicePct ? `−${fr(p.invoicePct)} %` : "", p.ug.free ? `${p.ug.free} UG` : ""].filter(Boolean).join(" · ") || "—"}</td>
-                  <td style={{ ...td, color: "#0369a1" }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → −${fr(p.nextInvoiceTier.pct)} %` : p.ug.next ? `encore ${p.ug.next.missing} → ${p.ug.next.min_qty}+${p.ug.next.free_qty}` : ""}</td>
+                  <td style={{ ...td, color: "#0369a1" }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → −${fr(p.nextInvoiceTier.pct)} %` : p.ug.next ? `encore ${p.ug.next.missing} → +${p.ug.next.gain} UG` : ""}</td>
                 </tr>
               );
             })}
@@ -644,7 +652,7 @@ function Dashboard({ detail }) {
                 <td style={td}><b>{p.name}</b></td>
                 <td style={td}>{p.totals ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ {dfr(p.order.confirmed_at)}{p.order.email_sent_at ? " ✉️" : ""}</span> : <span style={{ color: "#94a3b8" }}>pas encore</span>}</td>
                 {p.totals ? (<>
-                  <td style={{ ...td, textAlign: "right" }}>{p.totals.units}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.gross)}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{p.totals.units}{p.totals.freeUnits ? <span style={{ color: "#15803d" }}> +{p.totals.freeUnits} UG</span> : null}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.gross)}</td>
                   <td style={{ ...td, textAlign: "right" }}>{p.totals.rfaValue ? eur(p.totals.rfaValue) : ""}</td><td style={{ ...td, textAlign: "right" }}>{p.totals.coop ? eur(p.totals.coop) : ""}</td>
                   <td style={{ ...td, textAlign: "right" }}>{eur(p.totals.net)}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.fee)}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{eur(p.totals.totalHT)}</td>

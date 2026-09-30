@@ -194,7 +194,7 @@ export function matchLgo(out, lines, slots = []) {
   for (const r of out?.rows || []) {
     const billed = Number.isFinite(r.qty) ? Math.max(0, Math.round(r.qty)) : 0;
     const free = Number.isFinite(r.free_qty) ? Math.max(0, Math.round(r.free_qty)) : 0;
-    const q = billed + free;   // quantités de l'opération = unités reçues, gratuites comprises
+    const q = billed;          // quantités de l'opération = unités facturées ; le site calcule lui-même les UG de l'offre
     freeTotal += free;
     const d = normCode(r.cip);
     const name = oneLine(r.name) || (d ? `code ${d}` : "produit sans nom");
@@ -222,7 +222,7 @@ export function matchLgo(out, lines, slots = []) {
     }
   }
   for (const l of L) if (seen[l.id] > 1 && Object.keys(grid[l.id] || {}).length < seen[l.id]) warnings.push(`« ${l.name} » apparaît ${seen[l.id]} fois pour une même date de livraison : quantités additionnées.`);
-  if (freeTotal > 0) warnings.push(`${freeTotal} unité(s) gratuite(s) du bon ajoutée(s) aux quantités : dans l'opération, les quantités sont des unités reçues, gratuités comprises.`);
+  if (freeTotal > 0) warnings.push(`${freeTotal} unité(s) gratuite(s) indiquée(s) sur le bon non reprise(s) : le site ajoute automatiquement les gratuités prévues par l'offre.`);
   return { qty, grid, unmatched: [...unmatchedBy.values()], warnings };
 }
 

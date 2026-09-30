@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
-import { labUnitNet, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceLine, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvGet, kvSet } from "./_kv.js";
 
 // Le statut ne change que par l'action « status » (ou la création du bon labo), jamais par « save »
@@ -355,15 +355,20 @@ async function createPurchaseOrder(id) {
       if (!total) continue;
       if (!l.odoo_product_id) { skipped.push(l.cip); continue; }
       const gross = Number(l.price_gross) || 0;
-      const net = labUnitNet(op, l, total, s.perPharmacyTotal);
-      const discount = gross > 0 ? round2(Math.max(0, (1 - net / gross) * 100)) : 0;
+      const noRfa = { ...op, rfa_pct: 0 };
       // lignes dans l'ordre des livraisons : immédiat d'abord, puis les dates prévues
-      const bySlot = s.groupBySlot[l.id] || {};
       for (const slotId of [IMMEDIATE_SLOT, ...(op.delivery_slots || []).map(x => x.id)]) {
-        const q = bySlot[slotId] || 0;
-        if (!q) continue;
+        const billed = s.groupBySlot[l.id]?.[slotId] || 0;
+        if (!billed) continue;
+        const free = s.groupFreeBySlot[l.id]?.[slotId] || 0;
+        // montant labo = unités facturées × prix après remise sur facture (palier du groupe, ou de chaque pharmacie)
+        let amount = 0;
+        if (op.tier_mode === "individuel") {
+          for (const [pid, qs] of Object.entries(s.perPharmacyTotal)) { const b = s.perPharmacy[pid]?.[l.id]?.[slotId] || 0; if (b) amount += b * priceLine(noRfa, l, qs[l.id], qs[l.id]).unitAfterInvoice; }
+        } else amount = billed * priceLine(noRfa, l, total, total).unitAfterInvoice;
+        const ol = odooLine(gross, billed + free, amount);
         const date = slotId === IMMEDIATE_SLOT ? (op.end_date || today()) : (slotOf(op, slotId)?.date || op.end_date || today());
-        orderLines.push([0, 0, { product_id: l.odoo_product_id, name: lineLabel(l), product_qty: q, price_unit: gross, discount,
+        orderLines.push([0, 0, { product_id: l.odoo_product_id, name: lineLabel(l) + (free ? ` (dont ${free} UG)` : ""), product_qty: ol.qty, price_unit: ol.price_unit, discount: ol.discount,
           date_planned: `${date} 08:00:00`, ...(uomOf[l.odoo_product_id] ? { product_uom: uomOf[l.odoo_product_id] } : {}) }]);
       }
     }

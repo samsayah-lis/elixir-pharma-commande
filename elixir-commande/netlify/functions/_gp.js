@@ -2,7 +2,7 @@
 // Une pharmacie est identifiée par sa fiche client Odoo Elixir (fiche commerciale,
 // colonne pharmacy_id), jamais par son CIP : la plupart des fiches ont un CIP vide ou « 0 ».
 import { verifyTokenAsync } from "./auth.js";
-import { priceOrder, objectiveProgress, parisToday, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, orderKey, slotOrder, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 
 export { odoo, COMPANY_ID };
@@ -125,26 +125,51 @@ export function countedQty(data) {
   return { counted, orphans, confirmed };
 }
 
+// Unités gratuites : répartition entre pharmacies (clé anonyme, même calcul qu'à l'écran),
+// puis entre les dates de livraison de chaque pharmacie.
+// perPharmacyTotal : { id: { lineId: facturées } } ; perPharmacy : { id: { lineId: { slot: facturées } } }
+export function allocateAllFree(op, lines, perPharmacyTotal, perPharmacy) {
+  const free = {}, freeSlots = {}, groupFree = {}, groupFreeBySlot = {};
+  for (const l of lines) {
+    if (!(l.ug_tiers || []).length) continue;
+    const billedByKey = {}, idByKey = {};
+    for (const [pid, qs] of Object.entries(perPharmacyTotal)) if ((qs[l.id] || 0) > 0) { const k = orderKey(op.id, pid); billedByKey[k] = qs[l.id]; idByKey[k] = pid; }
+    for (const [k, f] of Object.entries(allocateFree(op, l, billedByKey))) {
+      const pid = idByKey[k];
+      (free[pid] ||= {})[l.id] = f;
+      if (!f) continue;
+      const bySlot = freeBySlot(f, perPharmacy[pid]?.[l.id] || {}, slotOrder(op));
+      (freeSlots[pid] ||= {})[l.id] = bySlot;
+      groupFree[l.id] = (groupFree[l.id] || 0) + f;
+      for (const [s, n] of Object.entries(bySlot)) (groupFreeBySlot[l.id] ||= {})[s] = (groupFreeBySlot[l.id][s] || 0) + n;
+    }
+  }
+  return { free, freeSlots, groupFree, groupFreeBySlot };
+}
+
 // ── Tableau de bord d'une opération ─────────────────────────────────────
+// Quantités = unités facturées ; UG calculées (voir gp-pricing.js).
 export function summarize(data) {
   const { op, lines, participants, orders } = data;
   const { counted, orphans, confirmed } = countedQty(data);
   const agg = aggregate(counted);
+  const ug = allocateAllFree(op, lines, agg.perPharmacyTotal, agg.perPharmacy);
   const feeOf = (id) => { const p = (participants || []).find(x => x.pharmacy_id === id); return p?.fee_pct ?? op.fee_pct; };
   // 1er passage sans coopération : montant net après RFA de chaque pharmacie (base du prorata « total »)
   let groupNetAfterRfa = 0;
   for (const id of Object.keys(agg.perPharmacyTotal)) {
-    groupNetAfterRfa += priceOrder({ ...op, coop_mode: "aucune" }, lines, agg.perPharmacyTotal[id], agg.group).totals.net;
+    groupNetAfterRfa += priceOrder({ ...op, coop_mode: "aucune" }, lines, agg.perPharmacyTotal[id], agg.group, { free: ug.free[id] || {} }).totals.net;
   }
   const byId = Object.fromEntries((orders || []).map(o => [o.pharmacy_id, o]));
   const pharmacies = (participants || []).map(p => {
     const mine = agg.perPharmacyTotal[p.pharmacy_id] || {};
-    const s = confirmed.has(p.pharmacy_id) ? priceOrder(op, lines, mine, agg.group, { groupNetAfterRfa, feePct: feeOf(p.pharmacy_id) }) : null;
+    const s = confirmed.has(p.pharmacy_id) ? priceOrder(op, lines, mine, agg.group, { free: ug.free[p.pharmacy_id] || {}, groupNetAfterRfa, feePct: feeOf(p.pharmacy_id) }) : null;
     return { id: p.pharmacy_id, cip: p.pharmacy_cip, name: p.pharmacy_name, email: p.email, fee_pct: p.fee_pct,
-      order: byId[p.pharmacy_id] || null, bySlot: agg.perPharmacy[p.pharmacy_id] || {}, totals: s?.totals || null, rows: s?.rows || [] };
+      order: byId[p.pharmacy_id] || null, bySlot: agg.perPharmacy[p.pharmacy_id] || {}, freeBySlot: ug.freeSlots[p.pharmacy_id] || {},
+      totals: s?.totals || null, rows: s?.rows || [] };
   });
   const objective = objectiveProgress(op, lines, agg.group, agg.perPharmacyTotal);
-  return { ...agg, groupNetAfterRfa, pharmacies, objective, orphans: orphans.length };
+  return { ...agg, ...ug, groupNetAfterRfa, pharmacies, objective, orphans: orphans.length };
 }
 
 // ── Enregistrement de la commande d'une pharmacie ───────────────────────

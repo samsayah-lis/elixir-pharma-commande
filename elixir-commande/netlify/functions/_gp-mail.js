@@ -26,7 +26,7 @@ const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { 
 const dfr = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "";
 
 // E-mail de confirmation de (pré)commande envoyé à la pharmacie
-export function confirmationEmail({ op, summary, bySlot, stockByLine }) {
+export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockByLine }) {
   const hasSlots = (op.delivery_slots || []).length > 0;
   const slots = [{ id: IMMEDIATE_SLOT, label: hasSlots ? "Livraison immédiate (en stock)" : "Quantité" },
     ...(op.delivery_slots || []).map(s => ({ id: s.id, label: `${s.label ? s.label + " — " : ""}${dfr(s.date)}` }))];
@@ -37,7 +37,7 @@ export function confirmationEmail({ op, summary, bySlot, stockByLine }) {
   const td = "padding:6px 8px;border-bottom:1px solid #eceff1;font-size:13px";
   const rows = summary.rows.map(r => `<tr>
       <td style="${td}">${esc(r.line.name)}<br><span style="color:#78909c;font-size:11px">CIP ${esc(r.line.cip)}</span></td>
-      ${usedSlots.map(s => `<td style="${td};text-align:right">${bySlot[r.line.id]?.[s.id] || ""}</td>`).join("")}
+      ${usedSlots.map(s => { const q = bySlot[r.line.id]?.[s.id] || 0, f = freeBySlot[r.line.id]?.[s.id] || 0; return `<td style="${td};text-align:right">${q ? q : ""}${f ? `<br><span style="color:#15803d;font-size:11px">+${f} UG</span>` : ""}</td>`; }).join("")}
       <td style="${td};text-align:right">${eur(r.gross)}</td>
       <td style="${td};text-align:right">${eur(r.unitNet)}</td>
       <td style="${td};text-align:right"><b>${eur(r.totalNet)}</b></td></tr>`).join("");
@@ -54,12 +54,12 @@ export function confirmationEmail({ op, summary, bySlot, stockByLine }) {
   <table style="border-collapse:collapse;margin-left:auto;font-size:13px">
     ${line("Montant brut HT", eur(t.gross))}
     ${t.invoiceDiscount > 0.004 ? line("Remises sur facture", "− " + eur(t.invoiceDiscount)) : ""}
-    ${t.ugValue > 0.004 ? line("Unités gratuites converties en remise", "− " + eur(t.ugValue)) : ""}
     ${t.rfaValue > 0.004 ? line("Remise de fin d'année (avancée sur facture)", "− " + eur(t.rfaValue)) : ""}
     ${t.coop > 0.004 ? line("Coopération commerciale", "− " + eur(t.coop)) : ""}
     ${line(`Frais de traitement (${String(t.feePct).replace(".", ",")} %)`, "+ " + eur(t.fee))}
     ${line("Total HT", eur(t.totalHT), true)}
   </table>
+  ${t.freeUnits ? `<p style="font-size:13px">Unités : ${t.units} facturées <b>+ ${t.freeUnits} gratuites</b> = ${t.receivedUnits} reçues (valeur des gratuites : ${eur(t.ugValue)}).</p>` : ""}
   ${collectif ? `<p style="font-size:12px;color:#546e7a">Les paliers de remise s'appliquent au total du groupe : les prix indiqués correspondent au palier atteint à ce jour et peuvent encore s'améliorer d'ici la clôture${op.end_date ? ` du ${dfr(op.end_date)}` : ""}.</p>` : ""}
   ${hasPre ? `<p style="font-size:12px;color:#546e7a">Les produits en précommande vous seront livrés aux dates indiquées, après réception du stock chez Elixir Pharma.</p>` : ""}
   <p>Vous pouvez modifier votre ${kind} jusqu'à la clôture de l'opération depuis votre espace de commande Elixir.</p>
