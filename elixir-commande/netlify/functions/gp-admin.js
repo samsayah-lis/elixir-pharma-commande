@@ -6,6 +6,7 @@ import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
 import { labUnitNet, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { kvGet, kvSet } from "./_kv.js";
 
 // Le statut ne change que par l'action « status » (ou la création du bon labo), jamais par « save »
 const OP_FIELDS = ["name", "supplier_name", "supplier_odoo_id", "start_date", "end_date", "tier_mode", "fee_pct",
@@ -109,9 +110,8 @@ async function get(q) {
       return { suppliers: rows };
     }
     case "trigger_status": {
-      const [row] = await sb(`kv_store?key=${eq(`gp_trigger:${q.id}:${q.slot_id}`)}&select=value`);
-      if (!row) return { status: "aucun" };
-      const v = row.value;
+      const v = await kvGet(`gp_trigger:${q.id}:${q.slot_id}`);
+      if (!v || typeof v !== "object") return { status: "aucun" };
       // fonction d'arrière-plan tuée ou jamais démarrée : on rend la main (la relance ne crée pas de doublon)
       if (v.status === "en_cours" && Date.now() - Date.parse(v.started_at) > 16 * 60e3) return { ...v, status: "erreur", error: "Création interrompue : relancez (les devis déjà créés ne seront pas dupliqués)" };
       return v;
@@ -386,10 +386,9 @@ async function startTrigger(id, slotId, event) {
   if (slotId !== IMMEDIATE_SLOT && !slotOf(op, slotId)) throw fail("Date de livraison inconnue");
   if (!process.env.CRON_SECRET) throw fail("CRON_SECRET absent des variables Netlify : impossible de lancer la création en arrière-plan", 500);
   const key = `gp_trigger:${id}:${slotId}`;
-  const [row] = await sb(`kv_store?key=${eq(key)}&select=value`);
-  if (row?.value?.status === "en_cours" && Date.now() - Date.parse(row.value.started_at) < 16 * 60e3) return { job: { id, slot_id: slotId }, already_running: true };
-  await sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal",
-    body: { key, value: { status: "en_cours", started_at: new Date().toISOString(), slot: slotLabel(op, slotId), created: [], errors: [], skipped: 0 } } });
+  const prev = await kvGet(key);
+  if (prev?.status === "en_cours" && Date.now() - Date.parse(prev.started_at) < 16 * 60e3) return { job: { id, slot_id: slotId }, already_running: true };
+  await kvSet(key, { status: "en_cours", started_at: new Date().toISOString(), slot: slotLabel(op, slotId), created: [], errors: [], skipped: 0 });
   // le secret n'est envoyé qu'à une adresse du site, jamais à un hôte tiré de la requête
   const h = String(event.headers?.host || "").toLowerCase();
   const base = `https://${["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"].includes(h) || /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/.test(h) ? h : "commandes-elixir.netlify.app"}`;
@@ -400,7 +399,7 @@ async function startTrigger(id, slotId, event) {
     });
   } catch (e) { r = { ok: false, status: e.message }; }
   if (!r.ok && r.status !== 202) {
-    await sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { key, value: { status: "erreur", error: `Lancement impossible (HTTP ${r.status})` } } });
+    await kvSet(key, { status: "erreur", started_at: new Date().toISOString(), error: `Lancement impossible (HTTP ${r.status})`, created: [], errors: [] });
     throw fail(`Lancement impossible (HTTP ${r.status})`, 500);
   }
   return { job: { id, slot_id: slotId } };

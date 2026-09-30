@@ -10,6 +10,7 @@ import { verifyAdmin, isCronAuthorized } from "./auth.js";
 import { getCors } from "./cors.js";
 import { elixirPharmacyRows, elixirCustomerIds, pharmacyRow, PARTNER_FIELDS } from "./_pharmacies.js";
 import { odoo } from "./_odoo-rpc.js";
+import { kvGet, kvSet } from "./_kv.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -80,9 +81,9 @@ export const handler = async (event) => {
     if (stale.length) {
       const day = new Date().toISOString().slice(0, 10);
       const key = `pharmacies_retirees:${day}`;
-      const [prev] = await sb(`kv_store?key=eq.${encodeURIComponent(key)}&select=value`);
-      const saved = [...(prev?.value?.rows || []), ...stale];
-      await sb("kv_store?on_conflict=key", { method: "POST", headers: { Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ key, value: { at: new Date().toISOString(), rows: saved } }) });
+      const prev = await kvGet(key);
+      const saved = [...(prev?.rows || []), ...stale];
+      await kvSet(key, { at: new Date().toISOString(), rows: saved });
       let deleted = 0;
       for (let i = 0; i < stale.length; i += 100)
         deleted += (await sb(`elixir_pharmacies?email=in.${encodeURIComponent(inList(stale.slice(i, i + 100).map(c => c.email)))}`, { method: "DELETE", headers: { Prefer: "return=representation" } }) || []).length;

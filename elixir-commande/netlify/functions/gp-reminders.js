@@ -4,6 +4,7 @@
 // - livraison prévue dans les 2 jours dont des devis restent à créer
 import { sb, sbAll, today } from "./_gp.js";
 import { sendMail, ADMIN_MAIL } from "./_gp-mail.js";
+import { kvExists, kvSet, kvDeleteOlder } from "./_kv.js";
 
 const SITE = "https://elixir-commande.expepharma.com/#admin";
 const addDays = (d, n) => new Date(Date.parse(d + "T12:00:00Z") + n * 86400e3).toISOString().slice(0, 10);
@@ -11,10 +12,9 @@ const dfr = (d) => new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { weekd
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 async function once(key, fn) {
-  const [row] = await sb(`kv_store?key=eq.${encodeURIComponent(key)}&select=key`);
-  if (row) return false;
+  if (await kvExists(key)) return false;
   const r = await fn();
-  if (r?.sent) await sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { key, value: { at: new Date().toISOString() } } });
+  if (r?.sent) await kvSet(key, { at: new Date().toISOString() });
   return !!r?.sent;
 }
 
@@ -59,8 +59,8 @@ export const handler = async () => {
   }
   // Ménage : suivis d'analyse IA de plus de 30 jours, fichiers d'analyse oubliés depuis plus d'un jour
   const d30 = new Date(Date.now() - 30 * 86400e3).toISOString(), d1 = new Date(Date.now() - 86400e3).toISOString();
-  await sb(`kv_store?key=like.gp_import:*&updated_at=lt.${encodeURIComponent(d30)}`, { method: "DELETE" }).catch(e => console.error("gp-reminders", e));
-  await sb(`kv_store?key=like.gp_file:*&updated_at=lt.${encodeURIComponent(d1)}`, { method: "DELETE" }).catch(e => console.error("gp-reminders", e));
+  for (const [prefix, before] of [["gp_import:", d30], ["gp_quota:", d30], ["gp_trigger:", d30], ["gp_file:", d1]])
+    await kvDeleteOlder(prefix, before).catch(e => console.error("gp-reminders", e));
   let sent = 0;
   for (const it of items) {
     if (await once(it.key, () => sendMail({ to: ADMIN_MAIL, subject: `[Commandes groupées] ${it.subject}`, html: `${it.html}<p><a href="${SITE}">Ouvrir l'admin</a></p>` }))) sent++;

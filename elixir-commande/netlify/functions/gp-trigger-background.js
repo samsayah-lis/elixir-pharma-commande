@@ -9,6 +9,7 @@
 import { isCronAuthorized } from "./auth.js";
 import { sb, sbAll, eq, odoo, loadOperation, summarize, COMPANY_ID } from "./_gp.js";
 import { priceOrder, round2, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { kvSet } from "./_kv.js";
 
 const lineLabel = (l) => l.cip ? `[${l.cip}] ${l.name}` : l.name;
 
@@ -18,7 +19,7 @@ export const handler = async (event) => {
   if (!id || !slotId) return { statusCode: 400, body: "" };
   const key = `gp_trigger:${id}:${slotId}`;
   const report = { status: "en_cours", started_at: new Date().toISOString(), created: [], errors: [], skipped: 0, total: 0 };
-  const save = () => sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { key, value: report } });
+  const save = () => kvSet(key, report);
   try {
     const data = await loadOperation(id);
     if (!data) throw new Error("Opération introuvable");

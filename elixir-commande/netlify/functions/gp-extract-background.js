@@ -10,6 +10,7 @@ import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import { z } from "zod";
 import { isCronAuthorized } from "./auth.js";
 import { sb, productInfo } from "./_gp.js";
+import { kvGet, kvSet, kvDel } from "./_kv.js";
 
 const MODEL = "claude-opus-5-5";
 const DEADLINE_MS = 13 * 60 * 1000;
@@ -238,9 +239,6 @@ function explain(e) {
 }
 
 // ── Kv_store ─────────────────────────────────────────────────────────────
-const kvSet = (key, value) => sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates", body: { key, value } });
-const kvGet = async (key) => (await sb(`kv_store?key=eq.${encodeURIComponent(key)}&select=value&limit=1`))?.[0]?.value || null;
-const kvDel = (key) => sb(`kv_store?key=eq.${encodeURIComponent(key)}`, { method: "DELETE" });
 
 export const handler = async (event) => {
   if (!isCronAuthorized(event)) return { statusCode: 403, body: "" };

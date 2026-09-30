@@ -5,15 +5,17 @@
 // inscrite à l'opération, opération « ouverte » et dans ses dates.
 // L'analyse tourne dans gp-extract-background (15 min max) ; l'écran interroge le statut.
 //
-// Quotas comptés en base (kv_store, clés gp_import:<job>) avant toute écriture :
+// Quotas comptés en base avant toute écriture :
 //  - 1 analyse « en_cours » à la fois par propriétaire (pharmacie ou « admin ») ;
 //  - 10 analyses par 24 h glissantes par pharmacie, 60 pour l'admin.
-// Filtres PostgREST sur le JSON : value->>champ compare en texte ; created_at est
-// toujours un toISOString() (24 caractères, UTC), donc ordre du texte = ordre du temps.
+// kv_store.value est du texte : on ne peut pas filtrer sur son contenu. Chaque analyse
+// a donc une clé d'index gp_quota:<propriétaire>:<créée le, ISO UTC>:<job> ; l'ordre du
+// texte des clés suit l'ordre du temps, et les plages de clés donnent les analyses récentes.
 import crypto from "node:crypto";
 import { getCors } from "./cors.js";
 import { verifyTokenAsync } from "./auth.js";
 import { json, sb, identifyPharmacy, today } from "./_gp.js";
+import { kvGet, kvSet, kvDel, kvRange } from "./_kv.js";
 import { rateLimit } from "./rate-limit.js";
 
 const MAX_TEXT = { lgo: 200_000, offre: 1_500_000 };
@@ -30,16 +32,18 @@ const BASE64 = /^[A-Za-z0-9+/]*={0,2}$/;
 const INTERRUPTED = "Analyse interrompue (délai dépassé)";
 
 const enc = encodeURIComponent;
-const kvSet = (key, value) => sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates", body: { key, value } });
-const kvGet = async (key) => (await sb(`kv_store?key=eq.${enc(key)}&select=value&limit=1`))?.[0]?.value || null;
-const kvDel = (key) => sb(`kv_store?key=eq.${enc(key)}`, { method: "DELETE" });
 const frDate = (d) => String(d).slice(0, 10).split("-").reverse().join("/");
 
-// Analyses d'un propriétaire créées après sinceIso (option : d'un statut donné)
-async function importsOf(owner, sinceIso, status) {
-  let q = `kv_store?key=like.gp_import:*&value->>owner=eq.${enc(owner)}&value->>created_at=gt.${enc(sinceIso)}`;
-  if (status) q += `&value->>status=eq.${enc(status)}`;
-  return (await sb(`${q}&select=key,updated_at,value->>created_at&limit=200`)) || [];
+// Analyses d'un propriétaire créées après sinceIso, avec leur statut (lu dans gp_import:<job>)
+const quotaKey = (owner, createdIso, job) => `gp_quota:${owner}:${createdIso}:${job}`;
+async function importsOf(owner, sinceIso) {
+  const prefix = `gp_quota:${owner}:`;
+  const rows = await kvRange(prefix + sinceIso, prefix + "~", 200);
+  return Promise.all(rows.map(async r => {
+    const job = r.key.slice(-36), created_at = r.key.slice(prefix.length, -37);
+    const v = await kvGet(`gp_import:${job}`);
+    return { key: r.key, updated_at: r.updated_at, job, created_at, status: v?.status || "inconnu", value: v };
+  }));
 }
 
 async function whoIs(event, b) {
@@ -157,15 +161,12 @@ export const handler = async (event) => {
     // Quotas durables, comptés avant toute écriture
     const now = Date.now();
     const staleIso = new Date(now - STALE_MS).toISOString();
-    const [running, lastDay] = await Promise.all([
-      importsOf(who.owner, staleIso, "en_cours"),
-      importsOf(who.owner, new Date(now - DAY_MS).toISOString()),
-    ]);
+    const lastDay = await importsOf(who.owner, new Date(now - DAY_MS).toISOString());
+    const running = lastDay.filter(x => x.status === "en_cours" && x.created_at > staleIso);
     // analyses restées « en_cours » au-delà du délai (fonction coupée) : marquées en erreur, fichier supprimé
-    const dead = (await sb(`kv_store?key=like.gp_import:*&value->>owner=eq.${enc(who.owner)}&value->>status=eq.en_cours&value->>created_at=lte.${enc(staleIso)}&select=key,value&limit=50`)) || [];
-    for (const d of dead) {
-      await kvSet(d.key, { ...d.value, status: "erreur", error: "Analyse interrompue (délai dépassé)", finished_at: new Date().toISOString() }).catch(() => {});
-      await kvDel(d.key.replace("gp_import:", "gp_file:")).catch(() => {});
+    for (const d of lastDay.filter(x => x.status === "en_cours" && x.created_at <= staleIso)) {
+      await kvSet(`gp_import:${d.job}`, { ...d.value, status: "erreur", error: INTERRUPTED, finished_at: new Date().toISOString() }).catch(() => {});
+      await kvDel(`gp_file:${d.job}`).catch(() => {});
     }
     if (running.length) return json(cors, 429, { error: "Une analyse est déjà en cours : attendez qu'elle se termine (quelques minutes au plus)" });
     const quota = who.admin ? DAILY_QUOTA.admin : DAILY_QUOTA.pharmacy;
@@ -175,7 +176,9 @@ export const handler = async (event) => {
     const importKey = `gp_import:${job}`, fileKey = `gp_file:${job}`;
     const fileName = String(b.file_name || "fichier").slice(0, 200);
     const record = { status: "en_cours", kind, owner: who.owner, op_id: opId, file_name: fileName, created_at: new Date(now).toISOString() };
+    const indexKey = quotaKey(who.owner, record.created_at, job);
     await kvSet(importKey, record);
+    await kvSet(indexKey, job);
     const fail = async (httpStatus, error) => {
       await kvDel(fileKey).catch(() => {});
       await kvSet(importKey, { ...record, status: "erreur", error, finished_at: new Date().toISOString() }).catch(e => console.error("gp-upload", e));
@@ -184,10 +187,11 @@ export const handler = async (event) => {
 
     // Deux dépôts simultanés passent tous deux le contrôle : seul le plus ancien continue,
     // l'autre efface sa trace (rien n'a été analysé, il ne compte pas dans le quota)
-    const concurrent = (await importsOf(who.owner, staleIso, "en_cours"))
+    const concurrent = (await importsOf(who.owner, staleIso)).filter(x => x.status === "en_cours")
       .sort((x, y) => String(x.updated_at).localeCompare(String(y.updated_at)) || String(x.key).localeCompare(String(y.key)));
-    if (concurrent.length > 1 && concurrent[0].key !== importKey) {
+    if (concurrent.length > 1 && concurrent[0].key !== indexKey) {
       await kvDel(importKey).catch(e => console.error("gp-upload", e));
+      await kvDel(indexKey).catch(e => console.error("gp-upload", e));
       return json(cors, 429, { error: "Une analyse est déjà en cours : attendez qu'elle se termine (quelques minutes au plus)" });
     }
 
