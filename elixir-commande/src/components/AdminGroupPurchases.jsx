@@ -65,6 +65,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
   const [access, setAccess] = useState([]);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState(null);     // fiches produits créées / à compléter
+  const [prodJob, setProdJob] = useState(null);   // création des fiches Odoo en arrière-plan { id, status, done, total }
 
   const call = useCallback(async (qs, body) => {
     const r = await adminFetch(body ? API : `${API}?${qs}`, body ? { method: "POST", body: JSON.stringify(body) } : {});
@@ -100,6 +101,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       const d = await call(`action=get&id=${id}`);
       const f = { ...EMPTY_OP, ...d.op }, ls = d.lines.map(withText), ps = d.participants;
       setDetail(d); setForm(f); setLines(ls); setParts(ps); setSnapshot(JSON.stringify({ form: f, lines: ls, parts: ps })); setView("edit");
+      call(`action=products_status&id=${id}`).then(j => { if (j.status === "en_cours") setProdJob(x => x?.id === id ? x : { ...j, id }); }).catch(() => {});
     } catch (e) { setErr(e.message); }
     setBusy("");
   };
@@ -117,6 +119,41 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       setSnapshot(s => { try { const o = JSON.parse(s); o.form = { ...o.form, ...meta }; return JSON.stringify(o); } catch { return s; } });
     } catch { /* l'écran garde l'état précédent */ }
   }, [call]);
+  // Fiches créées en arrière-plan : on relie les produits sans toucher au reste de la saisie
+  const mergeProducts = useCallback(async (id) => {
+    try {
+      const d = await call(`action=get&id=${id}`);
+      if (formIdRef.current !== id) return;
+      const byId = Object.fromEntries(d.lines.filter(l => l.odoo_product_id).map(l => [l.id, l]));
+      const fix = (ls) => ls.map(l => !l.odoo_product_id && byId[l.id]?.cip === l.cip ? { ...l, odoo_product_id: byId[l.id].odoo_product_id } : l);
+      setDetail(d); setLines(fix);
+      setSnapshot(s => { try { const o = JSON.parse(s); o.lines = fix(o.lines); return JSON.stringify(o); } catch { return s; } });
+    } catch { /* bouton « Recharger » en secours */ }
+  }, [call]);
+  const jobId = prodJob?.status === "en_cours" ? prodJob.id : null;
+  useEffect(() => {
+    if (!jobId) return;
+    let stop = false, timer = null, fails = 0;
+    const tick = async () => {
+      if (stop) return;
+      try {
+        const j = await call(`action=products_status&id=${jobId}`);
+        fails = 0;
+        if (stop) return;
+        if (j.status === "en_cours") { setProdJob({ ...j, id: jobId }); timer = setTimeout(tick, 3000); return; }
+        setProdJob(null);
+        if (j.status === "termine" || j.status === "erreur") {
+          await mergeProducts(jobId);
+          const msgs = [...(j.created || []).map(x => `✅ Fiche Odoo créée : ${x.name} (${x.cip})`),
+            ...(j.linked || []).map(x => `🔗 Fiche Odoo existante reliée : ${x.name} (${x.cip})`), ...(j.warnings || []).map(w => `⚠️ ${w}`),
+            ...(j.status === "erreur" ? [`❌ ${j.error || "Création des fiches interrompue"}`] : [])];
+          if (msgs.length) setNotice(n => [...(n || []), ...msgs]);
+        }
+      } catch { if (++fails < 10 && !stop) timer = setTimeout(tick, 5000); else setProdJob(null); }
+    };
+    timer = setTimeout(tick, 2000);
+    return () => { stop = true; clearTimeout(timer); };
+  }, [jobId, call, mergeProducts]);
 
   const save = async (force = false, confirmedDetails = null) => {
     setErr("");
@@ -149,11 +186,12 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         participants: parts.map(p => ({ id: p.pharmacy_id, name: p.pharmacy_name, email: p.email, cip: p.pharmacy_cip, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : toNum(p.fee_pct) })),
         loaded_updated_at: form.updated_at || null, loaded_line_ids: (detail?.lines || []).map(l => l.id) });
       setForm(x => ({ ...x, id: r.id || r.operation?.id, updated_at: r.operation?.updated_at || x.updated_at }));   // pas de doublon si le rechargement échoue
-      flash?.(r.locked ? "✅ Notes enregistrées" : `✅ Opération enregistrée${r.created_products?.length ? ` — ${r.created_products.length} fiche(s) produit créée(s) dans Odoo` : ""}`);
-      if (r.created_products?.length || r.product_warnings?.length)
-        setNotice([...(r.created_products || []).map(x => `Fiche Odoo créée : ${x.name} (${x.cip})`), ...(r.product_warnings || [])]);
+      const opId = r.id || r.operation?.id;
+      flash?.(r.locked ? "✅ Notes enregistrées" : `✅ Opération enregistrée${r.products_pending ? ` — création de ${r.products_pending} fiche(s) produit dans Odoo en cours` : ""}`);
+      setNotice(r.product_warnings?.length || r.products_job?.error ? [...(r.product_warnings || []).map(w => `⚠️ ${w}`), ...(r.products_job?.error ? [`❌ ${r.products_job.error}`] : [])] : null);
+      if (r.products_pending && !r.products_job?.error) setProdJob({ id: opId, status: "en_cours", done: 0, total: r.products_pending });
       setBusy("");
-      await open(r.id || r.operation.id); loadList(); loadAccess();
+      await open(opId); loadList(); loadAccess();
       return;
     } catch (e) {
       setBusy("");
@@ -237,6 +275,9 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         </div>
       </div>
       {err && <Err text={err} />}
+      {prodJob?.id === form.id && <div style={{ ...card, background: "#eff6ff", borderColor: "#93c5fd", fontSize: 13 }}>
+        ⏳ Création des fiches produits dans Odoo : <b>{prodJob.done || 0} / {prodJob.total || "…"}</b> (environ 10 secondes par fiche). Vous pouvez continuer à travailler ; l'opération ne pourra être ouverte aux commandes qu'une fois toutes les fiches créées.
+      </div>}
       {notice && <div style={{ ...card, background: "#f0fdf4", borderColor: "#86efac", fontSize: 13 }}>{notice.map((t, i) => <div key={i}>{t}</div>)}<button type="button" style={{ ...btn(), marginTop: 8, padding: "5px 10px" }} onClick={() => setNotice(null)}>OK</button></div>}
       {locked && <div style={{ ...card, background: "#f8fafc", fontSize: 13, color: "#475569" }}>Opération {stLabel.toLowerCase()} : seules les notes et les conditions affichées restent modifiables.</div>}
 
@@ -437,7 +478,7 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
                   <td style={{ padding: 4, width: 64 }}><input inputMode="decimal" style={CI} value={l.vat_rate ?? ""} onChange={e => set(i, "vat_rate", e.target.value)} placeholder="auto" aria-label="TVA" /></td>
                   <td style={{ padding: "8px 4px", fontSize: 11, width: 120 }}>
                     {l.odoo_product_id || p.odoo_product_id ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ fiche</span>
-                      : <span style={{ color: "#b45309", fontWeight: 700 }} title="La fiche sera créée dans Odoo à l'enregistrement (prix de vente = prix brut, TVA, tarif fournisseur)">➕ à créer{p.medipim ? " (Medipim)" : ""}</span>}
+                      : <span style={{ color: "#b45309", fontWeight: 700 }} title="La fiche sera créée dans Odoo après l'enregistrement, en arrière-plan (prix de vente = prix brut, TVA, tarif fournisseur)">➕ à créer{p.medipim ? " (Medipim)" : ""}</span>}
                     {!(l.odoo_product_id || p.odoo_product_id) && p.medipim?.public_price != null && <div style={{ color: "#64748b" }}>PPTTC {eur(p.medipim.public_price)}</div>}
                     {p.in_stock != null && <div style={{ color: p.in_stock ? "#16a34a" : "#b45309" }}>{p.in_stock ? `stock ${p.available}` : "précommande"}</div>}
                     {p.elixir_price != null && <div style={{ color: "#64748b" }}>Elixir {eur(p.elixir_price)}</div>}

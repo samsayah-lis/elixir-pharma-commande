@@ -8,7 +8,6 @@ import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summariz
 import { priceLine, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvGet, kvSet } from "./_kv.js";
 import { medipimProduct } from "./_medipim.js";
-import { ensureOdooProduct } from "./_odoo-products.js";
 
 // Le statut ne change que par l'action « status » (ou la création du bon labo), jamais par « save »
 const OP_FIELDS = ["name", "supplier_name", "supplier_odoo_id", "start_date", "end_date", "tier_mode", "fee_pct",
@@ -116,6 +115,12 @@ async function get(q) {
         { fields: ["id", "name"], limit: 20, order: "supplier_rank desc" });
       return { suppliers: rows };
     }
+    case "products_status": {
+      const v = await kvGet(`gp_products:${q.id}`);
+      if (!v || typeof v !== "object") return { status: "aucun" };
+      if (v.status === "en_cours" && Date.now() - Date.parse(v.heartbeat || v.started_at) > 3 * 60e3) return { ...v, status: "erreur", error: "Création interrompue : réenregistrez l'opération pour reprendre (aucun doublon)" };
+      return v;
+    }
     case "trigger_status": {
       const v = await kvGet(`gp_trigger:${q.id}:${q.slot_id}`);
       if (!v || typeof v !== "object") return { status: "aucun" };
@@ -130,7 +135,7 @@ async function get(q) {
 
 async function post(b, event) {
   switch (b.action) {
-    case "save": return saveOperation(b);
+    case "save": return saveOperation(b, event);
     case "delete": {
       const [op] = await sb(`gp_operations?id=${eq(b.id)}&select=status`);
       if (!op) throw fail("Opération introuvable", 404);
@@ -150,11 +155,8 @@ async function post(b, event) {
     case "lookup": {
       // Odoo d'abord ; pour un produit absent d'Odoo, fiche Medipim (nom, TVA, prix, CIP7)
       const products = await productInfo(b.cips || []);
-      for (const c of (b.cips || []).map(x => String(x || "").replace(/\D/g, "")).filter(Boolean).slice(0, 40)) {
-        if (products[c]?.odoo_product_id) continue;
-        const m = await medipimProduct(c).catch(() => null);
-        if (m) products[c] = { ...(products[c] || {}), medipim: m };
-      }
+      const missing = [...new Set((b.cips || []).map(x => String(x || "").replace(/\D/g, "")).filter(c => c && !products[c]?.odoo_product_id))].slice(0, 60);
+      await Promise.all(missing.map(async c => { const m = await medipimProduct(c).catch(() => null); if (m) products[c] = { ...(products[c] || {}), medipim: m }; }));
       return { products };
     }
     case "order_save": {
@@ -188,7 +190,7 @@ async function changeStatus(id, status) {
     const noPrice = lines.filter(l => !(Number(l.price_gross) > 0)).map(l => l.name);
     if (noPrice.length) problems.push(`prix brut manquant : ${noPrice.slice(0, 5).join(", ")}${noPrice.length > 5 ? "…" : ""}`);
     const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => l.cip);
-    if (noOdoo.length) problems.push(`produits sans fiche Odoo : ${noOdoo.slice(0, 5).join(", ")}${noOdoo.length > 5 ? "…" : ""}`);
+    if (noOdoo.length) problems.push(`produits sans fiche Odoo (création en cours : patientez, ou réenregistrez pour la relancer) : ${noOdoo.slice(0, 5).join(", ")}${noOdoo.length > 5 ? "…" : ""}`);
     if ((op.delivery_slots || []).some(s => !s.date)) problems.push("une date de livraison n'a pas de date");
     if (op.status === "cloturee") {
       const trig = await sb(`gp_triggers?operation_id=eq.${id}&select=slot_id&limit=1`);
@@ -203,7 +205,7 @@ async function changeStatus(id, status) {
 }
 
 // ── Création / mise à jour d'une opération, de ses produits et participants ──
-async function saveOperation(b) {
+async function saveOperation(b, event) {
   const opIn = b.operation || {};
   const isNew = !opIn.id;
   const id = opIn.id || crypto.randomUUID();
@@ -257,7 +259,8 @@ async function saveOperation(b) {
   const info = toResolve.length ? await productInfo(toResolve).catch(() => ({})) : {};
   // produits absents d'Odoo : fiche Medipim (nom, TVA, CIP7, prix public)
   const medipim = {};
-  for (const l of lines) if (!l.odoo_product_id && !info[l.cip]?.odoo_product_id && !(l.cip in medipim)) medipim[l.cip] = await medipimProduct(l.cip).catch(() => null);
+  const needMedipim = [...new Set(lines.filter(l => !l.odoo_product_id && !info[l.cip]?.odoo_product_id && (!l.name || l.vat_rate == null || l.vat_rate === "")).map(l => l.cip))].slice(0, 20);
+  await Promise.all(needMedipim.map(async c => { medipim[c] = await medipimProduct(c).catch(() => null); }));
   const noName = [];
   lines = lines.map((l, i) => {
     const x = info[l.cip] || {};
@@ -266,7 +269,8 @@ async function saveOperation(b) {
     const price = num(l.price_gross, 0);
     return lineRow({ ...l, name, price_gross: price,
       id: l.id && /^[0-9a-f-]{36}$/i.test(l.id) ? l.id : crypto.randomUUID(),
-      odoo_product_id: l.odoo_product_id || x.odoo_product_id || null,
+      // fiche reliée entre-temps par la création en arrière-plan : on la garde
+      odoo_product_id: l.odoo_product_id || x.odoo_product_id || (byIdCur.get(l.id)?.cip === l.cip ? byIdCur.get(l.id).odoo_product_id : null) || null,
       vat_rate: l.vat_rate === "" || l.vat_rate == null ? (x.vat_rate ?? medipim[l.cip]?.vat ?? null) : num(l.vat_rate, null) }, id, i);
   });
   if (noName.length) throw fail(`Désignation manquante (produit introuvable dans Odoo et Medipim) pour : ${noName.join(", ")}`);
@@ -308,24 +312,13 @@ async function saveOperation(b) {
       throw fail(force ? "Des quantités ont changé depuis votre confirmation" : "Ces modifications effacent des quantités déjà commandées", 409, { code: "confirm", details });
   }
 
-  // Produits absents d'Odoo : fiche créée (prix de vente = prix brut de l'offre, TVA, CIP7, prix public
-  // Medipim, tarif du fournisseur de l'opération). Sans prix brut ou sans TVA, création au prochain enregistrement.
-  const createdProducts = [], productWarnings = [];
-  for (const l of lines.filter(x => !x.odoo_product_id)) {
-    const m = l.cip in medipim ? medipim[l.cip] : await medipimProduct(l.cip).catch(() => null);
-    const vat = l.vat_rate ?? m?.vat ?? null;
-    if (!(l.price_gross > 0) || vat == null) { productWarnings.push(`${l.name} (${l.cip}) : fiche Odoo créée dès que le prix brut et la TVA seront renseignés`); continue; }
-    try {
-      const r = await ensureOdooProduct({ cip: l.cip, name: l.name, vat, list_price: l.price_gross, supplier_id: op.supplier_odoo_id ?? cur.op?.supplier_odoo_id ?? null,
-        supplier_price: l.price_gross, cip7: m?.cip7 || (l.cip.length === 13 && l.cip.startsWith("34009") ? l.cip.slice(5, 12) : null), public_price: m?.public_price || null });
-      l.odoo_product_id = r.id; l.vat_rate = vat;
-      if (r.created) createdProducts.push({ cip: l.cip, name: l.name, id: r.id });
-      if (r.archived) productWarnings.push(`${l.name} (${l.cip}) : la fiche Odoo existante est archivée`);
-    } catch (e) { productWarnings.push(`${l.name} (${l.cip}) : création Odoo impossible (${e.message})`); }
-  }
+  // Produits absents d'Odoo : les fiches sont créées APRÈS l'enregistrement, en arrière-plan
+  // (gp-products-background) : Odoo met ~9 s par fiche partagée, trop long pour cette requête.
+  const productWarnings = lines.filter(l => !l.odoo_product_id && (!(l.price_gross > 0) || l.vat_rate == null))
+    .map(l => `${l.name} (${l.cip}) : fiche Odoo créée dès que le prix brut et la TVA seront renseignés`);
   if (status !== "brouillon") {
     const noOdoo = lines.filter(l => !l.odoo_product_id).map(l => `${l.name} (${l.cip})`);
-    if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. ${productWarnings.join(" ; ")}`);
+    if (noOdoo.length) throw fail(`Produit sans fiche Odoo, impossible une fois l'opération ouverte : ${noOdoo.join(", ")}. Enregistrez d'abord en brouillon : les fiches manquantes sont créées automatiquement dans Odoo.`);
   }
   // ── Écritures ──
   let saved;
@@ -358,7 +351,9 @@ async function saveOperation(b) {
       body: added.map(w => ({ pharmacy_id: w.pharmacy_id, pharmacy_name: w.pharmacy_name, email: w.email, pharmacy_cip: w.pharmacy_cip })) });
   }
   if (hit.length) await refreshOrderStatus(id, [...new Set(hit.map(r => r.pharmacy_id))].filter(pid => !gonePartIds.has(pid)));
-  return { operation: saved, id, created_products: createdProducts, product_warnings: productWarnings };
+  const pending = lines.filter(l => !l.odoo_product_id && l.price_gross > 0 && l.vat_rate != null).length;
+  const productsJob = pending ? await startProductsJob(id, event, pending).catch(e => ({ error: e.message })) : null;
+  return { operation: saved, id, products_pending: pending, products_job: productsJob, product_warnings: productWarnings };
 }
 
 // ── Bon de commande au laboratoire (Odoo, brouillon) ────────────────────
@@ -422,6 +417,22 @@ async function createPurchaseOrder(id) {
     await sb(`gp_operations?id=eq.${id}&po_odoo_id=is.null`, { method: "PATCH", body: { po_created_at: null } }).catch(() => {});
     throw e;
   }
+}
+
+// ── Fiches produits manquantes : création en arrière-plan ─────────────
+const siteBase = (event) => { const h = String(event?.headers?.host || "").toLowerCase();
+  return `https://${["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"].includes(h) || /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/.test(h) ? h : "commandes-elixir.netlify.app"}`; };
+async function startProductsJob(id, event, total) {
+  if (!process.env.CRON_SECRET) throw new Error("CRON_SECRET absent : fiches non créées");
+  const key = `gp_products:${id}`;
+  const prev = await kvGet(key);
+  if (prev?.status === "en_cours" && Date.now() - Date.parse(prev.heartbeat || prev.started_at) < 3 * 60e3) return { already_running: true };
+  await kvSet(key, { status: "en_cours", started_at: new Date().toISOString(), heartbeat: new Date().toISOString(), total, done: 0, created: [], linked: [], warnings: [] });
+  const r = await fetch(`${siteBase(event)}/.netlify/functions/gp-products-background`, {
+    method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET }, body: JSON.stringify({ id }),
+  }).catch(e => ({ ok: false, status: e.message }));
+  if (!r.ok && r.status !== 202) { await kvSet(key, { status: "erreur", error: `Lancement impossible (HTTP ${r.status})` }); throw new Error(`Lancement impossible (HTTP ${r.status})`); }
+  return { started: true };
 }
 
 // ── Déclenchement d'une livraison : devis Odoo créés en arrière-plan ─────
