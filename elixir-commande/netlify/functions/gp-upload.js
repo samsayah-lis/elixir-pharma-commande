@@ -9,13 +9,13 @@
 //  - 1 analyse « en_cours » à la fois par propriétaire (pharmacie ou « admin ») ;
 //  - 10 analyses par 24 h glissantes par pharmacie, 60 pour l'admin.
 // kv_store.value est du texte : on ne peut pas filtrer sur son contenu. Chaque analyse
-// a donc une clé d'index gp_quota:<propriétaire>:<créée le, ISO UTC>:<job> ; l'ordre du
-// texte des clés suit l'ordre du temps, et les plages de clés donnent les analyses récentes.
+// a donc une clé d'index gp_quota:<propriétaire>:<créée le, ISO UTC>:<job>, retrouvée par
+// préfixe ; la date est comparée dans le code (la base trie le texte selon la langue).
 import crypto from "node:crypto";
 import { getCors } from "./cors.js";
 import { verifyTokenAsync } from "./auth.js";
 import { json, sb, identifyPharmacy, today } from "./_gp.js";
-import { kvGet, kvSet, kvDel, kvRange } from "./_kv.js";
+import { kvGet, kvSet, kvDel, kvByPrefix } from "./_kv.js";
 import { rateLimit } from "./rate-limit.js";
 
 const MAX_TEXT = { lgo: 200_000, offre: 1_500_000 };
@@ -38,7 +38,8 @@ const frDate = (d) => String(d).slice(0, 10).split("-").reverse().join("/");
 const quotaKey = (owner, createdIso, job) => `gp_quota:${owner}:${createdIso}:${job}`;
 async function importsOf(owner, sinceIso) {
   const prefix = `gp_quota:${owner}:`;
-  const rows = await kvRange(prefix + sinceIso, prefix + "~", 200);
+  // la date de création est dans la clé (ISO UTC, ordre du texte = ordre du temps en JavaScript)
+  const rows = (await kvByPrefix(prefix)).filter(r => r.key.startsWith(prefix) && r.key.slice(prefix.length, -37) > sinceIso);
   return Promise.all(rows.map(async r => {
     const job = r.key.slice(-36), created_at = r.key.slice(prefix.length, -37);
     const v = await kvGet(`gp_import:${job}`);

@@ -24,6 +24,8 @@ export async function kvGet(key) {
 export const kvSet = (key, value) => sb("kv_store?on_conflict=key", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { key, value: JSON.stringify(value) } });
 export const kvDel = (key) => sb(`kv_store?key=eq.${enc(key)}`, { method: "DELETE" });
 export const kvExists = async (key) => ((await sb(`kv_store?key=eq.${enc(key)}&select=key&limit=1`)) || []).length > 0;
-// Clés comprises strictement entre `from` et `to` (ordre du texte), avec leur date d'insertion
-export const kvRange = async (from, to, limit = 500) => (await sb(`kv_store?key=gt.${enc(from)}&key=lt.${enc(to)}&select=key,updated_at&order=key.asc&limit=${limit}`)) || [];
+// Clés commençant par `prefix`, avec leur date d'insertion. Pas de plage gt/lt sur les clés :
+// la base compare le texte selon la langue (ponctuation ignorée), « …:5567:~ » ne borne rien
+// et « …:5567: » déborderait sur « …:55678: ». Le préfixe (LIKE) compare caractère par caractère.
+export const kvByPrefix = async (prefix, limit = 1000) => (await sb(`kv_store?key=like.${enc(prefix)}*&select=key,updated_at&order=updated_at.asc&limit=${limit}`)) || [];
 export const kvDeleteOlder = (likePrefix, beforeIso) => sb(`kv_store?key=like.${enc(likePrefix)}*&updated_at=lt.${enc(beforeIso)}`, { method: "DELETE" });
