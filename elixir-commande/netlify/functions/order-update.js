@@ -35,6 +35,8 @@ export const handler = async (event) => {
   const patch = {};
   if (body.processed !== undefined) patch.processed = body.processed;
   if (body.pharmacy_cip) patch.pharmacy_cip = body.pharmacy_cip;
+  // Envoi partiel : lignes marquées synced_at / synced_ref (même liste, mêmes produits)
+  if (Array.isArray(body.items)) patch.items = body.items;
   if (Object.keys(patch).length === 0) patch.processed = true;
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${encodeURIComponent(id)}`, {

@@ -55,6 +55,10 @@ export const handler = async (event) => {
   catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
   let { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
+  // Envoi d'une partie des lignes (admin) : référence PharmaML propre à cet envoi (ex. 1790…P2)
+  // et commande non marquée « traitée » (l'admin le fait quand toutes les lignes sont parties)
+  const partial = payload.partial === true;
+  const reference = /^[0-9A-Za-z]{1,30}$/.test(String(payload.reference || "")) ? String(payload.reference) : String(orderId || Date.now());
   const via = payload.via === "admin" ? "admin" : payload.via === "auto" ? "auto" : "inconnu";
   const t0 = Date.now();
   if (!items?.length) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
@@ -91,7 +95,7 @@ export const handler = async (event) => {
 
   const body = [{
     identifiantPML: String(pharmacyCip),
-    referenceCommande: String(orderId || Date.now()),
+    referenceCommande: reference,
     lignes: items.map(i => ({
       CIP: i.cip || "",
       libelle: (i.name || "").substring(0, 50),
@@ -120,8 +124,8 @@ export const handler = async (event) => {
     }
 
     await journal({ via, orderId, pharmacy: pharmacyName, cip: String(pharmacyCip), lignes: items.length, outcome: "transmise",
-                    http: res.status, ms: Date.now() - t0, commandes: result?.commandes ?? null });
-    await markProcessed(orderId);
+                    http: res.status, ms: Date.now() - t0, commandes: result?.commandes ?? null, ...(partial ? { partiel: true, reference } : {}) });
+    if (!partial) await markProcessed(orderId);
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, commandes: result?.commandes || 1, pharmaml: result }) };
   } catch (err) {
     console.error("[submit-order] ERREUR:", err.message);
