@@ -62,6 +62,10 @@ const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", secti
 
 const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 
+// Ligne de commande réglée : envoyée à PharmaML (synced_at) ou traitée sans envoi (handled_at :
+// saisie à la main dans Odoo, annulée, livrée autrement…)
+const lineDone = (it) => !!(it?.synced_at || it?.handled_at);
+
 export default function AdminPanel({ onClose, sectionMeta }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
@@ -479,7 +483,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const order = ordersRef.current.find(o => o.id === orderArg.id) || orderArg;   // marques d'envoi à jour
     if (order.processed || inFlight.current.has(order.id)) return;
     const all = order.items || [];
-    const remaining = all.map((_, i) => i).filter(i => !all[i]?.synced_at);
+    const remaining = all.map((_, i) => i).filter(i => !lineDone(all[i]));
     const idx = onlyIdx ? onlyIdx.filter(i => remaining.includes(i)) : remaining;
     if (!idx.length) return;
     // Une partie des lignes (ou la suite d'un envoi partiel) : référence PharmaML propre à cet envoi
@@ -542,7 +546,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
         if (res.ok && json.success) {
           const now = new Date().toISOString();
           const newItems = all.map((it, i) => idx.includes(i) ? { ...it, synced_at: now, synced_ref: reference } : it);
-          const done = newItems.every(it => it?.synced_at);
+          const done = newItems.every(lineDone);
           setSyncStatus(s => ({ ...s, [order.id]: done ? "ok" : `partielle:${idx.length}` }));
           ordersRef.current = ordersRef.current.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o);
           setOrders(prev => prev.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o));
@@ -566,9 +570,32 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     }
   };
 
+  // Lignes traitées sans envoi à PharmaML (ou retour « à envoyer ») ; commande traitée quand tout est réglé
+  const markLines = async (orderArg, idxList, handled) => {
+    const order = ordersRef.current.find(o => o.id === orderArg.id) || orderArg;
+    if (inFlight.current.has(order.id)) return;
+    const all = order.items || [];
+    const now = new Date().toISOString();
+    const newItems = all.map((it, i) => {
+      if (!idxList.includes(i) || it?.synced_at) return it;   // une ligne envoyée reste envoyée
+      if (handled) return { ...it, handled_at: now };
+      const { handled_at, ...rest } = it; return rest;
+    });
+    const done = newItems.length > 0 && newItems.every(lineDone);
+    ordersRef.current = ordersRef.current.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o);
+    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o));
+    setLineSel(sel => ({ ...sel, [order.id]: [] }));
+    try {
+      const r = await adminFetch("/.netlify/functions/order-update", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: order.id, items: newItems, processed: done }) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setSyncStatus(s => ({ ...s, [order.id]: handled ? `traitees:${idxList.length}` : undefined }));
+    } catch (e) { setSyncStatus(s => ({ ...s, [order.id]: `État des lignes non enregistré (${e.message}) : actualisez` })); }
+  };
+
   // « Sync toutes » : commandes en attente SANS envoi partiel — le reste d'une commande partielle
   // (précommandes retenues) ne part que par son propre bouton « Sync le reste »
-  const bulkPending = orders.filter(o => !o.processed && !(o.items || []).some(it => it?.synced_at));
+  const bulkPending = orders.filter(o => !o.processed && !(o.items || []).some(lineDone));
   const syncAllPending = async () => {
     if (syncingAll) return;
     setSyncingAll(true);
@@ -729,7 +756,10 @@ export default function AdminPanel({ onClose, sectionMeta }) {
     const newVal = !order?.processed;
     // Rouvrir efface les marques d'envoi par ligne : un nouveau Sync renvoie toute la commande (comme avant)
     const its = order?.items || [];
-    const items = !newVal && its.length && its.every(it => it?.synced_at) ? its.map(({ synced_at, synced_ref, ...it }) => it) : null;   // partielle : marques gardées
+    const items = newVal ? null
+      : its.length && its.every(it => it?.synced_at) ? its.map(({ synced_at, synced_ref, handled_at, ...it }) => it)   // tout envoyé : renvoi complet possible
+      : its.some(it => it?.handled_at) ? its.map(({ handled_at, ...it }) => it)   // lignes traitées sans envoi : de nouveau à envoyer
+      : null;   // envoi partiel : marques d'envoi gardées
     setOrders(orders.map(o => o.id===id ? {...o, processed: newVal, ...(items ? { items } : {})} : o));
     await adminFetch("/.netlify/functions/order-update", {
       method: "POST",
@@ -1142,8 +1172,10 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         <span style={{fontWeight:800,fontSize:14,color:"#0f2d3d"}}>{o.pharmacyName}</span>
                         {o.processed
                           ? <span style={{background:"#dcfce7",color:"#166534",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>✓ TRAITÉE</span>
-                          : (o.items||[]).some(it=>it?.synced_at)
-                            ? <span style={{background:"#fef3c7",color:"#92400e",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>PARTIELLE · {(o.items||[]).filter(it=>it?.synced_at).length}/{(o.items||[]).length} LIGNES ENVOYÉES</span>
+                          : (o.items||[]).some(lineDone)
+                            ? <span style={{background:"#fef3c7",color:"#92400e",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>PARTIELLE · {[
+                                (o.items||[]).filter(it=>it?.synced_at).length ? `${(o.items||[]).filter(it=>it?.synced_at).length} ENVOYÉE(S)` : "",
+                                (o.items||[]).filter(it=>it?.handled_at && !it?.synced_at).length ? `${(o.items||[]).filter(it=>it?.handled_at && !it?.synced_at).length} TRAITÉE(S) SANS ENVOI` : ""].filter(Boolean).join(" · ")} / {(o.items||[]).length} LIGNES</span>
                             : <span style={{background:"#dbeafe",color:"#1e40af",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>EN ATTENTE</span>
                         }
                       </div>
@@ -1159,7 +1191,8 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       {syncStatus[o.id]==="pending" && <span style={{fontSize:11,color:"#2563eb",fontWeight:700,padding:"6px 4px"}}>⏳ Sync…</span>}
                       {syncStatus[o.id]==="ok" && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ Envoyée</span>}
                       {String(syncStatus[o.id]||"").startsWith("partielle:") && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) envoyée(s)</span>}
-                      {syncStatus[o.id] && syncStatus[o.id]!=="pending" && syncStatus[o.id]!=="ok" && !String(syncStatus[o.id]).startsWith("partielle:") && (
+                      {String(syncStatus[o.id]||"").startsWith("traitees:") && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) traitée(s)</span>}
+                      {syncStatus[o.id] && syncStatus[o.id]!=="pending" && syncStatus[o.id]!=="ok" && !/^(partielle|traitees):/.test(String(syncStatus[o.id])) && (
                         <span title={syncStatus[o.id]} style={{fontSize:11,color:"#dc2626",fontWeight:700,padding:"6px 4px",cursor:"help",maxWidth:300,display:"inline-block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⚠️ {syncStatus[o.id]}</span>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (lineSel[o.id]||[]).length>0 && (
@@ -1167,9 +1200,14 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                           🔁 Sync sélection ({lineSel[o.id].length})
                         </button>
                       )}
+                      {!o.processed && syncStatus[o.id]!=="pending" && (lineSel[o.id]||[]).length>0 && (
+                        <button onClick={()=>markLines(o, lineSel[o.id], true)} title="Marquer les lignes cochées comme traitées, SANS les envoyer à PharmaML" style={{background:"#dcfce7",border:"1px solid #86efac",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"#166534",fontWeight:700}}>
+                          ✓ Traiter sélection ({lineSel[o.id].length})
+                        </button>
+                      )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (
                         <button onClick={()=>syncOrder(o)} title="Envoyer toutes les lignes pas encore transmises" style={{background:"#2563eb",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
-                          🔁 {(o.items||[]).some(it=>it?.synced_at) ? `Sync le reste (${(o.items||[]).filter(it=>!it?.synced_at).length})` : "Sync"}
+                          🔁 {(o.items||[]).some(lineDone) ? `Sync le reste (${(o.items||[]).filter(it=>!lineDone(it)).length})` : "Sync"}
                         </button>
                       )}
                       <button onClick={()=>downloadCsv(o)} title="Télécharger CSV" style={{background:"#0f2d3d",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>⬇ CSV</button>
@@ -1183,7 +1221,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                   </div>
                   {/* Sélection des lignes à envoyer (commande en attente) */}
                   {!o.processed && (o.items||[]).length > 1 && (() => {
-                    const rest = (o.items||[]).map((it,i)=>i).filter(i=>!o.items[i]?.synced_at);
+                    const rest = (o.items||[]).map((it,i)=>i).filter(i=>!lineDone(o.items[i]));
                     const inSt = rest.filter(i=>orderStock[o.items[i]?.cip]===true), pre = rest.filter(i=>orderStock[o.items[i]?.cip]===false);
                     const pick = (arr) => setLineSel(sel=>({...sel,[o.id]:arr}));
                     const link = {background:"none",border:"none",color:"#2563eb",cursor:"pointer",fontSize:11,fontWeight:700,padding:"0 4px"};
@@ -1204,7 +1242,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                       const hasUG = campAdmin && o.items?.some(item => calcUgAdmin(item.name||'', item.qty||0, campAdmin) > 0);
                       return (<>
                         <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
-                          {!o.processed && <span style={{width:22,flexShrink:0}} />}
+                          {(!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{width:22,flexShrink:0}} />}
                           <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
                           <span style={{flex:1}}>Désignation</span>
                           <span style={{width:30,textAlign:"right"}}>Qté</span>
@@ -1215,16 +1253,19 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                         {o.items?.map((item,i)=>{
                           const ug = campAdmin ? calcUgAdmin(item.name||'', item.qty||0, campAdmin) : 0;
                           return (
-                            <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none",opacity:!o.processed&&item.synced_at?0.55:1}}>
-                              {!o.processed && <span style={{width:22,flexShrink:0}}>
+                            <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none",opacity:lineDone(item)&&(!o.processed||(o.items||[]).some(it=>it?.handled_at))?0.55:1}}>
+                              {(!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{width:22,flexShrink:0}}>
                                 {item.synced_at ? <span title={`Envoyée le ${new Date(item.synced_at).toLocaleString("fr-FR")} (réf. ${item.synced_ref})`} style={{color:"#059669",fontWeight:800}}>✓</span>
-                                  : <input type="checkbox" aria-label={`Envoyer ${item.name}`} checked={(lineSel[o.id]||[]).includes(i)}
+                                  : item.handled_at ? <span title={`Traitée sans envoi le ${new Date(item.handled_at).toLocaleString("fr-FR")}`} style={{color:"#64748b",fontWeight:800}}>✓</span>
+                                  : o.processed ? null : <input type="checkbox" aria-label={`Envoyer ${item.name}`} checked={(lineSel[o.id]||[]).includes(i)}
                                       onChange={e=>setLineSel(sel=>{ const cur=sel[o.id]||[]; return {...sel,[o.id]: e.target.checked ? [...cur,i] : cur.filter(x=>x!==i)}; })} />}
                               </span>}
                               <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
                               <span style={{flex:1,paddingRight:8}}>{item.name}
-                                {!o.processed && !item.synced_at && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?"#dcfce7":"#ffedd5",color:orderStock[item.cip]?"#166534":"#9a3412"}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
-                                {!o.processed && item.synced_at && <span style={{marginLeft:6,fontSize:9,color:"#059669",fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
+                                {!o.processed && !lineDone(item) && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?"#dcfce7":"#ffedd5",color:orderStock[item.cip]?"#166534":"#9a3412"}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
+                                {item.synced_at && (!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{marginLeft:6,fontSize:9,color:"#059669",fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
+                                {!item.synced_at && item.handled_at && <span style={{marginLeft:6,fontSize:9,color:"#475569",fontWeight:700}}>traitée sans envoi
+                                  <button onClick={()=>markLines(o,[i],false)} disabled={syncStatus[o.id]==="pending"} style={{marginLeft:4,background:"none",border:"none",color:"#2563eb",cursor:"pointer",fontSize:9,fontWeight:700,padding:0,textDecoration:"underline"}}>annuler</button></span>}
                               </span>
                               <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
                               {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:ug>0?"#059669":"#ddd",fontWeight:ug>0?800:400}}>{ug>0?`+${ug}`:"—"}</span>}

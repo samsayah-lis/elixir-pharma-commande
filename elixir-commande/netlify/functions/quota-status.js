@@ -49,7 +49,7 @@ export const handler = async (event) => {
         if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
         for (const it of Array.isArray(items) ? items : []) {
           const q = byCip[String(it?.cip || "")];
-          if (!q) continue;
+          if (!q || it.handled_at) continue;   // traitée sans envoi par l'admin (saisie dans Odoo, annulée…) : pas à compter ici
           const sentAt = it.synced_at ? Date.parse(it.synced_at) : o.processed ? Date.parse(o.date) : null;   // envoi auto : juste après la création
           if (sentAt != null && !(sentAt > lastImport && sentAt > recent)) continue;   // déjà dans Odoo (ou trop ancienne)
           usedSite[q.cip] = (usedSite[q.cip] || 0) + (parseInt(it.qty) || 0);
