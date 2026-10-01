@@ -106,8 +106,12 @@ export async function authenticate() {
   return uid;
 }
 
+// Langue française par défaut : les noms produits sont traduisibles dans Odoo ; sans langue,
+// Odoo renvoie le nom ANGLAIS, souvent resté « Nom à préciser : <CIP> » ou un ancien libellé
+// quand la fiche a été renommée depuis l'interface (en français).
+export const ODOO_LANG = "fr_FR";
 export async function odooCall(uid, model, method, domain, kwargs) {
-  const kw = kwargs || {};
+  const kw = { ...(kwargs || {}), context: { lang: ODOO_LANG, ...((kwargs || {}).context || {}) } };
   const body = buildCall("execute_kw", [ODOO_DB, uid, ODOO_KEY, model, method, [domain], kw]);
   const xml = await post("/xmlrpc/2/object", body);
   return parse(xml);

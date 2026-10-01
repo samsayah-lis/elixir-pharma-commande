@@ -18,10 +18,13 @@ async function rpc(service, method, args) {
   return j.result;
 }
 
+// Langue française par défaut (noms produits traduisibles : sans langue, Odoo renvoie le nom
+// anglais, parfois resté « Nom à préciser : <CIP> » après un renommage fait en français)
 export async function odoo(model, method, args, kwargs = {}) {
   if (!uidCache) uidCache = await rpc("common", "login", [ODOO_DB, ODOO_USER, ODOO_KEY]);
   if (!uidCache) throw new Error("Authentification Odoo refusée");
-  return rpc("object", "execute_kw", [ODOO_DB, uidCache, ODOO_KEY, model, method, args, kwargs]);
+  const kw = { ...(kwargs || {}), context: { lang: "fr_FR", ...((kwargs || {}).context || {}) } };
+  return rpc("object", "execute_kw", [ODOO_DB, uidCache, ODOO_KEY, model, method, args, kw]);
 }
 
 // search_read paginé, sans plafond
