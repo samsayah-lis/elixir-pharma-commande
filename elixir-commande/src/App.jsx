@@ -33,6 +33,16 @@ const SECTION_META = {
   fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+// Contingentement (quota Odoo par période) : lignes du panier au-delà du reste autorisé.
+// Plusieurs lignes d'un même CIP sont additionnées.
+const quotaOver = (quota, items) => {
+  const P = quota && !quota.exempt ? (quota.products || {}) : {};
+  const inCart = {};
+  for (const i of items) if (i.cip && P[i.cip]) inCart[i.cip] = (inCart[i.cip] || 0) + i.qty;
+  const over = Object.entries(inCart).filter(([c, n]) => n > P[c].remaining).map(([c, n]) => ({ cip: c, qty: n, ...P[c] }));
+  return { P, inCart, over };
+};
+const quotaDay = (d) => d ? new Date(d + "T12:00:00Z").toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" }) : "";
 
 // ── Display config (ordre + visibilité des onglets, paramètres visuels) ──
 function getDisplayConfig() {
@@ -827,6 +837,25 @@ export default function App() {
   const cartTotal = cartItems.reduce((s, i) => s + i.total, 0);
   const cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
 
+  // ── Contingentement : reste autorisé par produit, rechargé à l'ouverture du panier ──
+  const [quota, setQuota] = useState(null);
+  const loadQuota = useCallback(async () => {
+    if (!pharmacyEmail) return null;
+    try {
+      const t = localStorage.getItem("pharmacy_token");
+      const r = await fetch("/.netlify/functions/quota-status", { method: "POST",
+        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail }), signal: AbortSignal.timeout(12000) });
+      if (!r.ok) { setQuota(null); return null; }
+      const j = await r.json();
+      setQuota(j);
+      return j;
+    } catch { setQuota(null); return null; }   // Odoo indisponible : on ne bloque pas la commande (Odoo contrôle aussi)
+  }, [pharmacyEmail, pharmacyCip]);
+  useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip]);   // autre pharmacie / déconnexion
+  useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
+  const quotaCheck = useMemo(() => quotaOver(quota, cartItems), [quota, cartItems]);
+
   // ── Panier : invalidation si la STRUCTURE du catalogue a changé ──────────
   // Le panier est indexé par position (catKey-idx). Si l'admin ajoute / retire /
   // réordonne un produit entre deux sessions, ces index pointent alors sur
@@ -1077,6 +1106,14 @@ export default function App() {
   const handleSend = async () => {
     if (cartItems.length === 0) return;
     setSendStatus("sending");
+    // Contingentement : vérification avec les quantités à jour juste avant l'envoi
+    const freshQuota = await loadQuota();
+    const blocked = quotaOver(freshQuota, cartItems).over;   // chiffres à jour ; sans réponse d'Odoo, pas de blocage
+    if (blocked.length) {
+      setSendStatus(null);
+      flash(`⚠ Contingentement dépassé : ${blocked.map(b => `${b.name} (reste ${b.remaining})`).join(", ")}`);
+      return;
+    }
 
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
     const lignes = cartItems.map(i =>
@@ -2481,6 +2518,27 @@ export default function App() {
                           {item.nextTier && (<>🎯 Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></>)}
                         </div>
                       )}
+                      {/* Contingentement : quota de la période, déjà commandé, reste */}
+                      {item.cip && quotaCheck.P[item.cip] && (() => {
+                        const q = quotaCheck.P[item.cip];
+                        const over = quotaCheck.inCart[item.cip] > q.remaining;
+                        const room = Math.max(0, q.remaining - (quotaCheck.inCart[item.cip] - item.qty));   // reste pour CETTE ligne
+                        const max = item.step > 1 ? Math.floor(room / item.step) * item.step : room;
+                        return (
+                          <div style={{ marginTop: 6, fontSize: 11, borderRadius: 6, padding: "5px 8px", lineHeight: 1.45,
+                                        background: over ? "#fef2f2" : "#eff6ff", color: over ? "#991b1b" : "#1e3a8a", border: over ? "1px solid #fecaca" : "1px solid transparent" }}>
+                            🔒 Contingenté : <strong>{q.label}</strong>{q.used > 0 ? ` · déjà commandé ${q.used}` : ""} · reste <strong>{q.remaining}</strong>
+                            {q.end && <span style={{ color: over ? "#991b1b" : "#64748b" }}> (nouveau quota le {quotaDay(q.end)})</span>}
+                            {over && (
+                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontWeight: 700 }}>
+                                {q.remaining === 0 ? "Quota atteint pour cette période" : `Maximum ${q.remaining} pour cette période`}
+                                <button onClick={() => setItemQty(item, max)} style={{ background: "white", border: "1px solid #fca5a5", color: "#b91c1c", borderRadius: 6,
+                                  padding: "2px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>{max > 0 ? `Ramener à ${max}` : "Retirer"}</button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {/* Avertissement rupture */}
                       {item.cip && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
                         <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", background: "#fff5f5", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
@@ -2529,10 +2587,15 @@ export default function App() {
                     </div>
                   </div>
 
+                  {quotaCheck.over.length > 0 && (
+                    <div role="alert" style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
+                      🔒 Contingentement dépassé : {quotaCheck.over.map(o => `${o.name} (${o.qty} demandés, reste ${o.remaining})`).join(" ; ")}. Ajustez ces lignes pour envoyer la commande.
+                    </div>
+                  )}
                   {/* Send button */}
                   <button
                     onClick={handleSend}
-                    disabled={sendStatus === "sending"}
+                    disabled={sendStatus === "sending" || quotaCheck.over.length > 0}
                     style={{
                       width: "100%",
                       background: sendStatus === "success"
@@ -2542,7 +2605,7 @@ export default function App() {
                         : "linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)",
                       color: "white", border: "none", borderRadius: 10, padding: "12px",
                       fontWeight: 700, fontSize: 14, cursor: sendStatus === "sending" ? "not-allowed" : "pointer",
-                      opacity: sendStatus === "sending" ? 0.7 : 1, marginBottom: 8
+                      opacity: sendStatus === "sending" || quotaCheck.over.length > 0 ? 0.6 : 1, marginBottom: 8
                     }}>
                     {sendStatus === "sending" ? "⏳ Envoi en cours..." :
                      sendStatus === "success" ? "✅ Commande envoyée !" :
