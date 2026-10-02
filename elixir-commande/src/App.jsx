@@ -33,6 +33,11 @@ const SECTION_META = {
   fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+// Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
+// (sessionStorage de l'onglet, une clé par fiche) — jamais l'un pour l'autre
+const cartKeys = (a) => a ? [`acting_cart_q_${a.odoo_id}`, `acting_cart_s_${a.odoo_id}`] : ["cart_quantities", "cart_special"];
+const cartStore = (a) => a ? sessionStorage : localStorage;
+const readCart = (a) => { const [kq, ks] = cartKeys(a); try { return [JSON.parse(cartStore(a).getItem(kq) || "{}"), JSON.parse(cartStore(a).getItem(ks) || "[]")]; } catch { return [{}, []]; } };
 // Contingentement (quota Odoo par période) : lignes du panier au-delà du reste autorisé.
 // Plusieurs lignes d'un même CIP sont additionnées.
 const quotaOver = (quota, items) => {
@@ -203,10 +208,16 @@ export default function App() {
     } catch {}
     return getDisplayConfig().defaultTab || "expert";
   });
+  // Saisie par Elixir pour une pharmacie (admin connecté) : la commande part au nom de cette pharmacie.
+  // L'identité de session ci-dessous est remplacée en mémoire seulement (la connexion pharmacie
+  // enregistrée dans le navigateur n'est pas touchée) ; mémorisé pour l'onglet (sessionStorage).
+  const [actingFor, setActingFor] = useState(() => { try { return JSON.parse(sessionStorage.getItem("acting_for") || "null"); } catch { return null; } });
+  const [showPharmacyPicker, setShowPharmacyPicker] = useState(false);
+  const hasAdminToken = !!localStorage.getItem("admin_token");
   // Session pharmacie — déclarés en premier car référencés dans useEffect et useMemo
-  const [pharmacyName, setPharmacyName] = useState(() => localStorage.getItem("session_name") || "");
-  const [pharmacyEmail, setPharmacyEmail] = useState(() => localStorage.getItem("session_email") || "");
-  const [pharmacyCip, setPharmacyCip] = useState(() => localStorage.getItem("session_cip") || "");
+  const [pharmacyName, setPharmacyName] = useState(() => actingFor ? actingFor.name : (localStorage.getItem("session_name") || ""));
+  const [pharmacyEmail, setPharmacyEmail] = useState(() => actingFor ? (actingFor.email || "") : (localStorage.getItem("session_email") || ""));
+  const [pharmacyCip, setPharmacyCip] = useState(() => actingFor ? (actingFor.cip || "") : (localStorage.getItem("session_cip") || ""));
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   // Commandes groupées (nouveau module) : null = vérification en cours
   const [gpAllowed, setGpAllowed] = useState(null);
@@ -249,9 +260,9 @@ export default function App() {
     const t = setInterval(tick, 1000);
     return () => clearInterval(t);
   }, []);
-  const [quantities, setQuantities] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_quantities") || "{}"); } catch { return {}; } });
+  const [quantities, setQuantities] = useState(() => readCart(actingFor)[0]);
   // Produits hors catalogue curaté (ajoutés depuis Saisie de commande / Péremption courte)
-  const [specialItems, setSpecialItems] = useState(() => { try { return JSON.parse(localStorage.getItem("cart_special") || "[]"); } catch { return []; } });
+  const [specialItems, setSpecialItems] = useState(() => readCart(actingFor)[1]);
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -285,23 +296,28 @@ export default function App() {
     if (!pharmacyCip || pharmacyCip === "0") return;
     setMyOrdersLoading(true);
     try {
-      const ptok = localStorage.getItem("pharmacy_token");
+      const ptok = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
       const res = await fetch(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`,
         ptok ? { headers: { Authorization: `Bearer ${ptok}` } } : {});
       const data = await res.json();
       setMyOrders(data.orders || []);
     } catch { setMyOrders([]); }
     setMyOrdersLoading(false);
-  }, [pharmacyCip]);
+  }, [pharmacyCip, actingFor]);
   useEffect(() => {
+    setReorderSuggestions([]); setShowReorder(false);   // autre pharmacie (saisie Elixir) : pas les suggestions de la précédente
+    setUlabsConfirmed(false); setUlabsError(null);
     if (!pharmacyCip || pharmacyCip === "0") return;
+    let cancelled = false;
     fetch(`/.netlify/functions/ml-recommend?mode=reorder&pharmacy_cip=${encodeURIComponent(pharmacyCip)}&limit=10`)
       .then(r => r.json())
       .then(data => {
+        if (cancelled) return;
         const due = (data.suggestions || []).filter(s => s.should_reorder && s.name);
         if (due.length > 0) { setReorderSuggestions(due); setShowReorder(true); }
       })
       .catch(() => {});
+    return () => { cancelled = true; };
   }, [pharmacyCip]);
 
   const [globalSearch, setGlobalSearch] = useState("");
@@ -406,13 +422,13 @@ export default function App() {
 
   useEffect(() => { fetchProducts(); }, [fetchProducts]);
 
-  // Persiste le panier dans localStorage
+  // Persiste le panier (session : localStorage ; saisie Elixir : panier de la pharmacie servie, onglet)
   useEffect(() => {
-    localStorage.setItem("cart_quantities", JSON.stringify(quantities));
-  }, [quantities]);
+    try { cartStore(actingFor).setItem(cartKeys(actingFor)[0], JSON.stringify(quantities)); } catch {}
+  }, [quantities, actingFor]);
   useEffect(() => {
-    localStorage.setItem("cart_special", JSON.stringify(specialItems));
-  }, [specialItems]);
+    try { cartStore(actingFor).setItem(cartKeys(actingFor)[1], JSON.stringify(specialItems)); } catch {}
+  }, [specialItems, actingFor]);
   const [promoSections, setPromoSections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
@@ -679,7 +695,27 @@ export default function App() {
     setSpecialItems([]);
     setCartOpen(false);
   };
-  const [isClient, setIsClient] = useState(null);
+  const [isClient, setIsClient] = useState(() => actingFor ? true : null);
+  const startActing = (ph) => {
+    // chaque pharmacie servie a son propre panier ; celui de votre session reste de côté, intact
+    if (actingFor && actingFor.odoo_id !== ph.odoo_id && (cartItems || []).length
+      && !window.confirm(`Le panier préparé pour ${actingFor.name} (${cartItems.length} ligne(s)) reste de côté dans cet onglet. Passer à ${ph.name} ?`)) return;
+    // identité : adresse de COMPTE de cette pharmacie seulement (jamais l'e-mail Odoo, qui peut être partagé)
+    const a = { odoo_id: ph.odoo_id, name: ph.name, cip: ph.cip || "", email: ph.has_account ? ((ph.emails || [])[0] || "") : "", city: ph.city || "" };
+    try { sessionStorage.setItem("acting_for", JSON.stringify(a)); } catch {}
+    const [q, sp] = readCart(a);
+    setActingFor(a); setQuantities(q); setSpecialItems(sp);
+    setPharmacyName(a.name); setPharmacyEmail(a.email); setPharmacyCip(a.cip); setIsClient(true);
+    setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", window.location.pathname + window.location.search);
+  };
+  const stopActing = () => {
+    if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return;
+    try { const [kq, ks] = cartKeys(actingFor); sessionStorage.removeItem(kq); sessionStorage.removeItem(ks); sessionStorage.removeItem("acting_for"); } catch {}
+    const [q, sp] = readCart(null);   // panier de votre session, tel que vous l'aviez laissé
+    setActingFor(null); setQuantities(q); setSpecialItems(sp);
+    setPharmacyName(localStorage.getItem("session_name") || ""); setPharmacyEmail(localStorage.getItem("session_email") || ""); setPharmacyCip(localStorage.getItem("session_cip") || "");
+    setIsClient(null);
+  };
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");
@@ -840,19 +876,19 @@ export default function App() {
   // ── Contingentement : reste autorisé par produit, rechargé à l'ouverture du panier ──
   const [quota, setQuota] = useState(null);
   const loadQuota = useCallback(async () => {
-    if (!pharmacyEmail) return null;
+    if (!pharmacyEmail && !actingFor) return null;
     try {
-      const t = localStorage.getItem("pharmacy_token");
+      const t = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
       const r = await fetch("/.netlify/functions/quota-status", { method: "POST",
         headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-        body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail }), signal: AbortSignal.timeout(12000) });
+        body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...(actingFor ? { odoo_id: actingFor.odoo_id } : {}) }), signal: AbortSignal.timeout(12000) });
       if (!r.ok) { setQuota(null); return null; }
       const j = await r.json();
       setQuota(j);
       return j;
     } catch { setQuota(null); return null; }   // Odoo indisponible : on ne bloque pas la commande (Odoo contrôle aussi)
-  }, [pharmacyEmail, pharmacyCip]);
-  useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip]);   // autre pharmacie / déconnexion
+  }, [pharmacyEmail, pharmacyCip, actingFor]);
+  useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip, actingFor]);   // autre pharmacie / déconnexion
   useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
   const quotaCheck = useMemo(() => quotaOver(quota, cartItems), [quota, cartItems]);
 
@@ -1106,6 +1142,12 @@ export default function App() {
   const handleSend = async () => {
     if (cartItems.length === 0) return;
     setSendStatus("sending");
+    // Saisie Elixir : la session admin doit être valide AVANT tout envoi (sinon commande sans mention ni trace admin)
+    if (actingFor) {
+      const ok = await fetch("/.netlify/functions/admin-pharmacy-find?q=", { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` } })
+        .then(r => r.ok).catch(() => false);
+      if (!ok) { setSendStatus(null); flash("⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande"); return; }
+    }
     // Contingentement : vérification avec les quantités à jour juste avant l'envoi
     const freshQuota = await loadQuota();
     const blocked = quotaOver(freshQuota, cartItems).over;   // chiffres à jour ; sans réponse d'Odoo, pas de blocage
@@ -1137,8 +1179,8 @@ export default function App() {
 
     const templateParams = {
       to_email:      DEFAULT_RECIPIENT,
-      pharmacy_name: pharmacyName,
-      pharmacy_email: pharmacyEmail,
+      pharmacy_name: actingFor ? `${pharmacyName} — saisie par Elixir` : pharmacyName,
+      pharmacy_email: pharmacyEmail || "—",
       is_client:     isClient ? "Oui" : "Non (nouveau client – RIB joint)",
       order_date:    date,
       order_lines:   lignes,
@@ -1172,10 +1214,11 @@ export default function App() {
         };
 
         // Sauvegarde dans Supabase (await pour détecter les erreurs)
+        const atok = actingFor ? localStorage.getItem("admin_token") : null;
         const saveRes = await fetch("/.netlify/functions/order-save", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(order),
+          headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
+          body: JSON.stringify(actingFor ? { ...order, enteredByAdmin: true } : order),
         });
         const saveJson = await saveRes.json();
         if (saveJson.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
@@ -1184,6 +1227,7 @@ export default function App() {
         // ── Auto-submit vers PharmaML ──
         // Essaie d'abord l'agent local (port 3001), sinon fallback Netlify Function
         (async () => {
+          if (actingFor && !(pharmacyCip && pharmacyCip !== "0")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin
           const payload = JSON.stringify({
             csvContent,
             items: order.items,
@@ -1194,7 +1238,7 @@ export default function App() {
             { url: "http://localhost:3001", label: "agent local" },
             { url: "/.netlify/functions/submit-order", label: "Netlify Function" },
           ];
-          const ptok = localStorage.getItem("pharmacy_token");
+          const ptok = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
           for (const ep of endpoints) {
             try {
               const res = await fetch(ep.url, {
@@ -1254,7 +1298,7 @@ export default function App() {
     </>
   );
 
-  if (!onboardingDone && !showAdmin) return (
+  if (!onboardingDone && !showAdmin && !actingFor) return (
     <div style={obBg}>
 
       {/* ── STEP LOADING ── */}
@@ -1495,8 +1539,9 @@ export default function App() {
               </div>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #262626", borderRadius: 9, padding: "4px 4px 4px 12px" }}>
-              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: "#cfcfcf", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>🏥 {pharmacyName}</span>
-              <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>
+              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : "#cfcfcf", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>{actingFor ? "🛠" : "🏥"} {pharmacyName}</span>
+              {!actingFor && hasAdminToken && <button onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#fdba74", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>🛠</button>}
+              {!actingFor && <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>}
             </div>
             {!isMobile && <button onClick={handlePrint} style={{ background: "#16181b", border: "1px solid #2a2a2a", color: "#ddd", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>🖨</button>}
             {pharmacyCip && pharmacyCip !== "0" && (
@@ -1536,6 +1581,18 @@ export default function App() {
               padding:"10px 24px", borderRadius:10, fontSize:13, fontWeight:700, boxShadow:"0 4px 20px rgba(0,0,0,0.15)",
               animation:"fadeIn 0.2s" }}>
               {flashMsg}
+            </div>
+          )}
+
+          {/* Saisie par Elixir pour une pharmacie */}
+          {actingFor && (
+            <div role="status" style={{ background: "#fff7ed", border: "2px solid #fb923c", borderRadius: 12, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: "#7c2d12" }}>
+                <b>🛠 Commande saisie par Elixir pour {actingFor.name}</b>{actingFor.city ? ` (${actingFor.city})` : ""}
+                <div style={{ fontSize: 12 }}>{actingFor.cip ? `CIP ${actingFor.cip}` : "⚠️ pas de CIP dans Odoo : la commande sera enregistrée mais ne partira pas seule à PharmaML"}{actingFor.email ? ` · ${actingFor.email}` : " · sans compte sur le site"} — le panier est envoyé au nom de cette pharmacie.</div>
+              </div>
+              <button onClick={() => setShowPharmacyPicker(true)} style={{ background: "white", border: "1px solid #fdba74", color: "#9a3412", borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Changer de pharmacie</button>
+              <button onClick={stopActing} style={{ background: "#9a3412", border: "none", color: "white", borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Terminer</button>
             </div>
           )}
 
@@ -1666,7 +1723,9 @@ export default function App() {
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (
-            <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty} />
+            actingFor
+              ? <div style={{ background: "white", borderRadius: 14, padding: "18px 22px", fontSize: 14, color: "#334155" }}>En saisie pour une pharmacie, les commandes groupées se passent depuis l'admin : opération → « 🛒 Saisir une commande ».</div>
+              : <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (
@@ -2358,12 +2417,13 @@ export default function App() {
                 ...items.map(i => `${i.cip};${i.name};${i.qty};${(i.pn||0).toFixed(2)};${(i.total||0).toFixed(2)}`)
               ].join("\n");
               try {
+                const atok = actingFor ? localStorage.getItem("admin_token") : null;   // saisie Elixir pour une pharmacie
                 await fetch("/.netlify/functions/order-save", {
-                  method: "POST", headers: { "Content-Type": "application/json" },
+                  method: "POST", headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
                   body: JSON.stringify({
                     id: orderId, pharmacyName, pharmacyEmail, pharmacyCip,
                     isClient: true, items, totalHt: myTotal, nbLignes: items.length, csv,
-                    source: "ulabs"
+                    source: "ulabs", ...(actingFor ? { enteredByAdmin: true } : {})
                   })
                 });
                 setUlabsConfirmed(true);
@@ -2684,6 +2744,7 @@ export default function App() {
         </div>}>
           <AdminPanel
             sectionMeta={SECTION_META}
+            onOrderForPharmacy={() => setShowPharmacyPicker(true)}
             onClose={() => {
               window.location.hash = "";
               fetchProducts();
@@ -2692,6 +2753,59 @@ export default function App() {
           />
         </ErrorBoundary>
       )}
+      {showPharmacyPicker && <PharmacyPicker onPick={startActing} onClose={() => setShowPharmacyPicker(false)} />}
+    </div>
+  );
+}
+
+// ── Admin : choisir la pharmacie pour laquelle on passe commande (clients Elixir d'Odoo, avec ou sans compte) ──
+function PharmacyPicker({ onPick, onClose }) {
+  const [q, setQ] = useState("");
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const search = async () => {
+    if (q.trim().length < 2) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await fetch(`/.netlify/functions/admin-pharmacy-find?q=${encodeURIComponent(q.trim())}`, { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` } });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 401 || r.status === 403) throw new Error("Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis recommencez.");
+      if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
+      setRes(j.pharmacies || []);
+    } catch (e) { setErr(e.message); setRes(null); }
+    setBusy(false);
+  };
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Commander pour une pharmacie" onClick={onClose}
+      style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "60px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: "white", borderRadius: 16, padding: "20px 22px", width: "100%", maxWidth: 620, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", fontFamily: "inherit" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>🛠 Commander pour une pharmacie</div>
+          <button onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8" }}>✕</button>
+        </div>
+        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>Clients Elixir dans Odoo, avec ou sans compte sur le site. Le panier sera envoyé au nom de la pharmacie choisie (CIP, PharmaML, contingentement), avec la mention « saisie par Elixir ».</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input autoFocus value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && search()} placeholder="Nom, ville, CIP ou e-mail" aria-label="Rechercher une pharmacie"
+            style={{ flex: 1, border: "1.5px solid #d6dde3", borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "inherit" }} />
+          <button onClick={search} disabled={busy || q.trim().length < 2} style={{ background: "#0f2d3d", color: "white", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 700, cursor: "pointer", opacity: busy || q.trim().length < 2 ? 0.6 : 1 }}>{busy ? "…" : "Rechercher"}</button>
+        </div>
+        {err && <div style={{ marginTop: 10, color: "#991b1b", background: "#fee2e2", borderRadius: 8, padding: "8px 12px", fontSize: 13 }}>{err}</div>}
+        {res && !res.length && <div style={{ marginTop: 12, color: "#64748b", fontSize: 13 }}>Aucune pharmacie cliente d'Elixir ne correspond.</div>}
+        {res && res.length > 0 && (
+          <div style={{ marginTop: 12, maxHeight: 380, overflowY: "auto", border: "1px solid #eef2f5", borderRadius: 10 }}>
+            {res.map(p => (
+              <button key={p.odoo_id} onClick={() => onPick(p)} style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", background: "white", border: "none", borderBottom: "1px solid #f1f5f9", padding: "10px 12px", cursor: "pointer", fontFamily: "inherit" }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, color: "#0f2d3d", fontSize: 14 }}>{p.name}</div>
+                  <div style={{ fontSize: 12, color: "#64748b" }}>{[p.zip && p.city ? `${p.zip} ${p.city}` : p.city, p.cip ? `CIP ${p.cip}` : "sans CIP", p.phone].filter(Boolean).join(" · ")}</div>
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 99, padding: "2px 8px", background: p.has_account ? "#dcfce7" : "#f1f5f9", color: p.has_account ? "#166534" : "#64748b", whiteSpace: "nowrap" }}>{p.has_account ? "compte site" : "sans compte"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { json, sb, identifyPharmacy } from "./_gp.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 import { quotaProducts, odooUsage, lastPharmamlImport, currentPeriod, quotaLabel, parisDate } from "./_quota.js";
 import { rateLimit } from "./rate-limit.js";
+import { verifyAdmin } from "./auth.js";
 
 export const handler = async (event) => {
   const cors = getCors(event);
@@ -20,7 +21,13 @@ export const handler = async (event) => {
     const b = JSON.parse(event.body || "{}");
     const products = await quotaProducts();
     if (!products.length) return json(cors, 200, { exempt: false, products: {} });
-    const ph = await identifyPharmacy(event, b.cip, b.email);
+    // Admin qui commande à la place d'une pharmacie : identité donnée par la fiche Odoo choisie
+    let ph = null;
+    if (b.odoo_id && /^\d+$/.test(String(b.odoo_id))) {
+      const auth = await verifyAdmin(event);
+      if (auth.error) return json(cors, 403, { error: "Accès admin requis" });
+      ph = { id: String(b.odoo_id), email: String(b.email || "").trim().toLowerCase(), cip: String(b.cip || "").trim() };
+    } else ph = await identifyPharmacy(event, b.cip, b.email);
     const mail = ph?.email || String(b.email || "").trim().toLowerCase();
     if (ph) {
       const [p] = await odoo("res.partner", "read", [[Number(ph.id)]], { fields: ["deny_quota"], context: { allowed_company_ids: [COMPANY_ID] } });
@@ -35,11 +42,14 @@ export const handler = async (event) => {
     //    PharmaML importée dans Odoo pour cette pharmacie (48 h au plus) : pas encore importées.
     const usedSite = {};
     const emails = ph ? (await sb(`elixir_pharmacies?odoo_id=eq.${Number(ph.id)}&select=email`)).map(r => String(r.email || "").toLowerCase()).filter(Boolean) : [];
-    if (mail.includes("@") && !emails.includes(mail)) emails.push(mail);
-    if (emails.length) {
+    if (!b.odoo_id && mail.includes("@") && !emails.includes(mail)) emails.push(mail);   // saisie admin : adresses de compte de la fiche seulement
+    // commandes du site de la pharmacie : par adresse de connexion, ou par CIP (commande saisie par Elixir
+    // pour une pharmacie sans compte)
+    const cipKnown = /^\d{7,13}$/.test(String(ph?.cip || "")) ? String(ph.cip) : null;
+    if (emails.length || cipKnown) {
       // fenêtre de 7 jours : la synchro manuelle se fait dans la journée ; au-delà, commande oubliée ou abandonnée
       const since = new Date(Date.now() - 7 * 864e5).toISOString();
-      const orFilter = emails.map(e => `pharmacy_email.ilike.${JSON.stringify(e)}`).join(",");
+      const orFilter = [...emails.map(e => `pharmacy_email.ilike.${JSON.stringify(e)}`), ...(cipKnown ? [`pharmacy_cip.eq.${cipKnown}`] : [])].join(",");
       const orders = await sb(`elixir_orders?date=gte.${encodeURIComponent(since)}&or=(${encodeURIComponent(orFilter)})&select=date,items,processed&order=date.desc&limit=300`);
       const byCip = {};
       for (const q of products) { byCip[q.cip] = q; if (q.barcode) byCip[q.barcode] = q; }

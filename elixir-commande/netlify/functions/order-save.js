@@ -1,5 +1,6 @@
 import { rateLimit } from "./rate-limit.js";
 import { getCors } from "./cors.js";
+import { verifyAdmin } from "./auth.js";
 // Sauvegarde une commande dans Supabase + décrémentation stock (non-bloquante)
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -35,16 +36,28 @@ export const handler = async (event) => {
     processed: false,
     source: order.source || "catalogue",
   };
+  // Saisie par Elixir pour une pharmacie (admin connecté) : on garde qui l'a saisie
+  if (order.enteredByAdmin) {
+    const auth = await verifyAdmin(event);
+    if (auth.error) return { statusCode: 403, headers: cors, body: JSON.stringify({ success: false, error: "Session admin expirée : reconnectez-vous à l'admin pour commander à la place d'une pharmacie" }) };
+    row.entered_by = auth.admin?.email || "admin";
+  }
 
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders`, {
+    const post = (r) => fetch(`${SUPABASE_URL}/rest/v1/elixir_orders`, {
       method: "POST",
       headers: {
         "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`,
         "Content-Type": "application/json", "Prefer": "return=minimal"
       },
-      body: JSON.stringify(row)
+      body: JSON.stringify(r)
     });
+    let res = await post(row);
+    // colonne entered_by pas encore créée (sql/orders-entered-by.sql) : la commande passe quand même
+    if (!res.ok && row.entered_by) {
+      const t = await res.clone().text();
+      if (/entered_by/.test(t)) { const { entered_by, ...rest } = row; res = await post(rest); }
+    }
 
     if (!res.ok) {
       const err = await res.text();

@@ -66,7 +66,7 @@ const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 // saisie à la main dans Odoo, annulée, livrée autrement…)
 const lineDone = (it) => !!(it?.synced_at || it?.handled_at);
 
-export default function AdminPanel({ onClose, sectionMeta }) {
+export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
   // Helper : fetch avec JWT Supabase + auto-refresh
@@ -959,9 +959,14 @@ export default function AdminPanel({ onClose, sectionMeta }) {
             {products.filter(p=>p.source==="admin").length} ajoutés · {products.length} produits · {orders.length} commandes
           </div>
         </div>
-        <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
-          ← Retour au catalogue
-        </button>
+        <div style={{display:"flex",gap:8}}>
+          {onOrderForPharmacy && <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Continuer ?")) return; onOrderForPharmacy(); }} title="Passer une commande sur le site à la place d'une pharmacie (sans accès, par téléphone…)" style={{background:"#fb923c",border:"none",borderRadius:8,color:"#1c1917",padding:"6px 14px",fontWeight:800,cursor:"pointer",fontSize:13}}>
+            🛠 Commander pour une pharmacie
+          </button>}
+          <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
+            ← Retour au catalogue
+          </button>
+        </div>
       </div>
 
       {/* ── Body : sidebar + content ── */}
@@ -1170,6 +1175,7 @@ export default function AdminPanel({ onClose, sectionMeta }) {
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                         <span style={{fontWeight:800,fontSize:14,color:"#0f2d3d"}}>{o.pharmacyName}</span>
+                        {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:"#ffedd5",color:"#9a3412",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
                         {o.processed
                           ? <span style={{background:"#dcfce7",color:"#166534",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>✓ TRAITÉE</span>
                           : (o.items||[]).some(lineDone)

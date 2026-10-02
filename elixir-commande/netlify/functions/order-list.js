@@ -38,7 +38,7 @@ export const handler = async (event) => {
   // les pharmacies migrées vers l'OTP).
   if (!isAdmin && user?.cip) {
     url += `&pharmacy_cip=eq.${encodeURIComponent(user.cip)}`;
-  } else if (!isAdmin && params.pharmacy_cip) {
+  } else if (params.pharmacy_cip) {   // admin en saisie pour une pharmacie : ses commandes seulement
     url += `&pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}`;
   }
   // Si admin sans filtre → toutes les commandes
@@ -83,6 +83,7 @@ export const handler = async (event) => {
       csv: r.csv,
       processed: r.processed,
       source: r.source || "catalogue",
+      enteredBy: r.entered_by || null,
     }));
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };

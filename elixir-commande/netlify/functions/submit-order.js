@@ -70,6 +70,11 @@ export const handler = async (event) => {
   const authUser = tok ? await verifyTokenAsync(tok) : null;
   if (authUser?.cip) pharmacyCip = authUser.cip;
 
+  // Saisie par Elixir (jeton admin) sans CIP : pas de recherche par e-mail (une adresse peut mener à une autre officine)
+  if (authUser?.isAdmin && (!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0)) {
+    await journal({ via, orderId, pharmacy: pharmacyName, cip: null, lignes: items.length, outcome: "cip_introuvable" });
+    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Saisie Elixir pour une pharmacie sans CIP : commande à traiter à la main" }) };
+  }
   // Si pas de CIP, essayer de le retrouver dans Supabase par email
   if ((!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) && pharmacyEmail && SUPABASE_URL) {
     try {
