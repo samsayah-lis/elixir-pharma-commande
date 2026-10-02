@@ -5,8 +5,9 @@ import crypto from "node:crypto";
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
-import { priceLine, odooLine, packIssues, PACK_RULES, isElixir, ELIXIR_NAME, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceLine, odooLine, packIssues, PACK_RULES, isElixir, ELIXIR_ID, ELIXIR_NAME, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { view as participantView } from "./_gp-view.js";
+import { sendMail, confirmationEmail, cancellationEmail, ADMIN_MAIL } from "./_gp-mail.js";
 import { kvGet, kvSet } from "./_kv.js";
 import { medipimProduct } from "./_medipim.js";
 
@@ -148,6 +149,16 @@ async function post(b, event) {
       return { ok: true };
     }
     case "status": return changeStatus(b.id, b.status);
+    case "add_elixir": {
+      // « ＋ Elixir commande pour son stock » : inscrite tout de suite (sans toucher au reste de la fiche)
+      // pour pouvoir saisir sa commande sans enregistrer d'abord l'opération
+      const [op] = await sb(`gp_operations?id=eq.${b.id}&select=id,status&limit=1`);
+      if (!op) throw fail("Enregistrez d'abord l'opération", 404);
+      if (LOCKED.includes(op.status)) throw fail("Opération commandée, terminée ou annulée : participantes non modifiables");
+      await sb("gp_participants?on_conflict=operation_id,pharmacy_id", { method: "POST", prefer: "resolution=ignore-duplicates,return=minimal",
+        body: { operation_id: op.id, pharmacy_id: ELIXIR_ID, pharmacy_name: ELIXIR_NAME, email: null, pharmacy_cip: null, fee_pct: 0 } });
+      return { ok: true };
+    }
     case "access_add": {
       const rows = (b.pharmacies || []).filter(p => p.id).map(p => ({ pharmacy_id: String(p.id), pharmacy_name: p.name || null, email: p.email || null, pharmacy_cip: p.cip || null }));
       if (rows.length) await sb("gp_access?on_conflict=pharmacy_id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows });
@@ -166,7 +177,8 @@ async function post(b, event) {
     case "participant_view":
     case "participant_save": {
       // Saisie par Elixir pour une participante : Elixir elle-même (stock) ou une pharmacie (téléphone, mail…).
-      // Même écran et mêmes contrôles (colisage, verrou de version) que la pharmacie, sans e-mail.
+      // Même écran et mêmes contrôles (colisage, verrou de version) que la pharmacie. E-mail de confirmation :
+      // à Elixir pour son stock ; à la pharmacie (copie à Elixir) pour une commande saisie à sa place.
       const data = await loadOperation(b.id);
       if (!data) throw fail("Opération introuvable", 404);
       const part = data.participants.find(p => p.pharmacy_id === String(b.pharmacy_id));
@@ -180,7 +192,27 @@ async function post(b, event) {
         throw fail("Les commandes ne sont plus modifiables : des devis ont déjà été créés dans Odoo");
       const r = await saveOrder({ data, pharmacy: ph, entries: b.entries, source: "formulaire", loadedUpdatedAt: "loaded_updated_at" in b ? b.loaded_updated_at : undefined });
       const fresh = await loadOperation(data.op.id);
-      return { ok: true, total: r.total, changed: r.changed, cancelled: r.wasConfirmed && r.total === 0, mail: { sent: false, reason: "saisie par Elixir" }, ...(await participantView(fresh, ph)) };
+      const v = await participantView(fresh, ph);
+      const stock = isElixir(ph.id);
+      let mail = { sent: false, reason: "aucune modification" };
+      if (r.total > 0 && r.changed) {
+        const stockByLine = Object.fromEntries(fresh.lines.map(l => [l.id, !!v.products[l.cip]?.in_stock]));
+        const m = confirmationEmail({ op: fresh.op, summary: v.my_summary, bySlot: v.my_order.bySlot, freeBySlot: v.my_order.freeBySlot, stockByLine, audience: stock ? "elixir" : "saisie" });
+        if (stock) mail = { ...(await sendMail({ to: ADMIN_MAIL, subject: m.subject, html: m.html })), to: ADMIN_MAIL };
+        else {
+          mail = ph.email ? { ...(await sendMail({ to: ph.email, subject: m.subject, html: m.html })), to: ph.email } : { sent: false, reason: "pas d'adresse e-mail pour cette pharmacie" };
+          if (mail.sent) await sb(`gp_orders?operation_id=eq.${data.op.id}&pharmacy_id=${eq(ph.id)}`, { method: "PATCH", body: { email_sent_at: new Date().toISOString() } }).catch(() => {});
+          await sendMail({ to: ADMIN_MAIL, subject: `[Commande groupée] ${ph.name} — ${fresh.op.name} (saisie par Elixir)`, html: m.html }).catch(() => {});
+        }
+      } else if (r.wasConfirmed && r.total === 0) {
+        const m = cancellationEmail({ op: fresh.op });
+        if (stock) mail = { ...(await sendMail({ to: ADMIN_MAIL, subject: `[Commande groupée] Commande Elixir (stock) annulée — ${fresh.op.name}`, html: `<p>La commande d'Elixir pour son stock dans l'opération <b>${fresh.op.name.replace(/[<>&]/g, "")}</b> est annulée (toutes les quantités retirées).</p>` })), to: ADMIN_MAIL };
+        else {
+          mail = ph.email ? { ...(await sendMail({ to: ph.email, subject: m.subject, html: m.html })), to: ph.email } : { sent: false, reason: "pas d'adresse e-mail pour cette pharmacie" };
+          await sendMail({ to: ADMIN_MAIL, subject: `[Commande groupée] ${ph.name} : commande annulée par Elixir — ${fresh.op.name}`, html: m.html }).catch(() => {});
+        }
+      }
+      return { ok: true, total: r.total, changed: r.changed, cancelled: r.wasConfirmed && r.total === 0, mail, ...v };
     }
     case "order_save": {
       // saisie par Elixir pour le compte d'une pharmacie (commande reçue par téléphone, mail…)

@@ -148,7 +148,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
       setView(r); setGrid(JSON.parse(JSON.stringify(r.my_order?.bySlot || {}))); setDirty(false); setImp(null);
       setSource({ source: "formulaire", file_name: null });
       setOps(list => (list || []).map(o => o.id === op.id ? { ...o, my_order: { status: r.my_order.status, confirmed_at: r.my_order.confirmed_at, units: r.total || 0 } } : o));
-      const mailNote = admin ? "" : r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
+      const mailNote = admin ? (r.mail?.sent ? ` E-mail de confirmation envoyé à ${r.mail.to}.` : r.mail?.reason && r.mail.reason !== "aucune modification" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "") : r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
       if (r.cancelled) setMsg({ type: "info", text: `Votre commande est annulée : vous avez retiré toutes vos quantités.${mailNote}` });
       else if (!r.total) setMsg({ type: "info", text: "Votre commande est vide : rien n'a été enregistré." });
       else if (!r.changed) setMsg({ type: "ok", text: `Aucune modification.${mailNote}` });

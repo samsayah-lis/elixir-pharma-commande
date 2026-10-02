@@ -26,7 +26,9 @@ const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { 
 const dfr = (d) => d ? new Date(d + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "";
 
 // E-mail de confirmation de (pré)commande envoyé à la pharmacie
-export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockByLine }) {
+// audience : "pharmacie" (commande passée par la pharmacie), "saisie" (saisie pour elle par Elixir),
+// "elixir" (commande d'Elixir pour son stock, envoyée à Elixir)
+export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockByLine, audience = "pharmacie" }) {
   const hasSlots = (op.delivery_slots || []).length > 0;
   const slots = [{ id: IMMEDIATE_SLOT, label: hasSlots ? "Livraison immédiate (en stock)" : "Quantité" },
     ...(op.delivery_slots || []).map(s => ({ id: s.id, label: `${s.label ? s.label + " — " : ""}${dfr(s.date)}` }))];
@@ -46,7 +48,9 @@ export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockB
   const collectif = op.tier_mode !== "individuel";
   const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#1c2b33;max-width:720px">
   <p>Bonjour,</p>
-  <p>Nous confirmons la réception de votre <b>${kind}</b> pour l'opération <b>${esc(op.name)}</b>${op.supplier_name ? ` (${esc(op.supplier_name)})` : ""}.</p>
+  ${audience === "elixir"
+    ? `<p>Commande d'<b>Elixir Pharma pour son stock</b> enregistrée dans l'opération <b>${esc(op.name)}</b>${op.supplier_name ? ` (${esc(op.supplier_name)})` : ""}. Ces quantités seront commandées au laboratoire avec celles des pharmacies ; aucun devis client n'est créé.</p>`
+    : `<p>Nous confirmons la réception de votre <b>${kind}</b> pour l'opération <b>${esc(op.name)}</b>${op.supplier_name ? ` (${esc(op.supplier_name)})` : ""}.${audience === "saisie" ? " Elle a été saisie pour vous par l'équipe Elixir Pharma." : ""}</p>`}
   <table style="border-collapse:collapse;width:100%;margin:12px 0">
     <thead><tr><th style="${th}">Produit</th>${usedSlots.map(s => `<th style="${th};text-align:right">${esc(s.label)}</th>`).join("")}
       <th style="${th};text-align:right">Prix brut HT</th><th style="${th};text-align:right">Prix net HT</th><th style="${th};text-align:right">Total net HT</th></tr></thead>
@@ -62,9 +66,9 @@ export function confirmationEmail({ op, summary, bySlot, freeBySlot = {}, stockB
   ${t.freeUnits ? `<p style="font-size:13px">Unités : ${t.units} facturées <b>+ ${t.freeUnits} gratuites</b> = ${t.receivedUnits} reçues (valeur des gratuites : ${eur(t.ugValue)}).${collectif ? " Vous gardez au moins vos propres gratuités ; la part des gratuités gagnées en plus par le groupe peut évoluer jusqu'à la clôture." : ""}</p>` : ""}
   ${collectif ? `<p style="font-size:12px;color:#546e7a">Les paliers de remise s'appliquent au total du groupe : les prix indiqués correspondent au palier atteint à ce jour et peuvent encore s'améliorer d'ici la clôture${op.end_date ? ` du ${dfr(op.end_date)}` : ""}.</p>` : ""}
   ${hasPre ? `<p style="font-size:12px;color:#546e7a">Les produits en précommande vous seront livrés aux dates indiquées, après réception du stock chez Elixir Pharma.</p>` : ""}
-  <p>Vous pouvez modifier votre ${kind} jusqu'à la clôture de l'opération depuis votre espace de commande Elixir.</p>
+  <p>${audience === "elixir" ? "Modifiable depuis l'admin (opération → « Saisir une commande ») jusqu'à la création du bon de commande au laboratoire." : `Vous pouvez modifier votre ${kind} jusqu'à la clôture de l'opération depuis votre espace de commande Elixir${audience === "saisie" ? ", ou en nous contactant" : ""}.`}</p>
   <p>L'équipe Elixir Pharma</p></div>`;
-  const subject = `Confirmation de votre ${kind} — ${op.name}`;
+  const subject = audience === "elixir" ? `[Commande groupée] Commande Elixir (stock) — ${op.name}` : `Confirmation de votre ${kind} — ${op.name}`;
   return { subject, html, kind };
 }
 

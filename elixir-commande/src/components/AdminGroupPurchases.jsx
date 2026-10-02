@@ -82,6 +82,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
 
   const state = JSON.stringify({ form, lines, parts });
   const [entryDirty, setEntryDirty] = useState(false);   // quantités saisies dans « Saisir une commande », pas encore enregistrées
+  const [entryFor, setEntryFor] = useState(null);        // { id, n } : participante à ouvrir dans « Saisir une commande »
   const dirty = view === "edit" && ((snapshot !== "" && state !== snapshot) || entryDirty);
   const discard = () => !dirty || window.confirm("Des modifications ne sont pas enregistrées. Les abandonner ?");
   useEffect(() => {
@@ -341,12 +342,15 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       <fieldset disabled={locked} style={{ border: "none", padding: 0, margin: 0, minWidth: 0 }}>
         <Slots form={form} setForm={setForm} triggers={detail?.triggers || []} />
         <LinesEditor lines={lines} setLines={setLines} call={call} products={detail?.products || {}} locked={locked} />
-        <Participants parts={parts} setParts={setParts} access={access} call={call} opFee={form.fee_pct} locked={locked} />
+        <Participants parts={parts} setParts={setParts} access={access} call={call} opFee={form.fee_pct} locked={locked}
+          opId={form.id} savedIds={new Set((detail?.participants || []).map(p => p.pharmacy_id))}
+          onElixirAdded={(row) => { setSnapshot(sn => { try { const o = JSON.parse(sn); if (!o.parts.some(p => p.pharmacy_id === ELIXIR_ID)) o.parts = [...o.parts, row]; return JSON.stringify(o); } catch { return sn; } }); refreshDetail(form.id); setEntryFor({ id: ELIXIR_ID, n: Date.now() }); }}
+          onEnterOrder={(id) => setEntryFor({ id, n: Date.now() })} />
       </fieldset>
 
       {detail && form.id && <Dashboard detail={detail} />}
       {detail && form.id && ["brouillon", "ouverte", "cloturee"].includes(detail.op.status) && !detail.op.po_odoo_id && !detail.op.po_created_at && !(detail.triggers || []).length && (detail.participants || []).length > 0 &&
-        <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} />}
+        <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />}
       {detail && form.id && ["cloturee", "commandee", "terminee"].includes(form.status) && <Fulfilment key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} dirty={dirty} />}
 
       {form.id && (
@@ -636,7 +640,17 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
 }
 
 // ── Pharmacies participantes ──
-function Participants({ parts, setParts, access, call, opFee, locked }) {
+function Participants({ parts, setParts, access, call, opFee, locked, opId, savedIds, onElixirAdded, onEnterOrder }) {
+  const [elixirBusy, setElixirBusy] = useState(false);
+  const [elixirErr, setElixirErr] = useState("");
+  const addElixir = async () => {
+    const row = { pharmacy_id: ELIXIR_ID, pharmacy_name: ELIXIR_NAME, email: null, pharmacy_cip: null, fee_pct: 0 };
+    if (!opId) { setParts(ps => [...ps, row]); return; }   // nouvelle opération : inscrite à l'enregistrement
+    setElixirBusy(true); setElixirErr("");
+    try { await call(null, { action: "add_elixir", id: opId }); setParts(ps => ps.some(p => p.pharmacy_id === ELIXIR_ID) ? ps : [...ps, row]); onElixirAdded?.(row); }
+    catch (e) { setElixirErr(e.message); }
+    setElixirBusy(false);
+  };
   const [q, setQ] = useState("");
   const [res, setRes] = useState([]);
   const inOp = new Set(parts.map(p => p.pharmacy_id));
@@ -649,13 +663,16 @@ function Participants({ parts, setParts, access, call, opFee, locked }) {
     <div style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <div style={{ ...h3, margin: 0 }}>Participantes ({nPh} pharmacie{nPh > 1 ? "s" : ""}{inOp.has(ELIXIR_ID) ? " + Elixir" : ""})</div>
-        {!locked && !inOp.has(ELIXIR_ID) && <button type="button" style={{ ...btn(), padding: "5px 10px", fontSize: 12 }} title="Elixir commande aussi pour son stock : ses quantités comptent pour les paliers et l'objectif"
-          onClick={() => setParts(ps => [...ps, { pharmacy_id: ELIXIR_ID, pharmacy_name: ELIXIR_NAME, email: null, pharmacy_cip: null, fee_pct: 0 }])}>＋ Elixir commande pour son stock</button>}
+        {!locked && !inOp.has(ELIXIR_ID) && <button type="button" disabled={elixirBusy} style={{ ...btn(), padding: "5px 10px", fontSize: 12 }} title="Elixir commande aussi pour son stock : ses quantités comptent pour les paliers et l'objectif"
+          onClick={addElixir}>{elixirBusy ? "…" : "＋ Elixir commande pour son stock"}</button>}
       </div>
+      {elixirErr && <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 6 }}>{elixirErr}</div>}
       <div style={{ height: 8 }} />
       {parts.filter(p => isElixir(p.pharmacy_id)).map(p => (
         <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", background: "#f0f9ff", borderRadius: 8, marginBottom: 6, fontSize: 13, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}><b>🏢 {ELIXIR_NAME}</b> <span style={{ color: "#64748b" }}>· ses quantités comptent pour les paliers, l'objectif et les UG · sans frais ni coopération · dans le bon labo, sans devis client</span></div>
+          <div style={{ flex: 1, minWidth: 200 }}><b>🏢 {ELIXIR_NAME}</b> <span style={{ color: "#64748b" }}>· ses quantités comptent pour les paliers, l'objectif et les UG · sans frais ni coopération · dans le bon labo, sans devis client</span>
+            {!savedIds?.has(ELIXIR_ID) && <div style={{ color: "#b45309", fontSize: 12, marginTop: 2 }}>Enregistrez l'opération pour saisir la commande d'Elixir.</div>}</div>
+          {savedIds?.has(ELIXIR_ID) && <button type="button" style={{ ...btn("pri"), padding: "5px 10px", fontSize: 12 }} onClick={() => onEnterOrder?.(ELIXIR_ID)}>🛒 Saisir sa commande</button>}
           <button type="button" style={{ ...btn("danger"), padding: "5px 10px" }} onClick={() => setParts(ps => ps.filter(x => !isElixir(x.pharmacy_id)))} aria-label="Retirer Elixir">✕</button>
         </div>
       ))}
@@ -697,7 +714,7 @@ function Participants({ parts, setParts, access, call, opFee, locked }) {
 
 // ── Saisie d'une commande par Elixir : pour son stock, ou pour une pharmacie (téléphone, mail…) ──
 // Même écran que la pharmacie (paliers, UG, colisage en direct), enregistré sans e-mail.
-function OrderEntry({ detail, call, refresh, onDirtyChange }) {
+function OrderEntry({ detail, call, refresh, onDirtyChange, focus }) {
   const parts = [...(detail.participants || [])].sort((a, b) => (isElixir(b.pharmacy_id) ? 1 : 0) - (isElixir(a.pharmacy_id) ? 1 : 0));
   const [pid, setPid] = useState(parts[0]?.pharmacy_id || "");
   const [entryDirty, setEntryDirtyLocal] = useState(false);
@@ -705,10 +722,18 @@ function OrderEntry({ detail, call, refresh, onDirtyChange }) {
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
   const adminCall = useCallback((body) => call(null, body), [call]);
   const admin = useMemo(() => ({ call: adminCall, opId: detail.op.id, participantId: pid, onSaved: refresh }), [adminCall, detail.op.id, pid, refresh]);
+  const boxRef = useRef(null);
+  const partIds = parts.map(p => p.pharmacy_id).join(",");
+  useEffect(() => {
+    if (!focus || !partIds.split(",").includes(focus.id)) return;
+    if (focus.id !== pid && entryDirty && !window.confirm("Quantités non enregistrées pour cette participante. Changer quand même ?")) return;
+    setPid(focus.id);
+    boxRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [focus, partIds]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (!parts.length) return null;
   const choose = (v) => { if (entryDirty && !window.confirm("Quantités non enregistrées pour cette participante. Changer quand même ?")) return; setPid(v); };
   return (
-    <div style={card}>
+    <div style={card} ref={boxRef}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
         <div style={{ ...h3, margin: 0 }}>🛒 Saisir une commande</div>
         <select style={{ ...IS, maxWidth: 360 }} value={pid} onChange={e => choose(e.target.value)} aria-label="Participante">
