@@ -17,8 +17,10 @@ const chip = (on) => ({ display: "inline-block", fontSize: 11, fontWeight: 700, 
 const PHASE = { ouverte: "Ouverte aux commandes", a_venir: "Pas encore ouverte", cloturee: "Clôturée", commandee: "Commandée au laboratoire", terminee: "Terminée" };
 const hasQty = (grid) => Object.values(grid || {}).some(s => Object.values(s || {}).some(q => Number(q) > 0));
 
-// Onglet « Commandes groupées » côté pharmacie
-export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange }) {
+// Onglet « Commandes groupées » côté pharmacie.
+// admin = { call(body) → réponse gp-admin, opId, participantId, onSaved } : même écran utilisé par
+// l'admin pour saisir la commande d'une participante (Elixir pour son stock, ou une pharmacie).
+export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange, admin = null }) {
   const [ops, setOps] = useState(null);
   const [selId, setSelId] = useState(null);
   const [view, setView] = useState(null);
@@ -48,14 +50,18 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
     if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
     return j;
   }, [headers, pharmacyCip, pharmacyEmail]);
-  const api = useCallback((body) => call("gp-pharmacy", body), [call]);
+  const adminCall = admin?.call, adminOp = admin?.opId, adminPart = admin?.participantId;
+  const api = useCallback((body) => adminCall
+    ? adminCall({ ...body, action: body.action === "save" ? "participant_save" : "participant_view", id: adminOp, pharmacy_id: adminPart })
+    : call("gp-pharmacy", body), [call, adminCall, adminOp, adminPart]);
 
   const listReq = useRef(0);
   const loadList = useCallback((quiet) => {
+    if (adminOp) { setOps([{ id: adminOp }]); setSelId(adminOp); return; }   // saisie admin : une seule opération
     const req = ++listReq.current;
     api({ action: "list" }).then(j => { if (req === listReq.current) setOps(j.operations || []); })
       .catch(e => { if (req !== listReq.current) return; if (!quiet) { setOps([]); setMsg({ type: "err", text: e.message }); } });
-  }, [api]);
+  }, [api, adminOp]);
   useEffect(() => { loadList(false); }, [loadList]);
   // accessibilité : focus sur « retour » à l'ouverture, sur la ligne quittée au retour
   const backRef = useRef(null), lastOpened = useRef(null);
@@ -86,7 +92,8 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
 
   const op = view?.operation;
   const lines = view?.lines || [];
-  const editable = op?.phase === "ouverte";
+  // saisie admin : modifiable jusqu'au bon de commande labo (le serveur le vérifie aussi)
+  const editable = admin ? ["brouillon", "ouverte", "cloturee"].includes(op?.status) : op?.phase === "ouverte";
   const inStock = (l) => !!view?.products?.[l.cip]?.in_stock;
   const slots = useMemo(() => {
     if (!op) return [];
@@ -104,7 +111,8 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
     const group = Object.fromEntries(lines.map(l => [l.id, (view.group_others?.[l.id] || 0) + (mine[l.id] || 0)]));
     const noCoop = (qty) => priceOrder({ ...op, coop_mode: "aucune" }, lines, qty, group, { feePct: view.fee_pct }).totals.net;
     // Base de répartition de la coopération « montant global » : tout le groupe, après RFA
-    const groupNet = collectif ? lines.reduce((s, l) => s + noCoop({ [l.id]: group[l.id] || 0 }), 0) : (view.others_net || 0) + noCoop(mine);
+    // (pharmacies seulement : les quantités d'Elixir pour son stock en sont exclues)
+    const groupNet = collectif ? lines.reduce((s, l) => s + noCoop({ [l.id]: Math.max(0, (group[l.id] || 0) - (view.coop_excluded?.[l.id] || 0)) }), 0) : (view.others_net || 0) + noCoop(mine);
     // Unités gratuites : individuel = tranches de la pharmacie ; collectif = part des UG du groupe
     // (répartition au plus fort reste avec les autres pharmacies, clés anonymes, comme au serveur)
     const free = {}, freeSlots = {};
@@ -140,11 +148,12 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
       setView(r); setGrid(JSON.parse(JSON.stringify(r.my_order?.bySlot || {}))); setDirty(false); setImp(null);
       setSource({ source: "formulaire", file_name: null });
       setOps(list => (list || []).map(o => o.id === op.id ? { ...o, my_order: { status: r.my_order.status, confirmed_at: r.my_order.confirmed_at, units: r.total || 0 } } : o));
-      const mailNote = r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
+      const mailNote = admin ? "" : r.mail?.sent ? ` Un e-mail a été envoyé à ${r.pharmacy.email}.` : r.mail?.reason && r.mail.reason !== "commande vide" ? ` (E-mail non envoyé : ${r.mail.reason}.)` : "";
       if (r.cancelled) setMsg({ type: "info", text: `Votre commande est annulée : vous avez retiré toutes vos quantités.${mailNote}` });
       else if (!r.total) setMsg({ type: "info", text: "Votre commande est vide : rien n'a été enregistré." });
       else if (!r.changed) setMsg({ type: "ok", text: `Aucune modification.${mailNote}` });
       else setMsg({ type: "ok", text: `Commande enregistrée.${mailNote}` });
+      if (r.changed || r.cancelled) admin?.onSaved?.();
     } catch (e) { setMsg({ type: "err", text: e.message }); if (/rechargez/.test(e.message)) setStale(true); }
     setBusy("");
   };
@@ -196,13 +205,13 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
   const confirmed = view?.my_order?.status === "confirmee";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
+      {!admin && <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
         <div style={{ fontSize: 20, fontWeight: 800 }}>🤝 Commandes groupées</div>
         <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues.</div>
-      </div>
+      </div>}
 
       {!selId && <OpsList ops={ops} onOpen={choose} />}
-      {selId && (
+      {selId && !admin && (
         <div>
           <button ref={backRef} style={{ ...btn(false), padding: "8px 14px" }} disabled={busy === "save" || busy === "import"} onClick={() => choose(null)}>← Toutes les opérations</button>
         </div>
@@ -347,9 +356,9 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange 
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
-                <button style={btn(false)} disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy === "import" ? "Analyse…" : "📄 Importer mon bon de commande (LGO)"}</button>
-                <button style={{ ...btn(true), opacity: busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid))} onClick={confirm}>
-                  {busy === "save" ? "Envoi…" : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
+                {!admin && <button style={btn(false)} disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy === "import" ? "Analyse…" : "📄 Importer mon bon de commande (LGO)"}</button>}
+                <button style={{ ...btn(true), opacity: busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid)) || (!!admin && !dirty)} onClick={confirm}>
+                  {busy === "save" ? "Envoi…" : admin ? (confirmed ? "Enregistrer les modifications" : "Enregistrer la commande") : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
                 </button>
               </div>
             )}

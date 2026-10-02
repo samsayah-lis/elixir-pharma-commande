@@ -3,6 +3,7 @@
 // - opération arrivée à échéance : clôturer puis créer le bon de commande au labo
 // - livraison prévue dans les 2 jours dont des devis restent à créer
 import { sb, sbAll, today } from "./_gp.js";
+import { isElixir } from "../../src/gp-pricing.js";
 import { sendMail, ADMIN_MAIL } from "./_gp-mail.js";
 import { kvExists, kvSet, kvDeleteOlder } from "./_kv.js";
 
@@ -23,10 +24,11 @@ export const handler = async () => {
   const ops = await sbAll("gp_operations?status=in.(ouverte,cloturee,commandee)");
   const items = [];
   for (const op of ops) {
-    const [parts, orders] = await Promise.all([
+    let [parts, orders] = await Promise.all([
       sbAll(`gp_participants?operation_id=eq.${op.id}&select=pharmacy_id,pharmacy_name`),
       sbAll(`gp_orders?operation_id=eq.${op.id}&status=eq.confirmee&select=pharmacy_id`),
     ]);
+    parts = parts.filter(p => !isElixir(p.pharmacy_id));   // pharmacies seulement (Elixir commande pour son stock)
     const partIds = new Set(parts.map(p => p.pharmacy_id));
     const ok = new Set(orders.map(o => o.pharmacy_id).filter(id => partIds.has(id)));
     if (op.status === "ouverte" && op.end_date && (op.end_date === t || op.end_date === addDays(t, 2))) {

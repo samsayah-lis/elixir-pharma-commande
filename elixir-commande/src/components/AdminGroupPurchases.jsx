@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import * as XLSX from "xlsx";
-import { priceLine, ugLabel, invoiceDiscount, packIssues, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import { priceLine, ugLabel, invoiceDiscount, packIssues, isElixir, ELIXIR_ID, ELIXIR_NAME, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
+import GroupOrders from "./GroupOrders.jsx";
 import { analyzeFile } from "../gp-files.js";
 import { Objective } from "./GroupOrders.jsx";
 
@@ -80,7 +81,8 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
   }, [adminFetch]);
 
   const state = JSON.stringify({ form, lines, parts });
-  const dirty = view === "edit" && snapshot !== "" && state !== snapshot;
+  const [entryDirty, setEntryDirty] = useState(false);   // quantités saisies dans « Saisir une commande », pas encore enregistrées
+  const dirty = view === "edit" && ((snapshot !== "" && state !== snapshot) || entryDirty);
   const discard = () => !dirty || window.confirm("Des modifications ne sont pas enregistrées. Les abandonner ?");
   useEffect(() => {
     onDirtyChange?.(dirty);
@@ -310,7 +312,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
               <div><label style={LS}>Pharmacie centralisatrice</label>
                 <select style={IS} value={form.centralizer_id || ""} onChange={e => { const p = parts.find(x => x.pharmacy_id === e.target.value); setForm(x => ({ ...x, centralizer_id: e.target.value || null, centralizer_name: p?.pharmacy_name || null })); }}>
                   <option value="">— choisir parmi les participantes —</option>
-                  {parts.map(p => <option key={p.pharmacy_id} value={p.pharmacy_id}>{p.pharmacy_name}</option>)}
+                  {parts.filter(p => !isElixir(p.pharmacy_id)).map(p => <option key={p.pharmacy_id} value={p.pharmacy_id}>{p.pharmacy_name}</option>)}
                 </select></div>
             ) : <div />}
           </div>
@@ -343,6 +345,8 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       </fieldset>
 
       {detail && form.id && <Dashboard detail={detail} />}
+      {detail && form.id && ["brouillon", "ouverte", "cloturee"].includes(detail.op.status) && !detail.op.po_odoo_id && !detail.op.po_created_at && !(detail.triggers || []).length && (detail.participants || []).length > 0 &&
+        <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} />}
       {detail && form.id && ["cloturee", "commandee", "terminee"].includes(form.status) && <Fulfilment key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} dirty={dirty} />}
 
       {form.id && (
@@ -640,10 +644,22 @@ function Participants({ parts, setParts, access, call, opFee, locked }) {
   const search = async () => { try { setRes((await call(`action=pharmacies&q=${encodeURIComponent(q)}`)).pharmacies || []); } catch { setRes([]); } };
   const candidates = access.filter(a => !inOp.has(a.pharmacy_id));
   const allowed = new Set(access.map(a => a.pharmacy_id));
+  const nPh = parts.filter(p => !isElixir(p.pharmacy_id)).length;
   return (
     <div style={card}>
-      <div style={h3}>Pharmacies participantes ({parts.length})</div>
-      {parts.map((p, i) => (
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <div style={{ ...h3, margin: 0 }}>Participantes ({nPh} pharmacie{nPh > 1 ? "s" : ""}{inOp.has(ELIXIR_ID) ? " + Elixir" : ""})</div>
+        {!locked && !inOp.has(ELIXIR_ID) && <button type="button" style={{ ...btn(), padding: "5px 10px", fontSize: 12 }} title="Elixir commande aussi pour son stock : ses quantités comptent pour les paliers et l'objectif"
+          onClick={() => setParts(ps => [...ps, { pharmacy_id: ELIXIR_ID, pharmacy_name: ELIXIR_NAME, email: null, pharmacy_cip: null, fee_pct: 0 }])}>＋ Elixir commande pour son stock</button>}
+      </div>
+      <div style={{ height: 8 }} />
+      {parts.filter(p => isElixir(p.pharmacy_id)).map(p => (
+        <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", background: "#f0f9ff", borderRadius: 8, marginBottom: 6, fontSize: 13, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}><b>🏢 {ELIXIR_NAME}</b> <span style={{ color: "#64748b" }}>· ses quantités comptent pour les paliers, l'objectif et les UG · sans frais ni coopération · dans le bon labo, sans devis client</span></div>
+          <button type="button" style={{ ...btn("danger"), padding: "5px 10px" }} onClick={() => setParts(ps => ps.filter(x => !isElixir(x.pharmacy_id)))} aria-label="Retirer Elixir">✕</button>
+        </div>
+      ))}
+      {parts.filter(p => !isElixir(p.pharmacy_id)).map((p, i) => (
         <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderTop: i ? "1px solid #f1f5f9" : "none", fontSize: 13, flexWrap: "wrap" }}>
           <div style={{ flex: 1, minWidth: 200 }}><b>{p.pharmacy_name}</b> <span style={{ color: "#94a3b8" }}>{p.pharmacy_cip ? `CIP ${p.pharmacy_cip} · ` : ""}{p.email} · fiche Odoo {p.pharmacy_id}</span>
             {!allowed.has(p.pharmacy_id) && <span style={{ color: "#b45309" }}> · onglet débloqué à l'enregistrement</span>}</div>
@@ -675,6 +691,34 @@ function Participants({ parts, setParts, access, call, opFee, locked }) {
         ))}
         <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>Seules les pharmacies clientes d'Elixir apparaissent. Une pharmacie nouvellement inscrite reçoit l'accès à l'onglet à l'enregistrement.</div>
       </>}
+    </div>
+  );
+}
+
+// ── Saisie d'une commande par Elixir : pour son stock, ou pour une pharmacie (téléphone, mail…) ──
+// Même écran que la pharmacie (paliers, UG, colisage en direct), enregistré sans e-mail.
+function OrderEntry({ detail, call, refresh, onDirtyChange }) {
+  const parts = [...(detail.participants || [])].sort((a, b) => (isElixir(b.pharmacy_id) ? 1 : 0) - (isElixir(a.pharmacy_id) ? 1 : 0));
+  const [pid, setPid] = useState(parts[0]?.pharmacy_id || "");
+  const [entryDirty, setEntryDirtyLocal] = useState(false);
+  const setEntryDirty = useCallback((d) => { setEntryDirtyLocal(d); onDirtyChange?.(d); }, [onDirtyChange]);
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
+  const adminCall = useCallback((body) => call(null, body), [call]);
+  const admin = useMemo(() => ({ call: adminCall, opId: detail.op.id, participantId: pid, onSaved: refresh }), [adminCall, detail.op.id, pid, refresh]);
+  if (!parts.length) return null;
+  const choose = (v) => { if (entryDirty && !window.confirm("Quantités non enregistrées pour cette participante. Changer quand même ?")) return; setPid(v); };
+  return (
+    <div style={card}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
+        <div style={{ ...h3, margin: 0 }}>🛒 Saisir une commande</div>
+        <select style={{ ...IS, maxWidth: 360 }} value={pid} onChange={e => choose(e.target.value)} aria-label="Participante">
+          {parts.map(p => <option key={p.pharmacy_id} value={p.pharmacy_id}>{isElixir(p.pharmacy_id) ? `🏢 ${ELIXIR_NAME}` : p.pharmacy_name}</option>)}
+        </select>
+      </div>
+      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>{isElixir(pid)
+        ? "Commande d'Elixir pour son stock : quantités facturées par livraison ; elles entrent dans les paliers, l'objectif et le bon de commande au laboratoire (aucun devis client)."
+        : "Commande saisie par Elixir pour le compte de cette pharmacie (aucun e-mail envoyé)."}</div>
+      {pid && <GroupOrders key={pid} admin={admin} onDirtyChange={setEntryDirty} />}
     </div>
   );
 }
@@ -756,7 +800,7 @@ function Dashboard({ detail }) {
           <tbody>
             {s.pharmacies.map(p => (
               <tr key={p.id}>
-                <td style={td}><b>{p.name}</b></td>
+                <td style={td}><b>{p.name}</b>{isElixir(p.id) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, background: "#e0f2fe", color: "#075985", borderRadius: 99, padding: "1px 7px" }}>STOCK · BON LABO, SANS DEVIS</span>}</td>
                 <td style={td}>{p.totals ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ {dfr(p.order.confirmed_at)}{p.order.email_sent_at ? " ✉️" : ""}</span> : <span style={{ color: "#94a3b8" }}>pas encore</span>}</td>
                 {p.totals ? (<>
                   <td style={{ ...td, textAlign: "right" }}>{p.totals.units}{p.totals.freeUnits ? <span style={{ color: "#15803d" }}> +{p.totals.freeUnits} UG</span> : null}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.gross)}</td>
@@ -785,7 +829,7 @@ function Fulfilment({ detail, call, refresh, dirty }) {
   const s = detail.summary;
   const slots = [{ id: IMMEDIATE_SLOT, label: (op.delivery_slots || []).length ? "Livraison immédiate (produits en stock)" : "Livraison à réception", date: null }, ...(op.delivery_slots || []).map(x => ({ id: x.id, label: x.label || "Livraison", date: x.date }))];
   const count = (sl) => {
-    const need = s.pharmacies.filter(p => p.totals && Object.values(p.bySlot).some(x => (x[sl.id] || 0) > 0)).map(p => p.id);
+    const need = s.pharmacies.filter(p => !isElixir(p.id) && p.totals && Object.values(p.bySlot).some(x => (x[sl.id] || 0) > 0)).map(p => p.id);
     const done = new Set((detail.triggers || []).filter(t => t.slot_id === sl.id && t.odoo_sale_order_id).map(t => t.pharmacy_id));
     return { n: need.length, done: need.filter(id => done.has(id)).length };
   };

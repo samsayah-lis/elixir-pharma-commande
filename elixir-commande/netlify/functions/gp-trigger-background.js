@@ -8,7 +8,7 @@
 // [CG-xxxxxxxx-date] dans la référence client, retrouvé si un essai a été coupé.
 import { isCronAuthorized } from "./auth.js";
 import { sb, sbAll, eq, odoo, loadOperation, summarize, COMPANY_ID } from "./_gp.js";
-import { priceOrder, odooLine, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceOrder, odooLine, isElixir, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { kvSet } from "./_kv.js";
 
 const lineLabel = (l) => l.cip ? `[${l.cip}] ${l.name}` : l.name;
@@ -29,7 +29,8 @@ export const handler = async (event) => {
     report.slot = slotId === IMMEDIATE_SLOT ? "livraison immédiate" : (slot.label || slot.date);
     const date = slotId === IMMEDIATE_SLOT ? null : slot.date;
     const s = summarize(data);
-    const targets = s.pharmacies.filter(p => p.order?.status === "confirmee" && Object.values(p.bySlot).some(sl => (sl[slotId] || 0) > 0));
+    // Elixir (stock) : pas de devis client, ses quantités sont dans le bon de commande au laboratoire
+    const targets = s.pharmacies.filter(p => !isElixir(p.id) && p.order?.status === "confirmee" && Object.values(p.bySlot).some(sl => (sl[slotId] || 0) > 0));
     report.total = targets.length;
     const marker = `CG-${id.slice(0, 8)}-${slotId}`;
     const ctx = { context: { allowed_company_ids: [COMPANY_ID] } };

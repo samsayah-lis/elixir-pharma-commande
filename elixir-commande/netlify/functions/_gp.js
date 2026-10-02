@@ -3,7 +3,7 @@
 // colonne pharmacy_id), jamais par son CIP : la plupart des fiches ont un CIP vide ou « 0 ».
 import { verifyTokenAsync } from "./auth.js";
 import crypto from "node:crypto";
-import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, packIssues, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, packIssues, isElixir, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 
 export { odoo, COMPANY_ID };
@@ -160,16 +160,18 @@ export function summarize(data) {
   const { counted, orphans, confirmed } = countedQty(data);
   const agg = aggregate(counted);
   const ug = allocateAllFree(op, lines, agg.perPharmacyTotal, agg.perPharmacy);
-  const feeOf = (id) => { const p = (participants || []).find(x => x.pharmacy_id === id); return p?.fee_pct ?? op.fee_pct; };
-  // 1er passage sans coopération : montant net après RFA de chaque pharmacie (base du prorata « total »)
+  const feeOf = (id) => { if (isElixir(id)) return 0; const p = (participants || []).find(x => x.pharmacy_id === id); return p?.fee_pct ?? op.fee_pct; };
+  // 1er passage sans coopération : montant net après RFA de chaque pharmacie (base du prorata « total »,
+  // pharmacies seulement : la coopération n'est pas partagée avec Elixir)
   let groupNetAfterRfa = 0;
   for (const id of Object.keys(agg.perPharmacyTotal)) {
+    if (isElixir(id)) continue;
     groupNetAfterRfa += priceOrder({ ...op, coop_mode: "aucune" }, lines, agg.perPharmacyTotal[id], agg.group, { free: ug.free[id] || {} }).totals.net;
   }
   const byId = Object.fromEntries((orders || []).map(o => [o.pharmacy_id, o]));
   const pharmacies = (participants || []).map(p => {
     const mine = agg.perPharmacyTotal[p.pharmacy_id] || {};
-    const s = confirmed.has(p.pharmacy_id) ? priceOrder(op, lines, mine, agg.group, { free: ug.free[p.pharmacy_id] || {}, groupNetAfterRfa, feePct: feeOf(p.pharmacy_id) }) : null;
+    const s = confirmed.has(p.pharmacy_id) ? priceOrder(isElixir(p.pharmacy_id) ? { ...op, coop_mode: "aucune" } : op, lines, mine, agg.group, { free: ug.free[p.pharmacy_id] || {}, groupNetAfterRfa, feePct: feeOf(p.pharmacy_id) }) : null;
     return { id: p.pharmacy_id, cip: p.pharmacy_cip, name: p.pharmacy_name, email: p.email, fee_pct: p.fee_pct,
       order: byId[p.pharmacy_id] || null, bySlot: agg.perPharmacy[p.pharmacy_id] || {}, freeBySlot: ug.freeSlots[p.pharmacy_id] || {},
       totals: s?.totals || null, rows: s?.rows || [] };

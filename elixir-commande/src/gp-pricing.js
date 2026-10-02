@@ -302,3 +302,11 @@ export function packIssues(lines, bySlot) {
   }
   return out;
 }
+
+// ── Elixir participante (commande pour son stock) ───────────────────────
+// Identifiant réservé dans gp_participants / gp_orders. Ses quantités comptent pour les
+// paliers, l'objectif et les UG (sa part, comme une pharmacie) ; elle ne paie ni frais ni
+// ne prend de coopération (réservée aux pharmacies) ; pas de devis client (bon labo seulement).
+export const ELIXIR_ID = "elixir";
+export const ELIXIR_NAME = "Elixir Pharma (stock)";
+export const isElixir = (id) => String(id) === ELIXIR_ID;

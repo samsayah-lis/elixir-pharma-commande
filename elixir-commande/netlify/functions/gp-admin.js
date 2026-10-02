@@ -5,7 +5,8 @@ import crypto from "node:crypto";
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
 import { json, sb, sbAll, inList, eq, odoo, productInfo, loadOperation, summarize, saveOrder, refreshOrderStatus, today, fail, COMPANY_ID } from "./_gp.js";
-import { priceLine, odooLine, packIssues, PACK_RULES, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { priceLine, odooLine, packIssues, PACK_RULES, isElixir, ELIXIR_NAME, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
+import { view as participantView } from "./_gp-view.js";
 import { kvGet, kvSet } from "./_kv.js";
 import { medipimProduct } from "./_medipim.js";
 
@@ -59,7 +60,7 @@ export const handler = async (event) => {
 function slotProgress(op, qtyRows, confirmedIds, triggers) {
   const out = {};
   const need = {};
-  for (const r of qtyRows) if (r.operation_id === op.id && confirmedIds.has(r.pharmacy_id)) (need[r.slot_id] ||= new Set()).add(r.pharmacy_id);
+  for (const r of qtyRows) if (r.operation_id === op.id && confirmedIds.has(r.pharmacy_id) && !isElixir(r.pharmacy_id)) (need[r.slot_id] ||= new Set()).add(r.pharmacy_id);   // Elixir : pas de devis
   const done = {};
   for (const t of triggers) if (t.operation_id === op.id && t.odoo_sale_order_id) (done[t.slot_id] ||= new Set()).add(t.pharmacy_id);
   for (const [slot, set] of Object.entries(need)) out[slot] = { pharmacies: set.size, done: [...set].filter(id => done[slot]?.has(id)).length };
@@ -162,6 +163,25 @@ async function post(b, event) {
       await Promise.all(missing.map(async c => { const m = await medipimProduct(c).catch(() => null); if (m) products[c] = { ...(products[c] || {}), medipim: m }; }));
       return { products };
     }
+    case "participant_view":
+    case "participant_save": {
+      // Saisie par Elixir pour une participante : Elixir elle-même (stock) ou une pharmacie (téléphone, mail…).
+      // Même écran et mêmes contrôles (colisage, verrou de version) que la pharmacie, sans e-mail.
+      const data = await loadOperation(b.id);
+      if (!data) throw fail("Opération introuvable", 404);
+      const part = data.participants.find(p => p.pharmacy_id === String(b.pharmacy_id));
+      if (!part) throw fail("Cette participante ne fait pas partie de l'opération");
+      const ph = { id: part.pharmacy_id, name: part.pharmacy_name, email: part.email };
+      if (b.action === "participant_view") return participantView(data, ph);
+      if (!["brouillon", "ouverte", "cloturee"].includes(data.op.status) || data.op.po_odoo_id || data.op.po_created_at)
+        throw fail("Les commandes ne sont plus modifiables : le bon de commande au laboratoire est créé ou l'opération est terminée");
+      // des devis existent : une quantité de plus changerait les paliers et les prix déjà devisés
+      if ((await sb(`gp_triggers?operation_id=eq.${data.op.id}&select=slot_id&limit=1`)).length)
+        throw fail("Les commandes ne sont plus modifiables : des devis ont déjà été créés dans Odoo");
+      const r = await saveOrder({ data, pharmacy: ph, entries: b.entries, source: "formulaire", loadedUpdatedAt: "loaded_updated_at" in b ? b.loaded_updated_at : undefined });
+      const fresh = await loadOperation(data.op.id);
+      return { ok: true, total: r.total, changed: r.changed, cancelled: r.wasConfirmed && r.total === 0, mail: { sent: false, reason: "saisie par Elixir" }, ...(await participantView(fresh, ph)) };
+    }
     case "order_save": {
       // saisie par Elixir pour le compte d'une pharmacie (commande reçue par téléphone, mail…)
       const data = await loadOperation(b.id);
@@ -169,6 +189,8 @@ async function post(b, event) {
       if (!["ouverte", "cloturee"].includes(data.op.status)) throw fail("Les commandes ne sont plus modifiables à ce stade");
       const part = data.participants.find(p => p.pharmacy_id === String(b.pharmacy_id));
       if (!part) throw fail("Cette pharmacie ne participe pas à l'opération");
+      if ((await sb(`gp_triggers?operation_id=eq.${data.op.id}&select=slot_id&limit=1`)).length)
+        throw fail("Les commandes ne sont plus modifiables : des devis ont déjà été créés dans Odoo");
       const r = await saveOrder({ data, pharmacy: { id: part.pharmacy_id, name: part.pharmacy_name, email: part.email }, entries: b.entries, source: "formulaire" });
       return { ok: true, ...r };
     }
@@ -296,8 +318,11 @@ async function saveOperation(b, event) {
   // ── Participants ──
   let wanted = null, goneParts = [];
   if (Array.isArray(b.participants)) {
-    wanted = b.participants.filter(p => p.id).map(p => ({ operation_id: id, pharmacy_id: String(p.id), pharmacy_name: p.name || null, email: p.email || null,
-      pharmacy_cip: p.cip || null, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : num(p.fee_pct, null) }));
+    // Elixir (commande pour son stock) : participante sans frais, sans e-mail ni CIP
+    wanted = b.participants.filter(p => p.id).map(p => isElixir(p.id)
+      ? { operation_id: id, pharmacy_id: String(p.id), pharmacy_name: ELIXIR_NAME, email: null, pharmacy_cip: null, fee_pct: 0 }
+      : { operation_id: id, pharmacy_id: String(p.id), pharmacy_name: p.name || null, email: p.email || null,
+        pharmacy_cip: p.cip || null, fee_pct: p.fee_pct === "" || p.fee_pct == null ? null : num(p.fee_pct, null) });
     const keepP = new Set(wanted.map(w => w.pharmacy_id));
     goneParts = cur.participants.filter(p => !keepP.has(p.pharmacy_id));
   }
@@ -366,7 +391,7 @@ async function saveOperation(b, event) {
     if (wanted.length) await sb("gp_participants?on_conflict=operation_id,pharmacy_id", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: wanted });
     // seules les NOUVELLES participantes reçoivent l'accès à l'onglet (un retrait d'accès reste acquis)
     const before = new Set(cur.participants.map(p => p.pharmacy_id));
-    const added = wanted.filter(w => !before.has(w.pharmacy_id));
+    const added = wanted.filter(w => !before.has(w.pharmacy_id) && !isElixir(w.pharmacy_id));   // Elixir n'a pas d'onglet pharmacie
     if (added.length) await sb("gp_access?on_conflict=pharmacy_id", { method: "POST", prefer: "resolution=ignore-duplicates,return=minimal",
       body: added.map(w => ({ pharmacy_id: w.pharmacy_id, pharmacy_name: w.pharmacy_name, email: w.email, pharmacy_cip: w.pharmacy_cip })) });
   }
