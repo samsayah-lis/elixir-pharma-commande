@@ -358,10 +358,10 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
           : null;
         return why
           ? <div style={{ ...card, fontSize: 13, color: "#64748b" }}><div style={{ ...h3, marginBottom: 6 }}>🛒 Saisir une commande</div>Saisie impossible : {why}.</div>
-          : <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />;
+          : <OrderEntry key={`saisie-${form.id}`} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />;
       })()}
       {detail && form.id && <Dashboard detail={detail} />}
-      {detail && form.id && ["cloturee", "commandee", "terminee"].includes(form.status) && <Fulfilment key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} dirty={dirty} />}
+      {detail && form.id && ["cloturee", "commandee", "terminee"].includes(form.status) && <Fulfilment key={`livraisons-${form.id}`} detail={detail} call={call} refresh={() => refreshDetail(form.id)} dirty={dirty} />}
 
       {form.id && (
         <div style={{ textAlign: "right" }}>
