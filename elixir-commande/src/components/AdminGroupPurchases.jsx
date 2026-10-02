@@ -348,9 +348,19 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
           onEnterOrder={(id) => setEntryFor({ id, n: Date.now() })} />
       </fieldset>
 
+      {form.id && (() => {
+        // pourquoi la saisie est fermée (sinon le bloc s'ouvre)
+        const why = !detail ? "chargement…"
+          : !["brouillon", "ouverte", "cloturee"].includes(detail.op.status) ? "l'opération est commandée, terminée ou annulée"
+          : detail.op.po_odoo_id || detail.op.po_created_at ? "le bon de commande au laboratoire est créé"
+          : (detail.triggers || []).length ? "des devis ont déjà été créés dans Odoo"
+          : !(detail.participants || []).length ? "aucune participante enregistrée : ajoutez Elixir (bouton « ＋ Elixir commande pour son stock ») ou une pharmacie, puis enregistrez"
+          : null;
+        return why
+          ? <div style={{ ...card, fontSize: 13, color: "#64748b" }}><div style={{ ...h3, marginBottom: 6 }}>🛒 Saisir une commande</div>Saisie impossible : {why}.</div>
+          : <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />;
+      })()}
       {detail && form.id && <Dashboard detail={detail} />}
-      {detail && form.id && ["brouillon", "ouverte", "cloturee"].includes(detail.op.status) && !detail.op.po_odoo_id && !detail.op.po_created_at && !(detail.triggers || []).length && (detail.participants || []).length > 0 &&
-        <OrderEntry key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />}
       {detail && form.id && ["cloturee", "commandee", "terminee"].includes(form.status) && <Fulfilment key={form.id} detail={detail} call={call} refresh={() => refreshDetail(form.id)} dirty={dirty} />}
 
       {form.id && (
