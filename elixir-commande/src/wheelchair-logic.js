@@ -6,34 +6,60 @@
 export const SIZES = [40.5, 43, 45.5, 48];
 export const SIZE_LABELS = ["40,5 cm", "43 cm", "45,5 cm", "48 cm"];
 
-// Taille → fauteuil INVACARE ACTION 2NG fixe. Une nouvelle livraison peut arriver sous un AUTRE CIP :
+// Gammes proposées dans les menus d'aide au choix. Une nouvelle livraison peut arriver sous un AUTRE CIP :
 // les références d'une même taille sont reconnues par le code du produit du fournisseur (DHCARE,
-// product.supplierinfo.product_code), identique d'une livraison à l'autre. Le CIP historique sert de
-// repli si le code n'est pas renseigné dans Odoo (code du 48 cm renseigné le 09/10/2026).
-export const SUPPLIER_CODE_BY_SIZE = { "40.5": "BR1538205", "43": "BR1538206", "45.5": "BR1538207", "48": "BR1538212" };
-export const FALLBACK_CIP_BY_SIZE = { "40.5": "3662050045614", "43": "3662050045638", "45.5": "3662050045652", "48": "3662050045676" };
-export const WHEELCHAIR_CODES = SIZES.map(s => SUPPLIER_CODE_BY_SIZE[String(s)]);
-export const WHEELCHAIR_FALLBACK_CIPS = SIZES.map(s => FALLBACK_CIP_BY_SIZE[String(s)]);
-export const codeForSize = (idx) => SUPPLIER_CODE_BY_SIZE[String(SIZES[idx])];
-export const fallbackCipForSize = (idx) => FALLBACK_CIP_BY_SIZE[String(SIZES[idx])];
+// product.supplierinfo.product_code), identique d'une livraison à l'autre ; le CIP historique sert de
+// repli si le code n'est pas renseigné dans Odoo. Clés de taille : String(taille), ex. "45.5".
+export const LINES = {
+  fauteuil: {
+    key: "fauteuil", icon: "🦽", title: "Commande fauteuil roulant", model: "Invacare Action 2NG",
+    sizes: [40.5, 43, 45.5, 48],
+    codes: { "40.5": "BR1538205", "43": "BR1538206", "45.5": "BR1538207", "48": "BR1538212" },
+    fallback: { "40.5": "3662050045614", "43": "3662050045638", "45.5": "3662050045652", "48": "3662050045676" },
+  },
+  transfert: {
+    key: "transfert", icon: "🪑", title: "Commande fauteuil de transfert", model: "Invacare Transit Lite Action 2NG",
+    sizes: [43, 45.5],
+    codes: { "43": "BR1685838", "45.5": "BR1685839" },
+    fallback: { "43": "3662050469175", "45.5": "3662050469182" },
+  },
+};
+export const sizeLabel = (s) => `${String(s).replace(".", ",")} cm`;
+export const ALL_GROUP_CODES = [...new Set(Object.values(LINES).flatMap(l => Object.values(l.codes)))];
+export const ALL_FALLBACK_CIPS = [...new Set(Object.values(LINES).flatMap(l => Object.values(l.fallback)))];
 
-// Références d'une taille : celles du code fournisseur, sinon le CIP historique
-export function refsForSize(idx, data) {
-  const byCode = data?.refs?.[codeForSize(idx)] || [];
+// Références d'une taille d'une gamme : celles du code fournisseur, sinon le CIP historique
+export function refsFor(line, size, data) {
+  const byCode = data?.refs?.[line.codes[String(size)]] || [];
   if (byCode.length) return byCode;
-  const fb = data?.byCip?.[fallbackCipForSize(idx)];
+  const fb = data?.byCip?.[line.fallback[String(size)]];
   return fb ? [fb] : [];
 }
+
+// Recommandation (sur les 4 largeurs standard) ramenée aux tailles d'une gamme : la plus petite taille
+// au moins égale à la largeur recommandée (une assise trop étroite est à éviter).
+export function fitToLine(result, line) {
+  if (!result) return null;
+  if (result.idx == null) return { ...result, lineIdx: null };
+  const target = SIZES[result.idx];
+  const j = line.sizes.findIndex(x => x >= target);
+  if (j < 0) return { ...result, idx: null, lineIdx: null, size: null, label: "Hors gamme", outOfRange: "gamme",
+    reason: `${result.reason} Largeur ${sizeLabel(target)} : au-delà des tailles de cette gamme (${line.sizes.map(sizeLabel).join(", ")}).` };
+  const size = line.sizes[j];
+  return { ...result, lineIdx: j, size, label: sizeLabel(size),
+    reason: size !== target ? `${result.reason} ${sizeLabel(target)} n'existe pas dans cette gamme → ${sizeLabel(size)}, la taille au-dessus.` : result.reason };
+}
+
 // Stock connu d'une référence (catalogue : « available » ; à défaut, en stock sans quantité connue)
 const avail = (r) => r.available == null ? (r.in_stock ? Infinity : 0) : Math.max(0, Math.floor(Number(r.available) || 0));
 export const totalStock = (refs) => (refs || []).reduce((a, r) => a + avail(r), 0);
 
-// Répartit la quantité sur les références en stock d'une même taille : d'abord celle qui en a le
-// moins (écoule le reliquat de l'ancienne livraison), sans dépasser le stock connu de chacune.
+// Répartit la quantité sur les références en stock d'une même taille, dans l'ordre d'entrée
+// (refs triées : la plus ancienne d'abord — premier entré, premier sorti), sans dépasser le stock
+// connu de chacune. Décision de Zineb (09/10/2026).
 export function allocate(refs, qty) {
   const q = Math.max(0, Math.floor(Number(qty) || 0));
-  const inStock = (refs || []).filter(r => avail(r) > 0)
-    .sort((a, b) => (avail(a) - avail(b)) || String(a.cip).localeCompare(String(b.cip)));
+  const inStock = (refs || []).filter(r => avail(r) > 0);
   const lines = [];
   let left = q;
   for (const r of inStock) {

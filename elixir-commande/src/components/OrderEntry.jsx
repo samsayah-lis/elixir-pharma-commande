@@ -4,6 +4,7 @@ const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " �
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
 import { applyTiers, TierBadge } from "../tiers.jsx";
+import { loadGroups, collapseGroups } from "../product-groups.js";
 
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery }) {
   const [query, setQuery] = useState(initialQuery || "");
@@ -48,7 +49,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        setResults(Array.isArray(data.products) ? data.products : []);
+        // articles sous plusieurs CIP (même code fournisseur) : une seule ligne, la référence servie en premier
+        setResults(collapseGroups(Array.isArray(data.products) ? data.products : [], await loadGroups()));
         // Track search (fire-and-forget)
         const r = Array.isArray(data.products) ? data.products : [];
         fetch("/.netlify/functions/search-track", {
@@ -82,7 +84,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     if (qty <= 0) return;
     const hasDiscount = product.discounted_price && product.discount_pct > 0;
     const price = hasDiscount ? product.discounted_price : product.list_price;
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0, tiers: product.price_tiers || null });
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0, tiers: product.price_tiers || null,
+      ...(product.supplier_code ? { supplier_code: product.supplier_code } : {}) });
     setQuantities(prev => ({ ...prev, [product.cip]: 0 }));
     // Track add-to-cart
     fetch("/.netlify/functions/search-track", {

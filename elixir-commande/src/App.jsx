@@ -5,6 +5,8 @@ import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendatio
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
 import WheelchairOrder from "./components/WheelchairOrder";
+import { allocate } from "./wheelchair-logic.js";
+import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
 import MyOrdersPanel from "./components/MyOrdersPanel";
 
@@ -31,6 +33,7 @@ const SECTION_META = {
   saisie:   { label: "Saisie de commande",  subtitle: "Recherche par CIP ou nom — stock temps réel Odoo", color: "#0f2d3d", accent: "#2d9cbc", icon: "📝", columns: [], specialView: "orderEntry" },
   peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
   fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
+  transfert:{ label: "Fauteuil de transfert", subtitle: "Largeur d'assise → fauteuil de transfert Invacare (43 ou 45,5 cm)", color: "#1e3a5f", accent: "#3b82f6", icon: "🪑", columns: [], specialView: "transferChair" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
@@ -203,7 +206,7 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
-      if (outil && ["fauteuil", "saisie", "peremption", "groupees"].includes(outil)) return outil;
+      if (outil && ["fauteuil", "transfert", "saisie", "peremption", "groupees"].includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
     } catch {}
     return getDisplayConfig().defaultTab || "expert";
@@ -343,7 +346,7 @@ export default function App() {
       try {
         const res = await fetch(`/.netlify/functions/odoo-catalog?q=${encodeURIComponent(globalSearch.trim())}&limit=50`);
         const data = await res.json();
-        const results = Array.isArray(data) ? data : data.products || [];
+        const results = collapseGroups(Array.isArray(data) ? data : data.products || [], await loadGroups());
         setGlobalResults(results);
         // Track search (fire-and-forget)
         trackSearch(globalSearch.trim(), results.length, null, false);
@@ -769,9 +772,10 @@ export default function App() {
   // Ajoute un produit au panier depuis la Saisie de commande / Péremption courte.
   // S'il est dans le catalogue curaté → quantities (logique campagnes/UG) ; sinon → specialItems.
   const addItemToCart = (item) => {
+    // article regroupant plusieurs références (même code fournisseur) : ligne hors catalogue, une seule
     let added = false;
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
-      if (added) return;
+      if (added || item.supplier_code) return;   // plusieurs références : toujours une ligne hors catalogue
       const idx = (c.products || []).findIndex(p => p.cip === item.cip);
       if (idx >= 0) {
         setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + item.qty }));
@@ -781,13 +785,14 @@ export default function App() {
     if (!added) {
       const id = item.cip || item.name;
       setSpecialItems(prev => {
-        const i = prev.findIndex(s => (s.cip || s.name) === id);
+        const byCode = item.supplier_code ? prev.findIndex(s => s.supplier_code === item.supplier_code) : -1;
+        const i = byCode >= 0 ? byCode : prev.findIndex(s => (s.cip || s.name) === id);
         if (i >= 0) {
           const n = [...prev];
-          n[i] = { ...n[i], qty: n[i].qty + item.qty };
+          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) };
           return n;
         }
-        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null }];
+        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) }];
       });
     }
     flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
@@ -865,6 +870,7 @@ export default function App() {
         step: 1,
         isCampaign: false,
         isSpecial: true,
+        supplierCode: s.supplier_code || null,
       });
     });
     return items;
@@ -911,7 +917,11 @@ export default function App() {
     sigCheckedRef.current = true;
     try {
       const stored = localStorage.getItem("cart_catalog_sig");
-      if (stored && stored !== catalogSig && Object.keys(quantities).length > 0) {
+      // vidage seulement si une section utilisée par le panier a changé (un nouvel onglet ne vide rien)
+      const parseSig = (x) => Object.fromEntries((x || "").split(";").filter(Boolean).map(y => { const j = y.indexOf(":"); return [y.slice(0, j), y.slice(j + 1)]; }));
+      const prev = parseSig(stored), cur = parseSig(catalogSig);
+      const used = new Set(Object.keys(quantities).filter(k => parseInt(quantities[k]) > 0).map(k => k.slice(0, k.lastIndexOf("-"))));
+      if (stored && stored !== catalogSig && [...used].some(k => prev[k] !== cur[k])) {
         setQuantities({});
         try { localStorage.removeItem("cart_quantities"); } catch {}
         flash("⚠ Catalogue mis à jour — panier réinitialisé par sécurité");
@@ -1139,6 +1149,42 @@ export default function App() {
     setOnboardingDone(true);
   };
 
+  const expandSupplierGroups = async (items) => {
+    // lignes concernées : code fournisseur connu (menu fauteuils, Saisie), ou CIP d'un groupe (panier d'une
+    // version précédente, ligne du catalogue, recherche sans regroupement)
+    const known = codeOfCip(await loadGroups());
+    if (!items.some(i => i.supplierCode || i.isSpecial || known[i.cip])) return items;
+    const data = await loadGroups({ fresh: true });   // stock du moment
+    const codeOf = codeOfCip(data);
+    const codeFor = (i) => i.isCampaign ? null : (i.supplierCode || codeOf[i.cip] || null);   // campagne (UG) : ligne laissée telle quelle
+    // plusieurs lignes d'un même article (ancien panier : une ligne par CIP ; catalogue + menu…) : quantités
+    // additionnées par prix et réparties une fois, avec le stock déjà pris par les lignes précédentes du panier
+    // décompté, pour ne jamais compter deux fois le stock de la plus ancienne référence
+    const used = {};   // CIP → unités déjà prises dans ce panier
+    for (const i of items) if (i.isCampaign && i.cip) used[i.cip] = (used[i.cip] || 0) + i.qty;
+    const keyOf = (i, c) => `${c}|${i.pn}`;
+    const qtyBy = {};
+    for (const i of items) { const c = codeFor(i); if (c && data?.refs?.[c]?.length) qtyBy[keyOf(i, c)] = (qtyBy[keyOf(i, c)] || 0) + i.qty; }
+    const done = new Set();
+    return items.flatMap(i => {
+      const code = codeFor(i);
+      if (!code) return [i];
+      i = { ...i, supplierCode: code };
+      const refs = data?.refs?.[code] || [];
+      if (!refs.length) return [i];   // service indisponible : la ligne part sur sa référence
+      const k = keyOf(i, code);
+      if (done.has(k)) return [];   // déjà réparti avec la première ligne de l'article à ce prix
+      done.add(k);
+      const qty = qtyBy[k];
+      const left = refs.map(r => r.available == null ? r : { ...r, available: Math.max(0, (Number(r.available) || 0) - (used[r.cip] || 0)) });
+      const { lines, missing } = allocate(left, qty);
+      if (!lines.length) return [{ ...i, qty, total: i.pn * qty, group: code }];
+      if (missing > 0) lines[lines.length - 1].qty += missing;   // stock insuffisant : reliquat sur la dernière référence servie
+      for (const l of lines) used[l.ref.cip] = (used[l.ref.cip] || 0) + l.qty;
+      return lines.map(l => ({ ...i, cip: l.ref.cip, qty: l.qty, total: i.pn * l.qty, group: code }));
+    });
+  };
+
   const handleSend = async () => {
     if (cartItems.length === 0) return;
     setSendStatus("sending");
@@ -1148,9 +1194,13 @@ export default function App() {
         .then(r => r.ok).catch(() => false);
       if (!ok) { setSendStatus(null); flash("⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande"); return; }
     }
-    // Contingentement : vérification avec les quantités à jour juste avant l'envoi
+    // Articles à plusieurs références (même code fournisseur, ex. fauteuils livrés sous un nouveau CIP) :
+    // le pharmacien a UNE ligne ; la commande est répartie par CIP, la plus ancienne référence d'abord
+    // (premier entré, premier sorti), avec le stock à jour, au prix vu par le pharmacien.
+    const sendItems = await expandSupplierGroups(cartItems).catch(() => cartItems);
+    // Contingentement : vérification avec les quantités à jour juste avant l'envoi, sur les CIP réellement envoyés
     const freshQuota = await loadQuota();
-    const blocked = quotaOver(freshQuota, cartItems).over;   // chiffres à jour ; sans réponse d'Odoo, pas de blocage
+    const blocked = quotaOver(freshQuota, sendItems).over;   // chiffres à jour ; sans réponse d'Odoo, pas de blocage
     if (blocked.length) {
       setSendStatus(null);
       flash(`⚠ Contingentement dépassé : ${blocked.map(b => `${b.name} (reste ${b.remaining})`).join(", ")}`);
@@ -1158,8 +1208,8 @@ export default function App() {
     }
 
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
-    const lignes = cartItems.map(i =>
-      `• ${i.name}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
+    const lignes = sendItems.map(i =>
+      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
 
     // Build CSV and save order to localStorage for admin
@@ -1171,7 +1221,7 @@ export default function App() {
       });
     });
     const csvLines = [];
-    cartItems.forEach(i => {
+    sendItems.forEach(i => {
       let cip = i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—";
       csvLines.push(`${cip.replace(/;/g,"")};${i.qty}`);
     });
@@ -1185,7 +1235,7 @@ export default function App() {
       order_date:    date,
       order_lines:   lignes,
       total_ht:      cartTotal.toFixed(2).replace(".", ",") + " €",
-      nb_lignes:     cartItems.length,
+      nb_lignes:     sendItems.length,
       nb_unites:     cartCount,
     };
 
@@ -1205,9 +1255,9 @@ export default function App() {
           pharmacyEmail,
           pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
           isClient,
-          items: cartItems.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total })),
+          items: sendItems.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) })),
           totalHt: cartTotal,
-          nbLignes: cartItems.length,
+          nbLignes: sendItems.length,
           csv: csvContent,
           processed: false,
           source: "catalogue",
@@ -1437,8 +1487,8 @@ export default function App() {
           )}
         </div>
         {[
-          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "ulabs", "groupees"].includes(k)) },
-          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "ulabs", "groupees"].includes(k)) },
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "ulabs", "groupees"].includes(k)) },
+          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "transfert", "ulabs", "groupees"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
           <div key={group.title} style={{ marginBottom: 4 }}>
             <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
@@ -1730,6 +1780,9 @@ export default function App() {
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (
             <WheelchairOrder onAddToCart={addItemToCart} />
+          )}
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "transferChair" && (
+            <WheelchairOrder key="transfert" lineKey="transfert" onAddToCart={addItemToCart} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "shortExpiry" && (
@@ -2465,9 +2518,24 @@ export default function App() {
             loading={myOrdersLoading}
             pharmacyName={pharmacyName}
             onClose={() => setShowMyOrders(false)}
-            onReorder={(items) => {
+            onReorder={async (items) => {
+              // article à plusieurs références : une ligne au prix du jour (référence servie en premier),
+              // répartie par CIP à l'envoi ; quantité remplacée comme pour les lignes du catalogue
+              const groups = items.some(it => it.group) ? await loadGroups() : null;
               items.forEach(it => {
                 if (!it.cip || !it.qty) return;
+                if (it.group) {
+                  const refs = groups?.refs?.[it.group] || [];
+                  const head = allocate(refs, 1).lines[0]?.ref || refs[0];
+                  const pn = head ? (head.discounted_price && head.discount_pct > 0 ? head.discounted_price : head.list_price) : it.pn;
+                  const line = { cip: head?.cip || it.cip, name: head?.name || it.name, qty: parseInt(it.qty) || 0, pn, pv: head?.list_price ?? pn,
+                    tiers: head?.price_tiers || null, supplier_code: it.group };
+                  setSpecialItems(prev => {
+                    const j = prev.findIndex(x => x.supplier_code === it.group);
+                    return j >= 0 ? prev.map((x, n) => n === j ? { ...x, ...line } : x) : [...prev, line];
+                  });
+                  return;
+                }
                 Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
                   const idx = (c.products || []).findIndex(p => p.cip === it.cip);
                   if (idx >= 0) setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: parseInt(it.qty) || 0 }));

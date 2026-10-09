@@ -29,7 +29,13 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
           )}
           {orders.map(order => {
             const date = new Date(order.date);
-            const items = Array.isArray(order.items) ? order.items : [];
+            // lignes d'un même article livré sous plusieurs CIP (même code fournisseur) : une seule ligne
+            const items = (Array.isArray(order.items) ? order.items : []).reduce((acc, it) => {
+              const g = it.group && acc.find(x => x.group === it.group);
+              if (g) { g.qty = (Number(g.qty) || 0) + (Number(it.qty) || 0); g.total = (Number(g.total) || 0) + (Number(it.total) || 0); }
+              else acc.push({ ...it });
+              return acc;
+            }, []);
             return (
               <div key={order.id} style={{ background:"#fafbfc", borderRadius:14, padding:"16px 20px", marginBottom:12, border:"1px solid #e8ecf0" }}>
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
@@ -38,7 +44,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                       {date.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" })}
                       <span style={{ fontSize:11, color:"#888", marginLeft:8 }}>{date.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" })}</span>
                     </div>
-                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{items.length} ligne(s) · {order.nbLignes || items.length} réf.</div>
+                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{items.length} ligne(s) · {items.length} réf.</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
                     <div style={{ fontWeight:800, fontSize:16, color:"#059669" }}>{order.totalHt ? parseFloat(order.totalHt).toFixed(2).replace(".",",") + " €" : "—"}</div>

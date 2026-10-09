@@ -4,13 +4,15 @@
 // (product.supplierinfo.product_code) : on retrouve ainsi toutes les références qui cohabitent,
 // avec stock et prix du catalogue du site (odoo_catalog). Lecture seule, sans données client.
 // → { refs: { <code>: [ligne catalogue…] }, byCip: { <cip>: ligne catalogue } }
+// Les références d'un code sont triées par ordre d'entrée (création de la fiche Odoo) : la
+// première est la plus ancienne, à sortir en premier (FIFO).
 import { getCors } from "./cors.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const FIELDS = "cip,name,list_price,discounted_price,discount_pct,price_tiers,in_stock,available";
-const cache = new Map();   // code fournisseur → { at, cips } (10 min par instance)
+const cache = new Map();   // code fournisseur → { at, cips (triés, plus ancienne d'abord) } (10 min par instance)
 
 const cipOf = (p) => [p.default_code, p.barcode].map(x => String(x || "").trim()).find(x => /^\d{13}$/.test(x)) || null;
 
@@ -21,15 +23,15 @@ async function cipsByCode(codes) {
       { fields: ["product_code", "product_tmpl_id", "product_id"], context: { allowed_company_ids: [COMPANY_ID] } });
     const tids = [...new Set(si.map(s => s.product_tmpl_id?.[0]).filter(Boolean))];
     const variants = tids.length ? await odoo("product.product", "search_read", [[["product_tmpl_id", "in", tids], ["active", "=", true]]],
-      { fields: ["id", "default_code", "barcode", "product_tmpl_id"] }) : [];
-    const found = Object.fromEntries(todo.map(c => [c, new Set()]));
+      { fields: ["id", "default_code", "barcode", "product_tmpl_id", "create_date"] }) : [];
+    const found = Object.fromEntries(todo.map(c => [c, new Map()]));   // cip → date d'entrée
     for (const s of si) for (const v of variants) {
       if (v.product_tmpl_id?.[0] !== s.product_tmpl_id?.[0]) continue;
       if (s.product_id && s.product_id[0] !== v.id) continue;   // tarif propre à une variante
       const cip = cipOf(v);
-      if (cip) found[s.product_code]?.add(cip);
+      if (cip) found[s.product_code]?.set(cip, `${v.create_date || ""}|${String(v.id).padStart(10, "0")}`);
     }
-    for (const c of todo) cache.set(c, { at: Date.now(), cips: [...found[c]] });
+    for (const c of todo) cache.set(c, { at: Date.now(), cips: [...found[c].entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([cip]) => cip) });
   }
   return Object.fromEntries(codes.map(c => [c, cache.get(c)?.cips || []]));
 }

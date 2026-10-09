@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { recommend, SIZES, SIZE_LABELS, WHEELCHAIR_CODES, WHEELCHAIR_FALLBACK_CIPS, codeForSize, refsForSize, totalStock, allocate, MEASURE_BANDS, WEIGHT_BANDS } from "../wheelchair-logic.js";
+import { recommend, SIZES, LINES, sizeLabel, refsFor, fitToLine, totalStock, allocate, MEASURE_BANDS, WEIGHT_BANDS } from "../wheelchair-logic.js";
+import { loadGroups } from "../product-groups.js";
 import { TierBadge, applyTiers } from "../tiers.jsx";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
@@ -10,8 +11,11 @@ const h2 = { fontSize: 13, fontWeight: 800, color: "#0f2d3d", letterSpacing: 0.3
 const input = { width: 120, border: "1.5px solid #d6dde3", borderRadius: 8, padding: "8px 10px", fontSize: 16, fontWeight: 700, outline: "none", fontFamily: "inherit" };
 const label = { fontSize: 12, fontWeight: 700, color: "#334155", display: "block", marginBottom: 4 };
 
-// Parcours guidé : largeur d'assise → fauteuil Invacare correspondant (stock + prix Odoo).
-export default function WheelchairOrder({ onAddToCart }) {
+// Parcours guidé : largeur d'assise → fauteuil de la gamme (stock + prix Odoo).
+// lineKey : « fauteuil » (fauteuil roulant, 4 tailles) ou « transfert » (fauteuil de transfert, 2 tailles).
+export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
+  const line = LINES[lineKey] || LINES.fauteuil;
+  const sizes = line.sizes;
   const [method, setMethod] = useState("mesure");
   const [measure, setMeasure] = useState("");
   const [weight, setWeight] = useState("");
@@ -21,34 +25,35 @@ export default function WheelchairOrder({ onAddToCart }) {
   const [data, setData] = useState(null);   // { refs: { code fournisseur: [références] }, byCip }
   const [loading, setLoading] = useState(true);
 
-  // Stock et prix des 4 tailles : toutes les références (CIP) de chaque code fournisseur
+  // Stock et prix de chaque taille : toutes les références (CIP) de chaque code fournisseur
   // (une nouvelle livraison peut arriver sous un autre CIP), depuis le catalogue synchronisé.
   useEffect(() => {
     let cancelled = false;
-    fetch(`/.netlify/functions/supplier-code-refs?codes=${WHEELCHAIR_CODES.join(",")}&cips=${WHEELCHAIR_FALLBACK_CIPS.join(",")}`)
-      .then(r => r.json()).catch(() => null)
-      .then(j => { if (!cancelled) { setData(j && !j.error ? j : null); setLoading(false); } });
+    loadGroups().then(j => { if (!cancelled) { setData(j); setLoading(false); } });
     return () => { cancelled = true; };
   }, []);
 
-  const result = useMemo(() => recommend({ method, measure, weight, height }), [method, measure, weight, height]);
-  const selectedIdx = manualIdx ?? (result && result.idx != null ? result.idx : null);
-  const refs = selectedIdx != null ? refsForSize(selectedIdx, data) : [];
+  // recommandation sur les 4 largeurs standard, ramenée aux tailles de la gamme (taille au-dessus)
+  const result = useMemo(() => fitToLine(recommend({ method, measure, weight, height }), line), [method, measure, weight, height, line]);
+  const selectedIdx = manualIdx ?? (result && result.lineIdx != null ? result.lineIdx : null);
+  const sizeAt = (i) => sizes[i];
+  const codeAt = (i) => line.codes[String(sizes[i])];
+  const refs = selectedIdx != null ? refsFor(line, sizeAt(selectedIdx), data) : [];
   const stock = totalStock(refs);
   const plan = allocate(refs, qty);
-  // référence affichée : la première servie (sinon la première connue)
-  const product = plan.lines[0]?.ref || refs[0] || null;
+  // le pharmacien voit UN fauteuil : la référence servie en premier (la plus ancienne en stock)
+  const product = plan.lines[0]?.ref || refs.find(r => (Number(r.available) || 0) > 0 || r.in_stock) || refs[0] || null;
   const priceOf = (p) => p.discounted_price && p.discount_pct > 0 ? p.discounted_price : p.list_price;
   const unitPrice = product ? priceOf(product) : null;
   const tiered = product ? applyTiers(unitPrice, product.price_tiers, qty) : null;
   const canAdd = !!product && stock > 0 && qty >= 1 && plan.missing === 0;
 
-  // une ligne de panier par référence servie (le stock est réservé sur le bon CIP)
+  // une seule ligne de panier ; la répartition entre références (premier entré, premier sorti) est
+  // faite à l'envoi de la commande, avec le stock à jour (voir expandSupplierGroups dans App.jsx)
   const add = () => {
     if (!canAdd) return;
-    for (const { ref, qty: n } of plan.lines)
-      onAddToCart?.({ cip: ref.cip, name: ref.name, qty: n, pn: priceOf(ref), pv: ref.list_price,
-                      discount: ref.discount_pct || 0, tiers: ref.price_tiers || null });
+    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: unitPrice, pv: product.list_price,
+                    discount: product.discount_pct || 0, tiers: product.price_tiers || null, supplier_code: codeAt(selectedIdx) });
   };
   const reset = () => { setMeasure(""); setWeight(""); setHeight(""); setManualIdx(null); setQty(1); };
 
@@ -62,9 +67,9 @@ export default function WheelchairOrder({ onAddToCart }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
       {/* En-tête */}
       <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
-        <div style={{ fontSize: 20, fontWeight: 800 }}>🦽 Commande fauteuil roulant</div>
+        <div style={{ fontSize: 20, fontWeight: 800 }}>{line.icon} {line.title}</div>
         <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
-          Déterminez la largeur d'assise (4 tailles standard : 40,5 · 43 · 45,5 · 48 cm), le bon fauteuil Invacare Action 2NG s'affiche avec son stock et son prix.
+          Déterminez la largeur d'assise ({sizes.length} tailles : {sizes.map(x => String(x).replace(".", ",")).join(" · ")} cm), le bon fauteuil {line.model} s'affiche avec son stock et son prix.
         </div>
       </div>
 
@@ -108,28 +113,30 @@ export default function WheelchairOrder({ onAddToCart }) {
               {result.reason}
               {result.outOfRange && (
                 <div style={{ marginTop: 6, fontWeight: 700, color: "#9a3412" }}>
-                  {result.outOfRange === "bariatrique" ? "Au-delà de 100 kg : matériel bariatrique nécessaire." : "Au-delà de 45,5 cm mesurés : modèle large ou sur mesure."} Orienter vers un prestataire de matériel médical pour un essayage.
+                  {result.outOfRange === "bariatrique" ? "Au-delà de 100 kg : matériel bariatrique nécessaire. Orienter vers un prestataire de matériel médical pour un essayage."
+                    : result.outOfRange === "gamme" ? (lineKey === "transfert" ? "Assise trop étroite pour ce fauteuil de transfert : voir le menu « Fauteuil roulant » (jusqu'à 48 cm)." : "Taille non proposée dans cette gamme : orienter vers un prestataire de matériel médical.")
+                    : "Au-delà de 45,5 cm mesurés : modèle large ou sur mesure. Orienter vers un prestataire de matériel médical pour un essayage."}
                 </div>
               )}
             </div>
           </div>
         )}
-        {/* Choix manuel / vue des 4 tailles avec stock */}
+        {/* Choix manuel / vue des tailles de la gamme avec stock */}
         <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#64748b", marginRight: 4 }}>Tailles disponibles :</span>
-          {SIZES.map((s, i) => {
-            const rs = refsForSize(i, data), st = totalStock(rs);
+          {sizes.map((s, i) => {
+            const rs = refsFor(line, s, data), st = totalStock(rs);
             const active = selectedIdx === i;
             return (
               <button key={s} onClick={() => setManualIdx(i)} title={!rs.length ? "" : st > 0 ? (Number.isFinite(st) ? `En stock : ${st}` : "En stock") : "Rupture"} style={{
                 border: `1.5px solid ${active ? "#0f2d3d" : "#d6dde3"}`, background: active ? "#0f2d3d" : "white", color: active ? "white" : "#0f2d3d",
                 borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
-                {SIZE_LABELS[i]}
+                {sizeLabel(s)}
                 <span style={{ width: 8, height: 8, borderRadius: 4, background: !rs.length ? "#cbd5e1" : st > 0 ? "#10b981" : "#ef4444" }} />
               </button>
             );
           })}
-          {manualIdx != null && result && result.idx != null && manualIdx !== result.idx && (
+          {manualIdx != null && result && result.lineIdx != null && manualIdx !== result.lineIdx && (
             <button onClick={() => setManualIdx(null)} style={{ border: "none", background: "none", color: "#2563eb", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
               revenir à la recommandation ({result.label})
             </button>
@@ -145,7 +152,7 @@ export default function WheelchairOrder({ onAddToCart }) {
         ) : selectedIdx == null ? (
           <div style={{ color: "#64748b", fontSize: 13 }}>Le produit s'affichera dès qu'une taille est déterminée (ou choisie ci-dessus).</div>
         ) : !product ? (
-          <div style={{ color: "#b91c1c", fontSize: 13 }}>Aucune référence trouvée pour cette taille (code fournisseur {codeForSize(selectedIdx)}) — utilisez la Saisie de commande.</div>
+          <div style={{ color: "#b91c1c", fontSize: 13 }}>Aucune référence trouvée pour cette taille (code fournisseur {codeAt(selectedIdx)}) — utilisez la Saisie de commande.</div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flexShrink: 0 }}>
@@ -156,16 +163,10 @@ export default function WheelchairOrder({ onAddToCart }) {
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d" }}>{product.name}</div>
               <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
-                {refs.length > 1 ? <>Code fournisseur <span style={{ fontFamily: "monospace" }}>{codeForSize(selectedIdx)}</span></> : <>CIP : <span style={{ fontFamily: "monospace" }}>{product.cip}</span></>} · largeur d'assise {SIZE_LABELS[selectedIdx]}
+                CIP : <span style={{ fontFamily: "monospace" }}>{product.cip}</span> · largeur d'assise {sizeLabel(sizeAt(selectedIdx))}
                 {Number.isFinite(stock) && stock > 0 && <> · <b style={{ color: "#065f46" }}>stock {stock}</b></>}
               </div>
-              {refs.length > 1 && (
-                <div style={{ fontSize: 11, color: "#475569", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
-                  {refs.length} références pour ce même fauteuil (nouvelle livraison sous un autre CIP) : {refs.map(r => `${r.cip} · ${r.available == null ? (r.in_stock ? "en stock" : "rupture") : `stock ${r.available}`}`).join(" — ")}
-                  {plan.lines.length > 1 && <div style={{ color: "#0f2d3d", fontWeight: 700 }}>Votre commande sera répartie : {plan.lines.map(l => `${l.qty} × ${l.ref.cip}`).join(" + ")}</div>}
-                </div>
-              )}
-              {manualIdx != null && result && result.idx != null && manualIdx !== result.idx && (
+              {manualIdx != null && result && result.lineIdx != null && manualIdx !== result.lineIdx && (
                 <div style={{ fontSize: 11, color: "#9a3412", marginTop: 4 }}>⚠️ Taille choisie manuellement, différente de la recommandation ({result.label}).</div>
               )}
             </div>
@@ -192,7 +193,7 @@ export default function WheelchairOrder({ onAddToCart }) {
               <button onClick={add} disabled={!canAdd} style={{
                 background: canAdd ? "#10b981" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, padding: "7px 16px",
                 fontSize: 12, fontWeight: 800, cursor: canAdd ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
-                {stock <= 0 ? "Indisponible" : plan.missing > 0 ? `Stock disponible : ${stock}` : `Ajouter au panier · ${fmt(plan.lines.reduce((a, l) => a + applyTiers(priceOf(l.ref), l.ref.price_tiers, l.qty).pn * l.qty, 0))}`}
+                {stock <= 0 ? "Indisponible" : plan.missing > 0 ? `Stock disponible : ${stock}` : `Ajouter au panier · ${fmt((tiered ? tiered.pn : unitPrice) * qty)}`}
               </button>
             </div>
           </div>
@@ -283,7 +284,7 @@ export default function WheelchairOrder({ onAddToCart }) {
                   return (
                     <tr key={b.label} style={{ background: hit ? "#ecfdf5" : "transparent", fontWeight: hit ? 800 : 400, color: b.idx == null ? "#9a3412" : "#1e293b" }}>
                       <td style={{ padding: "7px 6px", borderBottom: "1px solid #f1f5f9" }}>{b.label}</td>
-                      <td style={{ padding: "7px 6px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{b.idx == null ? "hors gamme" : SIZE_LABELS[b.idx]}</td>
+                      <td style={{ padding: "7px 6px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{b.idx == null ? "hors gamme" : (fitToLine({ idx: b.idx, reason: "" }, line).label || "hors gamme")}</td>
                     </tr>
                   );
                 })}
