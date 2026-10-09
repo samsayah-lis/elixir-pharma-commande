@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { recommend, SIZES, SIZE_LABELS, WHEELCHAIR_CIPS, cipForSize, MEASURE_BANDS, WEIGHT_BANDS } from "../wheelchair-logic.js";
+import { recommend, SIZES, SIZE_LABELS, WHEELCHAIR_CODES, WHEELCHAIR_FALLBACK_CIPS, codeForSize, refsForSize, totalStock, allocate, MEASURE_BANDS, WEIGHT_BANDS } from "../wheelchair-logic.js";
 import { TierBadge, applyTiers } from "../tiers.jsx";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
@@ -18,33 +18,37 @@ export default function WheelchairOrder({ onAddToCart }) {
   const [height, setHeight] = useState("");
   const [manualIdx, setManualIdx] = useState(null);
   const [qty, setQty] = useState(1);
-  const [products, setProducts] = useState({});
+  const [data, setData] = useState(null);   // { refs: { code fournisseur: [références] }, byCip }
   const [loading, setLoading] = useState(true);
 
-  // Stock et prix des 4 tailles, depuis le catalogue Odoo synchronisé.
+  // Stock et prix des 4 tailles : toutes les références (CIP) de chaque code fournisseur
+  // (une nouvelle livraison peut arriver sous un autre CIP), depuis le catalogue synchronisé.
   useEffect(() => {
     let cancelled = false;
-    Promise.all(WHEELCHAIR_CIPS.map(cip =>
-      fetch(`/.netlify/functions/odoo-catalog?limit=3&q=${cip}`).then(r => r.json())
-        .then(j => (j.products || []).find(p => p.cip === cip) || null).catch(() => null)
-    )).then(list => {
-      if (cancelled) return;
-      const map = {}; list.forEach((p, i) => { if (p) map[WHEELCHAIR_CIPS[i]] = p; });
-      setProducts(map); setLoading(false);
-    });
+    fetch(`/.netlify/functions/supplier-code-refs?codes=${WHEELCHAIR_CODES.join(",")}&cips=${WHEELCHAIR_FALLBACK_CIPS.join(",")}`)
+      .then(r => r.json()).catch(() => null)
+      .then(j => { if (!cancelled) { setData(j && !j.error ? j : null); setLoading(false); } });
     return () => { cancelled = true; };
   }, []);
 
   const result = useMemo(() => recommend({ method, measure, weight, height }), [method, measure, weight, height]);
   const selectedIdx = manualIdx ?? (result && result.idx != null ? result.idx : null);
-  const product = selectedIdx != null ? products[cipForSize(selectedIdx)] : null;
-  const unitPrice = product ? (product.discounted_price && product.discount_pct > 0 ? product.discounted_price : product.list_price) : null;
+  const refs = selectedIdx != null ? refsForSize(selectedIdx, data) : [];
+  const stock = totalStock(refs);
+  const plan = allocate(refs, qty);
+  // référence affichée : la première servie (sinon la première connue)
+  const product = plan.lines[0]?.ref || refs[0] || null;
+  const priceOf = (p) => p.discounted_price && p.discount_pct > 0 ? p.discounted_price : p.list_price;
+  const unitPrice = product ? priceOf(product) : null;
   const tiered = product ? applyTiers(unitPrice, product.price_tiers, qty) : null;
+  const canAdd = !!product && stock > 0 && qty >= 1 && plan.missing === 0;
 
+  // une ligne de panier par référence servie (le stock est réservé sur le bon CIP)
   const add = () => {
-    if (!product || qty < 1) return;
-    onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: unitPrice, pv: product.list_price,
-                    discount: product.discount_pct || 0, tiers: product.price_tiers || null });
+    if (!canAdd) return;
+    for (const { ref, qty: n } of plan.lines)
+      onAddToCart?.({ cip: ref.cip, name: ref.name, qty: n, pn: priceOf(ref), pv: ref.list_price,
+                      discount: ref.discount_pct || 0, tiers: ref.price_tiers || null });
   };
   const reset = () => { setMeasure(""); setWeight(""); setHeight(""); setManualIdx(null); setQty(1); };
 
@@ -114,14 +118,14 @@ export default function WheelchairOrder({ onAddToCart }) {
         <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <span style={{ fontSize: 11, color: "#64748b", marginRight: 4 }}>Tailles disponibles :</span>
           {SIZES.map((s, i) => {
-            const p = products[cipForSize(i)];
+            const rs = refsForSize(i, data), st = totalStock(rs);
             const active = selectedIdx === i;
             return (
-              <button key={s} onClick={() => setManualIdx(i)} title={p ? (p.in_stock ? "En stock" : "Rupture") : ""} style={{
+              <button key={s} onClick={() => setManualIdx(i)} title={!rs.length ? "" : st > 0 ? (Number.isFinite(st) ? `En stock : ${st}` : "En stock") : "Rupture"} style={{
                 border: `1.5px solid ${active ? "#0f2d3d" : "#d6dde3"}`, background: active ? "#0f2d3d" : "white", color: active ? "white" : "#0f2d3d",
                 borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
                 {SIZE_LABELS[i]}
-                <span style={{ width: 8, height: 8, borderRadius: 4, background: !p ? "#cbd5e1" : p.in_stock ? "#10b981" : "#ef4444" }} />
+                <span style={{ width: 8, height: 8, borderRadius: 4, background: !rs.length ? "#cbd5e1" : st > 0 ? "#10b981" : "#ef4444" }} />
               </button>
             );
           })}
@@ -141,17 +145,26 @@ export default function WheelchairOrder({ onAddToCart }) {
         ) : selectedIdx == null ? (
           <div style={{ color: "#64748b", fontSize: 13 }}>Le produit s'affichera dès qu'une taille est déterminée (ou choisie ci-dessus).</div>
         ) : !product ? (
-          <div style={{ color: "#b91c1c", fontSize: 13 }}>Produit {cipForSize(selectedIdx)} introuvable dans le catalogue Odoo — utilisez la Saisie de commande.</div>
+          <div style={{ color: "#b91c1c", fontSize: 13 }}>Aucune référence trouvée pour cette taille (code fournisseur {codeForSize(selectedIdx)}) — utilisez la Saisie de commande.</div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={{ flexShrink: 0 }}>
-              {product.in_stock
+              {stock > 0
                 ? <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
                 : <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>RUPTURE</div>}
             </div>
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d" }}>{product.name}</div>
-              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>CIP : <span style={{ fontFamily: "monospace" }}>{product.cip}</span> · largeur d'assise {SIZE_LABELS[selectedIdx]}</div>
+              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
+                {refs.length > 1 ? <>Code fournisseur <span style={{ fontFamily: "monospace" }}>{codeForSize(selectedIdx)}</span></> : <>CIP : <span style={{ fontFamily: "monospace" }}>{product.cip}</span></>} · largeur d'assise {SIZE_LABELS[selectedIdx]}
+                {Number.isFinite(stock) && stock > 0 && <> · <b style={{ color: "#065f46" }}>stock {stock}</b></>}
+              </div>
+              {refs.length > 1 && (
+                <div style={{ fontSize: 11, color: "#475569", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>
+                  {refs.length} références pour ce même fauteuil (nouvelle livraison sous un autre CIP) : {refs.map(r => `${r.cip} · ${r.available == null ? (r.in_stock ? "en stock" : "rupture") : `stock ${r.available}`}`).join(" — ")}
+                  {plan.lines.length > 1 && <div style={{ color: "#0f2d3d", fontWeight: 700 }}>Votre commande sera répartie : {plan.lines.map(l => `${l.qty} × ${l.ref.cip}`).join(" + ")}</div>}
+                </div>
+              )}
               {manualIdx != null && result && result.idx != null && manualIdx !== result.idx && (
                 <div style={{ fontSize: 11, color: "#9a3412", marginTop: 4 }}>⚠️ Taille choisie manuellement, différente de la recommandation ({result.label}).</div>
               )}
@@ -176,10 +189,10 @@ export default function WheelchairOrder({ onAddToCart }) {
                   style={{ width: 48, textAlign: "center", border: "1.5px solid #ddd", borderRadius: 6, padding: 4, fontSize: 14, fontWeight: 700, outline: "none" }} />
                 <button onClick={() => setQty(q => q + 1)} style={{ background: "#0f2d3d", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16, color: "white" }}>+</button>
               </div>
-              <button onClick={add} disabled={!product.in_stock} style={{
-                background: product.in_stock ? "#10b981" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, padding: "7px 16px",
-                fontSize: 12, fontWeight: 800, cursor: product.in_stock ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
-                {product.in_stock ? `Ajouter au panier · ${fmt((tiered ? tiered.pn : unitPrice) * qty)}` : "Indisponible"}
+              <button onClick={add} disabled={!canAdd} style={{
+                background: canAdd ? "#10b981" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, padding: "7px 16px",
+                fontSize: 12, fontWeight: 800, cursor: canAdd ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
+                {stock <= 0 ? "Indisponible" : plan.missing > 0 ? `Stock disponible : ${stock}` : `Ajouter au panier · ${fmt(plan.lines.reduce((a, l) => a + applyTiers(priceOf(l.ref), l.ref.price_tiers, l.qty).pn * l.qty, 0))}`}
               </button>
             </div>
           </div>

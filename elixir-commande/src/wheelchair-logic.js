@@ -6,15 +6,44 @@
 export const SIZES = [40.5, 43, 45.5, 48];
 export const SIZE_LABELS = ["40,5 cm", "43 cm", "45,5 cm", "48 cm"];
 
-// Taille → CIP13 du fauteuil INVACARE ACTION 2NG fixe correspondant.
-export const PRODUCT_BY_SIZE = {
-  "40.5": "3662050045614",
-  "43":   "3662050045638",
-  "45.5": "3662050045652",
-  "48":   "3662050045676",
-};
-export const WHEELCHAIR_CIPS = SIZES.map(s => PRODUCT_BY_SIZE[String(s)]);
-export const cipForSize = (idx) => PRODUCT_BY_SIZE[String(SIZES[idx])];
+// Taille → fauteuil INVACARE ACTION 2NG fixe. Une nouvelle livraison peut arriver sous un AUTRE CIP :
+// les références d'une même taille sont reconnues par le code du produit du fournisseur (DHCARE,
+// product.supplierinfo.product_code), identique d'une livraison à l'autre. Le CIP historique sert de
+// repli si le code n'est pas renseigné dans Odoo (code du 48 cm renseigné le 09/10/2026).
+export const SUPPLIER_CODE_BY_SIZE = { "40.5": "BR1538205", "43": "BR1538206", "45.5": "BR1538207", "48": "BR1538212" };
+export const FALLBACK_CIP_BY_SIZE = { "40.5": "3662050045614", "43": "3662050045638", "45.5": "3662050045652", "48": "3662050045676" };
+export const WHEELCHAIR_CODES = SIZES.map(s => SUPPLIER_CODE_BY_SIZE[String(s)]);
+export const WHEELCHAIR_FALLBACK_CIPS = SIZES.map(s => FALLBACK_CIP_BY_SIZE[String(s)]);
+export const codeForSize = (idx) => SUPPLIER_CODE_BY_SIZE[String(SIZES[idx])];
+export const fallbackCipForSize = (idx) => FALLBACK_CIP_BY_SIZE[String(SIZES[idx])];
+
+// Références d'une taille : celles du code fournisseur, sinon le CIP historique
+export function refsForSize(idx, data) {
+  const byCode = data?.refs?.[codeForSize(idx)] || [];
+  if (byCode.length) return byCode;
+  const fb = data?.byCip?.[fallbackCipForSize(idx)];
+  return fb ? [fb] : [];
+}
+// Stock connu d'une référence (catalogue : « available » ; à défaut, en stock sans quantité connue)
+const avail = (r) => r.available == null ? (r.in_stock ? Infinity : 0) : Math.max(0, Math.floor(Number(r.available) || 0));
+export const totalStock = (refs) => (refs || []).reduce((a, r) => a + avail(r), 0);
+
+// Répartit la quantité sur les références en stock d'une même taille : d'abord celle qui en a le
+// moins (écoule le reliquat de l'ancienne livraison), sans dépasser le stock connu de chacune.
+export function allocate(refs, qty) {
+  const q = Math.max(0, Math.floor(Number(qty) || 0));
+  const inStock = (refs || []).filter(r => avail(r) > 0)
+    .sort((a, b) => (avail(a) - avail(b)) || String(a.cip).localeCompare(String(b.cip)));
+  const lines = [];
+  let left = q;
+  for (const r of inStock) {
+    if (left <= 0) break;
+    const n = Math.min(left, avail(r));
+    lines.push({ ref: r, qty: n });
+    left -= n;
+  }
+  return { lines, missing: left };
+}
 
 // Méthode 1 — mesure disponible : largeur = mesure + 2,5 à 5 cm de jeu.
 export const MEASURE_BANDS = [
