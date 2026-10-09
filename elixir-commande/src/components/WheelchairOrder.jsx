@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from "react";
 import { recommend, SIZES, LINES, sizeLabel, refsFor, fitToLine, totalStock, allocate, MEASURE_BANDS, WEIGHT_BANDS } from "../wheelchair-logic.js";
 import { loadGroups } from "../product-groups.js";
 import { TierBadge, applyTiers } from "../tiers.jsx";
+import ProductMedia, { Lightbox } from "./ProductMedia.jsx";
+import { MEDIA } from "../wheelchair-media.js";
 
 const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
 const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
@@ -24,6 +26,9 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
   const [qty, setQty] = useState(1);
   const [data, setData] = useState(null);   // { refs: { code fournisseur: [références] }, byCip }
   const [loading, setLoading] = useState(true);
+  const [zoom, setZoom] = useState(null);   // { photos, index } : photo agrandie
+  const media = MEDIA[line.key] || null;
+  const mainPhoto = media?.photos?.[0] || null;
 
   // Stock et prix de chaque taille : toutes les références (CIP) de chaque code fournisseur
   // (une nouvelle livraison peut arriver sous un autre CIP), depuis le catalogue synchronisé.
@@ -155,6 +160,13 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
           <div style={{ color: "#b91c1c", fontSize: 13 }}>Aucune référence trouvée pour cette taille (code fournisseur {codeAt(selectedIdx)}) — utilisez la Saisie de commande.</div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            {mainPhoto && (
+              <button onClick={() => setZoom({ photos: media.photos, index: 0 })} aria-label="Agrandir la photo du fauteuil"
+                style={{ flexShrink: 0, width: 96, height: 66, borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", padding: 0, background: "white", cursor: "zoom-in" }}>
+                <img src={mainPhoto.src} alt="" referrerPolicy="no-referrer" loading="lazy" onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }}
+                  style={{ width: "100%", height: "100%", objectFit: "contain" }} />
+              </button>
+            )}
             <div style={{ flexShrink: 0 }}>
               {stock > 0
                 ? <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
@@ -199,6 +211,10 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
           </div>
         )}
       </div>
+
+      {/* Photos, vidéo et points forts du modèle */}
+      <ProductMedia media={media} title={line.model} onZoom={(photos, index) => setZoom({ photos, index })} />
+      {zoom && <Lightbox photos={zoom.photos} index={zoom.index} onClose={() => setZoom(null)} onIndex={(index) => setZoom(z => ({ ...z, index }))} />}
 
       {/* Tuto — infographie de prise de mesure (reprise du guide de référence) */}
       <details open={method === "mesure"} style={card}>
