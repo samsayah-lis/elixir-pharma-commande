@@ -1,4 +1,5 @@
 import React from "react";
+import { JUSTIF_STATUTS } from "../lab-justif-client.js";
 
 export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder }) {
   return (
@@ -44,7 +45,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                       {date.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" })}
                       <span style={{ fontSize:11, color:"#888", marginLeft:8 }}>{date.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" })}</span>
                     </div>
-                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{items.length} ligne(s) · {items.length} réf.</div>
+                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{items.length} ligne(s) · {items.length} réf.{order.source === "justificatif" ? " · 📑 sur commande laboratoire" : ""}</div>
                   </div>
                   <div style={{ textAlign:"right" }}>
                     <div style={{ fontWeight:800, fontSize:16, color:"#059669" }}>{order.totalHt ? parseFloat(order.totalHt).toFixed(2).replace(".",",") + " €" : "—"}</div>
@@ -52,7 +53,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                       fontSize:9, fontWeight:700, borderRadius:6, padding:"2px 8px",
                       background: order.processed ? "#d1fae5" : "#fef3c7",
                       color: order.processed ? "#065f46" : "#92400e",
-                    }}>{order.processed ? "✓ TRAITÉE" : "EN ATTENTE"}</span>
+                    }}>{order.processed ? "✓ TRAITÉE" : order.source === "justificatif" ? "📑 COMMANDE LABO" : "EN ATTENTE"}</span>
                   </div>
                 </div>
                 {/* Items */}
@@ -66,6 +67,15 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                   ))}
                   {items.length > 5 && <div style={{ fontSize:11, color:"#aaa", paddingTop:4 }}>+ {items.length - 5} autre(s)...</div>}
                 </div>
+                {/* Sur justificatif labo : transmission au laboratoire */}
+                {order.source === "justificatif" && !order.processed && (
+                  <div style={{ marginTop:8, fontSize:11, color:"#5b21b6", background:"#f5f3ff", border:"1px solid #ddd6fe", borderRadius:8, padding:"6px 10px", lineHeight:1.45 }}>
+                    {(order.justif || []).length
+                      ? order.justif.map((j, k) => <div key={k}>📑 {JUSTIF_STATUTS[j.statut] || "Enregistrée"}{j.statut === "envoye" && j.envoyeLe ? ` le ${new Date(j.envoyeLe).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.</div>)
+                      : <div>📑 Commande enregistrée : Elixir la prend en charge auprès du laboratoire.</div>}
+                    <div style={{ color:"#7c3aed", marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>
+                  </div>
+                )}
                 {/* Recommander */}
                 <button onClick={() => onReorder(items)}
                   style={{

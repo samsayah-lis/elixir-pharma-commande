@@ -8,6 +8,7 @@ import AdminCampaigns from "./components/AdminCampaigns";
 import AdminEdit from "./components/AdminEdit";
 import AdminAdd from "./components/AdminAdd";
 import AdminGroupPurchases from "./components/AdminGroupPurchases";
+import AdminLabJustif from "./components/AdminLabJustif";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
@@ -595,7 +596,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
   // « Sync toutes » : commandes en attente SANS envoi partiel — le reste d'une commande partielle
   // (précommandes retenues) ne part que par son propre bouton « Sync le reste »
-  const bulkPending = orders.filter(o => !o.processed && !(o.items || []).some(lineDone));
+  // Commandes « sur justificatif labo » : jamais dans « Sync toutes » — à synchroniser une par une, à réception du labo
+  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && !(o.items || []).some(lineDone));
   const syncAllPending = async () => {
     if (syncingAll) return;
     setSyncingAll(true);
@@ -939,6 +941,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"promos",   label:"🎯 Promos",     icon:"🎯", badge: promos.length||null},
     {k:"orders",   label:"📋 Commandes",  icon:"📋", badge: orders.filter(o=>!o.processed).length||null},
     {k:"gp",       label:"🛒 Commandes groupées",icon:"🛒"},
+    {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
@@ -1176,6 +1179,21 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                         <span style={{fontWeight:800,fontSize:14,color:"#0f2d3d"}}>{o.pharmacyName}</span>
                         {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:"#ffedd5",color:"#9a3412",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
+                        {o.source === "justificatif" && <span title={`Commande sur justificatif labo : à synchroniser à réception de la marchandise.${(o.justif||[]).map(j => ` ${j.lab} : ${j.statut}${j.poNom ? ` (${j.poNom})` : ""}${j.motif ? ` — ${j.motif}` : ""}`).join(" ;")}`}
+                          style={{background:"#ede9fe",color:"#5b21b6",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
+                        {o.source === "justificatif" && !(o.justif||[]).length && (
+                          <button title="La demande au laboratoire n'a pas été créée (session expirée, panne…). Elle sera créée « à vérifier » dans l'onglet Justificatifs labos."
+                            onClick={async () => {
+                              try {
+                                const r = await adminFetch("/.netlify/functions/lab-justif", { method: "POST", body: JSON.stringify({ action: "submit", order_id: o.id, lignes: [] }) });
+                                const j = await r.json().catch(() => ({}));
+                                if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+                                setOrders(prev => prev.map(x => x.id === o.id ? { ...x, justif: (j.demandes || []).map(d => ({ lab: d.id.split("-").pop(), statut: d.statut || "a_verifier" })) } : x));
+                                flash("✓ Demande labo créée : à vérifier dans l'onglet Justificatifs labos");
+                              } catch (e) { flash(`⚠ ${e.message}`); }
+                            }}
+                            style={{background:"#fff7ed",color:"#9a3412",border:"1px solid #fdba74",fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:10,cursor:"pointer"}}>⚠ demande labo non créée — créer</button>
+                        )}
                         {o.processed
                           ? <span style={{background:"#dcfce7",color:"#166534",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>✓ TRAITÉE</span>
                           : (o.items||[]).some(lineDone)
@@ -1455,6 +1473,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {tab==="gp"&&(
           <AdminGroupPurchases adminFetch={adminFetch} flash={flash} onDirtyChange={onGpDirty} />
+        )}
+        {tab==="justif"&&(
+          <AdminLabJustif adminFetch={adminFetch} flash={flash} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

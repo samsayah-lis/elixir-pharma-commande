@@ -9,6 +9,8 @@ import { allocate } from "./wheelchair-logic.js";
 import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
 import MyOrdersPanel from "./components/MyOrdersPanel";
+import JustifCartBlock from "./components/JustifCartBlock";
+import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -38,9 +40,16 @@ const SECTION_META = {
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
 // (sessionStorage de l'onglet, une clé par fiche) — jamais l'un pour l'autre
-const cartKeys = (a) => a ? [`acting_cart_q_${a.odoo_id}`, `acting_cart_s_${a.odoo_id}`] : ["cart_quantities", "cart_special"];
+const cartKeys = (a) => a ? [`acting_cart_q_${a.odoo_id}`, `acting_cart_s_${a.odoo_id}`, `acting_cart_j_${a.odoo_id}`] : ["cart_quantities", "cart_special", "cart_justif"];
 const cartStore = (a) => a ? sessionStorage : localStorage;
-const readCart = (a) => { const [kq, ks] = cartKeys(a); try { return [JSON.parse(cartStore(a).getItem(kq) || "{}"), JSON.parse(cartStore(a).getItem(ks) || "[]")]; } catch { return [{}, []]; } };
+const readCart = (a) => {
+  const [kq, ks, kj] = cartKeys(a);
+  const rd = (k, d) => { try { const v = JSON.parse(cartStore(a).getItem(k) || d); return v && typeof v === "object" ? v : JSON.parse(d); } catch { return JSON.parse(d); } };
+  // justificatifs labo (attestation, ordonnances déposées) par CIP ; un dépôt interrompu est retiré
+  const j = rd(kj, "{}");
+  for (const c of Object.keys(j)) j[c] = { ...j[c], rx: (Array.isArray(j[c]?.rx) ? j[c].rx : []).filter(rxFrais) };   // expirées : à redéposer
+  return [rd(kq, "{}"), rd(ks, "[]"), j];
+};
 // Contingentement (quota Odoo par période) : lignes du panier au-delà du reste autorisé.
 // Plusieurs lignes d'un même CIP sont additionnées.
 const quotaOver = (quota, items) => {
@@ -266,6 +275,14 @@ export default function App() {
   const [quantities, setQuantities] = useState(() => readCart(actingFor)[0]);
   // Produits hors catalogue curaté (ajoutés depuis Saisie de commande / Péremption courte)
   const [specialItems, setSpecialItems] = useState(() => readCart(actingFor)[1]);
+  // Lignes « sur justificatif labo » : attestation, renouvellement, ordonnances déposées (par CIP)
+  const [justifInfo, setJustifInfo] = useState(() => readCart(actingFor)[2]);
+  const [justifProducts, setJustifProducts] = useState({});
+  useEffect(() => { loadJustifProducts().then(setJustifProducts); }, []);
+  const updateJustif = (cip, patch) => setJustifInfo(prev => {
+    const cur = prev[cip] || {};
+    return { ...prev, [cip]: { ...cur, ...(typeof patch === "function" ? patch(cur) : patch) } };
+  });
   const [cartOpen, setCartOpen] = useState(false);
   const [search, setSearch] = useState("");
 
@@ -432,6 +449,9 @@ export default function App() {
   useEffect(() => {
     try { cartStore(actingFor).setItem(cartKeys(actingFor)[1], JSON.stringify(specialItems)); } catch {}
   }, [specialItems, actingFor]);
+  useEffect(() => {
+    try { cartStore(actingFor).setItem(cartKeys(actingFor)[2], JSON.stringify(justifInfo)); } catch {}
+  }, [justifInfo, actingFor]);
   const [promoSections, setPromoSections] = useState(() => {
     try { return JSON.parse(localStorage.getItem("admin_promos") || "[]"); } catch { return []; }
   });
@@ -696,6 +716,7 @@ export default function App() {
     setOnboardingError("");
     setQuantities({});
     setSpecialItems([]);
+    setJustifInfo({});
     setCartOpen(false);
   };
   const [isClient, setIsClient] = useState(() => actingFor ? true : null);
@@ -706,16 +727,16 @@ export default function App() {
     // identité : adresse de COMPTE de cette pharmacie seulement (jamais l'e-mail Odoo, qui peut être partagé)
     const a = { odoo_id: ph.odoo_id, name: ph.name, cip: ph.cip || "", email: ph.has_account ? ((ph.emails || [])[0] || "") : "", city: ph.city || "" };
     try { sessionStorage.setItem("acting_for", JSON.stringify(a)); } catch {}
-    const [q, sp] = readCart(a);
-    setActingFor(a); setQuantities(q); setSpecialItems(sp);
+    const [q, sp, lj] = readCart(a);
+    setActingFor(a); setQuantities(q); setSpecialItems(sp); setJustifInfo(lj);
     setPharmacyName(a.name); setPharmacyEmail(a.email); setPharmacyCip(a.cip); setIsClient(true);
     setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", window.location.pathname + window.location.search);
   };
   const stopActing = () => {
     if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return;
-    try { const [kq, ks] = cartKeys(actingFor); sessionStorage.removeItem(kq); sessionStorage.removeItem(ks); sessionStorage.removeItem("acting_for"); } catch {}
-    const [q, sp] = readCart(null);   // panier de votre session, tel que vous l'aviez laissé
-    setActingFor(null); setQuantities(q); setSpecialItems(sp);
+    try { const [kq, ks, kj] = cartKeys(actingFor); sessionStorage.removeItem(kq); sessionStorage.removeItem(ks); sessionStorage.removeItem(kj); sessionStorage.removeItem("acting_for"); } catch {}
+    const [q, sp, lj] = readCart(null);   // panier de votre session, tel que vous l'aviez laissé
+    setActingFor(null); setQuantities(q); setSpecialItems(sp); setJustifInfo(lj);
     setPharmacyName(localStorage.getItem("session_name") || ""); setPharmacyEmail(localStorage.getItem("session_email") || ""); setPharmacyCip(localStorage.getItem("session_cip") || "");
     setIsClient(null);
   };
@@ -758,6 +779,8 @@ export default function App() {
   // Modifie la quantité d'un article du panier, qu'il vienne du catalogue (quantities)
   // ou soit hors-catalogue (specialItems). newQty <= 0 → suppression de l'article.
   const setItemQty = (item, newQty) => {
+    // ligne retirée : attestation et ordonnances valent pour UNE commande, jamais réutilisées
+    if ((parseInt(newQty) || 0) <= 0 && item.cip) setJustifInfo(prev => { if (!prev[item.cip]) return prev; const n = { ...prev }; delete n[item.cip]; return n; });
     if (item.isSpecial) {
       const q = Math.max(0, parseInt(newQty) || 0);
       const id = item.cip || item.name;
@@ -897,6 +920,8 @@ export default function App() {
   useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip, actingFor]);   // autre pharmacie / déconnexion
   useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
   const quotaCheck = useMemo(() => quotaOver(quota, cartItems), [quota, cartItems]);
+  const justifCheck = useMemo(() => justifIssues(cartItems, justifProducts, justifInfo), [cartItems, justifProducts, justifInfo]);
+  const cartTotalsByCip = useMemo(() => qtyByCip(cartItems), [cartItems]);
 
   // ── Panier : invalidation si la STRUCTURE du catalogue a changé ──────────
   // Le panier est indexé par position (catKey-idx). Si l'admin ajoute / retire /
@@ -1185,15 +1210,31 @@ export default function App() {
     });
   };
 
+  // un seul envoi à la fois, y compris pendant l'écran « Commande envoyée » (sinon commande et demande labo en double)
+  const sendingRef = useRef(false);
   const handleSend = async () => {
-    if (cartItems.length === 0) return;
+    if (sendingRef.current || cartItems.length === 0) return;
+    sendingRef.current = true;
+    let sent = false;
+    try { sent = await sendOrder(); }
+    finally { if (sent) setTimeout(() => { sendingRef.current = false; }, 3500); else sendingRef.current = false; }
+  };
+  const sendOrder = async () => {
+    // Lignes « sur justificatif labo » : attestation / ordonnance / quantité maximale
+    const jIssues = justifIssues(cartItems, justifProducts, justifInfo);
+    if (jIssues.length) { flash(`⚠ ${jIssues[0].name} : ${jIssues[0].msg}`); return false; }
     setSendStatus("sending");
     // Saisie Elixir : la session admin doit être valide AVANT tout envoi (sinon commande sans mention ni trace admin)
     if (actingFor) {
       const ok = await fetch("/.netlify/functions/admin-pharmacy-find?q=", { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` } })
         .then(r => r.ok).catch(() => false);
-      if (!ok) { setSendStatus(null); flash("⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande"); return; }
+      if (!ok) { setSendStatus(null); flash("⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande"); return false; }
     }
+    // Stock d'Elixir du moment : il décide quelles lignes passent par le labo (justificatif)
+    const jp = (await loadJustifProducts({ fresh: true })) || justifProducts;
+    if (jp !== justifProducts) setJustifProducts(jp);
+    const jIssues2 = justifIssues(cartItems, jp, justifInfo);
+    if (jIssues2.length) { setSendStatus(null); setCartOpen(true); flash(`⚠ ${jIssues2[0].name} : ${jIssues2[0].msg} (stock mis à jour)`); return false; }
     // Articles à plusieurs références (même code fournisseur, ex. fauteuils livrés sous un nouveau CIP) :
     // le pharmacien a UNE ligne ; la commande est répartie par CIP, la plus ancienne référence d'abord
     // (premier entré, premier sorti), avec le stock à jour, au prix vu par le pharmacien.
@@ -1204,12 +1245,14 @@ export default function App() {
     if (blocked.length) {
       setSendStatus(null);
       flash(`⚠ Contingentement dépassé : ${blocked.map(b => `${b.name} (reste ${b.remaining})`).join(", ")}`);
-      return;
+      return false;
     }
 
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
+    const totalsSend = qtyByCip(sendItems);
+    const isJustif = (i) => needsJustif(i, jp, totalsSend);
     const lignes = sendItems.map(i =>
-      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
+      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
 
     // Build CSV and save order to localStorage for admin
@@ -1247,18 +1290,31 @@ export default function App() {
       });
       setSendStatus("success");
       // Save order to Supabase via Netlify Function
-      try {
+      // Lignes « sur justificatif labo » : commande à part (source « justificatif »), jamais transmise
+      // automatiquement à PharmaML (Elixir commande au labo, puis synchronise à réception)
+      const normalItems = sendItems.filter(i => !isJustif(i));
+      const justifLines = sendItems.filter(isJustif);
+      const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));
+      const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
+      const atok = actingFor ? localStorage.getItem("admin_token") : null;
+      const saveOrder = (o) => fetch("/.netlify/functions/order-save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
+        body: JSON.stringify(actingFor ? { ...o, enteredByAdmin: true } : o),
+      }).then(r => r.json()).catch(e => ({ success: false, error: e.message }));
+      const baseId = Date.now();
+      if (normalItems.length) try {
         const order = {
-          id: Date.now(),
+          id: baseId,
           date: new Date().toISOString(),
           pharmacyName,
           pharmacyEmail,
           pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
           isClient,
-          items: sendItems.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) })),
-          totalHt: cartTotal,
-          nbLignes: sendItems.length,
-          csv: csvContent,
+          items: toItems(normalItems),
+          totalHt: justifLines.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,
+          nbLignes: normalItems.length,
+          csv: justifLines.length ? csvOf(normalItems) : csvContent,
           processed: false,
           source: "catalogue",
         };
@@ -1314,16 +1370,63 @@ export default function App() {
         })();
 
       } catch(e) { console.error("Order save error", e); }
+
+      // Commande « sur justificatif » APRÈS la commande normale (celle-ci part sans attendre le labo)
+      let keepJustif = null;   // lignes non enregistrées : laissées au panier pour être renvoyées
+      if (justifLines.length) {
+        const jOrder = {
+          id: normalItems.length ? baseId + 1 : baseId,
+          date: new Date().toISOString(),
+          pharmacyName, pharmacyEmail,
+          pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
+          isClient,
+          // justificatif gardé dans la ligne : une reprise par l'admin le retrouve si la transmission échoue
+          items: justifLines.map(i => ({ ...toItems([i])[0], justif: { attestation: !!justifInfo[i.cip]?.attestation,
+            renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) } })),
+          totalHt: justifLines.reduce((t, i) => t + (i.total || 0), 0),
+          nbLignes: justifLines.length,
+          csv: csvOf(justifLines),
+          processed: false,
+          source: "justificatif",
+        };
+        const jSave = await saveOrder(jOrder);
+        if (!jSave.success) {
+          keepJustif = new Set(justifLines.map(i => i.cip));
+          flash(`⚠ Lignes sur justificatif labo NON enregistrées (${jSave.error || "erreur"}) : elles restent dans votre panier, renvoyez-les`);
+        } else {
+          try {
+            const auth = actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken };
+            await submitJustif(jSave.id || jOrder.id, justifLines.map(i => ({ cip: i.cip, attestation: !!justifInfo[i.cip]?.attestation,
+              renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) })), auth);
+          } catch (e) {
+            console.warn("[justificatif labo]", e.message);
+            flash(`⚠ Commande enregistrée ; sa transmission au laboratoire sera faite par Elixir (${e.message})`);
+          }
+        }
+      }
       setTimeout(() => {
         setSendStatus(null);
-        setQuantities({});
-        setSpecialItems([]);
-        setCartOpen(false);
+        if (keepJustif) {
+          // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)
+          setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {
+            const i = k.lastIndexOf("-"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];
+            return p && keepJustif.has(p.cip);
+          })));
+          setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));
+          setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));
+        } else {
+          setQuantities({});
+          setSpecialItems([]);
+          setJustifInfo({});
+          setCartOpen(false);
+        }
       }, 3000);
+      return true;
     } catch (err) {
       console.error("[send-email] error:", err);
       setSendStatus("error");
       setTimeout(() => setSendStatus(null), 5000);
+      return false;
     }
   };
 
@@ -1743,7 +1846,10 @@ export default function App() {
                             added = true;
                           }
                         });
-                        if (added) {
+                        if (!added && justifProducts[p.cip]) {   // sur commande labo (justificatif) : ligne hors catalogue
+                          addItemToCart({ cip: p.cip, name: p.name, qty: 1, pn, pv: p.list_price, tiers: p.price_tiers || null });
+                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, true);
+                        } else if (added) {
                           flash(`✓ ${p.name} ajouté au panier`);
                           trackSearch(globalSearch.trim(), globalResults.length, p.cip, true);
                         } else {
@@ -1764,6 +1870,7 @@ export default function App() {
           {/* ── SPECIAL VIEWS : Saisie de commande & Péremption courte ── */}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
             <OrderEntry
+              justifProducts={justifProducts}
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
@@ -2667,8 +2774,13 @@ export default function App() {
                           </div>
                         );
                       })()}
+                      {/* Sur justificatif labo : attestation, renouvellement, ordonnance anonymisée */}
+                      {needsJustif(item, justifProducts, cartTotalsByCip) && (
+                        <JustifCartBlock rule={justifProducts[item.cip]} info={justifInfo[item.cip]} onChange={(patch) => updateJustif(item.cip, patch)}
+                          auth={actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken }} />
+                      )}
                       {/* Avertissement rupture */}
-                      {item.cip && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
+                      {item.cip && !needsJustif(item, justifProducts, cartTotalsByCip) && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
                         <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", background: "#fff5f5", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
                           ⚠️ <strong>Rupture de stock</strong> — ce produit peut ne pas être disponible à la livraison
                         </div>
@@ -2720,10 +2832,15 @@ export default function App() {
                       🔒 Contingentement dépassé : {quotaCheck.over.map(o => `${o.name} (${o.qty} demandés, reste ${o.remaining})`).join(" ; ")}. Ajustez ces lignes pour envoyer la commande.
                     </div>
                   )}
+                  {justifCheck.length > 0 && (
+                    <div role="alert" style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#5b21b6", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
+                      📑 Commande sur justificatif labo : {justifCheck.map(o => `${o.name} — ${o.msg}`).join(" ; ")}.
+                    </div>
+                  )}
                   {/* Send button */}
                   <button
                     onClick={handleSend}
-                    disabled={sendStatus === "sending" || quotaCheck.over.length > 0}
+                    disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || justifCheck.length > 0}
                     style={{
                       width: "100%",
                       background: sendStatus === "success"
@@ -2733,7 +2850,7 @@ export default function App() {
                         : "linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)",
                       color: "white", border: "none", borderRadius: 10, padding: "12px",
                       fontWeight: 700, fontSize: 14, cursor: sendStatus === "sending" ? "not-allowed" : "pointer",
-                      opacity: sendStatus === "sending" || quotaCheck.over.length > 0 ? 0.6 : 1, marginBottom: 8
+                      opacity: sendStatus === "sending" || quotaCheck.over.length > 0 || justifCheck.length > 0 ? 0.6 : 1, marginBottom: 8
                     }}>
                     {sendStatus === "sending" ? "⏳ Envoi en cours..." :
                      sendStatus === "success" ? "✅ Commande envoyée !" :
@@ -2754,7 +2871,7 @@ export default function App() {
                   }}>
                     {copyStatus || "📋 Copier le bon de commande"}
                   </button>
-                  <button onClick={() => { setQuantities({}); setSpecialItems([]); }} style={{
+                  <button onClick={() => { setQuantities({}); setSpecialItems([]); setJustifInfo({}); }} style={{
                     width: "100%", background: "none", color: "#e53e3e",
                     border: "1px solid #fed7d7", borderRadius: 10, padding: "8px",
                     fontWeight: 600, fontSize: 12, cursor: "pointer"

@@ -70,6 +70,21 @@ export const handler = async (event) => {
       return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };
     }
 
+    // Commandes « sur justificatif labo » : où en est la transmission au laboratoire (kv lj:req:s-<id>-<labo>)
+    const justif = {};
+    const jIds = rows.filter(r => r.source === "justificatif").map(r => r.id).filter(id => /^\d+$/.test(String(id)));
+    for (let i = 0; i < jIds.length; i += 40) {
+      try {
+        const or = jIds.slice(i, i + 40).map(id => `key.like.lj:req:s-${id}-*`).join(",");
+        const kr = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?or=(${encodeURIComponent(or)})&select=key,value`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+        for (const row of kr.ok ? await kr.json() : []) {
+          let v = row.value; if (typeof v === "string") { try { v = JSON.parse(v); } catch { continue; } }
+          if (!v?.orderId) continue;
+          (justif[v.orderId] ||= []).push({ lab: v.lab, statut: v.statut, envoyeLe: v.envoyeLe || null, ...(isAdmin ? { poNom: v.poNom || null, motif: v.motif || v.erreur || null } : {}) });
+        }
+      } catch { /* suivi indisponible : la commande s'affiche quand même */ }
+    }
+
     const orders = rows.map(r => ({
       id: r.id,
       date: r.date,
@@ -84,6 +99,7 @@ export const handler = async (event) => {
       processed: r.processed,
       source: r.source || "catalogue",
       enteredBy: r.entered_by || null,
+      ...(justif[String(r.id)] ? { justif: justif[String(r.id)] } : {}),
     }));
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };

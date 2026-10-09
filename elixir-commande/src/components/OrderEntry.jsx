@@ -6,7 +6,7 @@ const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 import { applyTiers, TierBadge } from "../tiers.jsx";
 import { loadGroups, collapseGroups } from "../product-groups.js";
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {} }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -162,17 +162,22 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               const hasDiscount = p.discounted_price && p.discount_pct > 0;
               const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
               const tiered = applyTiers(displayPrice, p.price_tiers, qty); // prix effectif selon la quantité saisie
+              // produit livré par le labo sur justificatif de commande : commandable même en rupture
+              const jr = !p.in_stock ? justifProducts[p.cip] : null;
+              const orderable = p.in_stock || !!jr;
 
               return (
                 <div key={p.cip} style={{
                   background: "white", borderRadius: 14, padding: "14px 18px",
-                  border: p.in_stock ? "1px solid #e8ecf0" : "1px solid #fed7d7",
-                  display: "flex", alignItems: "center", gap: 16, opacity: p.in_stock ? 1 : 0.85,
+                  border: p.in_stock ? "1px solid #e8ecf0" : jr ? "1px solid #ddd6fe" : "1px solid #fed7d7",
+                  display: "flex", alignItems: "center", gap: 16, opacity: orderable ? 1 : 0.85,
                 }}>
                   {/* Stock badge */}
                   <div style={{ flexShrink: 0, textAlign: "center", minWidth: 60 }}>
                     {p.in_stock ? (
                       <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
+                    ) : jr ? (
+                      <div title={`Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande`} style={{ background: "#ede9fe", color: "#5b21b6", borderRadius: 8, padding: "6px 8px", fontSize: 10, fontWeight: 800, lineHeight: 1.2 }}>📑 SUR<br />COMMANDE</div>
                     ) : (
                       <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>RUPTURE</div>
                     )}
@@ -184,6 +189,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
                       CIP : <span style={{ fontFamily: "monospace" }}>{p.cip}</span>
                     </div>
+                    {jr && (
+                      <div style={{ fontSize: 11, color: "#6d28d9", marginTop: 3, lineHeight: 1.35 }}>
+                        Commandé au laboratoire {jr.labNom} avec votre commande comme justificatif{jr.delai ? ` (${jr.delai})` : ""}.
+                        {jr.maxCommande ? ` ${jr.maxCommande} au plus par commande.` : ""}
+                      </div>
+                    )}
                   </div>
 
                   {/* Prix — avec remise si disponible */}
@@ -203,13 +214,13 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 
                   {/* Actions */}
                   <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 120 }}>
-                    {p.in_stock ? (<>
+                    {orderable ? (<>
                       <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                         <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
                           style={{ background: "#f0f2f5", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16 }}>−</button>
-                        <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: parseInt(e.target.value) || 0 }))}
+                        <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, parseInt(e.target.value) || 0) }))}
                           placeholder="0" style={{ width: 48, textAlign: "center", border: "1.5px solid #ddd", borderRadius: 6, padding: "4px", fontSize: 14, fontWeight: qty > 0 ? 700 : 400, outline: "none" }} />
-                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
+                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
                           style={{ background: "#0f2d3d", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16, color: "white" }}>+</button>
                       </div>
                       {qty > 0 && (

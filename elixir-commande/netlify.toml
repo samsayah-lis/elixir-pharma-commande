@@ -16,3 +16,7 @@
 # Commandes groupées : rappels quotidiens (≈ 8 h, heure de Paris)
 [functions."gp-reminders"]
   schedule = "0 6 * * *"
+
+# Commandes sur justificatif labo : détection PharmaML + envois dus, toutes les 10 min
+[functions."lab-justif-cron"]
+  schedule = "*/10 * * * *"
