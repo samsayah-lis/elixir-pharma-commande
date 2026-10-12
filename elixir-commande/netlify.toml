@@ -20,3 +20,7 @@
 # Commandes sur justificatif labo : détection PharmaML + envois dus, toutes les 10 min
 [functions."lab-justif-cron"]
   schedule = "*/10 * * * *"
+
+# Commandes Sanofi Pro (Dupixent) : traitement automatique sur le portail grossiste, toutes les 10 min
+[functions."sanofipro-cron"]
+  schedule = "*/10 * * * *"

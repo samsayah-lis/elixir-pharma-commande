@@ -133,6 +133,7 @@ export async function kvGetBrut(key) {
 }
 // n'aboutit que si personne n'a modifié la clé depuis la lecture (maj = updated_at lu)
 export async function kvSetSi(key, value, maj) {
+  if (!maj) return false;   // version inconnue : jamais « updated_at=eq.null »
   const res = await sb(`kv_store?key=eq.${enc(key)}&updated_at=eq.${enc(maj)}`, { method: "PATCH", prefer: "return=representation",
     body: { value: JSON.stringify(value), updated_at: new Date().toISOString() } });
   return Array.isArray(res) && res.length === 1;
@@ -143,7 +144,7 @@ export async function kvList(prefix, limit = 2000) {
   return rows.map(r => ({ key: r.key, updated_at: r.updated_at, value: parse(r.value) })).filter(r => r.value);
 }
 // Création seulement si la clé n'existe pas (false si elle existe déjà)
-async function kvCreate(key, value) {
+export async function kvCreate(key, value) {
   try {
     await sb("kv_store", { method: "POST", prefer: "return=minimal", body: { key, value: JSON.stringify(value), updated_at: new Date().toISOString() } });
     return true;
@@ -151,25 +152,26 @@ async function kvCreate(key, value) {
 }
 
 // ── Verrou : un seul traitement à la fois (cron, fonction d'arrière-plan, actions admin) ──
-export async function avecVerrou(fn, dureeMs = 14 * 60e3) {
+// `cle` : lj:lock (justificatifs labos) ; sp:lock (commandes Sanofi Pro)
+export async function avecVerrou(fn, dureeMs = 14 * 60e3, cle = "lj:lock") {
   const moi = crypto.randomUUID();
   const val = JSON.stringify({ moi, jusqua: Date.now() + dureeMs });
-  let pris = await kvCreate("lj:lock", { moi, jusqua: Date.now() + dureeMs });
+  let pris = await kvCreate(cle, { moi, jusqua: Date.now() + dureeMs });
   if (!pris) {
-    const [row] = (await sb(`kv_store?key=eq.lj:lock&select=value&limit=1`)) || [];
+    const [row] = (await sb(`kv_store?key=eq.${enc(cle)}&select=value&limit=1`)) || [];
     const cur = parse(row?.value);
     if (row && (!cur || !(cur.jusqua > Date.now()))) {
       // verrou expiré : reprise conditionnelle (échoue si quelqu'un l'a repris entre-temps)
-      const upd = await sb(`kv_store?key=eq.lj:lock&value=eq.${enc(row.value)}`, { method: "PATCH", prefer: "return=representation",
+      const upd = await sb(`kv_store?key=eq.${enc(cle)}&value=eq.${enc(row.value)}`, { method: "PATCH", prefer: "return=representation",
         body: { value: val, updated_at: new Date().toISOString() } });
       pris = Array.isArray(upd) && upd.length === 1;
-    } else if (!row) pris = await kvCreate("lj:lock", { moi, jusqua: Date.now() + dureeMs });
+    } else if (!row) pris = await kvCreate(cle, { moi, jusqua: Date.now() + dureeMs });
   }
   if (!pris) return { occupe: true };
   try { return { resultat: await fn() }; }
   finally {
-    const [row] = (await sb(`kv_store?key=eq.lj:lock&select=value&limit=1`).catch(() => [])) || [];
-    if (parse(row?.value)?.moi === moi) await sb(`kv_store?key=eq.lj:lock&value=eq.${enc(row.value)}`, { method: "DELETE" }).catch(() => {});
+    const [row] = (await sb(`kv_store?key=eq.${enc(cle)}&select=value&limit=1`).catch(() => [])) || [];
+    if (parse(row?.value)?.moi === moi) await sb(`kv_store?key=eq.${enc(cle)}&value=eq.${enc(row.value)}`, { method: "DELETE" }).catch(() => {});
   }
 }
 
@@ -195,10 +197,15 @@ export async function fichePharmacie({ odooId, cip }) {
   let p = null;
   if (odooId) [p] = await odoo("res.partner", "read", [[Number(odooId)]], { fields, context: { active_test: false } });
   else if (cip) {
-    // fiche d'Elixir (société 2), sinon fiche partagée cliente ; jamais celle d'une autre société du groupe
+    // fiche d'Elixir (société 2), sinon fiche partagée qui commande chez Elixir (même règle que la
+    // connexion au site, _pharmacies.js) ; jamais celle d'une autre société du groupe
     const cands = await odoo("res.partner", "search_read", [[["cip", "=", String(cip)], ["parent_id", "=", false], ["company_id", "in", [COMPANY_ID, false]]]],
       { fields: [...fields, "company_id", "customer_rank"], limit: 10, context: { allowed_company_ids: [COMPANY_ID] } });
-    p = cands.find(c => c.company_id?.[0] === COMPANY_ID) || cands.find(c => !c.company_id && (c.customer_rank || 0) > 0) || null;
+    p = cands.find(c => c.company_id?.[0] === COMPANY_ID) || null;
+    for (const c of p ? [] : cands.filter(c => !c.company_id && (c.customer_rank || 0) > 0)) {
+      const ventes = await odoo("sale.order", "search_count", [[["company_id", "=", COMPANY_ID], ["state", "in", ["sale", "done"]], ["partner_id", "child_of", [c.id]]]]);
+      if (ventes > 0) { p = c; break; }
+    }
   }
   if (!p) return null;
   return { odooId: p.id, nom: String(p.name || "").replace(/\s+/g, " ").trim(), cip: pickCip(p) || (cip ? String(cip) : ""),

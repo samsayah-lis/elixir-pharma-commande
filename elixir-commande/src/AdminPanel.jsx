@@ -9,6 +9,7 @@ import AdminEdit from "./components/AdminEdit";
 import AdminAdd from "./components/AdminAdd";
 import AdminGroupPurchases from "./components/AdminGroupPurchases";
 import AdminLabJustif from "./components/AdminLabJustif";
+import AdminSanofiPro from "./components/AdminSanofiPro";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
@@ -623,7 +624,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     return () => { alive = false; };
   }, [orders]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const flash = (msg) => { setSaved(msg); setTimeout(()=>setSaved(""), 2500); };
+  // stable (useCallback) : les onglets qui le reçoivent rechargent leurs données quand il change
+  const flash = useCallback((msg) => { setSaved(msg); setTimeout(()=>setSaved(""), 2500); }, []);
   const fmt = (n) => n!=null&&!isNaN(n) ? Number(n).toFixed(2)+" €" : "—";
 
   const refreshOrders = async () => {
@@ -942,6 +944,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"orders",   label:"📋 Commandes",  icon:"📋", badge: orders.filter(o=>!o.processed).length||null},
     {k:"gp",       label:"🛒 Commandes groupées",icon:"🛒"},
     {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
+    {k:"sanofipro",label:"💉 Sanofi Pro",icon:"💉"},
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
@@ -1476,6 +1479,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {tab==="justif"&&(
           <AdminLabJustif adminFetch={adminFetch} flash={flash} />
+        )}
+        {tab==="sanofipro"&&(
+          <AdminSanofiPro adminFetch={adminFetch} flash={flash} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />
