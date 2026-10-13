@@ -1,10 +1,10 @@
 // ── Commandes Sanofi Pro : passage planifié (toutes les 10 min) ──────────
 // Lance la fonction d'arrière-plan (15 min) : le traitement relit le portail plusieurs fois
 // (~1,5 Mo par lecture) et attend Odoo, trop long pour une fonction planifiée (30 s).
-// Surveillance : en mode automatique, si aucun passage n'a abouti depuis 40 min (fonction non
-// lancée, plantée, verrou bloqué…), e-mail d'alerte (au plus toutes les 6 h).
+// Surveillance : en mode automatique (ou tant que des commandes envoyées sont suivies), si aucun passage
+// n'a abouti depuis 40 min (fonction non lancée, plantée, verrou bloqué…), e-mail d'alerte (au plus toutes les 6 h).
 import { kvGet } from "./_lab-justif.js";
-import { lireConfig, alerteTechnique, AUTO } from "./_sanofipro.js";
+import { lireConfig, alerteTechnique, suiviEnCours, AUTO } from "./_sanofipro.js";
 
 const SITE = "https://commandes-elixir.netlify.app";
 const SILENCE_MAX_MIN = 40;
@@ -21,7 +21,8 @@ export const handler = async () => {
   if (lancement) console.error("sanofipro-cron :", lancement);
   try {
     const cfg = await lireConfig();
-    if (cfg.mode !== AUTO) return { statusCode: 200, body: "" };
+    // surveillé en automatique, et dans tout mode tant que des commandes envoyées sont suivies
+    if (cfg.mode !== AUTO && !(await suiviEnCours().catch(() => false))) return { statusCode: 200, body: "" };
     const der = await kvGet("sp:dernier_complet");
     const depuis = (s) => s ? (Date.now() - new Date(s).getTime()) / 60e3 : Infinity;
     // silence depuis le dernier passage abouti, et depuis le passage en automatique

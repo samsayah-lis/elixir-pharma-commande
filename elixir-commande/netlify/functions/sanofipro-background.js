@@ -4,7 +4,7 @@
 // pas être repris tant qu'elle tourne). Logique : _sanofipro.js
 import { isCronAuthorized } from "./auth.js";
 import { avecVerrou, kvSet } from "./_lab-justif.js";
-import { passage, lireConfig, alerteTechnique, VERROU, VERROU_MS, AUTO } from "./_sanofipro.js";
+import { passage, lireConfig, alerteTechnique, suiviEnCours, VERROU, VERROU_MS, AUTO } from "./_sanofipro.js";
 
 export const handler = async (event) => {
   if (!isCronAuthorized(event)) return { statusCode: 403, body: "" };
@@ -15,9 +15,9 @@ export const handler = async (event) => {
   } catch (e) {
     console.error("sanofipro", e);
     res = { erreur: String(e.message || e).slice(0, 300) };
-    // portail injoignable, identifiants refusés… : e-mail au plus toutes les 6 h (mode automatique)
+    // portail injoignable, identifiants refusés… : e-mail au plus toutes les 6 h (mode automatique, ou envois encore suivis)
     const cfg = await lireConfig().catch(() => null);
-    if (cfg?.mode === AUTO) await alerteTechnique(cfg, e).catch(err => { res.erreur += ` — alerte non envoyée : ${err.message}`; });
+    if (cfg && (cfg.mode === AUTO || await suiviEnCours().catch(() => false))) await alerteTechnique(cfg, e).catch(err => { res.erreur += ` — alerte non envoyée : ${err.message}`; });
   }
   const r = res.resultat || {};
   const trace = { at: debut, fin: new Date().toISOString(), occupe: !!res.occupe, erreur: res.erreur || null, mode: r.mode || null, journal: r.journal || [], stats: r.stats || null, apercu: r.apercu || null };
