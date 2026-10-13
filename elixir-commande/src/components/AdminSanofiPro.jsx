@@ -9,16 +9,19 @@ const ETATS = {
   en_attente: ["En attente", "#fef3c7", "#92400e"],
   a_traiter_main: ["À traiter à la main", "#ffedd5", "#9a3412"],
   en_cours: ["Envoi en cours", "#e0f2fe", "#075985"],
+  a_repondre: ["PharmaML ✓ · « Traiter » à faire", "#ffedd5", "#9a3412"],
+  doublon_pml: ["DOUBLON PharmaML probable", "#fee2e2", "#991b1b"],
+  annulee_sanofi: ["Annulée sur Sanofi · dans PharmaML", "#fee2e2", "#991b1b"],
   traitee: ["Traitée · attente Odoo", "#e0f2fe", "#075985"],
   dans_odoo: ["Traitée · dans Odoo", "#d1fae5", "#065f46"],
   absente_odoo: ["Absente d'Odoo", "#fee2e2", "#991b1b"],
   incertaine: ["Issue inconnue", "#fee2e2", "#991b1b"],
-  erreur: ["Refusée par le portail", "#fee2e2", "#991b1b"],
+  erreur: ["Refusée par PharmaML", "#fee2e2", "#991b1b"],
   portail: ["Faite sur le portail", "#f1f5f9", "#475569"],
   ignoree: ["Ignorée", "#f1f5f9", "#475569"],
 };
-const A_SUIVRE = new Set(["nouvelle", "en_attente", "a_traiter_main", "en_cours", "traitee", "absente_odoo", "incertaine", "erreur"]);
-const IGNORABLES = new Set(["en_attente", "nouvelle", "a_traiter_main", "erreur", "incertaine", "absente_odoo"]);
+const A_SUIVRE = new Set(["nouvelle", "en_attente", "a_traiter_main", "en_cours", "a_repondre", "doublon_pml", "annulee_sanofi", "traitee", "absente_odoo", "incertaine", "erreur"]);
+const IGNORABLES = new Set(["en_attente", "nouvelle", "a_traiter_main", "erreur", "incertaine", "absente_odoo", "a_repondre", "doublon_pml", "annulee_sanofi"]);
 const REPRENABLES = new Set(["en_attente", "a_traiter_main", "ignoree", "erreur", "incertaine"]);
 // décision simulée (mode simulation) pour une commande en attente sur le portail
 const DECISIONS = {
@@ -26,7 +29,7 @@ const DECISIONS = {
   en_attente: ["Resterait en attente", "#fef3c7", "#92400e"],
   a_traiter_main: ["À traiter à la main", "#ffedd5", "#9a3412"],
 };
-const MODES = [["arret", "Arrêt"], ["simulation", "Simulation (rien n'est fait)"], ["auto", "Automatique"]];
+const MODES = [["arret", "Arrêt"], ["simulation", "Simulation (rien n'est fait)"], ["auto_pml", "Automatique : PharmaML puis « Traiter »"]];
 const card = { background: "white", borderRadius: 14, padding: "16px 20px", border: "1px solid #e8ecf0" };
 const lbl = { fontSize: 11, fontWeight: 700, color: "#475569", display: "block", marginBottom: 3 };
 const inp = { width: "100%", boxSizing: "border-box", border: "1.5px solid #d6dde3", borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit" };
@@ -38,7 +41,7 @@ const reglages = (c) => Object.fromEntries(CHAMPS.map(k => [k, c?.[k]]));
 const NUMS = ["ageMaxHeures", "maxQteLigne", "plafondJour", "delaiOdooMin"];
 const empreinte = (c) => JSON.stringify(Object.fromEntries(CHAMPS.map(k => [k, NUMS.includes(k) && c?.[k] !== "" && c?.[k] != null ? Number(c[k]) : c?.[k]])));
 // un envoi a pu avoir lieu (issue inconnue, refus, traitée sur le portail, document en double) : même règle que le serveur
-const douteuse = (c) => ["incertaine", "erreur"].includes(c.etat) || !!c.issueInconnue || !!c.envoiPortail || !!c.plusieursDocs
+const douteuse = (c) => ["incertaine", "erreur"].includes(c.etat) || !!c.issueInconnue || !!c.envoiPortail || !!c.plusieursDocs || !!c.pml?.envoyeA
   || (c.historique || []).some(h => ["incertaine", "erreur", "portail"].includes(h.etat));
 
 export default function AdminSanofiPro({ adminFetch, flash }) {
@@ -80,7 +83,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
   const maj = (patch) => setCfg(c => ({ ...c, ...patch }));
   const enregistrer = () => {
     const vers = cfg.mode, avant = JSON.parse(saved).mode;
-    if (vers === "auto" && avant !== "auto" && !window.confirm("Passer en traitement AUTOMATIQUE ?\n\nChaque nouvelle commande Sanofi Pro dont la pharmacie est cliente Elixir et dont le stock libre Odoo couvre la quantité sera « traitée » sur le portail : réponse à Sanofi (expédiée en totalité) ET envoi de la commande dans PharmaML.\n\nPrévenez l'équipe : ne plus cliquer « Traiter » sur les nouvelles commandes (risque de doublon PharmaML).")) return;
+    if (vers === "auto_pml" && avant !== "auto_pml" && !window.confirm("Passer en traitement AUTOMATIQUE ?\n\nChaque nouvelle commande Sanofi Pro dont la pharmacie est cliente Elixir et dont le stock libre Odoo couvre la quantité sera :\n1. créée dans PharmaML (référence SP + référence Sanofi), puis retrouvée sur le portail PharmaML ;\n2. « traitée » sur le portail Sanofi Pro (réponse à Sanofi : expédiée en totalité).\n\nPrévenez l'équipe : ne plus saisir ni traiter à la main les nouvelles commandes (risque de doublon PharmaML).")) return;
     act("save", { action: "config_save", config: { ...cfg, ageMaxHeures: Number(cfg.ageMaxHeures), maxQteLigne: Number(cfg.maxQteLigne), plafondJour: Number(cfg.plafondJour), delaiOdooMin: Number(cfg.delaiOdooMin) } },
       (j) => { const c = reglages(j.config); dirtyRef.current = false; setCfg(c); setSaved(empreinte(c)); flash?.("✓ Réglages enregistrés"); });
   };
@@ -99,7 +102,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
   const d = etat.dernier;
   const cmds = (etat.commandes || []).slice().sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const visibles = cmds.filter(c => filtre === "toutes" ? true : A_SUIVRE.has(c.etat));
-  const modeLib = { arret: ["○ Arrêté", "#f1f5f9", "#475569"], simulation: ["◐ Simulation", "#fef3c7", "#92400e"], auto: ["● Automatique", "#d1fae5", "#065f46"] }[JSON.parse(saved).mode] || ["?", "#f1f5f9", "#475569"];
+  const modeLib = { arret: ["○ Arrêté", "#f1f5f9", "#475569"], simulation: ["◐ Simulation", "#fef3c7", "#92400e"], auto_pml: ["● Automatique (PharmaML + Sanofi)", "#d1fae5", "#065f46"] }[JSON.parse(saved).mode] || ["?", "#f1f5f9", "#475569"];
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -107,9 +110,10 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
         <div style={{ fontSize: 18, fontWeight: 800 }}>💉 Commandes Sanofi Pro (Dupixent)</div>
         <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4, lineHeight: 1.5 }}>
           Les pharmacies commandent sur Sanofi Pro ; les commandes arrivent sur le <a href={`${etat.portail}/new-orders`} target="_blank" rel="noreferrer" style={{ color: "#7dd3fc" }}>portail grossiste</a>.
-          « Traiter » sur ce portail répond à Sanofi <b>et envoie la commande dans PharmaML</b> (puis Odoo). En mode automatique, chaque nouvelle commande est traitée
-          si la pharmacie est cliente Elixir et que le stock libre Odoo couvre la quantité ; sinon elle reste sur le portail et un e-mail prévient.
-          Une commande traitée ne doit jamais l'être une seconde fois (doublon PharmaML).
+          « Traiter » sur ce portail <b>répond seulement à Sanofi : il ne crée PAS de commande PharmaML</b>. Une commande se traite donc en deux temps :
+          (1) saisie dans PharmaML, (2) « Traiter » sur le portail. En mode automatique, l'automate crée la commande PharmaML (réf. SP + réf. Sanofi),
+          la retrouve sur le portail PharmaML, puis clique « Traiter » — si la pharmacie est cliente Elixir et que le stock libre Odoo couvre la quantité ;
+          sinon la commande reste sur le portail et un e-mail prévient. Une commande ne doit jamais être saisie deux fois dans PharmaML.
         </div>
       </div>
 
@@ -136,13 +140,16 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
           <button onClick={enregistrer} disabled={!dirty || !!busy} style={{ ...btn("#0f2d3d"), opacity: !dirty || busy ? 0.5 : 1 }}>{busy === "save" ? "Enregistrement…" : "💾 Enregistrer"}</button>
           {dirty && <span style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
           <div style={{ flex: 1 }} />
+          <button disabled={!!busy} title="Envoie à PharmaML une liste VIDE (aucune commande créée) : vérifie que PharmaML accepte les envois depuis le serveur"
+            onClick={() => act("tpml", { action: "test_pharmaml" }, (j) => flash?.(j.ok ? `✓ PharmaML répond au serveur (HTTP ${j.http}, JSON${j.message ? ` : ${j.message}` : ""}) — à confirmer sur une 1re vraie commande` : `⚠ PharmaML : HTTP ${j.http}${j.message ? ` — ${j.message}` : ""}`))}
+            style={btn("#f1f5f9", "#0f2d3d")}>{busy === "tpml" ? "Essai…" : "🔌 Tester l'envoi PharmaML"}</button>
           <button disabled={!!busy || dirty} title={dirty ? "Enregistrez d'abord les réglages" : ""} onClick={() => act("run", { action: "run" }, (j) => { flash?.(j.lance ? "Passage lancé : résultat dans quelques secondes" : "⚠ Lancement impossible (CRON_SECRET ?)"); if (j.lance) setTimeout(charger, 15000); })}
             style={btn("#f1f5f9", "#0f2d3d")}>{busy === "run" ? "Lancement…" : "🔄 Vérifier maintenant"}</button>
         </div>
         <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px dashed #e2e8f0", fontSize: 12 }}>
           <b>Dernier passage :</b> {d ? <>
             {dt(d.at)}{d.mode ? ` · ${d.mode}` : ""}{d.occupe ? " · un passage était déjà en cours" : ""}
-            {d.stats && ` · ${d.stats.vues} en attente sur le portail, ${d.stats.traitees} traitée(s)${d.stats.simulees ? `, ${d.stats.simulees} simulée(s)` : ""}`}
+            {d.stats && ` · ${d.stats.vues} en attente sur le portail, ${d.stats.traitees} traitée(s)${d.stats.simulees ? `, ${d.stats.simulees} simulée(s)` : ""}${d.stats.aRepondre ? `, ${d.stats.aRepondre} « Traiter » à faire` : ""}${d.stats.incertaines ? `, ⚠ ${d.stats.incertaines} incertaine(s)` : ""}${d.stats.erreurs ? `, ⚠ ${d.stats.erreurs} refusée(s) par PharmaML` : ""}${d.stats.doublons ? `, ⚠⚠ ${d.stats.doublons} doublon(s)` : ""}`}
             {d.erreur && <div style={{ color: "#991b1b", fontWeight: 700 }}>⚠ {d.erreur}</div>}
             {(d.journal || []).length > 0 && <button onClick={() => setJournalOuvert(o => !o)} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 12 }}>{journalOuvert ? "masquer le détail" : "voir le détail"}</button>}
             {journalOuvert && <div style={{ marginTop: 4, fontFamily: "monospace", fontSize: 11, color: "#334155", whiteSpace: "pre-wrap" }}>{d.journal.join("\n")}</div>}
@@ -150,7 +157,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
         </div>
       </div>
 
-      {d?.apercu && d.mode !== "auto" && (
+      {d?.apercu && d.mode !== "auto_pml" && (
         <div style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
             <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Non traitées sur le portail ({d.apercu.length})</div>
@@ -170,8 +177,9 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
                     <tr key={c.ref} style={{ borderTop: "1px solid #f1f5f9", verticalAlign: "top" }}>
                       <td style={{ padding: 5 }}>{dt(c.date)}<div style={{ fontSize: 10, color: "#64748b", fontFamily: "monospace" }}>{c.ref}{c.par === "SANOFI_EMPLOYEE" ? " · saisie Sanofi" : ""}</div></td>
                       <td>{c.pharmacien}<div style={{ fontSize: 10, color: "#64748b" }}>CIP {c.cip}{c.pharmacieOdoo && c.pharmacieOdoo.toUpperCase() !== String(c.pharmacien).toUpperCase() ? ` · Odoo : ${c.pharmacieOdoo}` : ""}</div></td>
-                      <td>{(c.lignes || []).map((l, i) => <div key={i}>{l.qte} × {l.nom}</div>)}</td>
+                      <td>{(c.lignes || []).map((l, i) => <div key={i}>{l.qte} × {l.nom}{l.prix ? <span style={{ color: "#64748b" }}> · {Number(l.prix).toFixed(2)} € net</span> : null}</div>)}</td>
                       <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
+                        {c.decision === "serait_traitee" && <div style={{ fontSize: 10, color: "#065f46" }}>PharmaML SP{c.ref} puis « Traiter »</div>}
                         {c.motif && <div style={{ fontSize: 10, color: "#9a3412", maxWidth: 320 }}>{c.motif}</div>}</td>
                     </tr>);
                 })}</tbody>
@@ -205,7 +213,9 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
                     <td>{c.pharmacien}<div style={{ fontSize: 10, color: "#64748b" }}>CIP {c.cip}{c.pharmacie?.nom && c.pharmacie.nom.toUpperCase() !== String(c.pharmacien).toUpperCase() ? ` · Odoo : ${c.pharmacie.nom}` : ""}</div></td>
                     <td>{(c.lignes || []).map((l, i) => <div key={i}>{l.qte} × {l.nom}</div>)}</td>
                     <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
-                      {c.traiteeA && <div style={{ fontSize: 10, color: "#64748b" }}>traitée le {dt(c.traiteeA)}</div>}
+                      {c.pml?.ref && <div style={{ fontSize: 10, color: "#64748b" }}>PharmaML {c.pml.ref}{c.pml.vu ? ` ✓ ${dt(c.pml.vu)}` : c.pml.envoyeA ? ` envoyée ${dt(c.pml.envoyeA)}` : ""}</div>}
+                      {c.traiteeA && <div style={{ fontSize: 10, color: "#64748b" }}>dans PharmaML depuis le {dt(c.traiteeA)}</div>}
+                      {(c.doublon || c.deja || []).length > 0 && <div style={{ fontSize: 10, color: "#991b1b" }}>autre(s) commande(s) PharmaML : {(c.doublon || c.deja).map(x => `${x.ref} (${x.date})`).join(", ")}</div>}
                       {(c.odoo || []).length > 0 && <div style={{ fontSize: 10, color: "#065f46", fontFamily: "monospace" }}>{c.odoo.join(", ")}</div>}
                       {c.motif && !["dans_odoo", "traitee"].includes(c.etat) && <div style={{ fontSize: 10, color: "#9a3412", maxWidth: 320 }}>{c.motif}</div>}
                       {c.issueInconnue && c.etat !== "incertaine" && <div style={{ fontSize: 10, color: "#991b1b" }}>⚠ envoi tenté le {dt(c.issueInconnue)} (issue inconnue)</div>}

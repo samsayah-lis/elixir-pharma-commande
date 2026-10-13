@@ -4,7 +4,7 @@
 // Surveillance : en mode automatique, si aucun passage n'a abouti depuis 40 min (fonction non
 // lancée, plantée, verrou bloqué…), e-mail d'alerte (au plus toutes les 6 h).
 import { kvGet } from "./_lab-justif.js";
-import { lireConfig, alerteTechnique } from "./_sanofipro.js";
+import { lireConfig, alerteTechnique, AUTO } from "./_sanofipro.js";
 
 const SITE = "https://commandes-elixir.netlify.app";
 const SILENCE_MAX_MIN = 40;
@@ -21,7 +21,7 @@ export const handler = async () => {
   if (lancement) console.error("sanofipro-cron :", lancement);
   try {
     const cfg = await lireConfig();
-    if (cfg.mode !== "auto") return { statusCode: 200, body: "" };
+    if (cfg.mode !== AUTO) return { statusCode: 200, body: "" };
     const der = await kvGet("sp:dernier_complet");
     const depuis = (s) => s ? (Date.now() - new Date(s).getTime()) / 60e3 : Infinity;
     // silence depuis le dernier passage abouti, et depuis le passage en automatique

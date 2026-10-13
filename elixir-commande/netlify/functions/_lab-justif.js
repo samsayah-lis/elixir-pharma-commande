@@ -100,7 +100,7 @@ export function parisVersDate(s) {          // "2026-09-17 10:48:27" (heure de P
 const partiesParis = (d) => Object.fromEntries(new Intl.DateTimeFormat("fr-FR", {
   timeZone: "Europe/Paris", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", hour12: false,
 }).formatToParts(d).map(p => [p.type, p.value]));
-const jourPortail = (d) => { const p = partiesParis(d); return `${p.day}/${p.month}/${p.year}`; };
+export const jourPortail = (d) => { const p = partiesParis(d); return `${p.day}/${p.month}/${p.year}`; };
 export const jourParis = (d) => { const p = partiesParis(d); return `${p.year}-${p.month}-${p.day}`; };
 export const dateLongue = (d) => {
   const jour = d.toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", weekday: "long", day: "numeric", month: "long", year: "numeric" });
@@ -418,9 +418,16 @@ export async function traiter(cfg, req, { forcer = false, autres = [], maj = nul
 // ── Portail PharmaML (lecture seule) ────────────────────────────────────
 // ⚠️ Jamais commandes.php?U=&P= (canal de l'ERP, acquitterait les commandes), jamais /commandes/api/*.
 let cookie = null;
+// délai sur chaque appel au portail (un portail qui ne répond pas ne doit pas bloquer une fonction 15 min)
+async function fetchPortail(url, init = {}, ms = 25000) {
+  const ac = new AbortController(); const t = setTimeout(() => ac.abort(), ms);
+  try { const r = await fetch(url, { ...init, signal: ac.signal }); return { r, body: await r.text() }; }
+  catch (e) { throw new Error(e.name === "AbortError" ? "portail PharmaML : délai dépassé" : e.message); }
+  finally { clearTimeout(t); }
+}
 async function login() {
   if (!process.env.PHARMAML_PASS) throw new Error("PHARMAML_PASS non configuré sur Netlify");
-  const r = await fetch(`${PORTAIL}/connexion`, {
+  const { r } = await fetchPortail(`${PORTAIL}/connexion`, {
     method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ login: process.env.PHARMAML_USER || "admin", password: process.env.PHARMAML_PASS }).toString(),
     redirect: "manual",
@@ -432,8 +439,7 @@ async function login() {
 async function portail(chemin, html = false) {
   for (let essai = 0; essai < 2; essai++) {
     if (!cookie) await login();
-    const r = await fetch(PORTAIL + chemin, { headers: { Cookie: cookie, "X-Requested-With": "XMLHttpRequest", Accept: "*/*" }, redirect: "manual" });
-    const body = await r.text();
+    const { r, body } = await fetchPortail(PORTAIL + chemin, { headers: { Cookie: cookie, "X-Requested-With": "XMLHttpRequest", Accept: "*/*" }, redirect: "manual" });
     const perdue = r.status >= 300 || (html ? /name="password"/i.test(body) : /^\s*</.test(body));
     if (!perdue) return body;
     cookie = null;
@@ -448,7 +454,7 @@ async function commandesDuJour(d) {
 export async function testPortail() { return (await commandesDuJour(new Date())).length; }
 // Lignes commandées (écran « Produits commandés › Par clients »), filtrées sur le libellé :
 // le filtre ne marche pas sur le CIP, on le revérifie ensuite.
-async function lignesProduit(terme, du, au) {
+export async function lignesProduit(terme, du, au) {
   const cols = ["DateCommande", "Identifiant", "RaisonSociale", "CodeProduit", "Libelle", "QuantiteCommandee", "QuantiteLivree"];
   const out = [];
   for (let start = 0; ; ) {

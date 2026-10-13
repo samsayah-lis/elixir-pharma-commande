@@ -2,26 +2,32 @@
 // Les pharmacies commandent sur Sanofi Pro en choisissant Elixir comme grossiste ; les commandes
 // arrivent sur le portail grossiste https://sanofipro.expepharma.com (connexion e-mail + mot de
 // passe, variables SANOFIPRO_EMAIL / SANOFIPRO_PASSWORD).
-// « Traiter » sur ce portail (POST /api/consignments, quantités expédiées) répond à Sanofi ET envoie
-// la commande dans PharmaML : même seconde pour les 43 commandes traitées du 01 au 12/10/2026 ; le
-// connecteur Odoo la reprend ensuite (~4 min). On ne passe donc PAS par la synchro du site.
-// Décision de Zineb (12/10/2026) : traiter automatiquement une nouvelle commande quand la pharmacie
-// est cliente Elixir et que le stock libre Odoo couvre la quantité ; sinon elle reste sur le portail
-// (traitement à la main) et un e-mail prévient.
+// Traitement d'une commande = DEUX actions, comme le fait l'équipe à la main :
+//   1. la commande est créée dans PharmaML (InfoSoft), d'où le connecteur Odoo la reprend (~4 min) :
+//      même envoi que le site de commande (POST commandes.php, « Commande importée via API »),
+//      référence PharmaML « SP<référence Sanofi> » ; elle est ensuite retrouvée sur le portail PharmaML ;
+//   2. seulement alors, « Traiter » sur le portail Sanofi Pro (POST /api/consignments) : réponse à
+//      Sanofi (quantités expédiées). ⚠ « Traiter » NE crée PAS de commande PharmaML (constaté le
+//      13/10/2026 : 2 commandes traitées automatiquement, rien dans PharmaML).
+// Décisions de Zineb : traitement automatique (12/10/2026), par PharmaML (13/10/2026), quand la pharmacie
+// est cliente Elixir et que le stock libre Odoo couvre la quantité ; sinon la commande reste sur le
+// portail (traitement à la main) et un e-mail prévient.
 //
-// Anti-doublon (un 2e « Traiter » = une 2e commande PharmaML) :
+// Anti-doublon (une 2e commande PharmaML = Dupixent livré deux fois) :
 //   - un seul passage à la fois (verrou sp:lock, plus long que la vie d'une fonction) ; les actions
 //     admin sur une commande prennent le même verrou ;
 //   - état de la commande (sp:ord:<référence Sanofi>) réservé par écriture conditionnelle AVANT l'envoi ;
-//   - commande relue sur le portail juste avant : jamais si elle a déjà un envoi, n'est plus « pending »,
-//     a changé ou si sa référence apparaît plusieurs fois ;
-//   - jamais de second envoi automatique : ni après un refus d'identification, ni après une issue
-//     incertaine (panne, délai, envoi non retrouvé) ; reprise humaine confirmée seulement.
+//     l'envoi PharmaML est noté dans l'état AVANT d'être fait, et n'est jamais refait automatiquement ;
+//   - commande relue sur le portail Sanofi Pro juste avant : jamais si elle a déjà un envoi, n'est plus
+//     « pending », a changé ou si sa référence apparaît plusieurs fois ;
+//   - PharmaML relu juste avant : jamais si la pharmacie y a déjà une commande de ce produit depuis la
+//     commande Sanofi (saisie à la main par l'équipe, ou par la pharmacie) → à traiter à la main ;
+//   - issue incertaine (panne, délai, envoi non retrouvé) : reprise humaine confirmée seulement.
 //
 // Stockage kv_store : sp:config, sp:ord:<réf>, sp:ids (documents vus par référence), sp:lock,
 // sp:dernier_passage, sp:dernier_complet, sp:alerte_tech, sp:alerte_arret.
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
-import { sb, kvGet, kvGetBrut, kvSet, kvSetSi, kvList, kvCreate, fichePharmacie, esc, dateLongue, jourParis, MAIL_DE } from "./_lab-justif.js";
+import { sb, kvGet, kvGetBrut, kvSet, kvSetSi, kvList, kvCreate, fichePharmacie, esc, dateLongue, jourParis, MAIL_DE, lignesProduit, parisVersDate } from "./_lab-justif.js";
 
 export const PORTAIL_SP = "https://sanofipro.expepharma.com";
 const API = (process.env.SANOFIPRO_API || `${PORTAIL_SP}/api`).replace(/\/$/, "");
@@ -36,12 +42,21 @@ export const ALERTE_TECH_H = 6;         // panne : un e-mail au plus toutes les 
 const MENAGE_JOURS = 400;               // états effacés après ~13 mois (sauf commande encore en attente)
 const ABSENCES_MAX = 3;                 // absente de 3 lectures de suite → considérée supprimée du portail
 const ENVOI_MAX_MS = 11 * 60e3;         // plus aucun envoi après 11 min de passage (fonction tuée à 15 min)
+const PHARMAML_URL = (process.env.PHARMAML_URL || "https://pharmaml.elixirpharma.fr").replace(/\/$/, "");
+const AVANT_COMMANDE_MS = 15 * 60e3;    // commande PharmaML de la pharmacie depuis (commande Sanofi − 15 min) = déjà saisie ?
+export const refPML = (ref) => `SP${ref}`;
 
 // ── Réglages (onglet admin « Sanofi Pro ») ──────────────────────────────
-// mode : arret | simulation (rien n'est écrit sur le portail, aucun e-mail) | auto
+// mode : arret | simulation (rien n'est envoyé, aucun e-mail) | auto_pml (PharmaML puis réponse à Sanofi)
+// L'ancien mode « auto » (12/10/2026, « Traiter » seul) n'existe plus : relu comme « simulation ».
 export const CONFIG_DEFAUT = { mode: "simulation", ageMaxHeures: 48, maxQteLigne: 3, plafondJour: 30, delaiOdooMin: 45, alertes: "pharmacien@elixirpharma.fr" };
-export const MODES = ["arret", "simulation", "auto"];
-export async function lireConfig() { return { ...CONFIG_DEFAUT, ...((await kvGet("sp:config")) || {}) }; }
+export const MODES = ["arret", "simulation", "auto_pml"];
+export const AUTO = "auto_pml";
+export async function lireConfig() {
+  const c = { ...CONFIG_DEFAUT, ...((await kvGet("sp:config")) || {}) };
+  if (!MODES.includes(c.mode)) c.mode = "simulation";
+  return c;
+}
 export const adresses = (s) => [...new Set(String(s || "").toLowerCase().split(/[\s,;]+/).filter(Boolean))];
 export const adresseValide = (a) => /^[a-z0-9._%+'-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(a);
 export function validerConfig(c) {
@@ -61,16 +76,18 @@ export function validerConfig(c) {
 //   nouvelle        reprise demandée depuis l'admin (réexamen, même ancienne)
 //   en_attente      pas traitée automatiquement (motif) ; réexaminée à chaque passage jusqu'à l'âge maximum
 //   a_traiter_main  trop ancienne, toujours bloquée à l'âge maximum, réapparue ou en double : à traiter sur le portail
-//   en_cours        réservée, envoi en cours
-//   traitee         « Traiter » fait par Elixir automatiquement ; on attend la commande Odoo
+//   en_cours        réservée, envoi en cours (etape : pharmaml puis sanofi)
+//   a_repondre      commande créée dans PharmaML, mais « Traiter » sur Sanofi Pro a échoué : à faire à la main
+//   traitee         commande dans PharmaML + « Traiter » fait ; on attend la commande Odoo
 //   dans_odoo       commande Odoo retrouvée
 //   absente_odoo    pas de commande Odoo après le délai (alerte) ; on continue de chercher 48 h
 //   incertaine      issue inconnue (panne, délai, refus d'identification, envoi non retrouvé) : vérification humaine
-//   erreur          refusée par le portail, aucun envoi enregistré
+//   erreur          refusée (PharmaML ou portail Sanofi Pro), rien de retrouvé
 //   portail         traitée, refusée ou supprimée directement sur le portail
 //   ignoree         écartée depuis l'admin
 // Marqueurs permanents (toute reprise exige alors une confirmation explicite, même après « ignorer ») :
 //   issueInconnue  un envoi automatique a eu une issue incertaine ;
+//   pml.envoyeA    un envoi PharmaML a été tenté ;
 //   envoiPortail   la commande a été traitée sur le portail (COMPLETED / PARTIALLY_COMPLETED / boîtes expédiées) ;
 //   plusieursDocs  la référence a été vue avec plusieurs documents sur le portail.
 export const OUVERTS = new Set(["en_attente", "nouvelle"]);
@@ -88,7 +105,7 @@ export function classer(o) {
 export const aTraiter = (o) => classer(o) === "candidate";
 // envoi avec au moins une boîte expédiée (un refus du portail crée un envoi à 0)
 export const envoiExpedie = (o) => (o?.consignments || []).some(c => (c?.consignmentEntries || []).some(e => Number(e?.shippedQuantity) > 0));
-// traitée (au moins en partie) sur le portail : donc déjà envoyée dans PharmaML
+// traitée (au moins en partie) sur le portail Sanofi Pro (la personne a aussi saisi la commande PharmaML)
 const expediee = (o) => envoiExpedie(o) || ["COMPLETED", "PARTIALLY_COMPLETED"].includes(String(o?.status || "").toUpperCase());
 export const REF_OK = /^[0-9A-Za-z_-]{3,40}$/;
 
@@ -140,6 +157,59 @@ export class PortailSP {
   }
 }
 
+// ── PharmaML (InfoSoft) ─────────────────────────────────────────────────
+// Envoi : même requête que le site (submit-order.js, agent local) : POST commandes.php (identifiants
+// PHARMAML_USER / PHARMAML_PASS), « Commande importée via API ». Lecture : écran « Produits commandés ›
+// Par clients » du portail (session web, lecture seule, comme le module des justificatifs labos).
+export class PharmaML {
+  async envoyer(corps) {
+    if (!process.env.PHARMAML_PASS) return { ok: false, refus: true, status: 0, message: "PHARMAML_PASS non configuré sur Netlify" };
+    const url = `${PHARMAML_URL}/commandes.php?U=${encodeURIComponent(process.env.PHARMAML_USER || "admin")}&P=${encodeURIComponent(process.env.PHARMAML_PASS)}`;
+    const ac = new AbortController(); const t = setTimeout(() => ac.abort(), 30000);
+    try {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify(corps), signal: ac.signal, redirect: "manual" });
+      const texte = await r.text();
+      let j = null; try { j = JSON.parse(texte); } catch { /* HTML ou texte */ }
+      const json = !!j && typeof j === "object" && !Array.isArray(j);
+      const msg = json ? (j.message || j.errors?.[0]?.message || "") : `réponse non JSON${r.status >= 300 && r.status < 400 ? " (redirection)" : ""} : ${texte.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()}`;
+      // refus explicite : HTTP 4xx ou { status: "error" } (même lecture que submit-order) ; succès : JSON en 2xx
+      const refus = (r.status >= 400 && r.status < 500) || (json && j.status === "error");
+      return { ok: r.status >= 200 && r.status < 300 && json && j.status !== "error", refus, status: r.status, message: String(msg || "").slice(0, 300), commandes: json ? (j.commandes ?? null) : null };
+    } catch (e) { return { ok: false, refus: false, status: 0, message: e.name === "AbortError" ? "délai dépassé" : String(e.message || e).slice(0, 300) }; }
+    finally { clearTimeout(t); }
+  }
+  // lignes commandées d'une pharmacie (CIP) pour des produits (CIP13), depuis une date
+  async lignes(cip, codes, termes, depuis) {
+    const out = [];
+    for (const terme of termes) for (const l of await lignesProduit(terme, depuis, new Date())) {
+      if (String(l.Identifiant) !== String(cip) || !codes.includes(String(l.CodeProduit))) continue;
+      if (parisVersDate(l.DateCommande).getTime() < depuis.getTime()) continue;
+      if (!out.some(x => x.ReferenceCommande === l.ReferenceCommande && x.CodeProduit === l.CodeProduit && x.DateCommande === l.DateCommande)) out.push(l);
+    }
+    return out;
+  }
+  // essai sans commande (liste vide) : PharmaML accepte-t-il un envoi venant de Netlify ?
+  async essai() { return this.envoyer([]); }
+}
+// Notre commande PharmaML couvre-t-elle toute la commande Sanofi (chaque produit, commandé ET servi) ?
+export function couverture(miennes, lignesSt) {
+  if (!miennes.length) return { etat: "absente" };
+  if (new Set(miennes.map(l => l.DateCommande)).size > 1) return { etat: "double", detail: `notre référence apparaît dans ${new Set(miennes.map(l => l.DateCommande)).size} commandes PharmaML` };
+  const besoin = new Map(); for (const l of lignesSt) besoin.set(l.code, (besoin.get(l.code) || 0) + Number(l.qte || 0));
+  const manques = [];
+  for (const [code, q] of besoin) {
+    const ls = miennes.filter(l => String(l.CodeProduit) === code);
+    const cmd = ls.reduce((n, l) => n + (Number(l.QuantiteCommandee) || 0), 0);
+    const liv = ls.reduce((n, l) => n + (Number(l.QuantiteLivree) || 0), 0);
+    if (cmd < q || liv < q) manques.push(`${code} : commandé ${cmd}, servi ${liv} sur ${q}`);
+  }
+  return manques.length ? { etat: "partielle", detail: manques.join(" ; ") } : { etat: "complete" };
+}
+// termes de recherche du portail PharmaML (le filtre ne marche que sur le libellé) : 1er mot du produit
+const termes = (o) => [...new Set((o.orderEntries || []).map(e => (String(e.productName || "").match(/[A-Za-zÀ-ÿ]{3,}/) || [""])[0].toUpperCase()).filter(Boolean))];
+const corpsPML = (cip, ref, lignes) => [{ identifiantPML: String(cip), referenceCommande: ref,
+  lignes: lignes.map(l => ({ CIP: l.code, libelle: String(l.nom || "").substring(0, 50), quantiteCommandee: l.qte, quantiteLivree: l.qte, prix: l.prix })) }];
+
 // Corps envoyé par le bouton « Traiter » du portail (composant app-treat-order), toutes les lignes
 // expédiées en totalité. Reproduit à l'identique, y compris le total TVA 2,1 %.
 export function payloadTraitement(o, maintenant = new Date()) {
@@ -166,7 +236,7 @@ export function payloadTraitement(o, maintenant = new Date()) {
 
 // Résumé d'une commande du portail gardé dans son état (pas d'adresse ni de téléphone)
 export const resume = (o) => ({
-  ref: String(o.sanofiOrderReference), id: o._id, cip: String(o.cipCode || ""), pharmacien: String(o.pharmacistName || "").trim(),
+  ref: String(o.sanofiOrderReference), id: o._id, cip: String(o.cipCode || "").trim(), pharmacien: String(o.pharmacistName || "").trim(),
   date: o.orderDate, par: o.placedBy || "",
   lignes: (o.orderEntries || []).map(e => ({ code: String(e.productCode || ""), nom: String(e.productName || "").trim(), qte: Number(e.quantity), prix: Number(e.price) })),
 });
@@ -186,6 +256,18 @@ async function produitOdoo(code, cache) {
   cache.produits.set(code, v);
   if (v && !cache.libre.has(v.id)) cache.libre.set(v.id, v.libre - (cache.enVol.get(v.id) || 0));
   return v;
+}
+
+// Prix net envoyé à PharmaML (il devient le prix de la commande Odoo) : celui du site de commande
+// (odoo_catalog, liste de prix Odoo n°5 « EUR 2 », synchronisée chaque nuit)
+async function prixNet(code, cache) {
+  if (!cache.prix) cache.prix = new Map();
+  if (!cache.prix.has(code)) {
+    const [r] = (await sb(`odoo_catalog?cip=eq.${encodeURIComponent(code)}&select=discounted_price&limit=1`)) || [];
+    const v = Number(r?.discounted_price);
+    cache.prix.set(code, Number.isFinite(v) && v > 0 ? Math.round(v * 100) / 100 : null);
+  }
+  return cache.prix.get(code);
 }
 
 // → { motif (null = traitable), cle (motif sans chiffre variable : une alerte par cle), pharmacie, lignes }
@@ -210,8 +292,10 @@ export async function evaluer(o, cfg, cache) {
     const code = String(e.productCode || "").trim();
     const p = /^\d{13}$/.test(code) ? await produitOdoo(code, cache) : null;
     if (!p) return { motif: `produit inconnu dans Odoo (${code || "code vide"})`, cle: `produit:${code}`, pharmacie };
+    const prix = await prixNet(code, cache);
+    if (!prix) return { motif: `prix net introuvable pour ${p.nom} (catalogue Odoo du site)`, cle: `prix:${code}`, pharmacie };
     parProduit.set(p.id, (parProduit.get(p.id) || 0) + Number(e.quantity));
-    sortie.push({ code, nom: p.nom, qte: Number(e.quantity), produitId: p.id });
+    sortie.push({ code, nom: p.nom, qte: Number(e.quantity), produitId: p.id, prix });
   }
   for (const [pid, q] of parProduit) {
     const libre = cache.libre.get(pid) ?? 0;
@@ -239,7 +323,7 @@ export async function suiviOdoo(etats, maintenantMs = Date.now()) {
   }
   const credits = [];   // { ref, so: [noms] }
   for (const [odooId, liste] of parPharmacie) {
-    if (!liste.some(x => SUIVIS.has(x.st.etat))) continue;
+    if (!liste.some(x => SUIVIS.has(x.st.etat) || x.st.etat === "a_repondre")) continue;
     liste.sort((a, b) => String(a.st.traiteeA).localeCompare(String(b.st.traiteeA)) || a.ref.localeCompare(b.ref));
     const pids = [...new Set(liste.flatMap(x => (x.st.lignes || []).map(l => l.produitId)).filter(Boolean))];
     const debut = Math.min(...liste.map(x => new Date(x.st.traiteeA).getTime())) - AVANCE_ODOO_MS;
@@ -264,7 +348,7 @@ export async function suiviOdoo(etats, maintenantMs = Date.now()) {
         if (manque > 0) couverte = false;
       }
       if (!couverte) { for (const [l, x] of pris) l.q += x; continue; }
-      if (SUIVIS.has(st.etat)) credits.push({ ref, so: [...new Set(pris.map(([l]) => l.so))] });
+      if (SUIVIS.has(st.etat) || (st.etat === "a_repondre" && !st.odoo)) credits.push({ ref, so: [...new Set(pris.map(([l]) => l.so))], garder: st.etat === "a_repondre" });
     }
   }
   return credits;
@@ -274,7 +358,9 @@ export async function suiviOdoo(etats, maintenantMs = Date.now()) {
 const heure = (s) => s ? dateLongue(new Date(s)) : "";
 export function mailAlertes(items) {
   const n = items.length;
-  const sujet = n === 1 ? `Sanofi Pro : commande ${items[0].ref} — ${items[0].titre}` : `Sanofi Pro : ${n} commandes à vérifier`;
+  const urgent = items.filter(i => /DOUBLON|annulée/i.test(i.titre || ""));
+  const sujet = (urgent.length ? `⚠ ${urgent.map(i => `${/DOUBLON/i.test(i.titre) ? "DOUBLON PharmaML" : "ANNULÉE chez Sanofi"} ${i.ref}`).join(", ")} — ` : "")
+    + (n === 1 ? `Sanofi Pro : commande ${items[0].ref} — ${items[0].titre}` : `Sanofi Pro : ${n} commandes à vérifier`);
   const td = 'style="border:1px solid #d6dde3;padding:5px 8px;vertical-align:top"';
   const lignes = items.map(i => `<tr><td ${td}>${esc(heure(i.date))}</td><td ${td}>${esc(i.ref)}</td><td ${td}>${esc(i.pharmacien)}<br><span style="color:#64748b">CIP ${esc(i.cip)}</span></td>
     <td ${td}>${(i.lignes || []).map(l => `${esc(l.qte)} × ${esc(l.nom)}`).join("<br>")}</td><td ${td}><b>${esc(i.titre)}</b><br>${esc(i.detail || "")}</td></tr>`).join("");
@@ -283,7 +369,7 @@ export function mailAlertes(items) {
 <p>${n === 1 ? "Cette commande Sanofi Pro demande" : "Ces commandes Sanofi Pro demandent"} votre attention : le traitement automatique ne l'a pas fait${n > 1 ? " pour elles" : ""}, ou son résultat est à vérifier.</p>
 <table style="border-collapse:collapse;font-size:10pt"><tr style="background:#f1f5f9"><th ${td}>Commande du</th><th ${td}>Réf. Sanofi</th><th ${td}>Pharmacie</th><th ${td}>Produits</th><th ${td}>Situation</th></tr>${lignes}</table>
 <p>Portail : <a href="${PORTAIL_SP}/new-orders">${PORTAIL_SP}/new-orders</a> — suivi : admin du site de commande, onglet « Sanofi Pro ».</p>
-<p style="color:#64748b;font-size:9pt">Rappel : « Traiter » sur le portail envoie aussi la commande dans PharmaML. Une commande déjà traitée ne doit jamais l'être une seconde fois.</p>
+<p style="color:#64748b;font-size:9pt">Rappel : « Traiter » sur le portail Sanofi Pro ne fait que répondre à Sanofi ; la commande doit aussi être dans PharmaML, une seule fois (les envois automatiques ont la référence PharmaML « SP » + référence Sanofi).</p>
 </div>`;
   return { sujet, corps };
 }
@@ -311,21 +397,19 @@ export async function alerteTechnique(cfg, err, { cle = "sp:alerte_tech", sujet 
 // À appeler sous le verrou sp:lock (VERROU_MS). Tous les écrivains de sp:ord:* (passages, actions
 // admin) passent par ce verrou : les écritures du passage n'écrasent donc jamais une décision prise
 // pendant qu'il tourne.
-export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(), maintenant = () => new Date() } = {}) {
+export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(), pml = new PharmaML(), maintenant = () => new Date(),
+  attendre = (ms) => new Promise(r => setTimeout(r, ms)) } = {}) {
   const t0 = Date.now();
   const cfg = await lireConfig();
   const journal = [];
-  const stats = { vues: 0, traitees: 0, attente: 0, main: 0, incertaines: 0, simulees: 0 };
+  const stats = { vues: 0, traitees: 0, attente: 0, main: 0, incertaines: 0, erreurs: 0, aRepondre: 0, doublons: 0, simulees: 0 };
   if (cfg.mode === "arret") return { mode: cfg.mode, journal: ["Traitement automatique arrêté (réglage)"], stats };
-  // SUSPENDU le 13/10/2026 : les 2 premiers « Traiter » automatiques (07:38) n'ont créé AUCUNE commande
-  // PharmaML — la corrélation observée venait de la saisie faite par la personne qui traite, pas du portail.
-  // Le mode « auto » se comporte comme une simulation tant que l'envoi PharmaML n'est pas automatisé.
-  const auto = false;
+  const auto = cfg.mode === AUTO;
   const anomalies = [];       // statuts inconnus, références illisibles → alerte technique
   // simulation : décision qui serait prise pour chaque commande en attente sur le portail (affichée dans l'admin)
   const apercu = [];
-  const simuler = (base, decision, motif, pharmacieOdoo = null) =>
-    apercu.push({ ref: base.ref, date: base.date, pharmacien: base.pharmacien, cip: base.cip, par: base.par, lignes: base.lignes, decision, motif, pharmacieOdoo });
+  const simuler = (base, decision, motif, pharmacieOdoo = null, lignes = null) =>
+    apercu.push({ ref: base.ref, date: base.date, pharmacien: base.pharmacien, cip: base.cip, par: base.par, lignes: lignes || base.lignes, decision, motif, pharmacieOdoo });
 
   const commandes = await portail.commandes();
   if (commandes.length >= 1000) journal.push(`⚠ Le portail renvoie ${commandes.length} commandes : liste peut-être tronquée`);
@@ -347,21 +431,102 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
   // alerte gardée dans l'état jusqu'à ce que l'e-mail parte (nouvel essai au passage suivant sinon)
   const alerter = (st, titre, detail, cle = null) => { st.alerteDue = { titre, detail, cle, at: new Date().toISOString() }; };
   const incertaine = (st, motif, detail) => {
-    st.etat = "incertaine"; st.motif = motif; st.issueInconnue = st.issueInconnue || new Date().toISOString();
+    st.etat = "incertaine"; st.motif = motif; delete st.etape; st.issueInconnue = st.issueInconnue || new Date().toISOString();
     histo(st, "incertaine", motif); alerter(st, "issue inconnue", detail); stats.incertaines++;
+    journal.push(`⚠ ${st.ref} ${st.pharmacien} : issue inconnue — ${motif}`);
   };
+  const aRepondre = (st, motif, partielle = false) => {
+    st.etat = "a_repondre"; st.motif = motif; delete st.etape; histo(st, "a_repondre", motif); stats.aRepondre++;
+    alerter(st, partielle ? "servie partiellement dans PharmaML : répondre à Sanofi à la main" : "à « Traiter » sur le portail Sanofi Pro",
+      partielle ? `${motif}. La commande est dans PharmaML (réf. ${st.pml?.ref}) mais pas en totalité : sur Sanofi Pro, « Traiter » avec les quantités réellement servies. Ne pas la ressaisir dans PharmaML.`
+        : `${motif}. La commande est déjà dans PharmaML (réf. ${st.pml?.ref}) : ne pas la ressaisir, seulement cliquer « Traiter » sur Sanofi Pro.`);
+    journal.push(`${st.ref} ${st.pharmacien} : dans PharmaML (${st.pml?.ref}), réponse à Sanofi à faire à la main — ${motif}`);
+  };
+  // deux commandes PharmaML pour une seule commande Sanofi : à annuler avant expédition
+  const doublon = (st, lignes, contexte) => {
+    st.doublon = lignes.slice(0, 5).map(l => ({ ref: l.ReferenceCommande, date: l.DateCommande, qte: l.QuantiteCommandee }));
+    st.etat = "doublon_pml"; st.motif = `doublon PharmaML probable : ${contexte}`; delete st.etape; histo(st, "doublon_pml", st.motif); stats.doublons++;
+    alerter(st, "DOUBLON PharmaML probable", `${contexte}. Commandes PharmaML de la pharmacie pour ce produit : ${[st.pml?.ref, ...st.doublon.map(d => `${d.ref} (${d.date})`)].filter(Boolean).join(", ")}. Annuler l'une des deux (PharmaML ou commande Odoo) AVANT expédition.`);
+    journal.push(`⚠⚠ ${st.ref} ${st.pharmacien} : doublon PharmaML probable — ${contexte}`);
+  };
+  const annuleeSanofi = (st, statut) => {
+    st.etat = "annulee_sanofi"; st.statutPortail = statut; st.motif = `${statut} sur Sanofi Pro alors que la commande est dans PharmaML`; delete st.etape;
+    histo(st, "annulee_sanofi", st.motif);
+    alerter(st, "annulée sur Sanofi Pro mais déjà dans PharmaML", `Commande dans PharmaML (réf. ${st.pml?.ref}) mais ${statut} sur Sanofi Pro : retenir ou annuler la commande Odoo avant expédition.`);
+    journal.push(`⚠ ${st.ref} ${st.pharmacien} : ${st.motif}`);
+  };
+  // lecture PharmaML pour une commande : nos lignes (réf. SP…) et celles d'une autre origine (même pharmacie,
+  // mêmes produits, depuis la commande Sanofi − 15 min) ; nos envois pour d'autres commandes Sanofi ne comptent pas
+  const lirePML = async (st, refP) => {
+    const lignes = await pml.lignes(st.cip, (st.lignes || []).map(l => l.code), st.termes?.length ? st.termes : ["DUPIXENT"],
+      new Date(new Date(st.date).getTime() - AVANT_COMMANDE_MS));
+    const nos = new Set([...etats.entries()].filter(([r]) => r !== st.ref).map(([, v]) => v.st?.pml?.ref).filter(Boolean));
+    const miennes = lignes.filter(l => l.ReferenceCommande === refP);
+    return { miennes, etrangeres: lignes.filter(l => l.ReferenceCommande !== refP && !nos.has(l.ReferenceCommande)), couv: couverture(miennes, st.lignes || []) };
+  };
+  // moment où notre commande est arrivée dans PharmaML (pour retrouver la commande Odoo)
+  const arrivee = (st, miennes) => {
+    const t = miennes.map(l => parisVersDate(l.DateCommande).getTime()).filter(Number.isFinite);
+    return st.pml?.envoyeA || (t.length ? new Date(Math.min(...t)).toISOString() : null) || new Date().toISOString();
+  };
+  let panneControle = null;     // Odoo / PharmaML injoignable : alerte technique
 
-  // 1. États ouverts ou interrompus dont la commande a changé sur le portail
+  // 1. États ouverts, interrompus ou à surveiller dont la commande a changé
   for (const [ref, { st }] of etats) {
-    if (!st || !(OUVERTS.has(st.etat) || st.etat === "a_traiter_main" || st.etat === "en_cours")) continue;
+    if (!st) continue;
     const ds = docs.get(ref) || [];
     if (st.etat === "en_cours") {
-      // passage précédent mort pendant l'envoi (le verrou dure plus longtemps qu'une fonction : il ne tourne plus)
-      if (ds.some(envoiExpedie)) { histo(st, "traitee", "envoi retrouvé sur le portail après un passage interrompu"); st.etat = "traitee"; st.traiteeA = st.traiteeA || st.reserveeA || new Date().toISOString(); }
-      else incertaine(st, "passage interrompu pendant l'envoi", "Le traitement automatique a été interrompu pendant l'envoi. Vérifiez sur le portail et dans PharmaML avant toute action.");
+      // passage précédent mort pendant le traitement (le verrou dure plus longtemps qu'une fonction : il ne tourne plus)
+      if (st.pml?.envoyeA || st.etape === "sanofi") {
+        let r;
+        try { r = await lirePML(st, st.pml?.ref); }
+        catch (e) {
+          panneControle = panneControle || e;
+          journal.push(`${ref} : PharmaML illisible après un passage interrompu (${e.message})`);
+          const depuis = (Date.now() - new Date(st.pml?.envoyeA || st.reserveeA).getTime()) / 60e3;
+          if (depuis > 30) incertaine(st, `passage interrompu après l'envoi PharmaML et portail PharmaML illisible (${e.message})`, `La commande est peut-être déjà dans PharmaML (réf. ${st.pml?.ref}) : vérifiez avant toute action, ne pas la ressaisir.`);
+          else if (!st.alerteIllisibleA) { st.alerteIllisibleA = new Date().toISOString(); alerter(st, "envoi PharmaML à vérifier", `Passage interrompu après l'envoi PharmaML (réf. ${st.pml?.ref}) et portail PharmaML illisible : la commande est peut-être déjà dans PharmaML, ne pas la ressaisir.`); }
+          await ecrire(ref, st);
+          continue;
+        }
+        if (r.etrangeres.length) doublon(st, r.etrangeres, "passage interrompu : une autre commande PharmaML de la pharmacie existe pour ce produit");
+        else if (r.couv.etat === "double") doublon(st, r.miennes, r.couv.detail);
+        else if (r.couv.etat === "absente") incertaine(st, "passage interrompu pendant l'envoi PharmaML", `Envoi PharmaML (réf. ${st.pml?.ref}) tenté mais commande non retrouvée sur le portail PharmaML. Vérifiez PharmaML avant toute action.`);
+        else {
+          st.pml.vu = st.pml.vu || new Date().toISOString(); st.traiteeA = st.traiteeA || arrivee(st, r.miennes);
+          if (r.couv.etat === "partielle") aRepondre(st, `passage interrompu ; ${r.couv.detail}`, true);
+          else if (ds.length === 1 && classer(ds[0]) === "fait") {
+            if (!expediee(ds[0])) annuleeSanofi(st, ds[0].status);
+            else if (st.etape === "sanofi") { histo(st, "traitee", "réponse à Sanofi retrouvée après un passage interrompu"); st.etat = "traitee"; delete st.etape; }
+            // « Traiter » fait par quelqu'un pendant l'interruption : l'équipe a peut-être aussi saisi la commande
+            else doublon(st, [], "commande traitée à la main sur Sanofi Pro pendant un passage interrompu, après notre envoi PharmaML : vérifiez qu'elle n'a pas été saisie une 2e fois");
+          } else aRepondre(st, "passage interrompu après l'envoi PharmaML");
+        }
+      } else if (ds.length === 1 && classer(ds[0]) === "fait") {
+        // rien n'a été envoyé par l'automate, mais la commande a été traitée sur le portail entre-temps
+        histo(st, "portail", `traitée sur le portail (statut ${ds[0].status})`); st.etat = "portail"; st.statutPortail = ds[0].status; delete st.etape;
+        if (expediee(ds[0])) st.envoiPortail = st.envoiPortail || new Date().toISOString();
+      } else { histo(st, "en_attente", "passage interrompu avant tout envoi"); st.etat = "en_attente"; st.motif = "passage interrompu avant tout envoi : réexamen"; delete st.etape; }
       await ecrire(ref, st);
       continue;
     }
+    // surveillance 1 h après l'envoi : une saisie manuelle de la même commande = doublon
+    if (["traitee", "absente_odoo", "dans_odoo", "a_repondre"].includes(st.etat) && st.pml?.ref && !st.doublon
+      && Date.now() - new Date(st.traiteeA || st.pml.vu || 0).getTime() < 60 * 60e3) {
+      try {
+        const r = await lirePML(st, st.pml.ref);
+        if (r.etrangeres.length) { doublon(st, r.etrangeres, "une autre commande PharmaML de la pharmacie pour ce produit est apparue après notre envoi"); await ecrire(ref, st); continue; }
+      } catch (e) { journal.push(`${ref} : surveillance PharmaML impossible (${e.message})`); }
+    }
+    if (st.etat === "a_repondre") {
+      if (ds.length === 1 && classer(ds[0]) === "fait") {
+        if (expediee(ds[0])) { histo(st, "traitee", `réponse à Sanofi faite sur le portail (statut ${ds[0].status})`); st.etat = "traitee"; st.statutPortail = ds[0].status; delete st.alerteDue; }
+        else annuleeSanofi(st, ds[0].status);
+        await ecrire(ref, st);
+      }
+      continue;
+    }
+    if (!(OUVERTS.has(st.etat) || st.etat === "a_traiter_main")) continue;
     if (!ds.length) {
       // absente de la liste : suppression, ou liste incomplète du portail → plusieurs lectures avant de conclure
       st.absences = (st.absences || 0) + 1;
@@ -380,34 +545,42 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     else if (c === "inconnu") anomalies.push(`${ref} : statut « ${ds[0].status} »`);
   }
 
-  // 2. Suivi : les commandes traitées sont-elles arrivées dans Odoo ?
+  // 2. Suivi : les commandes envoyées sont-elles arrivées dans Odoo ?
   let suiviOk = true;
   try {
     const credits = await suiviOdoo(etats);
-    for (const { ref, so } of credits) { const st = etats.get(ref).st; histo(st, "dans_odoo", so.join(", ")); st.etat = "dans_odoo"; st.odoo = so; delete st.alerteDue; await ecrire(ref, st); }
+    for (const { ref, so, garder } of credits) {
+      const st = etats.get(ref).st;
+      st.odoo = so;
+      if (garder) histo(st, st.etat, `commande Odoo ${so.join(", ")} (réponse à Sanofi toujours à faire)`);
+      else { histo(st, "dans_odoo", so.join(", ")); st.etat = "dans_odoo"; delete st.alerteDue; }
+      await ecrire(ref, st);
+    }
   } catch (e) { suiviOk = false; journal.push(`Suivi Odoo impossible : ${e.message}`); }
-  // traitée sans commande Odoo retrouvée après le délai → alerte (aussi si le suivi a été impossible longtemps)
+  // envoyée sans commande Odoo retrouvée après le délai → alerte (aussi si le suivi a été impossible longtemps)
   for (const [ref, { st }] of etats) {
     if (st?.etat !== "traitee") continue;
     const ageMin = (Date.now() - new Date(st.traiteeA).getTime()) / 60e3;
     if (ageMin <= cfg.delaiOdooMin || (!suiviOk && ageMin <= SUIVI_ODOO_H * 60)) continue;
     histo(st, "absente_odoo"); st.etat = "absente_odoo";
-    alerter(st, `absente d'Odoo ${Math.round(ageMin)} min après le traitement`,
-      "Traitée automatiquement sur le portail (donc envoyée dans PharmaML), mais pas de commande Odoo correspondante pour cette pharmacie et ce produit. Vérifiez le portail PharmaML avant de la saisir à la main (ses boîtes restent décomptées du stock libre 48 h).");
+    alerter(st, `absente d'Odoo ${Math.round(ageMin)} min après l'envoi PharmaML`,
+      `Envoyée dans PharmaML${st.pml?.ref ? ` (réf. ${st.pml.ref})` : ""}, mais pas de commande Odoo correspondante pour cette pharmacie et ce produit. Vérifiez le portail PharmaML (commande « En attente » ou perdue par le connecteur) avant de la saisir à la main.`);
     await ecrire(ref, st);
   }
 
   // 3. Nouvelles commandes (plus anciennes d'abord)
-  let panneControle = null;     // Odoo injoignable : alerte technique
-  // stock déjà promis : commandes traitées pas encore retrouvées dans Odoo
+  // stock déjà promis : commandes envoyées (ou peut-être envoyées) pas encore retrouvées dans Odoo
   const enVol = new Map();
   for (const { st } of etats.values()) {
-    if (!SUIVIS.has(st?.etat) || !(Date.now() - new Date(st.traiteeA).getTime() <= SUIVI_ODOO_H * 3600e3)) continue;   // au-delà, free_qty d'Odoo en tient compte
+    const promise = SUIVIS.has(st?.etat) || st?.etat === "a_repondre" || (st?.etat === "incertaine" && st.pml?.envoyeA);
+    const t = st?.traiteeA || st?.pml?.envoyeA;
+    if (!promise || st.odoo || !(Date.now() - new Date(t).getTime() <= SUIVI_ODOO_H * 3600e3)) continue;   // au-delà, free_qty d'Odoo en tient compte
     for (const l of st.lignes || []) if (l.produitId) enVol.set(l.produitId, (enVol.get(l.produitId) || 0) + Number(l.qte || 0));
   }
   const cache = nouveauCache(enVol);
   const aujourdHui = jourParis(maintenant());
-  for (const { st } of etats.values()) if (st?.traiteeA && jourParis(new Date(st.traiteeA)) === aujourdHui) cache.traitesJour++;
+  // plafond : tout envoi PharmaML du jour compte, quelle qu'en soit l'issue
+  for (const { st } of etats.values()) { const t = st?.pml?.envoyeA || st?.traiteeA; if (t && jourParis(new Date(t)) === aujourdHui) cache.traitesJour++; }
   for (const o of commandes) if (classer(o) === "inconnu" && !etats.has(String(o.sanofiOrderReference))) anomalies.push(`${o.sanofiOrderReference} : statut « ${o.status} »`);
 
   const candidates = commandes.filter(aTraiter).sort((a, b) => String(a.orderDate).localeCompare(String(b.orderDate)));
@@ -418,16 +591,18 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     const cur = etats.get(ref);
     const st0 = cur?.st;
     const nDocs = (docs.get(ref) || []).length;
-    const base = { ...resume(o), ...(st0 ? { historique: st0.historique, forcer: st0.forcer, motif: st0.motif, cle: st0.cle, alerteCle: st0.alerteCle, alerteDue: st0.alerteDue, alerteA: st0.alerteA,
-      vueA: st0.vueA, issueInconnue: st0.issueInconnue, envoiPortail: st0.envoiPortail, statutPortail: st0.statutPortail, plusieursDocs: st0.plusieursDocs, traiteeA: st0.traiteeA }
+    const base = { ...resume(o), termes: termes(o), ...(st0 ? { historique: st0.historique, forcer: st0.forcer, motif: st0.motif, cle: st0.cle, alerteCle: st0.alerteCle, alerteDue: st0.alerteDue, alerteA: st0.alerteA,
+      vueA: st0.vueA, issueInconnue: st0.issueInconnue, envoiPortail: st0.envoiPortail, statutPortail: st0.statutPortail, plusieursDocs: st0.plusieursDocs, traiteeA: st0.traiteeA, pml: st0.pml }
       : { vueA: new Date().toISOString() }) };
     // déjà décidée (traitée, incertaine, à la main, ignorée…) : rien à faire, sauf « portail » redevenue en attente
     if (st0 && !OUVERTS.has(st0.etat) && st0.etat !== "portail") continue;
-    // à la main (jamais automatique) : en double sur le portail, ou réapparue « pending » après « portail »
+    // à la main (jamais automatique) : en double sur le portail, réapparue « pending » après « portail »,
+    // ou envoi PharmaML déjà tenté (une reprise confirmée efface ce blocage)
     const nAutres = autresDocs(ref, o._id);
     const aLaMain = nDocs > 1 ? `référence présente ${nDocs} fois sur le portail`
       : nAutres ? `référence déjà vue sur le portail avec ${nAutres} autre(s) document(s)`
-      : st0?.etat === "portail" ? `de nouveau « pending » sur le portail (était : ${st0.statutPortail ? `statut ${st0.statutPortail}` : st0.motif || "traitée sur le portail"})` : null;
+      : st0?.etat === "portail" ? `de nouveau « pending » sur le portail (était : ${st0.statutPortail ? `statut ${st0.statutPortail}` : st0.motif || "traitée sur le portail"})`
+      : st0?.pml?.envoyeA && !st0.forcer ? `envoi PharmaML déjà tenté le ${dateLongue(new Date(st0.pml.envoyeA))} (réf. ${st0.pml.ref})` : null;
     if (aLaMain) {
       if (nDocs > 1 || nAutres) base.plusieursDocs = true;
       if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${aLaMain}`); simuler(base, "a_traiter_main", aLaMain); stats.main++; continue; }
@@ -463,14 +638,52 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
       if (nouvelleCle || aAlerter || st0.motif !== ev.motif) await ecrire(ref, st);
       continue;
     }
-    if (!auto) { journal.push(`SIMULATION ${ref} ${base.pharmacien} (${ev.pharmacie.nom}) : serait traitée — ${ev.lignes.map(l => `${l.qte} × ${l.nom}`).join(", ")}`); simuler(base, "serait_traitee", null, ev.pharmacie.nom); stats.simulees++; decompter(cache, ev); continue; }
+    // termes de recherche PharmaML : libellé Sanofi, sinon nom Odoo ; aucun → on ne peut pas vérifier, rien n'est envoyé
+    if (!base.termes.length) base.termes = [...new Set(ev.lignes.map(l => (String(l.nom).match(/[A-Za-zÀ-ÿ]{3,}/) || [""])[0].toUpperCase()).filter(Boolean))];
+    if (!base.termes.length) { anomalies.push(`${ref} : aucun libellé pour chercher la commande dans PharmaML`); continue; }
+    const vue = { ...base, lignes: ev.lignes };
+    // PharmaML : la pharmacie y a-t-elle déjà une commande de ce produit depuis la commande Sanofi ?
+    // (équipe qui l'a saisie à la main, ou pharmacie qui a aussi commandé depuis son logiciel)
+    let pre;
+    try { pre = await lirePML(vue, refPML(ref)); }
+    catch (e) { journal.push(`${ref} : portail PharmaML illisible (${e.message}) — prochain passage`); panneControle = panneControle || e; continue; }
+    const motifEtranger = (l0) => `la pharmacie a déjà une commande PharmaML de ce produit depuis la commande Sanofi (réf. ${l0.ReferenceCommande}, ${l0.DateCommande}) : déjà saisie à la main ? Si oui, il ne reste qu'à cliquer « Traiter » sur Sanofi Pro`;
+    if (pre.etrangeres.length) {
+      const motif = motifEtranger(pre.etrangeres[0]);
+      if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${motif}`); simuler(base, "a_traiter_main", motif, ev.pharmacie.nom, ev.lignes); stats.main++; continue; }
+      const st = { ...base, etat: "a_traiter_main", motif, pharmacie: ev.pharmacie, lignes: ev.lignes, deja: pre.etrangeres.slice(0, 5).map(l => ({ ref: l.ReferenceCommande, date: l.DateCommande, qte: l.QuantiteCommandee })) };
+      histo(st, "a_traiter_main", motif); alerter(st, "à traiter à la main", motif);
+      await ecrire(ref, st); stats.main++;
+      continue;
+    }
+    const detail = ev.lignes.map(l => `${l.qte} × ${l.nom} à ${l.prix.toFixed(2)} €`).join(", ");
+    if (!auto) {
+      const dejaEnv = pre.couv.etat !== "absente";
+      journal.push(`SIMULATION ${ref} ${base.pharmacien} (${ev.pharmacie.nom}) : ${dejaEnv ? `déjà dans PharmaML (réf. ${refPML(ref)}, ${pre.couv.etat}) : serait seulement traitée sur Sanofi Pro` : `serait envoyée dans PharmaML (réf. ${refPML(ref)}) puis traitée`} — ${detail}`);
+      simuler(base, "serait_traitee", dejaEnv ? "déjà dans PharmaML : « Traiter » seulement" : null, ev.pharmacie.nom, ev.lignes); stats.simulees++; decompter(cache, ev); continue;
+    }
+
+    // coupe-circuit : un envoi automatique en échec (issue inconnue, refus PharmaML, doublon) non encore vu par
+    // quelqu'un suspend tous les envois automatiques (« Ignorer » ou « Traiter automatiquement » le lève)
+    const bloquant = [...etats.entries()].find(([r, v]) => r !== ref && v.st?.pml?.ref && ["incertaine", "erreur", "doublon_pml"].includes(v.st.etat));
+    if (bloquant) {
+      const motif = `envois automatiques suspendus : la commande ${bloquant[0]} (${bloquant[1].st.pharmacien}) est « ${bloquant[1].st.etat} » — à vérifier dans l'onglet Sanofi Pro (Ignorer ou Traiter automatiquement)`;
+      stats.attente++;
+      const st = { ...base, etat: "en_attente", motif, cle: "suspendu", pharmacie: ev.pharmacie, lignes: ev.lignes };
+      const nouvelle = !st0 || st0.etat !== "en_attente" || st0.cle !== "suspendu";
+      if (nouvelle) histo(st, "en_attente", motif);
+      const aAlerter = st.alerteCle !== "suspendu" && st.alerteDue?.cle !== "suspendu";
+      if (aAlerter) alerter(st, "non traitée automatiquement", motif, "suspendu");
+      if (nouvelle || aAlerter || st0.motif !== motif) await ecrire(ref, st);
+      continue;
+    }
 
     // ── traitement ──
     // arrêt demandé pendant le passage, ou passage trop long : on s'arrête avant de réserver
     const mode = (await kvGet("sp:config").catch(() => ({ mode: "?" })))?.mode;
-    if (mode !== "auto") { journal.push("Mode automatique quitté pendant le passage : commandes restantes laissées au prochain passage"); break; }
+    if (mode !== AUTO) { journal.push("Mode automatique quitté pendant le passage : commandes restantes laissées au prochain passage"); break; }
     if (Date.now() - t0 > ENVOI_MAX_MS) { journal.push("Passage trop long : envois reportés au prochain passage"); break; }
-    const st = { ...base, etat: "en_cours", pharmacie: ev.pharmacie, lignes: ev.lignes, reserveeA: new Date().toISOString(), motif: null, cle: null };
+    const st = { ...base, etat: "en_cours", etape: "pharmaml", pharmacie: ev.pharmacie, lignes: ev.lignes, reserveeA: new Date().toISOString(), motif: null, cle: null };
     delete st.alerteDue;     // ancienne alerte « non traitée » devenue sans objet
     histo(st, "en_cours");
     st.maj = new Date().toISOString();
@@ -480,8 +693,8 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     const pris = cur ? await kvSetSi(CLE(ref), st, majLue) : await kvCreate(CLE(ref), st);
     if (!pris) { journal.push(`${ref} : modifiée pendant le passage — prochain passage`); continue; }
     etats.set(ref, { st, maj: null });
-    const remettre = async (etat, motif) => { st.etat = etat; st.motif = motif; histo(st, etat, motif); await ecrire(ref, st); };
-    // relecture juste avant l'envoi : quelqu'un a pu la traiter sur le portail entre-temps
+    const remettre = async (etat, motif) => { st.etat = etat; st.motif = motif; delete st.etape; histo(st, etat, motif); await ecrire(ref, st); };
+    // relecture Sanofi Pro juste avant : quelqu'un a pu la traiter sur le portail entre-temps
     let memes;
     try { memes = (await portail.commandes()).filter(x => String(x.sanofiOrderReference) === ref); }
     catch (e) { await remettre("en_attente", `relecture du portail impossible juste avant l'envoi (${e.message})`); journal.push(`${ref} : relecture impossible, rien envoyé`); continue; }
@@ -492,27 +705,79 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
       st.statutPortail = frais.status; if (expediee(frais)) st.envoiPortail = st.envoiPortail || new Date().toISOString();
       await remettre("portail", `traitée sur le portail entre-temps (statut ${frais.status})`); continue;
     }
-    if (signature(frais) !== signature(o) || String(frais.cipCode) !== String(o.cipCode)) { await remettre("en_attente", "commande modifiée sur le portail : réexamen au prochain passage"); continue; }
+    if (signature(frais) !== signature(o) || String(frais.cipCode).trim() !== String(o.cipCode).trim()) { await remettre("en_attente", "commande modifiée sur le portail : réexamen au prochain passage"); continue; }
+    // PharmaML relu juste avant l'envoi (une saisie manuelle a pu arriver pendant la relecture Sanofi Pro)
+    let re;
+    try { re = await lirePML(st, refPML(ref)); }
+    catch (e) { panneControle = panneControle || e; await remettre("en_attente", `portail PharmaML illisible juste avant l'envoi (${e.message})`); continue; }
+    if (re.etrangeres.length) {
+      st.deja = re.etrangeres.slice(0, 5).map(l => ({ ref: l.ReferenceCommande, date: l.DateCommande, qte: l.QuantiteCommandee }));
+      const motif = motifEtranger(re.etrangeres[0]);
+      alerter(st, "à traiter à la main", motif); await remettre("a_traiter_main", motif); stats.main++;
+      continue;
+    }
 
+    // 1/2 — PharmaML : envoi noté AVANT d'être fait (jamais refait automatiquement), puis retrouvé sur le portail
+    let r = re, envoi = null, etrangeresVues = [];
+    if (re.couv.etat !== "absente") {
+      // déjà dans PharmaML avec NOTRE référence (envoi d'un passage précédent arrivé tard) : jamais renvoyée
+      st.pml = { ...(st.pml || {}), ref: refPML(ref), retrouveeAvantEnvoi: new Date().toISOString() };
+      histo(st, "en_cours", `déjà dans PharmaML (réf. ${st.pml.ref}) : pas de nouvel envoi`);
+    } else {
+      st.pml = { ref: refPML(ref), envoyeA: new Date().toISOString() };
+      await ecrire(ref, st);
+      envoi = await pml.envoyer(corpsPML(base.cip, st.pml.ref, ev.lignes));
+      st.pml.reponse = { http: envoi.status, message: envoi.message, commandes: envoi.commandes };
+      decompter(cache, ev);    // stock et plafond comptés dès l'envoi, quelle qu'en soit l'issue
+      let lectureOk = false;
+      for (const ms of [1500, 4000, 8000, 15000]) {
+        await attendre(ms);
+        try { r = await lirePML(st, st.pml.ref); lectureOk = true; } catch (e) { journal.push(`${ref} : lecture PharmaML impossible (${e.message})`); continue; }
+        if (r.etrangeres.length) etrangeresVues = r.etrangeres;
+        if (r.couv.etat === "complete" || r.couv.etat === "double") break;
+      }
+      if (!lectureOk || r.couv.etat === "absente") {
+        if (envoi.refus && lectureOk) {
+          st.etat = "erreur"; st.motif = `PharmaML a refusé l'envoi (HTTP ${envoi.status}${envoi.message ? ` : ${envoi.message}` : ""})`;
+          delete st.etape; histo(st, "erreur", st.motif); stats.erreurs++;
+          alerter(st, "refusée par PharmaML", `${st.motif}. Commande non retrouvée dans PharmaML : à traiter à la main (saisie PharmaML puis « Traiter »).`);
+          journal.push(`⚠ ${ref} ${base.pharmacien} : ${st.motif} — à traiter à la main`);
+        } else {
+          const motif = `envoi PharmaML ${envoi.ok ? "accepté" : envoi.status ? `HTTP ${envoi.status}` : "sans réponse"}${envoi.message ? ` (${envoi.message})` : ""} mais commande non retrouvée sur le portail PharmaML${lectureOk ? "" : " (portail illisible)"}`;
+          incertaine(st, motif, `${motif}. Vérifiez PharmaML (réf. ${st.pml.ref}) avant toute action : pas de nouvel envoi automatique.`);
+        }
+        await ecrire(ref, st);
+        journal.push("Envoi PharmaML en échec : plus aucun envoi dans ce passage");
+        break;
+      }
+    }
+    if (r.couv.etat === "double") { doublon(st, r.miennes, r.couv.detail); await ecrire(ref, st); continue; }
+    st.pml.vu = new Date().toISOString(); st.traiteeA = arrivee(st, r.miennes);
+    if (!envoi) decompter(cache, ev);
+    if (r.couv.etat === "partielle") {
+      aRepondre(st, `commande PharmaML ${st.pml.ref} incomplète : ${r.couv.detail}`, true);
+      if (etrangeresVues.length) doublon(st, etrangeresVues, "une autre commande PharmaML de la pharmacie pour ce produit est apparue pendant l'envoi");
+      await ecrire(ref, st);
+      continue;
+    }
+    st.etape = "sanofi";
+    await ecrire(ref, st);
+
+    // 2/2 — réponse à Sanofi (« Traiter »), une seule fois
     const res = await portail.traiter(payloadTraitement(frais, maintenant()));
     let verif = null;
     try { verif = (await portail.commandes()).find(x => x._id === o._id) || null; } catch { verif = undefined; }
-    const envoiVu = !!verif && envoiExpedie(verif);
     st.reponse = { http: res.status, message: res.message, statutApres: verif?.status ?? null };
-    if (envoiVu) {
-      st.etat = "traitee"; st.traiteeA = new Date().toISOString(); histo(st, "traitee", res.ok ? null : `réponse HTTP ${res.status} mais envoi enregistré`);
-      decompter(cache, ev); stats.traitees++;
-      journal.push(`✓ ${ref} ${base.pharmacien} : traitée — ${ev.lignes.map(l => `${l.qte} × ${l.nom}`).join(", ")}`);
-    } else if (res.status >= 400 && res.status < 500 && ![401, 403, 408].includes(res.status) && verif) {
-      // refus explicite (validation) et commande relue sans envoi
-      st.etat = "erreur"; st.motif = `refusée par le portail (HTTP ${res.status}${res.message ? ` : ${res.message}` : ""})`;
-      histo(st, "erreur", st.motif);
-      alerter(st, "refusée par le portail", `${st.motif}. Aucun envoi enregistré sur le portail : à traiter à la main (vérifiez PharmaML).`);
-    } else {
-      const motif = res.ok ? "réponse positive du portail mais aucun envoi enregistré sur la commande"
-        : `${res.status ? `HTTP ${res.status}` : "pas de réponse"}${res.message ? ` : ${res.message}` : ""}${verif === undefined ? " ; relecture impossible" : verif === null ? " ; commande disparue de la liste" : ""}`;
-      incertaine(st, motif, `${motif}. Vérifiez sur le portail et dans PharmaML avant toute action : pas de nouvel essai automatique.`);
-    }
+    delete st.etape;
+    if (verif && envoiExpedie(verif)) {
+      st.etat = "traitee"; histo(st, "traitee", res.ok ? `PharmaML ${st.pml.ref} + réponse à Sanofi` : `PharmaML ${st.pml.ref} ; réponse HTTP ${res.status} mais envoi enregistré`);
+      stats.traitees++;
+      journal.push(`✓ ${ref} ${base.pharmacien} : PharmaML ${st.pml.ref} + « Traiter » — ${detail}`);
+    } else if (verif && classer(verif) === "fait") annuleeSanofi(st, verif.status);
+    else aRepondre(st, `« Traiter » sur Sanofi Pro a échoué (${res.ok ? "réponse positive mais aucun envoi enregistré" : res.status ? `HTTP ${res.status}${res.message ? ` : ${res.message}` : ""}` : res.message || "pas de réponse"}${verif === undefined ? " ; relecture impossible" : ""})`);
+    // dernière lecture PharmaML : une saisie manuelle arrivée pendant « Traiter » est signalée tout de suite
+    if (!etrangeresVues.length) { try { etrangeresVues = (await lirePML(st, st.pml.ref)).etrangeres; } catch { /* surveillance au passage suivant */ } }
+    if (etrangeresVues.length) doublon(st, etrangeresVues, "une autre commande PharmaML de la pharmacie pour ce produit est apparue pendant l'envoi");
     await ecrire(ref, st);
   }
 
@@ -533,7 +798,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
   }
   if (anomalies.length) journal.push(`⚠ ${anomalies.length} commande(s) non examinée(s) : ${anomalies.slice(0, 5).join(" ; ")}`);
   if (auto && (panneControle || anomalies.length)) {
-    const err = new Error([panneControle && `contrôles Odoo impossibles : ${panneControle.message}`,
+    const err = new Error([panneControle && `contrôles impossibles (Odoo ou PharmaML) : ${panneControle.message}`,
       anomalies.length && `commandes non examinées (format inattendu du portail) : ${anomalies.slice(0, 10).join(" ; ")}`].filter(Boolean).join(" — "));
     await alerteTechnique(cfg, err).catch(e => journal.push(`⚠ Alerte technique non envoyée : ${e.message}`));
   }
