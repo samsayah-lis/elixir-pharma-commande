@@ -20,7 +20,7 @@ export const handler = async (event) => {
     if (cfg?.mode === "auto") await alerteTechnique(cfg, e).catch(err => { res.erreur += ` — alerte non envoyée : ${err.message}`; });
   }
   const r = res.resultat || {};
-  const trace = { at: debut, fin: new Date().toISOString(), occupe: !!res.occupe, erreur: res.erreur || null, mode: r.mode || null, journal: r.journal || [], stats: r.stats || null };
+  const trace = { at: debut, fin: new Date().toISOString(), occupe: !!res.occupe, erreur: res.erreur || null, mode: r.mode || null, journal: r.journal || [], stats: r.stats || null, apercu: r.apercu || null };
   await kvSet("sp:dernier_passage", trace).catch(() => {});
   // passage réellement exécuté (même en erreur) : surveillé par sanofipro-cron
   if (!res.occupe) await kvSet("sp:dernier_complet", { fin: trace.fin, erreur: trace.erreur }).catch(() => {});

@@ -319,6 +319,10 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
   if (cfg.mode === "arret") return { mode: cfg.mode, journal: ["Traitement automatique arrêté (réglage)"], stats };
   const auto = cfg.mode === "auto";
   const anomalies = [];       // statuts inconnus, références illisibles → alerte technique
+  // simulation : décision qui serait prise pour chaque commande en attente sur le portail (affichée dans l'admin)
+  const apercu = [];
+  const simuler = (base, decision, motif, pharmacieOdoo = null) =>
+    apercu.push({ ref: base.ref, date: base.date, pharmacien: base.pharmacien, cip: base.cip, par: base.par, lignes: base.lignes, decision, motif, pharmacieOdoo });
 
   const commandes = await portail.commandes();
   if (commandes.length >= 1000) journal.push(`⚠ Le portail renvoie ${commandes.length} commandes : liste peut-être tronquée`);
@@ -423,7 +427,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
       : st0?.etat === "portail" ? `de nouveau « pending » sur le portail (était : ${st0.statutPortail ? `statut ${st0.statutPortail}` : st0.motif || "traitée sur le portail"})` : null;
     if (aLaMain) {
       if (nDocs > 1 || nAutres) base.plusieursDocs = true;
-      if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${aLaMain}`); stats.main++; continue; }
+      if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${aLaMain}`); simuler(base, "a_traiter_main", aLaMain); stats.main++; continue; }
       const st = { ...base, etat: "a_traiter_main", motif: aLaMain }; histo(st, "a_traiter_main", aLaMain);
       alerter(st, "à traiter à la main", `${aLaMain} : vérifiez avant tout traitement`);
       await ecrire(ref, st); stats.main++;
@@ -435,7 +439,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     // trop ancienne pour un traitement automatique (mise en route, ou bloquée depuis trop longtemps)
     if (!(ageH <= cfg.ageMaxHeures) && !st0?.forcer) {
       const motif = st0 ? `toujours en attente après ${cfg.ageMaxHeures} h (${st0.motif || "?"})` : `commande de plus de ${cfg.ageMaxHeures} h, laissée au traitement manuel`;
-      if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${motif}`); stats.main++; continue; }
+      if (!auto) { journal.push(`SIMULATION ${ref} : à traiter à la main — ${motif}`); simuler(base, "a_traiter_main", motif); stats.main++; continue; }
       const st = { ...base, etat: "a_traiter_main", motif }; histo(st, "a_traiter_main", motif);
       alerter(st, "à traiter à la main", motif);
       await ecrire(ref, st); stats.main++;
@@ -446,7 +450,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     if (ev.erreur) { journal.push(`${ref} : contrôle impossible (${ev.erreur.message}) — prochain passage`); panneControle = panneControle || ev.erreur; continue; }
     if (ev.motif) {
       stats.attente++;
-      if (!auto) { journal.push(`SIMULATION ${ref} ${base.pharmacien} : resterait en attente — ${ev.motif}`); continue; }
+      if (!auto) { journal.push(`SIMULATION ${ref} ${base.pharmacien} : resterait en attente — ${ev.motif}`); simuler(base, "en_attente", ev.motif, ev.pharmacie?.nom); continue; }
       const st = { ...base, etat: "en_attente", motif: ev.motif, cle: ev.cle, pharmacie: ev.pharmacie || base.pharmacie, lignes: ev.lignes || base.lignes };
       const nouvelleCle = !st0 || st0.etat !== "en_attente" || st0.cle !== ev.cle;
       if (nouvelleCle) histo(st, "en_attente", ev.motif);
@@ -456,7 +460,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
       if (nouvelleCle || aAlerter || st0.motif !== ev.motif) await ecrire(ref, st);
       continue;
     }
-    if (!auto) { journal.push(`SIMULATION ${ref} ${base.pharmacien} (${ev.pharmacie.nom}) : serait traitée — ${ev.lignes.map(l => `${l.qte} × ${l.nom}`).join(", ")}`); stats.simulees++; decompter(cache, ev); continue; }
+    if (!auto) { journal.push(`SIMULATION ${ref} ${base.pharmacien} (${ev.pharmacie.nom}) : serait traitée — ${ev.lignes.map(l => `${l.qte} × ${l.nom}`).join(", ")}`); simuler(base, "serait_traitee", null, ev.pharmacie.nom); stats.simulees++; decompter(cache, ev); continue; }
 
     // ── traitement ──
     // arrêt demandé pendant le passage, ou passage trop long : on s'arrête avant de réserver
@@ -539,5 +543,5 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
     if (aEffacer.length) await sb(`kv_store?key=in.(${aEffacer.map(k => `"${encodeURIComponent(k)}"`).join(",")})`, { method: "DELETE" });
   } catch { /* le ménage ne bloque jamais un passage */ }
   if (!journal.length) journal.push(stats.vues ? `${stats.vues} commande(s) en attente examinée(s), rien de nouveau` : "Aucune nouvelle commande");
-  return { mode: cfg.mode, journal, stats };
+  return { mode: cfg.mode, journal, stats, apercu: auto ? null : apercu.slice(0, 200) };
 }

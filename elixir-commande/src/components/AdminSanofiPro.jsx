@@ -20,6 +20,12 @@ const ETATS = {
 const A_SUIVRE = new Set(["nouvelle", "en_attente", "a_traiter_main", "en_cours", "traitee", "absente_odoo", "incertaine", "erreur"]);
 const IGNORABLES = new Set(["en_attente", "nouvelle", "a_traiter_main", "erreur", "incertaine", "absente_odoo"]);
 const REPRENABLES = new Set(["en_attente", "a_traiter_main", "ignoree", "erreur", "incertaine"]);
+// décision simulée (mode simulation) pour une commande en attente sur le portail
+const DECISIONS = {
+  serait_traitee: ["Serait traitée", "#d1fae5", "#065f46"],
+  en_attente: ["Resterait en attente", "#fef3c7", "#92400e"],
+  a_traiter_main: ["À traiter à la main", "#ffedd5", "#9a3412"],
+};
 const MODES = [["arret", "Arrêt"], ["simulation", "Simulation (rien n'est fait)"], ["auto", "Automatique"]];
 const card = { background: "white", borderRadius: 14, padding: "16px 20px", border: "1px solid #e8ecf0" };
 const lbl = { fontSize: 11, fontWeight: 700, color: "#475569", display: "block", marginBottom: 3 };
@@ -144,6 +150,37 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
         </div>
       </div>
 
+      {d?.apercu && d.mode !== "auto" && (
+        <div style={card}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6, flexWrap: "wrap" }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Non traitées sur le portail ({d.apercu.length})</div>
+            <span style={{ fontSize: 11, color: "#64748b" }}>Simulation du {dt(d.at)} : ce que ferait le mode automatique. Rien n'a été envoyé.</span>
+            <div style={{ flex: 1 }} />
+            <a href={`${etat.portail}/new-orders`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: "#2563eb" }}>Ouvrir le portail ↗</a>
+          </div>
+          {!d.apercu.length ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 10 }}>Aucune commande en attente sur le portail.</div> : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead><tr style={{ color: "#64748b", textAlign: "left" }}>
+                  <th style={{ padding: 5 }}>Commande</th><th>Pharmacie</th><th>Produits</th><th>En automatique</th>
+                </tr></thead>
+                <tbody>{d.apercu.slice().sort((a, b) => String(b.date).localeCompare(String(a.date))).map(c => {
+                  const [t, bg, fg] = DECISIONS[c.decision] || [c.decision, "#f1f5f9", "#475569"];
+                  return (
+                    <tr key={c.ref} style={{ borderTop: "1px solid #f1f5f9", verticalAlign: "top" }}>
+                      <td style={{ padding: 5 }}>{dt(c.date)}<div style={{ fontSize: 10, color: "#64748b", fontFamily: "monospace" }}>{c.ref}{c.par === "SANOFI_EMPLOYEE" ? " · saisie Sanofi" : ""}</div></td>
+                      <td>{c.pharmacien}<div style={{ fontSize: 10, color: "#64748b" }}>CIP {c.cip}{c.pharmacieOdoo && c.pharmacieOdoo.toUpperCase() !== String(c.pharmacien).toUpperCase() ? ` · Odoo : ${c.pharmacieOdoo}` : ""}</div></td>
+                      <td>{(c.lignes || []).map((l, i) => <div key={i}>{l.qte} × {l.nom}</div>)}</td>
+                      <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
+                        {c.motif && <div style={{ fontSize: 10, color: "#9a3412", maxWidth: 320 }}>{c.motif}</div>}</td>
+                    </tr>);
+                })}</tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
           <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Commandes</div>
@@ -153,7 +190,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
           <div style={{ flex: 1 }} />
           <button onClick={charger} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "4px 10px" }}>↻ Actualiser</button>
         </div>
-        {!visibles.length ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 10 }}>{cmds.length ? "Rien à suivre." : "Aucune commande suivie (en simulation, rien n'est enregistré : voir le détail du dernier passage)."}</div> : (
+        {!visibles.length ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 10 }}>{cmds.length ? "Rien à suivre." : "Aucune commande suivie : le suivi commence en mode automatique (en simulation, voir « Non traitées sur le portail » ci-dessus)."}</div> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ color: "#64748b", textAlign: "left" }}>
