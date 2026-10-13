@@ -5,6 +5,7 @@ import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendatio
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
 import WheelchairOrder from "./components/WheelchairOrder";
+import LabJustifOrder from "./components/LabJustifOrder";
 import { allocate } from "./wheelchair-logic.js";
 import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
@@ -36,6 +37,7 @@ const SECTION_META = {
   peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
   fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
   transfert:{ label: "Fauteuil de transfert", subtitle: "Largeur d'assise → fauteuil de transfert Invacare (43 ou 45,5 cm)", color: "#1e3a5f", accent: "#3b82f6", icon: "🪑", columns: [], specialView: "transferChair" },
+  justificatif:{ label: "Commande labo sur justificatif", subtitle: "Takeda, Pfizer… : commande transmise au laboratoire avec votre justificatif (ordonnance anonymisée)", color: "#2e1065", accent: "#7c3aed", icon: "📑", columns: [], specialView: "labJustif" },
 };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
@@ -215,7 +217,7 @@ export default function App() {
     try {
       const p = new URLSearchParams(window.location.search);
       const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
-      if (outil && ["fauteuil", "transfert", "saisie", "peremption", "groupees"].includes(outil)) return outil;
+      if (outil && ["fauteuil", "transfert", "saisie", "peremption", "groupees", "justificatif"].includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
     } catch {}
     return getDisplayConfig().defaultTab || "expert";
@@ -1217,6 +1219,7 @@ export default function App() {
     sendingRef.current = true;
     let sent = false;
     try { sent = await sendOrder(); }
+    catch (e) { console.error("[envoi commande]", e); setSendStatus("error"); }   // une exception ne laisse jamais le bouton bloqué sur « Envoi en cours »
     finally { if (sent) setTimeout(() => { sendingRef.current = false; }, 3500); else sendingRef.current = false; }
   };
   const sendOrder = async () => {
@@ -1590,8 +1593,8 @@ export default function App() {
           )}
         </div>
         {[
-          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "ulabs", "groupees"].includes(k)) },
-          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "transfert", "ulabs", "groupees"].includes(k)) },
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
+          { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
           <div key={group.title} style={{ marginBottom: 4 }}>
             <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
@@ -1890,6 +1893,12 @@ export default function App() {
           )}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "transferChair" && (
             <WheelchairOrder key="transfert" lineKey="transfert" onAddToCart={addItemToCart} />
+          )}
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "labJustif" && (
+            <LabJustifOrder key={actingFor ? `a${actingFor.odoo_id}` : `p${pharmacyCip}`}
+              identite={actingFor ? `a${actingFor.odoo_id}` : `p${pharmacyCip}`}
+              auth={actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken }}
+              onAddToCart={addItemToCart} onOrdered={fetchMyOrders} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "shortExpiry" && (

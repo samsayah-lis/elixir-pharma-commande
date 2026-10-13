@@ -53,10 +53,8 @@ export default function JustifCartBlock({ rule, info = {}, onChange, auth }) {
             <div key={f.id || f.key || i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 4 }}>
               <span>{f.uploading ? "⏳" : "📎"}</span>
               <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
-              {!f.uploading && (
-                <button onClick={() => onChange(prev => ({ rx: (prev.rx || []).filter(x => x !== f && x.id !== f.id) }))} title="Retirer"
-                  style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>✕</button>
-              )}
+              <button onClick={() => onChange(prev => ({ rx: (prev.rx || []).filter(x => (f.key ? x.key !== f.key : x.id !== f.id)) }))} title="Retirer"
+                style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer", fontSize: 13 }}>✕</button>
             </div>
           ))}
           {rx.length < 3 && (

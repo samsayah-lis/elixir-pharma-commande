@@ -121,6 +121,26 @@ export async function submitJustif(orderId, lignes, auth = {}) {
   return j;
 }
 
+// Appel pharmacie (ou admin en saisie) au module ; un jeton expiré est renouvelé une fois
+async function appel(body, auth = {}) {
+  const envoi = async (token) => fetch("/.netlify/functions/lab-justif", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: JSON.stringify({ ...body, ...(auth.odooId ? { odoo_id: auth.odooId } : {}) }),
+  });
+  let res = await envoi(await jeton(auth));
+  if (res.status === 401 && !auth.odooId) res = await envoi(await freshPharmacyToken());
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw Object.assign(new Error(j.error || `HTTP ${res.status}`), { status: res.status, code: j.code || null, sansFiche: !!j.sansFiche, items: j.items || null, cip: j.cip || null });
+  return j;
+}
+// Page « Commande labo sur justificatif » : commande + demandes au labo en un seul appel.
+// orderId fourni par le site (13 chiffres) : un renvoi après coupure ne crée jamais une 2e commande.
+// Erreur : { status (0 = réseau), code (« contenu », « numero », « stock »), sansFiche, items (contenu déjà enregistré) }
+export const commanderJustif = (orderId, lignes, auth) => appel({ action: "commander", order_id: String(orderId), lignes }, auth)
+  .catch(e => { if (e.status === undefined) e.status = 0; throw e; });
+export const mesDemandesJustif = (auth) => appel({ action: "mes_demandes" }, auth).then(j => j.demandes || []);
+
 export const JUSTIF_STATUTS = {
   en_attente: "Enregistrée — transmission au laboratoire par Elixir",
   a_envoyer: "Transmission au laboratoire en cours",
