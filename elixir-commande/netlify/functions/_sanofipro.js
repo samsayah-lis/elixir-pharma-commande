@@ -317,7 +317,10 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
   const journal = [];
   const stats = { vues: 0, traitees: 0, attente: 0, main: 0, incertaines: 0, simulees: 0 };
   if (cfg.mode === "arret") return { mode: cfg.mode, journal: ["Traitement automatique arrêté (réglage)"], stats };
-  const auto = cfg.mode === "auto";
+  // SUSPENDU le 13/10/2026 : les 2 premiers « Traiter » automatiques (07:38) n'ont créé AUCUNE commande
+  // PharmaML — la corrélation observée venait de la saisie faite par la personne qui traite, pas du portail.
+  // Le mode « auto » se comporte comme une simulation tant que l'envoi PharmaML n'est pas automatisé.
+  const auto = false;
   const anomalies = [];       // statuts inconnus, références illisibles → alerte technique
   // simulation : décision qui serait prise pour chaque commande en attente sur le portail (affichée dans l'admin)
   const apercu = [];
