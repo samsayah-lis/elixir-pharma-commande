@@ -4,12 +4,16 @@
 //   config_save { config }        → réglages (mode arret | simulation | auto, seuils, adresses d'alerte)
 //   run                           → passage immédiat (fonction d'arrière-plan)
 //   test_pharmaml                 → essai d'envoi PharmaML SANS commande (liste vide) depuis Netlify
+//   diag_pml { pPass }            → diagnostic du refus PharmaML (lecture seule + essai à liste vide) : identifiants
+//                                   comparés à ceux de l'agent local par une empreinte courte (jamais renvoyés),
+//                                   réponse brute, IP de sortie Netlify, journal des envois du site (pml:*)
 //   ignorer { ref }               → plus de traitement ni d'alerte automatique pour cette commande
 //   reprendre { ref, confirme }   → réexamen au prochain passage, même ancienne ; après une issue incertaine
 //                                   (même ignorée depuis) : confirme requis ; jamais une commande déjà traitée
 // ignorer / reprendre prennent le verrou des passages (sp:lock) : un passage en cours ne peut pas
 // écraser la décision (409 « réessayez » si un passage tourne).
 // Logique et règles : _sanofipro.js
+import { createHash } from "node:crypto";
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { kvGet, kvSet, kvGetBrut, kvSetSi, kvList, avecVerrou } from "./_lab-justif.js";
@@ -46,6 +50,39 @@ export const handler = async (event) => {
     if (b.action === "test_pharmaml") {
       const r = await new PharmaML().essai();
       return json(200, { http: r.status, ok: r.ok, refus: r.refus, message: r.message, commandes: r.commandes });
+    }
+    if (b.action === "diag_pml") {
+      const url = (process.env.PHARMAML_URL || "https://pharmaml.elixirpharma.fr").replace(/\/$/, "");
+      const user = process.env.PHARMAML_USER || "admin";
+      const pass = process.env.PHARMAML_PASS || "";
+      // empreinte courte (4 caractères hexa) : suffit à comparer, ne permet pas de retrouver le mot de passe
+      const e4 = (v) => createHash("sha256").update(String(v)).digest("hex").slice(0, 4);
+      const masque = (t) => { let x = String(t || ""); for (const v of [pass, encodeURIComponent(pass)]) if (v) x = x.split(v).join("***"); return x; };
+      const texte = (t) => masque(t).replace(/<(style|script)[\s\S]*?<\/\1>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 600);
+      const essai = async (avecIdentifiants) => {
+        const t0 = Date.now();
+        try {
+          const r = await fetch(`${url}/commandes.php${avecIdentifiants ? `?U=${encodeURIComponent(user)}&P=${encodeURIComponent(pass)}` : ""}`, { method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json" }, body: "[]", redirect: "manual", signal: AbortSignal.timeout(20000) });
+          const corps = await r.text();
+          const entetes = {}; for (const k of ["server", "content-type", "x-powered-by", "www-authenticate", "location", "set-cookie", "x-frame-options", "via"]) if (r.headers.get(k)) entetes[k] = masque(r.headers.get(k)).slice(0, 200);
+          return { http: r.status, ms: Date.now() - t0, entetes, corps: texte(corps) };
+        } catch (e) { return { erreur: masque(e.message || e).slice(0, 200), ms: Date.now() - t0 }; }
+      };
+      const [avec, sans, ip] = await Promise.all([essai(true), essai(false),
+        fetch("https://api.ipify.org?format=json", { signal: AbortSignal.timeout(5000) }).then(r => r.json()).then(j => j.ip).catch(() => null)]);
+      const journal = (await kvList("pml:", 2000).catch(() => [])).map(r => r.value).filter(Boolean);
+      const groupes = {};
+      for (const e of journal) { const k = `${e.via || "?"} · ${e.outcome || "?"} · HTTP ${e.http ?? "-"}`; const g = (groupes[k] ||= { n: 0, premier: e.ts, dernier: e.ts });
+        g.n++; if (String(e.ts) < String(g.premier)) g.premier = e.ts; if (String(e.ts) > String(g.dernier)) g.dernier = e.ts; }
+      return json(200, {
+        identifiants: { url, urlDefinie: !!process.env.PHARMAML_URL, user, userDefini: !!process.env.PHARMAML_USER, passDefini: !!pass,
+          passEmpreinte: b.pPass ? (e4(pass) === String(b.pPass) ? "identique" : e4(pass.trim()) === String(b.pPass) ? "identique sans les espaces" : "différent") : null,
+          passEspaces: pass !== pass.trim(), passGuillemets: /^(["']).*\1$/.test(pass) },
+        ipNetlify: ip, essaiAvecIdentifiants: avec, essaiSansIdentifiants: sans,
+        journal: { total: journal.length, groupes, derniers: journal.slice(0, 15).map(e => ({ ts: e.ts, via: e.via, orderId: e.orderId, outcome: e.outcome, http: e.http, ms: e.ms,
+          detail: texte(e.erreur || (typeof e.brut === "string" ? e.brut : "") || JSON.stringify(e.pharmaml || "")).slice(0, 200) })) },
+      });
     }
     if (b.action === "run") {
       if (!process.env.CRON_SECRET) return json(200, { lance: false });
