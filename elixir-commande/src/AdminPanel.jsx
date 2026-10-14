@@ -67,6 +67,19 @@ const overrideKey = (sectionKey, p) => `${sectionKey}::${p.cip || p.name}`;
 // Ligne de commande réglée : envoyée à PharmaML (synced_at) ou traitée sans envoi (handled_at :
 // saisie à la main dans Odoo, annulée, livrée autrement…)
 const lineDone = (it) => !!(it?.synced_at || it?.handled_at);
+// JSON à clés triées (la base renvoie les objets dans un autre ordre de clés)
+const stable = (v) => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, kk) => { o[kk] = x[kk]; return o; }, {}) : x);
+// Écart entre la configuration de ce navigateur et la version en ligne (null : identiques)
+function comparerConfig(loc, srv) {
+  const pl = Array.isArray(loc.promos) ? loc.promos : [], ps = Array.isArray(srv.promos) ? srv.promos : [];
+  const parId = new Map(ps.map(p => [p.id, p]));
+  const seulementIci = pl.filter(p => !parId.has(p.id)).map(p => `${p.name}${p.active ? " (actif)" : ""}`);
+  const seulementEnLigne = ps.filter(p => !pl.some(x => x.id === p.id)).map(p => `${p.name}${p.active ? " (actif)" : ""}`);
+  const modifies = pl.filter(p => parId.has(p.id) && stable(p) !== stable(parId.get(p.id))).map(p => p.name);
+  const dl = loc.display || {}, ds = srv.display || {};
+  const affichage = [...new Set([...Object.keys(dl), ...Object.keys(ds)])].filter(k => stable(dl[k]) !== stable(ds[k]));
+  return seulementIci.length || seulementEnLigne.length || modifies.length || affichage.length ? { seulementIci, seulementEnLigne, modifies, affichage } : null;
+}
 
 export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
@@ -153,15 +166,44 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const hiddenTabs = new Set(displayConfig.hiddenTabs || []);
   const defaultTab = displayConfig.defaultTab || tabOrder.find(k => !hiddenTabs.has(k)) || "expert";
 
+  // ── Configuration publiée (display_config, admin_promos) ──────────────
+  // La version en ligne (celle que voient les pharmacies) fait foi : jamais d'écrasement silencieux.
+  // Chaque écriture porte la version lue (updated_at) : si un autre poste a modifié entre-temps, elle est
+  // refusée et un bandeau montre l'écart (avant : chaque ouverture de l'admin repoussait sa copie locale).
+  const configBase = useRef({});      // clé → updated_at de la version en ligne connue
+  const fileConfig = useRef({});      // clé → écriture en cours (les écritures d'une clé partent en série)
+  const configLocale = useRef({}); configLocale.current = { promos, displayConfig };
+  const [configEcart, setConfigEcart] = useState(null);
+  const ecartRef = useRef(null); ecartRef.current = configEcart;
+  const publier = (key, value, { forcer = false } = {}) => {
+    const p = (fileConfig.current[key] || Promise.resolve()).then(async () => {
+      // tant qu'un écart avec la version en ligne n'est pas tranché, rien n'est publié (sinon une copie
+      // ancienne de ce navigateur effacerait les changements faits ailleurs)
+      if (!forcer && ecartRef.current && !ecartRef.current.erreurSeule) return { ok: false, bloque: true };
+      const base = configBase.current[key];
+      const res = await adminFetch("/.netlify/functions/config-get", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key, value, ...(base !== undefined ? { base } : {}) }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.success) { configBase.current[key] = j.updated_at ?? null; return { ok: true }; }
+      if (res.status === 409) return { ok: false, conflit: true };
+      return { ok: false, erreur: j.error || `HTTP ${res.status}` };
+    }).catch(e => ({ ok: false, erreur: e.message }));
+    fileConfig.current[key] = p;
+    return p;
+  };
+  const signalerPublication = (r) => {
+    if (r.ok) { if (ecartRef.current?.erreurSeule) setConfigEcart(null); return; }
+    if (r.bloque) { flash("⚠ Non publié : tranchez d'abord la différence signalée en haut de l'admin"); return; }
+    if (r.conflit) { flash("⚠ Non publié : la configuration a été modifiée depuis un autre poste (bandeau en haut)"); chargerConfigServeur(); return; }
+    setConfigEcart({ erreurSeule: true, erreur: r.erreur });
+  };
   const saveDisplayConfig = (newConfig) => {
     const merged = { ...displayConfig, ...newConfig };
     setDisplayConfig(merged);
     localStorage.setItem("display_config", JSON.stringify(merged));
-    // Sync vers Supabase (fire-and-forget)
-    adminFetch("/.netlify/functions/config-get", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "display_config", value: merged }),
-    }).catch(() => {});
+    publier("display_config", merged).then(signalerPublication);
   };
 
   const fetchProducts = async () => {
@@ -311,23 +353,51 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     }
   }, [editForm.pv, editForm.pct, editForm.remise_eur]);
 
-  // ── Sync config locale → Supabase (pour que les clients voient la même chose) ──
-  const syncConfigToSupabase = async () => {
+  // ── Version en ligne relue (ouverture de l'admin, bouton de l'onglet Affichage) : écart montré, jamais écrasé ──
+  const chargerConfigServeur = async () => {
     try {
-      const dc = displayConfig;
-      const pm = promos;
-      await Promise.all([
-        adminFetch("/.netlify/functions/config-get", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key: "display_config", value: dc }),
-        }),
-        adminFetch("/.netlify/functions/config-get", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ key: "admin_promos", value: pm }),
-        }),
-      ]);
-      console.log("[config] ✓ Config synchronisée vers Supabase");
-    } catch (e) { console.warn("[config] Sync error:", e.message); }
+      const lire = async (k) => {
+        const r = await fetch(`/.netlify/functions/config-get?key=${k}&_=${Date.now()}`, { cache: "no-store" });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        return j;
+      };
+      const [d, p] = await Promise.all([lire("display_config"), lire("admin_promos")]);
+      configBase.current = { display_config: d.updated_at ?? null, admin_promos: p.updated_at ?? null };
+      const srv = { promos: Array.isArray(p.value) ? p.value : [], display: d.value && typeof d.value === "object" ? d.value : {} };
+      const ecart = comparerConfig({ promos: configLocale.current.promos, display: configLocale.current.displayConfig }, srv);
+      setConfigEcart(ecart ? { ...ecart, srv } : null);
+      return ecart;
+    } catch (e) { setConfigEcart({ erreurSeule: true, erreur: `version en ligne illisible (${e.message})` }); return undefined; }
+  };
+  const syncConfigToSupabase = async () => {
+    const ecart = await chargerConfigServeur();
+    if (ecart === null) flash("✓ À jour : les pharmacies voient la même configuration que ce navigateur");
+    else if (ecart) flash("Différences avec la version en ligne : voir le bandeau en haut");
+  };
+  // publier la version de ce navigateur à la place de la version en ligne (choix explicite dans le bandeau)
+  const publierMaVersion = async () => {
+    const e = configEcart || {};
+    const lignes = [
+      e.seulementIci?.length ? `Menus promo ajoutés pour les pharmacies : ${e.seulementIci.join(", ")}` : "",
+      e.seulementEnLigne?.length ? `Menus promo qui DISPARAÎTRONT : ${e.seulementEnLigne.join(", ")}` : "",
+      e.modifies?.length ? `Menus promo remplacés par votre version : ${e.modifies.join(", ")}` : "",
+      e.affichage?.length ? `Réglages d'affichage remplacés : ${e.affichage.join(", ")}` : "",
+    ].filter(Boolean).join("\n");
+    if (!window.confirm(`Remplacer la version que voient les pharmacies par celle de ce navigateur ?\n\n${lignes}`)) return;
+    const { promos: pm, displayConfig: dc } = configLocale.current;
+    const [r1, r2] = await Promise.all([publier("admin_promos", pm, { forcer: true }), publier("display_config", dc, { forcer: true })]);
+    if (r1.ok && r2.ok) { setConfigEcart(null); flash("✓ Publié : les pharmacies voient votre version (rechargement de leur page)"); return; }
+    const err = [r1, r2].find(r => !r.ok);
+    if (err.conflit) { flash("⚠ Modifiée entre-temps depuis un autre poste : écart mis à jour"); chargerConfigServeur(); }
+    else setConfigEcart(c => ({ ...(c || {}), erreurPublication: err.erreur || "erreur inconnue" }));
+  };
+  const reprendreVersionEnLigne = () => {
+    const srv = configEcart?.srv; if (!srv) return;
+    if ((configEcart.seulementIci || []).length && !window.confirm(`Abandonner ce qui n'existe que dans ce navigateur (${configEcart.seulementIci.join(", ")}) et reprendre la version en ligne ?`)) return;
+    setPromos(srv.promos); localStorage.setItem("admin_promos", JSON.stringify(srv.promos));
+    setDisplayConfig(srv.display); localStorage.setItem("display_config", JSON.stringify(srv.display));
+    setConfigEcart(null); flash("✓ Version en ligne reprise");
   };
 
   const handleLogin = async () => {
@@ -342,10 +412,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
       if (data.success && data.token) {
         localStorage.setItem("admin_token", data.token);
         if (data.refresh_token) localStorage.setItem("admin_refresh_token", data.refresh_token);
-        setAuthed(true);
+        setAuthed(true);   // l'effet sur authed relit aussi la configuration en ligne
         refreshOrders();
         fetchProducts();
-        syncConfigToSupabase();
       } else {
         setPwdError(data.error || "Identifiants incorrects");
       }
@@ -450,11 +519,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const savePromos = (updated) => {
     setPromos(updated);
     localStorage.setItem("admin_promos", JSON.stringify(updated));
-    // Sync vers Supabase (fire-and-forget)
-    adminFetch("/.netlify/functions/config-get", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ key: "admin_promos", value: updated }),
-    }).catch(() => {});
+    publier("admin_promos", updated).then(signalerPublication);
   };
   const createPromo = () => {
     if (!promoForm.name.trim()) return alert("Nom requis");
@@ -677,7 +742,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
   // Charger les données au montage si déjà authentifié
   useEffect(() => {
-    if (authed) { fetchProducts(); refreshOrders(); syncConfigToSupabase(); }
+    // configuration : version en ligne relue et comparée (plus jamais repoussée automatiquement, ce qui
+    // effaçait les menus promo créés depuis un autre poste)
+    if (authed) { fetchProducts(); refreshOrders(); chargerConfigServeur(); }
   }, [authed]);
 
   // ── Notifications push : polling 30s + Notification API ──────────────
@@ -974,6 +1041,28 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           </button>
         </div>
       </div>
+
+      {/* ── Configuration (menus promo, affichage) différente de celle que voient les pharmacies ── */}
+      {configEcart && (
+        <div role="alert" style={{background: configEcart.erreurSeule ? "#fef2f2" : "#fffbeb", borderBottom:`1px solid ${configEcart.erreurSeule ? "#fecaca" : "#fde68a"}`, padding:"10px 24px", fontSize:12, color:"#78350f", display:"flex", gap:16, alignItems:"center", flexWrap:"wrap", flexShrink:0}}>
+          <div style={{flex:"1 1 420px", lineHeight:1.5}}>
+            {configEcart.erreurSeule ? (
+              <><b style={{color:"#991b1b"}}>⚠ Dernière modification NON publiée</b> : les pharmacies ne la voient pas ({configEcart.erreur}).</>
+            ) : (<>
+              <b>⚠ Ce navigateur n'a pas la même configuration que celle que voient les pharmacies.</b> Rien n'est publié tant que vous n'avez pas choisi.
+              {configEcart.seulementIci?.length > 0 && <div>Menus promo présents seulement ici : <b>{configEcart.seulementIci.join(", ")}</b></div>}
+              {configEcart.seulementEnLigne?.length > 0 && <div>Menus promo en ligne absents d'ici : <b>{configEcart.seulementEnLigne.join(", ")}</b></div>}
+              {configEcart.modifies?.length > 0 && <div>Menus promo différents : <b>{configEcart.modifies.join(", ")}</b></div>}
+              {configEcart.affichage?.length > 0 && <div>Réglages d'affichage différents : {configEcart.affichage.join(", ")}</div>}
+              {configEcart.erreurPublication && <div style={{color:"#991b1b"}}>Publication impossible : {configEcart.erreurPublication}</div>}
+            </>)}
+          </div>
+          <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+            <button onClick={publierMaVersion} style={{background:"#b45309",color:"white",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Publier la version de ce navigateur</button>
+            {!configEcart.erreurSeule && <button onClick={reprendreVersionEnLigne} style={{background:"white",color:"#78350f",border:"1px solid #fcd34d",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Reprendre la version en ligne</button>}
+          </div>
+        </div>
+      )}
 
       {/* ── Body : sidebar + content ── */}
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>

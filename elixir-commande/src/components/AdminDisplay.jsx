@@ -62,9 +62,9 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
             <div style={{background:"#eff6ff",borderRadius:12,padding:"12px 16px",marginBottom:20,border:"1px solid #bfdbfe",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div>
                 <div style={{fontSize:12,fontWeight:700,color:"#1e40af"}}>📡 Synchronisation config → clients</div>
-                <div style={{fontSize:11,color:"#3b82f6",marginTop:2}}>Pousse votre config (onglets, promos, sections) vers Supabase pour que tous les clients la voient.</div>
+                <div style={{fontSize:11,color:"#3b82f6",marginTop:2}}>Compare votre config (onglets, promos, sections) à celle que voient les pharmacies ; en cas d'écart, un bandeau en haut permet de publier la vôtre.</div>
               </div>
-              <button onClick={async () => { await syncConfigToSupabase(); flash("✓ Config synchronisée vers Supabase"); }}
+              <button onClick={() => syncConfigToSupabase()}
                 style={{background:"#2563eb",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                 Synchroniser maintenant
               </button>
