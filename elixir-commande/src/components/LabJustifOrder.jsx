@@ -156,8 +156,13 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered 
         <div style={{ fontSize: 18, fontWeight: 800 }}>📑 Commande laboratoire sur justificatif</div>
         <div style={{ fontSize: 13, opacity: 0.9, marginTop: 6, lineHeight: 1.55 }}>
           Certains laboratoires ne livrent Elixir que sur justificatif d'une commande de pharmacie, pour un patient en France.
-          Choisissez vos produits, cochez l'attestation et joignez, si vous le souhaitez, l'ordonnance <b>anonymisée</b> :
-          Elixir transmet votre commande au laboratoire comme justificatif et vous livre dès réception.
+          Le justificatif, c'est votre commande accompagnée de l'<b>ordonnance anonymisée</b> du patient.
+          Choisissez vos produits, cochez l'attestation et joignez l'ordonnance anonymisée (photo ou PDF) :
+          Elixir la transmet au laboratoire avec votre commande et vous livre dès réception.
+        </div>
+        <div style={{ fontSize: 12, marginTop: 8, background: "rgba(255,255,255,0.14)", borderRadius: 8, padding: "6px 10px", lineHeight: 1.5 }}>
+          🔒 <b>Ordonnance anonymisée</b> : masquez le nom, le prénom, la date de naissance et le n° de sécurité sociale du patient
+          (au feutre avant la photo, ou en cachant la zone sur le PDF). Gardez visibles le médicament, la posologie, la date et le prescripteur.
         </div>
       </div>
 

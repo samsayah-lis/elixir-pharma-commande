@@ -28,9 +28,9 @@ export default function JustifCartBlock({ rule, info = {}, onChange, auth }) {
 
   return (
     <div style={{ marginTop: 8, background: "#f5f3ff", border: "1px solid #ddd6fe", borderRadius: 8, padding: "8px 10px" }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: "#5b21b6" }}>📑 Sur commande laboratoire ({rule.labNom}) — justificatif</div>
+      <div style={{ fontSize: 11, fontWeight: 800, color: "#5b21b6" }}>📑 Sur commande laboratoire ({rule.labNom}) — justificatif : ordonnance anonymisée</div>
       <div style={{ fontSize: 10.5, color: "#6d28d9", marginTop: 2, lineHeight: 1.4 }}>
-        Elixir commande ce produit au laboratoire avec votre commande comme justificatif{rule.delai ? ` — ${rule.delai}` : ""}.
+        Elixir commande ce produit au laboratoire avec votre commande et l'ordonnance anonymisée comme justificatif{rule.delai ? ` — ${rule.delai}` : ""}.
         {rule.maxCommande ? ` ${rule.maxCommande} au plus par commande.` : ""}
       </div>
       <label style={box}>
@@ -48,7 +48,7 @@ export default function JustifCartBlock({ rule, info = {}, onChange, auth }) {
           <div style={{ fontSize: 11, color: "#1e293b" }}>
             Ordonnance anonymisée {rule.ordonnance === "obligatoire" ? <b style={{ color: "#b91c1c" }}>* obligatoire</b> : <span style={{ color: "#64748b" }}>(facultative, appuie la demande)</span>}
           </div>
-          <div style={{ fontSize: 10, color: "#7c3aed", marginTop: 1 }}>Masquez nom, prénom, date de naissance et n° de sécurité sociale du patient avant l'envoi.</div>
+          <div style={{ fontSize: 10, color: "#7c3aed", marginTop: 1 }}>Anonymisée = nom, prénom, date de naissance et n° de sécurité sociale du patient masqués ; médicament, posologie, date et prescripteur visibles.</div>
           {rx.map((f, i) => (
             <div key={f.id || f.key || i} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, marginTop: 4 }}>
               <span>{f.uploading ? "⏳" : "📎"}</span>
@@ -59,7 +59,7 @@ export default function JustifCartBlock({ rule, info = {}, onChange, auth }) {
           ))}
           {rx.length < 3 && (
             <button onClick={() => fileRef.current?.click()} style={{ marginTop: 5, background: "white", border: "1px dashed #a78bfa", color: "#5b21b6",
-              borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>＋ Joindre l'ordonnance (photo ou PDF)</button>
+              borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>＋ Joindre l'ordonnance anonymisée (photo ou PDF)</button>
           )}
           <input ref={fileRef} type="file" accept="image/jpeg,image/png,application/pdf" capture={undefined} onChange={onFile} style={{ display: "none" }} />
           {rx.some(f => !f.uploading) && (
