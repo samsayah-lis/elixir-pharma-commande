@@ -13,6 +13,7 @@ import { verifyAdmin, verifyTokenAsync } from "./auth.js";
 import { rateLimit } from "./rate-limit.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 import {
+  kvGetBrut, kvSetSi, kvCreate, frise, etatCommandeDemande, SUIVI_ETAPES, SUIVI_MANUELLES, MAIL_DE, esc,
   sb, kvGet, kvSet, kvList, lireConfig, ecrireConfig, indexProduits, fichePharmacie, construireMail,
   enregistrerOrdonnance, RX_MIMES, RX_MAX_B64, envoyerTest, testPortail, CONFIG_DEFAUT,
 } from "./_lab-justif.js";
@@ -29,6 +30,41 @@ export async function lancerEnvois(event, { detecter = false } = {}) {
   return !!r && (r.ok || r.status === 202);
 }
 
+// Suivi (kv lj:suivi:<id>) et commandes du site (lignes de chaque demande envoyées à PharmaML ?) pour des demandes
+async function suivisEtCommandes(reqs) {
+  const suivis = new Map((await kvList("lj:suivi:", 5000).catch(() => [])).map(r => [r.key.slice("lj:suivi:".length), r.value]));
+  const ids = [...new Set(reqs.filter(r => r.source === "site" && /^\d+$/.test(String(r.orderId || ""))).map(r => String(r.orderId)))];
+  const orders = new Map();
+  for (let i = 0; i < ids.length; i += 100) {
+    const rows = await sb(`elixir_orders?id=in.(${ids.slice(i, i + 100).join(",")})&select=id,processed,items`).catch(() => []);
+    for (const o of rows || []) orders.set(String(o.id), o);
+  }
+  // état propre à chaque demande (ses lignes seulement)
+  const commandes = new Map(reqs.map(r => [r.id, r.source === "site" ? etatCommandeDemande(r, orders.get(String(r.orderId))) : null]));
+  return { suivis, commandes };
+}
+// champs de suivi d'une demande pour la liste admin
+const enrichir = (r, suivis, commandes) => ({ suivi: frise(r, suivis.get(r.id), commandes.get(r.id)), suiviBrut: suivis.get(r.id)?.etapes || [],
+  commande: commandes.get(r.id) || null });
+// e-mail à la pharmacie quand Elixir met à jour le suivi (depuis pharmacien@, comme les autres e-mails)
+async function mailSuivi(req, etape, commentaire, datePrevue) {
+  const to = String(req.email || "").trim().toLowerCase();
+  if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(to)) throw new Error("pas d'adresse e-mail pour cette pharmacie");
+  const produits = (req.lignes || []).map(l => `${l.qte} × ${l.produit}`).join(", ");
+  const dateFr = (d) => new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric", timeZone: "Europe/Paris" });
+  const corps = `<div style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:12pt;color:#000">
+<p>Bonjour,</p>
+<p>Votre commande sur justificatif laboratoire n° ${esc(req.orderId || req.reference)} (${esc(produits)}) : <b>${esc(SUIVI_ETAPES[etape])}</b>${datePrevue ? `, livraison prévue le ${esc(dateFr(datePrevue))}` : ""}.</p>
+${commentaire ? `<p>${esc(commentaire).replace(/\n/g, "<br>")}</p>` : ""}
+<p>Suivi de vos demandes : <a href="https://elixir-commande.expepharma.com/?outil=justificatif">site de commande Elixir, « Commande labo sur justificatif »</a>.</p>
+<p>Cordialement,<br><b>Elixir Pharma</b><br>01 86 04 33 02</p></div>`;
+  const id = await odoo("mail.mail", "create", [{ subject: `Elixir Pharma — votre commande n° ${req.orderId || req.reference} : ${SUIVI_ETAPES[etape]}`, body_html: corps,
+    email_from: MAIL_DE, email_to: to, auto_delete: false }]);
+  await odoo("mail.mail", "send", [[id]]);
+  const [m] = await odoo("mail.mail", "read", [[id], ["state", "failure_reason"]]);
+  if (m?.state !== "sent") throw new Error(`e-mail non parti : ${m?.failure_reason || m?.state || "état inconnu"}`);
+  return to;
+}
 // prix net du site : prix remisé (liste n°5) s'il existe, sinon prix catalogue (comme la recherche et la saisie)
 const prixNet = (r) => { const d = Number(r?.discounted_price), l = Number(r?.list_price);
   const v = Number.isFinite(d) && d > 0 ? d : Number.isFinite(l) && l > 0 ? l : null; return v != null ? Math.round(v * 100) / 100 : null; };
@@ -36,7 +72,7 @@ const quantites = (items) => { const m = {}; for (const i of items || []) if (i?
 const memeContenu = (a, b) => { const x = quantites(a), y = quantites(b); return Object.keys(x).length === Object.keys(y).length && Object.keys(x).every(k => x[k] === y[k]); };
 // erreur de saisie ou d'état (400), distincte d'une panne (500)
 const bad = (m) => Object.assign(new Error(m), { status: 400 });
-const ADMIN_ACTIONS = new Set(["config_get", "config_save", "list", "send", "ignore", "preview", "rx_get", "test_mail", "test_portail", "run", "product_lookup"]);
+const ADMIN_ACTIONS = new Set(["config_get", "config_save", "list", "send", "ignore", "preview", "rx_get", "test_mail", "test_portail", "run", "product_lookup", "suivi"]);
 const sansRx = (r) => ({ ...r, rx: (r.rx || []).map(x => ({ id: x.id, name: x.name })) });
 
 // Qui commande : pharmacie connectée (jeton vérifié), ou admin en saisie pour une fiche Odoo
@@ -221,7 +257,9 @@ export const handler = async (event) => {
       const labs = (await lireConfig()).labs;
       const reqs = (await kvList("lj:req:", 2000)).map(r => r.value).filter(r => String(r.pharmacie?.odooId || "") === String(qui.odooId) && r.source === "site");
       reqs.sort((a, c) => String(c.creeLe || c.dateCommande).localeCompare(String(a.creeLe || a.dateCommande)));
+      const { suivis, commandes } = await suivisEtCommandes(reqs.slice(0, 100));
       return json(200, { demandes: reqs.slice(0, 100).map(r => ({ id: r.id, orderId: r.orderId, labNom: labs[r.lab]?.nom || r.lab, date: r.dateCommande, statut: r.statut,
+        suivi: frise(r, suivis.get(r.id), commandes.get(r.id)),
         envoyeLe: r.envoyeLe || null, lignes: (r.lignes || []).map(l => ({ produit: l.produit, qte: l.qte })), rx: (r.rx || []).length,
         aCompleter: r.statut === "a_verifier" && /ordonnance/i.test(r.motif || "") ? "ordonnance" : null })) });
     }
@@ -300,7 +338,30 @@ async function admin(b, event, user) {
     case "list": {
       const rows = (await kvList("lj:req:")).map(r => sansRx(r.value));
       rows.sort((a, c) => String(c.dateCommande).localeCompare(String(a.dateCommande)));
-      return { demandes: rows.slice(0, 500), total: rows.length };
+      const page = rows.slice(0, 500);
+      const { suivis, commandes } = await suivisEtCommandes(page);
+      return { demandes: page.map(r => ({ ...r, ...enrichir(r, suivis, commandes) })), total: rows.length };
+    }
+    case "suivi": {
+      // mise à jour du suivi par Elixir (étape, message pour la pharmacie, date de livraison prévue, e-mail)
+      const req = await lire(b.id);
+      if (req.source !== "site") throw bad("suivi réservé aux commandes passées sur le site");
+      const etape = String(b.etape || "");
+      if (!SUIVI_MANUELLES.includes(etape)) throw bad("étape inconnue");
+      const commentaire = String(b.commentaire || "").trim().slice(0, 600);
+      const datePrevue = b.datePrevue ? String(b.datePrevue) : null;
+      if (datePrevue && !(/^\d{4}-\d{2}-\d{2}$/.test(datePrevue) && Number.isFinite(Date.parse(datePrevue + "T00:00:00Z")) && new Date(datePrevue + "T00:00:00Z").toISOString().slice(0, 10) === datePrevue)) throw bad("date prévue invalide");
+      const cle = `lj:suivi:${req.id}`;
+      const ajout = { etape, at: new Date().toISOString(), par: user?.email || "admin", ...(commentaire ? { commentaire } : {}), ...(datePrevue ? { datePrevue } : {}) };
+      const brut = await kvGetBrut(cle);
+      const suivi = { etapes: [...(brut?.value?.etapes || []), ajout].slice(-30) };
+      const ok = brut ? await kvSetSi(cle, suivi, brut.maj) : await kvCreate(cle, suivi);
+      if (!ok) throw bad("le suivi vient d'être modifié : actualisez la liste");
+      let mail = null;
+      if (b.prevenir) { try { mail = { a: await mailSuivi(req, etape, commentaire, datePrevue) }; } catch (e) { mail = { erreur: e.message }; } }
+      const [o] = /^\d+$/.test(String(req.orderId || "")) ? (await sb(`elixir_orders?id=eq.${req.orderId}&select=id,processed,items`).catch(() => null)) || [] : [];
+      const commande = etatCommandeDemande(req, o);
+      return { suivi: frise(req, suivi, commande), suiviBrut: suivi.etapes, commande, mail };
     }
     case "send": {
       // envoi demandé à la main : fait par la fonction d'arrière-plan (bon + PDF + mail dépassent les 10 s

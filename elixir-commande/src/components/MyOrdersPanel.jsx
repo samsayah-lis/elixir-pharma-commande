@@ -68,12 +68,18 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                   {items.length > 5 && <div style={{ fontSize:11, color:"#aaa", paddingTop:4 }}>+ {items.length - 5} autre(s)...</div>}
                 </div>
                 {/* Sur justificatif labo : transmission au laboratoire */}
-                {order.source === "justificatif" && !order.processed && (
+                {order.source === "justificatif" && (!order.processed || (order.justif || []).some(j => j.suivi && !["recue", "transmise"].includes(j.suivi.etape))) && (
                   <div style={{ marginTop:8, fontSize:11, color:"#5b21b6", background:"#f5f3ff", border:"1px solid #ddd6fe", borderRadius:8, padding:"6px 10px", lineHeight:1.45 }}>
                     {(order.justif || []).length
-                      ? order.justif.map((j, k) => <div key={k}>📑 {JUSTIF_STATUTS[j.statut] || "Enregistrée"}{j.statut === "envoye" && j.envoyeLe ? ` le ${new Date(j.envoyeLe).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.</div>)
+                      ? order.justif.map((j, k) => j.suivi && j.suivi.etape !== "recue"
+                        ? <div key={k}>
+                            <b style={{ color: ["refusee", "annulee"].includes(j.suivi.etape) ? "#991b1b" : "#5b21b6" }}>📑 {j.suivi.libelle}</b>{j.suivi.date ? ` le ${new Date(j.suivi.date).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.
+                            {j.suivi.datePrevue && !["expediee", "refusee", "annulee"].includes(j.suivi.etape) ? ` Livraison prévue le ${new Date(j.suivi.datePrevue).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}.` : ""}
+                            {j.suivi.commentaire ? <div style={{ color:"#334155" }}>💬 {j.suivi.commentaire}</div> : null}
+                          </div>
+                        : <div key={k}>📑 {JUSTIF_STATUTS[j.statut] || "Enregistrée"}{j.statut === "envoye" && j.envoyeLe ? ` le ${new Date(j.envoyeLe).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.</div>)
                       : <div>📑 Commande enregistrée : Elixir la prend en charge auprès du laboratoire.</div>}
-                    <div style={{ color:"#7c3aed", marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>
+                    {!order.processed && !(order.justif || []).some(j => j.suivi?.datePrevue || ["refusee", "annulee"].includes(j.suivi?.etape)) && <div style={{ color:"#7c3aed", marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>}
                   </div>
                 )}
                 {/* Recommander */}

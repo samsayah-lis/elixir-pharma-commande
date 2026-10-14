@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 
 // ── Admin : commandes sur justificatif labo ─────────────────────────────
 // Réglages par laboratoire (produits, destinataires, objet, règles, envoi automatique) et suivi
@@ -20,7 +20,22 @@ const inp = { width: "100%", boxSizing: "border-box", border: "1.5px solid #d6dd
 const btn = (bg, color = "white") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 
-export default function AdminLabJustif({ adminFetch, flash }) {
+// Suivi vu par la pharmacie : étapes qu'Elixir peut poser à la main
+const ETAPES_SUIVI = [
+  ["transmise", "Transmise au laboratoire (hors outil)"],
+  ["acceptee", "Acceptée par le laboratoire"],
+  ["recue_elixir", "Reçue chez Elixir"],
+  ["expediee", "Expédiée à la pharmacie"],
+  ["refusee", "Refusée par le laboratoire"],
+  ["annulee", "Annulée"],
+];
+// étape proposée par défaut : la suivante dans le parcours normal
+const PARCOURS = ["recue", "transmise", "acceptee", "recue_elixir", "expediee"];
+const etapeSuivante = (e) => { const i = PARCOURS.indexOf(e); return i < 0 ? "acceptee" : PARCOURS[Math.min(i + 1, PARCOURS.length - 1)]; };
+const COULEUR_SUIVI = { recue: "#475569", transmise: "#075985", acceptee: "#6d28d9", recue_elixir: "#b45309", expediee: "#065f46", refusee: "#991b1b", annulee: "#64748b" };
+
+// commandes / syncStatus / onSync : liste et synchronisation PharmaML de l'onglet « Commandes » (AdminPanel)
+export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onSync }) {
   const [cfg, setCfg] = useState(null);
   const [saved, setSaved] = useState(null);
   const [demandes, setDemandes] = useState([]);
@@ -28,6 +43,7 @@ export default function AdminLabJustif({ adminFetch, flash }) {
   const [filtre, setFiltre] = useState("actives");
   const [preview, setPreview] = useState(null);
   const [testAdr, setTestAdr] = useState("");
+  const [suiviEdit, setSuiviEdit] = useState(null);   // { demande, etape, commentaire, datePrevue, prevenir }
 
   const call = useCallback(async (body) => {
     const r = await adminFetch(API, { method: "POST", body: JSON.stringify(body) });
@@ -42,6 +58,14 @@ export default function AdminLabJustif({ adminFetch, flash }) {
     } catch (e) { flash?.(`⚠ ${e.message}`); }
   }, [call, flash]);
   useEffect(() => { charger(); }, [charger]);
+  // après une action : liste des demandes seulement (des réglages en cours de saisie ne sont jamais écrasés)
+  const vivant = useRef(true);
+  useEffect(() => () => { vivant.current = false; }, []);
+  const chargerDemandes = useCallback(async () => {
+    try { const l = await call({ action: "list" }); if (vivant.current) setDemandes(l.demandes || []); }
+    catch (e) { if (vivant.current) flash?.(`⚠ ${e.message}`); }
+  }, [call, flash]);
+  const plusTard = (ms) => setTimeout(() => { if (vivant.current) chargerDemandes(); }, ms);
 
   const act = async (label, body, ok) => {
     setBusy(label);
@@ -74,7 +98,8 @@ export default function AdminLabJustif({ adminFetch, flash }) {
     for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
     window.open(URL.createObjectURL(new Blob([arr], { type: j.mime })), "_blank", "noopener");
   };
-  const majDemande = (d) => setDemandes(ds => ds.map(x => x.id === d.id ? d : x));
+  // réponse d'une action (demande brute) : le suivi et l'état de la commande calculés par la liste sont conservés
+  const majDemande = (d) => setDemandes(ds => ds.map(x => x.id === d.id ? { ...x, ...d } : x));
 
   if (!cfg) return <div style={{ padding: 30, color: "#888" }}>Chargement…</div>;
   const visibles = demandes.filter(d => filtre === "toutes" ? true : filtre === "envoye" ? d.statut === "envoye" : !["envoye", "ignoree"].includes(d.statut));
@@ -160,7 +185,7 @@ export default function AdminLabJustif({ adminFetch, flash }) {
         {dirty && <span style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
         <div style={{ flex: 1 }} />
         <button onClick={() => act("portail", { action: "test_portail" }, (j) => flash?.(`✓ Portail PharmaML joignable (${j.commandesDuJour} commande(s) aujourd'hui)`))} disabled={!!busy} style={btn("#f1f5f9", "#0f2d3d")}>🔌 Tester le portail PharmaML</button>
-        <button onClick={() => act("run", { action: "run" }, (j) => { flash?.((j.journal || []).join(" · ")); setTimeout(charger, 20000); })} disabled={!!busy} style={btn("#f1f5f9", "#0f2d3d")}>{busy === "run" ? "Lancement…" : "🔄 Contrôler maintenant"}</button>
+        <button onClick={() => act("run", { action: "run" }, (j) => { flash?.((j.journal || []).join(" · ")); plusTard(20000); })} disabled={!!busy} style={btn("#f1f5f9", "#0f2d3d")}>{busy === "run" ? "Lancement…" : "🔄 Contrôler maintenant"}</button>
       </div>
 
       <div style={card}>
@@ -170,13 +195,13 @@ export default function AdminLabJustif({ adminFetch, flash }) {
             <button key={k} onClick={() => setFiltre(k)} style={{ ...btn(filtre === k ? "#0f2d3d" : "#f1f5f9", filtre === k ? "white" : "#0f2d3d"), padding: "4px 10px" }}>{t}</button>
           ))}
           <div style={{ flex: 1 }} />
-          <button onClick={charger} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "4px 10px" }}>↻ Actualiser</button>
+          <button onClick={chargerDemandes} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "4px 10px" }}>↻ Actualiser</button>
         </div>
         {!visibles.length ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 10 }}>Aucune demande.</div> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead><tr style={{ color: "#64748b", textAlign: "left" }}>
-                <th style={{ padding: 5 }}>Commande</th><th>Pharmacie</th><th>Produits</th><th>Labo</th><th>Statut</th><th>Bon</th><th>Actions</th>
+                <th style={{ padding: 5 }}>Commande</th><th>Pharmacie</th><th>Produits</th><th>Labo</th><th>Statut</th><th>Bon</th><th>Suivi pharmacie</th><th>Actions</th>
               </tr></thead>
               <tbody>{visibles.map(d => {
                 const [t, bg, fg] = STATUTS[d.statut] || [d.statut, "#f1f5f9", "#475569"];
@@ -194,7 +219,19 @@ export default function AdminLabJustif({ adminFetch, flash }) {
                       {(d.motif || d.erreur) && <div style={{ fontSize: 10, color: "#9a3412", maxWidth: 260 }}>{d.erreur || d.motif}</div>}
                     </td>
                     <td style={{ fontFamily: "monospace" }}>{d.poNom || ""}</td>
+                    <td style={{ minWidth: 170 }}>
+                      {d.suivi && <div style={{ fontSize: 11, fontWeight: 800, color: COULEUR_SUIVI[d.suivi.etape] || "#475569" }}>{d.suivi.libelle}{d.suivi.date ? <span style={{ fontWeight: 500, color: "#64748b" }}> · {dt(d.suivi.date)}</span> : null}</div>}
+                      {d.suivi?.datePrevue && <div style={{ fontSize: 10, color: "#6d28d9" }}>livraison prévue le {new Date(d.suivi.datePrevue).toLocaleDateString("fr-FR")}</div>}
+                      {d.suivi?.commentaire && <div style={{ fontSize: 10, color: "#334155", maxWidth: 220 }}>« {d.suivi.commentaire} »</div>}
+                      {d.commande && <div style={{ fontSize: 10, color: d.commande.processed ? "#065f46" : d.commande.commandeTraitee ? "#64748b" : "#92400e" }}>{d.commande.processed ? `✓ envoyée à PharmaML${d.commande.syncedAt ? ` le ${dt(d.commande.syncedAt)}` : ""}` : d.commande.commandeTraitee ? "commande close sans envoi PharmaML" : "pas encore synchronisée"}</div>}
+                      {d.commande && syncStatus[d.orderId] && syncStatus[d.orderId] !== "ok" && <div style={{ fontSize: 10, color: syncStatus[d.orderId] === "pending" ? "#075985" : "#b91c1c" }}>{syncStatus[d.orderId] === "pending" ? "synchronisation en cours…" : syncStatus[d.orderId]}</div>}
+                    </td>
                     <td style={{ whiteSpace: "nowrap" }}>
+                      {d.source === "site" && <><button disabled={!!busy} onClick={() => setSuiviEdit({ demande: d, etape: etapeSuivante(d.suivi?.etape), commentaire: "", datePrevue: d.suivi?.datePrevue || "", prevenir: !!d.email })}
+                        style={{ ...btn("#6d28d9"), padding: "3px 8px" }}>Suivi…</button>{" "}</>}
+                      {d.commande && !d.commande.processed && !d.commande.commandeTraitee && d.commande.lignes > 0 && onSync && <><button disabled={!!busy || syncStatus[d.orderId] === "pending"}
+                        onClick={() => { if (window.confirm(`Synchroniser vers PharmaML, commande n° ${d.orderId} (${d.pharmacie?.nom}) :\n${d.lignes.map(l => `  ${l.qte} × ${l.produit}`).join("\n")}\n\nSeules ces lignes (${cfg.labs[d.lab]?.nom || d.lab}) partent. À faire quand la marchandise est reçue chez Elixir : elle part en préparation et la pharmacie la voit « expédiée ».`)) { onSync(d.orderId, d.lignes.map(l => String(l.cip))); plusTard(8000); } }}
+                        style={{ ...btn("#0f2d3d"), padding: "3px 8px" }}>🔄 Synchroniser</button>{" "}</>}
                       <button onClick={() => act("preview", { action: "preview", id: d.id }, setPreview)} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "3px 8px" }}>Mail</button>{" "}
                       {d.statut !== "envoye" && d.statut !== "en_cours" && (<>
                         <button disabled={!!busy} onClick={() => {
@@ -203,7 +240,7 @@ export default function AdminLabJustif({ adminFetch, flash }) {
                           act("send", { action: "send", id: d.id, forcer }, (j) => {
                             majDemande(j.demande);
                             flash?.(j.lance ? "Envoi lancé : bon, PDF et mail sont faits en arrière-plan" : "Envoi programmé au prochain passage (10 min)");
-                            setTimeout(charger, 12000);
+                            plusTard(12000);
                           });
                         }} style={{ ...btn("#059669"), padding: "3px 8px" }}>Envoyer</button>{" "}
                         {d.statut !== "ignoree" && <button disabled={!!busy} onClick={() => { const m = window.prompt("Motif (facultatif) :", ""); if (m === null) return; act("ignore", { action: "ignore", id: d.id, motif: m || undefined }, (j) => majDemande(j.demande)); }}
@@ -216,6 +253,46 @@ export default function AdminLabJustif({ adminFetch, flash }) {
           </div>
         )}
       </div>
+
+      {suiviEdit && (
+        <div onClick={() => setSuiviEdit(null)} style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div onClick={e => e.stopPropagation()} style={{ background: "white", borderRadius: 14, maxWidth: 520, width: "100%", padding: 18 }}>
+            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Suivi de la demande — {suiviEdit.demande.pharmacie?.nom}</div>
+            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Commande n° {suiviEdit.demande.orderId} · {suiviEdit.demande.lignes.map(l => `${l.qte} × ${l.produit}`).join(", ")}</div>
+            {(suiviEdit.demande.suiviBrut || []).length > 0 && (
+              <div style={{ fontSize: 11, color: "#475569", marginTop: 8, background: "#f8fafc", borderRadius: 8, padding: "6px 8px" }}>
+                {suiviEdit.demande.suiviBrut.map((e, i) => <div key={i}>{dt(e.at)} — {ETAPES_SUIVI.find(x => x[0] === e.etape)?.[1] || e.etape}{e.datePrevue ? ` (prévue le ${new Date(e.datePrevue).toLocaleDateString("fr-FR")})` : ""}{e.commentaire ? ` : « ${e.commentaire} »` : ""} <span style={{ color: "#94a3b8" }}>({e.par})</span></div>)}
+              </div>
+            )}
+            <label style={{ ...lbl, marginTop: 12 }}>Étape</label>
+            <select style={inp} value={suiviEdit.etape} onChange={e => setSuiviEdit(s => ({ ...s, etape: e.target.value }))}>
+              {ETAPES_SUIVI.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+            </select>
+            {suiviEdit.etape === "acceptee" && (<>
+              <label style={{ ...lbl, marginTop: 10 }}>Livraison prévue le (facultatif)</label>
+              <input type="date" style={inp} value={suiviEdit.datePrevue} onChange={e => setSuiviEdit(s => ({ ...s, datePrevue: e.target.value }))} />
+            </>)}
+            {suiviEdit.etape === "expediee" && suiviEdit.demande.commande && !suiviEdit.demande.commande.processed && (
+              <div style={{ fontSize: 11, color: "#b45309", marginTop: 8 }}>La commande n'est pas encore synchronisée vers PharmaML : « 🔄 Synchroniser » la fait partir en préparation (l'étape « expédiée » s'affiche alors toute seule).</div>
+            )}
+            <label style={{ ...lbl, marginTop: 10 }}>Message pour la pharmacie (facultatif, visible sur son site ; remplace le message affiché, vide = aucun message)</label>
+            <textarea style={{ ...inp, minHeight: 64 }} maxLength={600} value={suiviEdit.commentaire} onChange={e => setSuiviEdit(s => ({ ...s, commentaire: e.target.value }))}
+              placeholder={suiviEdit.etape === "refusee" ? "Ex. : le laboratoire ne livre plus ce produit en ville ; nous vous proposons…" : "Ex. : livraison avec votre tournée de jeudi"} />
+            <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 12, marginTop: 10 }}>
+              <input type="checkbox" checked={suiviEdit.prevenir} disabled={!suiviEdit.demande.email} onChange={e => setSuiviEdit(s => ({ ...s, prevenir: e.target.checked }))} />
+              Prévenir la pharmacie par e-mail {suiviEdit.demande.email ? `(${suiviEdit.demande.email})` : "(pas d'adresse connue)"}
+            </label>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
+              <button onClick={() => setSuiviEdit(null)} style={btn("#f1f5f9", "#475569")}>Annuler</button>
+              <button disabled={!!busy} onClick={() => act("suivi", { action: "suivi", id: suiviEdit.demande.id, etape: suiviEdit.etape, commentaire: suiviEdit.commentaire,
+                datePrevue: suiviEdit.etape === "acceptee" && suiviEdit.datePrevue ? suiviEdit.datePrevue : null, prevenir: suiviEdit.prevenir }, (j) => {
+                  setSuiviEdit(null); chargerDemandes();
+                  flash?.(j.mail?.a ? `✓ Suivi mis à jour, e-mail envoyé à ${j.mail.a}` : j.mail?.erreur ? `Suivi mis à jour — ⚠ e-mail non envoyé : ${j.mail.erreur}` : "✓ Suivi mis à jour");
+                })} style={{ ...btn("#6d28d9"), opacity: busy ? 0.5 : 1 }}>{busy === "suivi" ? "Enregistrement…" : "Enregistrer"}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {preview && (
         <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>

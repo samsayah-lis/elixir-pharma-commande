@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import JustifCartBlock from "./JustifCartBlock";
-import { loadJustifProducts, justifIssues, commanderJustif, mesDemandesJustif, JUSTIF_STATUTS, rxFrais } from "../lab-justif-client.js";
+import { loadJustifProducts, justifIssues, commanderJustif, mesDemandesJustif, JUSTIF_STATUTS, SUIVI_ORDRE, rxFrais } from "../lab-justif-client.js";
 
 // ── Page « Commande labo sur justificatif » ─────────────────────────────
 // Produits que certains laboratoires (Takeda, Pfizer…) ne livrent à Elixir que sur justificatif d'une
@@ -273,14 +273,47 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered 
                   <div><b>{dateFr(d.date)}</b> · {d.labNom} · {d.lignes.map(l => `${l.qte} × ${l.produit}`).join(", ")}</div>
                   <div style={{ fontSize: 11, color: "#64748b" }}>n° {d.orderId}{d.rx ? ` · 📎 ${d.rx} ordonnance(s)` : ""}</div>
                 </div>
-                <div style={{ fontSize: 12, color: d.statut === "envoye" ? "#065f46" : "#6d28d9", marginTop: 2 }}>
-                  📑 {JUSTIF_STATUTS[d.statut] || "Enregistrée"}{d.statut === "envoye" && d.envoyeLe ? ` le ${dateFr(d.envoyeLe)}` : ""}
-                  {d.aCompleter === "ordonnance" ? " — ordonnance anonymisée manquante : contactez Elixir pour la transmettre" : ""}
-                </div>
+                {d.suivi && d.suivi.etape !== "recue" ? <SuiviDemande suivi={d.suivi} /> : (
+                  <div style={{ fontSize: 12, color: d.statut === "envoye" ? "#065f46" : "#6d28d9", marginTop: 2 }}>
+                    📑 {JUSTIF_STATUTS[d.statut] || "Enregistrée"}{d.statut === "envoye" && d.envoyeLe ? ` le ${dateFr(d.envoyeLe)}` : ""}
+                  </div>
+                )}
+                {d.aCompleter === "ordonnance" && <div style={{ fontSize: 12, color: "#b45309", marginTop: 2 }}>Ordonnance anonymisée manquante : contactez Elixir pour la transmettre.</div>}
               </div>
             ))}
         </div>
       </div>
+    </div>
+  );
+}
+
+// Frise de suivi d'une demande : reçue → transmise → acceptée → reçue chez Elixir → expédiée (ou refusée / annulée)
+function SuiviDemande({ suivi }) {
+  const atteintes = new Map((suivi.frise || []).map(e => [e.etape, e]));
+  const fin = ["refusee", "annulee"].includes(suivi.etape);
+  const rang = Math.max(-1, ...SUIVI_ORDRE.map(([k], i) => atteintes.has(k) ? i : -1));
+  const dateCourte = (d) => d ? new Date(d).toLocaleDateString("fr-FR", { day: "numeric", month: "short" }) : "";
+  return (
+    <div style={{ marginTop: 6 }}>
+      {fin ? (
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#991b1b" }}>✕ {suivi.libelle}{suivi.date ? ` le ${dateCourte(suivi.date)}` : ""}</div>
+      ) : (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {SUIVI_ORDRE.map(([k, t], i) => {
+            const fait = i <= rang, courant = i === rang;
+            return (
+              <div key={k} style={{ flex: "1 1 90px", minWidth: 90, borderTop: `3px solid ${fait ? (courant ? "#6d28d9" : "#a78bfa") : "#e2e8f0"}`, paddingTop: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: courant ? 800 : 600, color: fait ? "#4c1d95" : "#94a3b8" }}>{fait ? "✓ " : ""}{t}</div>
+                {fait && atteintes.get(k)?.date && <div style={{ fontSize: 10, color: "#64748b" }}>{dateCourte(atteintes.get(k).date)}</div>}
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {suivi.datePrevue && !fin && suivi.etape !== "expediee" && (
+        <div style={{ fontSize: 12, color: "#6d28d9", marginTop: 4 }}>📅 Livraison prévue le {new Date(suivi.datePrevue).toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long" })}</div>
+      )}
+      {suivi.commentaire && <div style={{ fontSize: 12, color: "#334155", marginTop: 4, background: "#f8fafc", borderRadius: 6, padding: "4px 8px" }}>💬 Elixir : {suivi.commentaire}</div>}
     </div>
   );
 }

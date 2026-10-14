@@ -3,6 +3,7 @@
 // GET /order-list?source=ulabs            → filtre par source campagne
 // GET /order-list?pharmacy_cip=XXX        → filtre par pharmacie
 import { verifyTokenAsync } from "./auth.js";
+import { frise, etatCommandeDemande } from "./_lab-justif.js";
 import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -73,6 +74,7 @@ export const handler = async (event) => {
     // Commandes « sur justificatif labo » : où en est la transmission au laboratoire (kv lj:req:s-<id>-<labo>)
     const justif = {};
     const jIds = rows.filter(r => r.source === "justificatif").map(r => r.id).filter(id => /^\d+$/.test(String(id)));
+    const reqs = [];   // demandes lues, pour leur suivi (étape mise à jour par Elixir)
     for (let i = 0; i < jIds.length; i += 40) {
       try {
         const or = jIds.slice(i, i + 40).map(id => `key.like.lj:req:s-${id}-*`).join(",");
@@ -80,10 +82,25 @@ export const handler = async (event) => {
         for (const row of kr.ok ? await kr.json() : []) {
           let v = row.value; if (typeof v === "string") { try { v = JSON.parse(v); } catch { continue; } }
           if (!v?.orderId) continue;
-          (justif[v.orderId] ||= []).push({ lab: v.lab, statut: v.statut, envoyeLe: v.envoyeLe || null, ...(isAdmin ? { poNom: v.poNom || null, motif: v.motif || v.erreur || null } : {}) });
+          const j = { lab: v.lab, statut: v.statut, envoyeLe: v.envoyeLe || null, ...(isAdmin ? { poNom: v.poNom || null, motif: v.motif || v.erreur || null } : {}) };
+          (justif[v.orderId] ||= []).push(j);
+          reqs.push({ v, j });
         }
       } catch { /* suivi indisponible : la commande s'affiche quand même */ }
     }
+    // suivi (kv lj:suivi:<id demande>) : étape courante, message d'Elixir, date prévue — appelant authentifié seulement
+    // (pas via l'ancien accès par ?pharmacy_cip sans jeton)
+    if (reqs.length && (isAdmin || user)) try {
+      const keys = reqs.map(x => `"lj:suivi:${x.v.id}"`).join(",");
+      const kr = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=in.(${encodeURIComponent(keys)})&select=key,value`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+      const suivis = new Map();
+      for (const row of kr.ok ? await kr.json() : []) { let v = row.value; if (typeof v === "string") { try { v = JSON.parse(v); } catch { continue; } } suivis.set(row.key.slice(9), v); }
+      const parId = new Map(rows.map(r => [String(r.id), r]));
+      for (const { v, j } of reqs) {
+        const f = frise(v, suivis.get(v.id), etatCommandeDemande(v, parId.get(String(v.orderId))));
+        j.suivi = { etape: f.etape, libelle: f.libelle, date: f.date, commentaire: f.commentaire, datePrevue: f.datePrevue };
+      }
+    } catch { /* suivi indisponible */ }
 
     const orders = rows.map(r => ({
       id: r.id,

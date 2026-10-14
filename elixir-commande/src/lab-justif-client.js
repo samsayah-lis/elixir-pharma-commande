@@ -141,6 +141,9 @@ export const commanderJustif = (orderId, lignes, auth) => appel({ action: "comma
   .catch(e => { if (e.status === undefined) e.status = 0; throw e; });
 export const mesDemandesJustif = (auth) => appel({ action: "mes_demandes" }, auth).then(j => j.demandes || []);
 
+// Étapes du suivi vues par la pharmacie (d.suivi.frise ne contient que les étapes atteintes)
+export const SUIVI_ORDRE = [["recue", "Reçue"], ["transmise", "Transmise au labo"], ["acceptee", "Acceptée par le labo"], ["recue_elixir", "Reçue chez Elixir"], ["expediee", "Expédiée"]];
+
 export const JUSTIF_STATUTS = {
   en_attente: "Enregistrée — transmission au laboratoire par Elixir",
   a_envoyer: "Transmission au laboratoire en cours",

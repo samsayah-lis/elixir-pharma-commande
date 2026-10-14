@@ -1478,7 +1478,14 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           <AdminGroupPurchases adminFetch={adminFetch} flash={flash} onDirtyChange={onGpDirty} />
         )}
         {tab==="justif"&&(
-          <AdminLabJustif adminFetch={adminFetch} flash={flash} />
+          <AdminLabJustif adminFetch={adminFetch} flash={flash} syncStatus={syncStatus}
+            onSync={(orderId, cips) => {   // lignes de la demande seulement (une commande peut porter plusieurs labos)
+              const o = ordersRef.current.find(x => String(x.id) === String(orderId));
+              if (!o) { flash("⚠ Commande introuvable dans la liste : actualisez l'onglet Commandes"); return; }
+              const idx = (o.items || []).map((it, i) => (cips || []).includes(String(it?.cip)) ? i : -1).filter(i => i >= 0);
+              if (!idx.length) { flash("⚠ Lignes de cette demande introuvables dans la commande"); return; }
+              syncOrder(o, idx);
+            }} />
         )}
         {tab==="sanofipro"&&(
           <AdminSanofiPro adminFetch={adminFetch} flash={flash} />

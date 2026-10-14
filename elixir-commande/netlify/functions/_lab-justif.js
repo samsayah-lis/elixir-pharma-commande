@@ -214,6 +214,65 @@ export async function fichePharmacie({ odooId, cip }) {
     bloque: p.active === false || !validCip(p.cip) };
 }
 
+// ── Suivi d'une demande (vu par la pharmacie, mis à jour par Elixir) ──────
+// Rangé à part (kv lj:suivi:<id demande>) : le moteur d'envoi réécrit lj:req:<id> et ne peut donc jamais
+// effacer une mise à jour de suivi faite pendant un envoi.
+//   recue (automatique) → transmise (automatique à l'envoi, ou à la main) → acceptee → recue_elixir →
+//   expediee (automatique quand la commande est synchronisée vers PharmaML, ou à la main) ; refusee / annulee : fin
+export const SUIVI_ETAPES = {
+  recue: "Demande reçue par Elixir",
+  transmise: "Transmise au laboratoire",
+  acceptee: "Acceptée par le laboratoire",
+  recue_elixir: "Reçue chez Elixir",
+  expediee: "Expédiée à votre pharmacie",
+  refusee: "Refusée par le laboratoire",
+  annulee: "Annulée",
+};
+export const SUIVI_MANUELLES = ["transmise", "acceptee", "recue_elixir", "expediee", "refusee", "annulee"];
+const ORDRE = ["recue", "transmise", "acceptee", "recue_elixir", "expediee"];
+// État, pour UNE demande, de la commande du site dont elle fait partie (une commande peut porter plusieurs labos) :
+// seules les lignes de la demande comptent ; « synchronisée » = toutes envoyées à PharmaML (synced_at) — une ligne
+// close « traitée sans envoi » (handled_at) n'est pas une expédition.
+// → { processed, syncedAt, commandeTraitee, lignes } ou null (commande introuvable)
+export function etatCommandeDemande(req, order) {
+  if (!order) return null;
+  let it = order.items; if (typeof it === "string") { try { it = JSON.parse(it); } catch { it = []; } }
+  it = Array.isArray(it) ? it : [];
+  const cips = new Set((req.lignes || []).map(l => String(l.cip || "")));
+  const siennes = it.filter(l => l && cips.has(String(l.cip || "")));
+  const dates = siennes.map(l => l.synced_at).filter(Boolean).sort();
+  return { processed: siennes.length > 0 && siennes.every(l => l.synced_at), syncedAt: dates[dates.length - 1] || null,
+    commandeTraitee: !!order.processed, lignes: siennes.length };
+}
+// commande = etatCommandeDemande(...) : « expédiée » posée seule quand les lignes de la demande sont parties vers PharmaML
+// → { etape, libelle, date, commentaire, datePrevue, frise: [{ etape, libelle, date, commentaire, datePrevue }] }
+export function frise(req, suivi, commande) {
+  const pts = new Map();
+  const poser = (etape, date, extra = {}) => { const prev = pts.get(etape); if (!prev || String(date || "") >= String(prev.date || "")) pts.set(etape, { etape, libelle: SUIVI_ETAPES[etape], date: date || null, ...extra }); };
+  const TERMINALES = ["refusee", "annulee"];
+  const manu = (suivi?.etapes || []).filter(e => SUIVI_ETAPES[e.etape]);
+  const der = manu[manu.length - 1];
+  // la dernière étape posée par Elixir fait foi : les étapes plus avancées posées avant elle sont des erreurs corrigées
+  const rangDer = der && !TERMINALES.includes(der.etape) ? ORDRE.indexOf(der.etape) : ORDRE.length;
+  poser("recue", req.creeLe || req.dateCommande);
+  if (req.statut === "envoye") poser("transmise", req.envoyeLe || null);
+  for (const e of manu) if (!TERMINALES.includes(e.etape) && ORDRE.indexOf(e.etape) <= rangDer) poser(e.etape, e.at, { commentaire: e.commentaire || null, datePrevue: e.datePrevue || null });
+  // refus / annulation : seulement si c'est la dernière étape posée par Elixir, et pas suivie d'un envoi des lignes à PharmaML
+  let fin = der && TERMINALES.includes(der.etape) ? { etape: der.etape, libelle: SUIVI_ETAPES[der.etape], date: der.at || null, commentaire: der.commentaire || null, datePrevue: null } : null;
+  if (commande?.processed && commande.syncedAt) {
+    if (fin && String(commande.syncedAt) > String(fin.date || "")) fin = null;
+    if (!fin && !pts.has("expediee")) poser("expediee", commande.syncedAt);
+  }
+  const avancees = ORDRE.filter(e => pts.has(e));
+  const courante = fin || pts.get(avancees[avancees.length - 1]);
+  // message affiché : celui de la dernière étape posée par Elixir, si elle fait foi (vide = aucun message)
+  const commentaire = fin ? fin.commentaire : der && !TERMINALES.includes(der.etape) ? der.commentaire || null : null;
+  // date prévue : celle de la dernière « acceptée », tant qu'elle n'a pas été corrigée (une « acceptée » sans date l'efface)
+  const acc = !fin && ORDRE.indexOf("acceptee") <= rangDer ? manu.filter(e => e.etape === "acceptee").slice(-1)[0] : null;
+  return { etape: courante.etape, libelle: courante.libelle, date: courante.date, commentaire, datePrevue: acc?.datePrevue || null,
+    frise: [...avancees.map(e => pts.get(e)), ...(fin ? [fin] : [])] };
+}
+
 // ── Contenu du mail ─────────────────────────────────────────────────────
 const remplir = (tpl, v) => String(tpl || "").replace(/\{(\w+)\}/g, (m, k) => (v[k] ?? m));
 const nomsProduits = (req) => [...new Set(req.lignes.map(l => l.court || l.produit))].join(" / ");
