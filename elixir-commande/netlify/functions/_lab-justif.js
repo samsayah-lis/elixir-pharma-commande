@@ -1,7 +1,7 @@
 // ── Commandes sur justificatif labo ──────────────────────────────────────
 // Certains laboratoires ne livrent Elixir que sur justificatif de commandes de pharmacies
 // (patients en France) : Takeda (Ninlaro, Alunbrig, Livtencity, Elaprase), Pfizer (Lorviqua,
-// Resitune, Somavert). Décisions de Zineb (09/10/2026) : envoi automatique, ordonnance
+// Somavert ; Resitune retiré le 14/10/2026 à la demande de Zineb). Décisions de Zineb (09/10/2026) : envoi automatique, ordonnance
 // anonymisée acceptée, Takeda via « TAKEDA - CSP » ; Vyndaqel reste dans elixir-reappro.
 //
 // Une demande = une commande de pharmacie × un laboratoire, venue :
@@ -66,15 +66,10 @@ export const CONFIG_DEFAUT = {
       delai: "dépannage Pfizer : 1 boîte par commande, par pharmacie et par jour",
       actif: false, depuis: null,
       // Fournisseur « PFIZER non EDI » (493) : surtout pas « PFIZER PHARMA » (494, EDI, rarement servi).
-      // Resitune : pas de repérage PharmaML — les logiciels des pharmacies le recommandent en boucle
-      // (20 000 lignes en 90 jours) ; seules les commandes passées sur le site partent.
+      // Resitune retiré (14/10/2026, Zineb) : ni sur le site, ni en repérage PharmaML.
       produits: [
         P("3400930177006", 41864, "LORVIQUA 100 mg B/30", "Lorviqua 100 mg", PF),
         P("3400930189641", 42142, "LORVIQUA 25 mg B/90", "Lorviqua 25 mg", PF),
-        P("3400930013953", 39005, "RESITUNE 75 mg B/30", "Resitune 75 mg", { ...PF, detection: false }),
-        P("3400930013984", 39006, "RESITUNE 75 mg B/90", "Resitune 75 mg", { ...PF, detection: false }),
-        P("3400930014035", 39007, "RESITUNE 100 mg B/30", "Resitune 100 mg", { ...PF, detection: false }),
-        P("3400930014066", 39008, "RESITUNE 100 mg B/90", "Resitune 100 mg", { ...PF, detection: false }),
         P("3400936078376", 47238, "SOMAVERT 10 mg B/30", "Somavert 10 mg", PF),
         P("3400936078437", 47239, "SOMAVERT 15 mg B/30", "Somavert 15 mg", PF),
         P("3400936118102", 47309, "SOMAVERT 20 mg B/30", "Somavert 20 mg", PF),
