@@ -8,6 +8,7 @@ import AdminCampaigns from "./components/AdminCampaigns";
 import AdminEdit from "./components/AdminEdit";
 import AdminAdd from "./components/AdminAdd";
 import AdminGroupPurchases from "./components/AdminGroupPurchases";
+import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
 
@@ -546,6 +547,52 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
 
   // ── SYNC helpers ──
+  // Envoi à PharmaML par le relais : le serveur crée une tâche (lignes pas encore envoyées, référence id puis
+  // idP<n>, jamais deux fois la même ligne), l'agent du Mac du bureau l'envoie (PharmaML refuse toute autre
+  // adresse), le serveur marque les lignes envoyées. La synchro marche donc depuis n'importe quel poste.
+  const suivreTaches = async (refs, maxMs) => {
+    const fin = Date.now() + maxMs;
+    let res = {};
+    while (Date.now() < fin) {
+      await new Promise(r => setTimeout(r, 2500));
+      try {
+        const r = await adminFetch("/.netlify/functions/pml-relais", { method: "POST", body: JSON.stringify({ action: "etat", refs }) });
+        res = (await r.json()).taches || {};
+        if (refs.every(ref => res[ref] && !["a_envoyer", "prise"].includes(res[ref].etat))) break;
+      } catch { /* réseau : nouvel essai */ }
+    }
+    return res;
+  };
+  const enFond = useRef(new Set());
+  const appliquerIssue = (orderId, t, idxEnvoyes) => {
+    if (!t) return;
+    if (t.etat === "envoyee") {
+      const order = ordersRef.current.find(o => o.id === orderId);
+      if (!order) return;
+      const at = t.renduA || new Date().toISOString();
+      const lignes = t.idx || idxEnvoyes || [];
+      const newItems = (order.items || []).map((it, i) => lignes.includes(i) ? { ...it, synced_at: it.synced_at || at, synced_ref: it.synced_ref || t.ref } : it);
+      const done = newItems.every(lineDone);
+      ordersRef.current = ordersRef.current.map(o => o.id === orderId ? { ...o, items: newItems, processed: done } : o);
+      setOrders(prev => prev.map(o => o.id === orderId ? { ...o, items: newItems, processed: done } : o));
+      setLineSel(sel => ({ ...sel, [orderId]: [] }));
+      setSyncStatus(s => ({ ...s, [orderId]: done ? "ok" : `partielle:${lignes.length}` }));
+      return;
+    }
+    const h = (d) => d ? new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
+    const msg = t.etat === "refusee" ? `Refusée par PharmaML (réf. ${t.ref}) : ${t.message || ""} — rien n'a été créé, les lignes sont de nouveau à synchroniser`
+      : t.etat === "incertaine" ? `Issue inconnue (réf. ${t.ref}) : vérifiez le portail PharmaML avant toute nouvelle saisie — ${t.message || ""}`
+      : t.etat === "expiree" ? `Non prise par l'agent du Mac avant l'échéance (réf. ${t.ref}) : rien envoyé, à resynchroniser`
+      : ["annulee", "non_envoyee"].includes(t.etat) ? `Non envoyée (${t.etat === "annulee" ? "annulée" : "vérifiée absente"}, réf. ${t.ref}) ${t.message || ""}`
+      : t.etat === "prise" ? `📤 Envoi en cours par l'agent du Mac (réf. ${t.ref}) : ne pas ressaisir avant son compte rendu`
+      : `📡 En file (réf. ${t.ref}) : en attente de l'agent du Mac jusqu'à ${h(t.priseAvant)} — non prise d'ici là, elle reviendra à la synchro manuelle (rien envoyé)`;
+    setSyncStatus(s => ({ ...s, [orderId]: msg }));
+    // encore en file : suivi en arrière-plan (30 min au plus) pour afficher l'issue sans actualiser
+    if (["a_envoyer", "prise"].includes(t.etat) && !enFond.current.has(t.ref)) {
+      enFond.current.add(t.ref);
+      suivreTaches([t.ref], 30 * 60e3).then(res => { enFond.current.delete(t.ref); const f = res[t.ref]; if (f && !["a_envoyer", "prise"].includes(f.etat)) appliquerIssue(orderId, f, idxEnvoyes); });
+    }
+  };
   const syncOrder = async (orderArg, onlyIdx = null) => {
     const order = ordersRef.current.find(o => o.id === orderArg.id) || orderArg;   // marques d'envoi à jour
     if (order.processed || inFlight.current.has(order.id)) return;
@@ -553,88 +600,18 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     const remaining = all.map((_, i) => i).filter(i => !lineDone(all[i]));
     const idx = onlyIdx ? onlyIdx.filter(i => remaining.includes(i)) : remaining;
     if (!idx.length) return;
-    // Une partie des lignes (ou la suite d'un envoi partiel) : référence PharmaML propre à cet envoi
-    const partial = idx.length < all.length;
-    const nSent = new Set(all.filter(it => it?.synced_ref).map(it => it.synced_ref)).size;
-    const reference = nSent === 0 ? String(order.id) : `${order.id}P${nSent + 1}`;
-    const sendItems = idx.map(i => all[i]);
+    if (order.avisAuto?.code === "double" && !window.confirm(`⚠ Possible doublon : ${order.avisAuto.error}\n\nVérifiez que la pharmacie veut bien les deux commandes. Envoyer quand même celle-ci à PharmaML ?`)) return;
     inFlight.current.add(order.id);
-    try { await sendOrderLines(); } finally { inFlight.current.delete(order.id); }
-    async function sendOrderLines() {
     setSyncStatus(s => ({ ...s, [order.id]: "pending" }));
-
-    // Si pas de CIP, essayer de le retrouver depuis Supabase (elixir_pharmacies)
-    let cip = order.pharmacyCip;
-    if ((!cip || cip === "0" || cip === 0) && order.pharmacyEmail) {
-      try {
-        const lookupRes = await fetch("/.netlify/functions/pharmacy-lookup", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: order.pharmacyEmail }),
-        });
-        const lookupJson = await lookupRes.json();
-        if (lookupJson.found && lookupJson.pharmacy?.cip) {
-          cip = lookupJson.pharmacy.cip;
-          console.log(`[sync] CIP retrouvé pour ${order.pharmacyEmail}: ${cip}`);
-          // Mettre à jour la commande en base
-          adminFetch("/.netlify/functions/order-update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: order.id, pharmacy_cip: cip }),
-          });
-        }
-      } catch (e) { console.warn("[sync] CIP lookup error:", e.message); }
-    }
-
-    const payload = JSON.stringify({
-      csvContent: partial ? sendItems.map(i => `${String(i.cip || "—").replace(/;/g, "")};${i.qty}`).join("\n") : order.csv,
-      items: sendItems,
-      pharmacyName: order.pharmacyName,
-      pharmacyEmail: order.pharmacyEmail,
-      pharmacyCip: cip,
-      orderId: partial ? reference : order.id,   // l'agent local utilise orderId comme référence PharmaML
-      reference, partial,
-      via: "admin",
-    });
-    const endpoints = [
-      { url: "http://localhost:3001", label: "agent local" },
-      { url: "/.netlify/functions/submit-order", label: "Netlify" },
-    ];
-    let lastError = "";
-    for (const ep of endpoints) {
-      try {
-        const res = await fetch(ep.url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: payload,
-          signal: AbortSignal.timeout(15000),
-        });
-        const json = await res.json().catch(() => ({}));
-        if (res.ok && json.success) {
-          const now = new Date().toISOString();
-          const newItems = all.map((it, i) => idx.includes(i) ? { ...it, synced_at: now, synced_ref: reference } : it);
-          const done = newItems.every(lineDone);
-          setSyncStatus(s => ({ ...s, [order.id]: done ? "ok" : `partielle:${idx.length}` }));
-          ordersRef.current = ordersRef.current.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o);
-          setOrders(prev => prev.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o));
-          setLineSel(sel => ({ ...sel, [order.id]: [] }));
-          adminFetch("/.netlify/functions/order-update", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ id: order.id, items: newItems, processed: done }),
-          }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); })
-            .catch(e => setSyncStatus(s => ({ ...s, [order.id]: `Envoyée, mais état non enregistré (${e.message}) : ne pas renvoyer ces lignes` })));
-          return; // success
-        }
-        lastError = json.error || json.detail?.message || `HTTP ${res.status}`;
-        console.warn(`[sync] ${ep.label} échoué:`, lastError);
-      } catch (err) {
-        lastError = err.message;
-        console.warn(`[sync] ${ep.label} inaccessible:`, err.message);
-      }
-    }
-    setSyncStatus(s => ({ ...s, [order.id]: lastError || "Erreur inconnue" }));
-    }
+    try {
+      const r = await adminFetch("/.netlify/functions/pml-relais", { method: "POST", body: JSON.stringify({ action: "envoyer", orderId: order.id, idx }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok || !j.ok) { setSyncStatus(s => ({ ...s, [order.id]: j.error || `HTTP ${r.status}` })); return; }
+      const res = await suivreTaches([j.ref], 75e3);
+      appliquerIssue(order.id, res[j.ref] || { ref: j.ref, etat: "a_envoyer" }, j.idx || idx);
+    } catch (e) {
+      setSyncStatus(s => ({ ...s, [order.id]: `Erreur (${e.message}) : actualisez avant de réessayer` }));
+    } finally { inFlight.current.delete(order.id); }
   };
 
   // Lignes traitées sans envoi à PharmaML (ou retour « à envoyer ») ; commande traitée quand tout est réglé
@@ -649,25 +626,48 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
       const { handled_at, ...rest } = it; return rest;
     });
     const done = newItems.length > 0 && newItems.every(lineDone);
-    ordersRef.current = ordersRef.current.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o);
-    setOrders(prev => prev.map(o => o.id === order.id ? { ...o, items: newItems, processed: done } : o));
+    const avant = { items: order.items, processed: order.processed };
+    const appliquer = (v) => { ordersRef.current = ordersRef.current.map(o => o.id === order.id ? { ...o, ...v } : o); setOrders(prev => prev.map(o => o.id === order.id ? { ...o, ...v } : o)); };
+    appliquer({ items: newItems, processed: done });
     setLineSel(sel => ({ ...sel, [order.id]: [] }));
     try {
       const r = await adminFetch("/.netlify/functions/order-update", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: order.id, items: newItems, processed: done }) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (Array.isArray(j.items)) appliquer({ items: j.items, processed: j.processed });   // marques d'envoi gardées par le serveur
       setSyncStatus(s => ({ ...s, [order.id]: handled ? `traitees:${idxList.length}` : undefined }));
-    } catch (e) { setSyncStatus(s => ({ ...s, [order.id]: `État des lignes non enregistré (${e.message}) : actualisez` })); }
+    } catch (e) { appliquer(avant); setSyncStatus(s => ({ ...s, [order.id]: `Non enregistré : ${e.message}` })); }
   };
 
   // « Sync toutes » : commandes en attente SANS envoi partiel — le reste d'une commande partielle
   // (précommandes retenues) ne part que par son propre bouton « Sync le reste »
   // Commandes « sur justificatif labo » : jamais dans « Sync toutes » — à synchroniser une par une, à réception du labo
-  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && !(o.items || []).some(lineDone));
+  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && !(o.items || []).some(lineDone)
+    && !(o.relais || []).some(t => ["a_envoyer", "prise", "incertaine"].includes(t.etat))   // en cours ou à vérifier : pas en masse
+    && o.avisAuto?.code !== "double");                                                       // possible doublon : une par une, après vérification
   const syncAllPending = async () => {
     if (syncingAll) return;
     setSyncingAll(true);
-    try { for (const o of bulkPending) await syncOrder(o); } finally { setSyncingAll(false); }
+    const lances = [];
+    try {
+      // toutes les tâches d'abord (rapide), puis suivi groupé de leurs issues
+      for (const o of bulkPending) {
+        if (inFlight.current.has(o.id)) continue;
+        inFlight.current.add(o.id);
+        setSyncStatus(s => ({ ...s, [o.id]: "pending" }));
+        try {
+          const r = await adminFetch("/.netlify/functions/pml-relais", { method: "POST", body: JSON.stringify({ action: "envoyer", orderId: o.id }) });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) { setSyncStatus(s => ({ ...s, [o.id]: j.error || `HTTP ${r.status}` })); inFlight.current.delete(o.id); continue; }
+          lances.push({ id: o.id, ref: j.ref, idx: j.idx });
+        } catch (e) { setSyncStatus(s => ({ ...s, [o.id]: `Erreur (${e.message})` })); inFlight.current.delete(o.id); }
+      }
+      if (lances.length) {
+        const res = await suivreTaches(lances.map(l => l.ref), 120e3);
+        for (const l of lances) appliquerIssue(l.id, res[l.ref] || { ref: l.ref, etat: "a_envoyer" }, l.idx);
+      }
+    } finally { for (const l of lances) inFlight.current.delete(l.id); setSyncingAll(false); }
   };
   // Stock des lignes des commandes en attente (cases « en stock » / « précommande »)
   useEffect(() => {
@@ -825,27 +825,38 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const toggleProcessed = async (id) => {
     const order = orders.find(o => o.id === id);
     const newVal = !order?.processed;
-    // Rouvrir efface les marques d'envoi par ligne : un nouveau Sync renvoie toute la commande (comme avant)
     const its = order?.items || [];
-    const items = newVal ? null
-      : its.length && its.every(it => it?.synced_at) ? its.map(({ synced_at, synced_ref, handled_at, ...it }) => it)   // tout envoyé : renvoi complet possible
-      : its.some(it => it?.handled_at) ? its.map(({ handled_at, ...it }) => it)   // lignes traitées sans envoi : de nouveau à envoyer
-      : null;   // envoi partiel : marques d'envoi gardées
-    setOrders(orders.map(o => o.id===id ? {...o, processed: newVal, ...(items ? { items } : {})} : o));
-    await adminFetch("/.netlify/functions/order-update", {
+    // une ligne envoyée à PharmaML ne repart jamais (marques gardées par le serveur) : une commande
+    // entièrement envoyée ne se rouvre pas pour un renvoi
+    if (!newVal && its.length && its.every(it => it?.synced_at)) {
+      window.alert("Commande entièrement envoyée à PharmaML : elle ne peut pas être renvoyée depuis l'admin (risque de doublon).\n\nSi elle manque vraiment dans PharmaML (vérifiez le portail), saisissez-la directement dans PharmaML.");
+      return;
+    }
+    const items = newVal ? null : its.some(it => it?.handled_at && !it?.synced_at) ? its.map(it => { if (it?.synced_at) return it; const { handled_at, ...rest } = it; return rest; }) : null;   // lignes traitées sans envoi : de nouveau à envoyer
+    const avantO = order;
+    setOrders(prev => prev.map(o => o.id===id ? {...o, processed: newVal, ...(items ? { items } : {})} : o));
+    const r = await adminFetch("/.netlify/functions/order-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, processed: newVal, ...(items ? { items } : {}) })
-    });
+    }).catch(() => null);
+    const j = await r?.json().catch(() => ({}));
+    if (!r?.ok) { setOrders(prev => prev.map(o => o.id === id ? avantO : o)); flash(`⚠ Non enregistré : ${j?.error || "erreur réseau"}`); }
+    else if (Array.isArray(j?.items)) setOrders(prev => prev.map(o => o.id === id ? { ...o, items: j.items, processed: j.processed } : o));
   };
 
   const deleteOrder = async (id) => {
-    setOrders(orders.filter(o => o.id!==id));
-    await adminFetch("/.netlify/functions/order-update", {
+    const avantO = orders.find(o => o.id === id);
+    setOrders(prev => prev.filter(o => o.id!==id));
+    const r = await adminFetch("/.netlify/functions/order-update", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, action: "delete" })
-    });
+    }).catch(() => null);
+    if (!r?.ok && avantO) {
+      setOrders(prev => prev.some(o => o.id === id) ? prev : [...prev, avantO].sort((a, b) => String(b.date).localeCompare(String(a.date))));
+      flash(`⚠ Non supprimée : ${(await r?.json().catch(() => ({})))?.error || "erreur réseau"}`);
+    }
   };
 
   // ── Sync state (must be before any return) ────────────────────────────
@@ -1242,6 +1253,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         {tab==="orders"&&(
           <>
             {orders.length > 0 && <AdminOrderKPIs orders={orders} />}
+            <AdminRelais adminFetch={adminFetch} flash={flash} />
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
               <div style={{fontSize:12,color:"#666"}}>
                 <span style={{fontWeight:700,color:"#0f2d3d"}}>{orders.filter(o=>!o.processed).length}</span> en attente · <span style={{color:"#888"}}>{orders.filter(o=>o.processed).length} traitée(s)</span>
@@ -1270,6 +1282,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                         <span style={{fontWeight:800,fontSize:14,color:"#0f2d3d"}}>{o.pharmacyName}</span>
+                        {o.avisAuto?.code === "double" && !o.processed && <span title={o.avisAuto.error} style={{background:"#fee2e2",color:"#991b1b",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>⚠ POSSIBLE DOUBLON{o.avisAuto.doubleDe ? ` de n° ${o.avisAuto.doubleDe}` : ""} : à vérifier</span>}
                         {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:"#ffedd5",color:"#9a3412",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
                         {o.source === "justificatif" && <span title={`Commande sur justificatif labo : à synchroniser à réception de la marchandise.${(o.justif||[]).map(j => ` ${j.lab} : ${j.statut}${j.poNom ? ` (${j.poNom})` : ""}${j.motif ? ` — ${j.motif}` : ""}`).join(" ;")}`}
                           style={{background:"#ede9fe",color:"#5b21b6",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
@@ -1301,6 +1314,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                       <div style={{fontSize:11,color:"#888",marginTop:2}}>
                         {o.nbLignes} référence(s) · Total : <strong>{o.totalHt?.toFixed(2)} €</strong>
                       </div>
+                      {(o.relais||[]).length > 0 && <RelaisCommande taches={o.relais} adminFetch={adminFetch} flash={flash} onChange={refreshOrders} />}
                     </div>
                     <div style={{display:"flex",gap:6,flexShrink:0}}>
                       {/* Sync button + status */}

@@ -3,7 +3,7 @@
 //   etat                          → réglages, dernier passage, commandes suivies (300 plus récentes)
 //   config_save { config }        → réglages (mode arret | simulation | auto, seuils, adresses d'alerte)
 //   run                           → passage immédiat (fonction d'arrière-plan)
-//   test_pharmaml                 → essai d'envoi PharmaML SANS commande (liste vide) depuis Netlify
+//   test_pharmaml                 → essai SANS commande (liste vide) envoyé par l'agent du Mac (relais) → { ref }
 //   diag_pml { pPass }            → diagnostic du refus PharmaML (lecture seule + essai à liste vide) : identifiants
 //                                   comparés à ceux de l'agent local par une empreinte courte (jamais renvoyés),
 //                                   réponse brute, IP de sortie Netlify, journal des envois du site (pml:*)
@@ -17,7 +17,8 @@ import { createHash } from "node:crypto";
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { kvGet, kvSet, kvGetBrut, kvSetSi, kvList, avecVerrou } from "./_lab-justif.js";
-import { lireConfig, validerConfig, CLE, PORTAIL_SP, VERROU, REF_OK, PharmaML } from "./_sanofipro.js";
+import { lireConfig, validerConfig, CLE, PORTAIL_SP, VERROU, REF_OK } from "./_sanofipro.js";
+import { mettreEnFile } from "./_relais.js";
 
 const SITE_HOSTS = ["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"];
 const siteBase = (event) => { const h = String(event?.headers?.host || "").toLowerCase();
@@ -48,8 +49,10 @@ export const handler = async (event) => {
       return json(200, { config: await lireConfig() });
     }
     if (b.action === "test_pharmaml") {
-      const r = await new PharmaML().essai();
-      return json(200, { http: r.status, ok: r.ok, refus: r.refus, message: r.message, commandes: r.commandes });
+      // essai par le relais : l'agent du Mac envoie une liste vide (PharmaML refuse Netlify, 403) ; suivi par pml-relais « etat »
+      const ref = `TEST-${Date.now()}`;
+      const r = await mettreEnFile({ ref, source: "test", corps: [], creePar: `admin:${qui}`, priseMs: 90e3 });
+      return json(200, { ok: r.ok, ref });
     }
     if (b.action === "diag_pml") {
       const url = (process.env.PHARMAML_URL || "https://pharmaml.elixirpharma.fr").replace(/\/$/, "");

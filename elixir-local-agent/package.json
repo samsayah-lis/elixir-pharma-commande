@@ -1,8 +1,8 @@
 {
   "name": "elixir-local-agent",
-  "version": "2.1.0",
+  "version": "3.0.0",
   "type": "module",
-  "description": "Agent local PharmaML — Elixir Pharma",
+  "description": "Agent PharmaML — relais du site de commande Elixir Pharma vers PharmaML (Mac du bureau)",
   "main": "agent.js",
   "scripts": {
     "start": "node agent.js"

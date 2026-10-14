@@ -24,3 +24,7 @@
 # Commandes Sanofi Pro (Dupixent) : traitement automatique sur le portail grossiste, toutes les 10 min
 [functions."sanofipro-cron"]
   schedule = "*/10 * * * *"
+
+# Relais PharmaML (agent du Mac) : échéances, alertes si l'agent ne répond plus, toutes les 5 min
+[functions."pml-relais-cron"]
+  schedule = "*/5 * * * *"

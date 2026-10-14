@@ -1333,43 +1333,24 @@ export default function App() {
         if (saveJson.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
         else console.warn("[order-save] ✗", saveJson.error);
 
-        // ── Auto-submit vers PharmaML ──
-        // Essaie d'abord l'agent local (port 3001), sinon fallback Netlify Function
+        // ── Envoi automatique vers PharmaML (relais) ──
+        // Le serveur relit la commande enregistrée, vérifie la pharmacie (jeton) et met les lignes EN STOCK dans
+        // la file du relais, que l'agent du Mac du bureau envoie à PharmaML ; le reste attend la synchro manuelle.
         (async () => {
+          if (!saveJson.success) return;                                     // pas en base : rien ne part
           if (actingFor && !(pharmacyCip && pharmacyCip !== "0")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin
-          const payload = JSON.stringify({
-            csvContent,
-            items: order.items,
-            pharmacyName, pharmacyEmail, pharmacyCip, orderId: order.id,
-            via: "auto",
-          });
-          const endpoints = [
-            { url: "http://localhost:3001", label: "agent local" },
-            { url: "/.netlify/functions/submit-order", label: "Netlify Function" },
-          ];
-          const ptok = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
-          for (const ep of endpoints) {
-            try {
-              const res = await fetch(ep.url, {
-                method: "POST",
-                headers: ptok
-                  ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` }
-                  : { "Content-Type": "application/json" },
-                body: payload,
-                // agent local : réponse immédiate ou rien ; Netlify : laisser le temps à PharmaML
-                signal: AbortSignal.timeout(ep.label === "agent local" ? 4000 : 15000),
-              });
-              const json = await res.json().catch(() => ({}));
-              if (res.ok && json.success) {
-                console.log(`[PharmaML] ✓ Commande transmise via ${ep.label} — ${json.nbLignes} ligne(s)`);
-                return;
-              }
-              console.warn(`[PharmaML] ${ep.label} error :`, json.error || res.status);
-            } catch (err) {
-              console.warn(`[PharmaML] ${ep.label} injoignable :`, err.message);
-            }
-          }
-          console.warn("[PharmaML] Tous les endpoints ont échoué.");
+          try {
+            const ptok = actingFor ? localStorage.getItem("admin_token") : await freshPharmacyToken();
+            const res = await fetch("/.netlify/functions/submit-order", {
+              method: "POST",
+              headers: ptok ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` } : { "Content-Type": "application/json" },
+              body: JSON.stringify({ orderId: order.id, pharmacyName, via: "auto" }),
+              signal: AbortSignal.timeout(20000),
+            });
+            const json = await res.json().catch(() => ({}));
+            if (json.queued) console.log(`[PharmaML] ✓ ${json.lignes} ligne(s) en file d'envoi (réf. ${json.reference})${json.retenues ? `, ${json.retenues} à synchroniser par Elixir` : ""}`);
+            else console.log("[PharmaML] synchro par Elixir :", json.error || res.status);
+          } catch (err) { console.warn("[PharmaML] envoi automatique non demandé :", err.message); }
         })();
 
       } catch(e) { console.error("Order save error", e); }

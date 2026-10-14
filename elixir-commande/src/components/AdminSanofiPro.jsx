@@ -72,7 +72,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
 
   const act = async (label, body, ok) => {
     setBusy(label);
-    try { const j = await call(body); if (ok) ok(j); return j; }
+    try { const j = await call(body); if (ok) await ok(j); return j; }
     catch (e) { flashRef.current?.(`⚠ ${e.message}`); return null; }
     finally { setBusy(""); }
   };
@@ -140,9 +140,23 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
           <button onClick={enregistrer} disabled={!dirty || !!busy} style={{ ...btn("#0f2d3d"), opacity: !dirty || busy ? 0.5 : 1 }}>{busy === "save" ? "Enregistrement…" : "💾 Enregistrer"}</button>
           {dirty && <span style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
           <div style={{ flex: 1 }} />
-          <button disabled={!!busy} title="Envoie à PharmaML une liste VIDE (aucune commande créée) : vérifie que PharmaML accepte les envois depuis le serveur"
-            onClick={() => act("tpml", { action: "test_pharmaml" }, (j) => flash?.(j.ok ? `✓ PharmaML répond au serveur (HTTP ${j.http}, JSON${j.message ? ` : ${j.message}` : ""}) — à confirmer sur une 1re vraie commande` : `⚠ PharmaML : HTTP ${j.http}${j.message ? ` — ${j.message}` : ""}`))}
-            style={btn("#f1f5f9", "#0f2d3d")}>{busy === "tpml" ? "Essai…" : "🔌 Tester l'envoi PharmaML"}</button>
+          <button disabled={!!busy} title="L'agent du Mac du bureau envoie à PharmaML une liste VIDE (aucune commande créée) : vérifie toute la chaîne site → agent → PharmaML"
+            onClick={() => act("tpml", { action: "test_pharmaml" }, async (j) => {
+              // l'agent du Mac interroge le site toutes les ~20 s : suivi de l'essai pendant 90 s au plus
+              if (!j.ok) { flash?.("⚠ Essai non mis en file"); return; }
+              const fin = Date.now() + 90e3;
+              let t = null;
+              while (Date.now() < fin) {
+                await new Promise(r => setTimeout(r, 2500));
+                const r = await adminFetch("/.netlify/functions/pml-relais", { method: "POST", body: JSON.stringify({ action: "etat", refs: [j.ref] }) }).then(x => x.json()).catch(() => null);
+                t = r?.taches?.[j.ref];
+                if (!t || ["a_envoyer", "prise"].includes(t.etat)) continue;
+                flash?.(t.etat === "envoyee" ? `✓ Chaîne complète OK : l'agent du Mac a envoyé l'essai, PharmaML a répondu (HTTP ${t.http})` : `⚠ Essai ${t.etat} : ${t.message || ""}`);
+                return;
+              }
+              flash?.(t?.etat === "prise" ? "⚠ Essai pris par l'agent, sans compte rendu en 90 s" : "⚠ L'agent du Mac n'a pas pris l'essai en 90 s : est-il lancé ? (bandeau « Relais PharmaML », onglet Commandes)");
+            })}
+            style={btn("#f1f5f9", "#0f2d3d")}>{busy === "tpml" ? "Essai (jusqu'à 90 s)…" : "🔌 Tester l'envoi PharmaML"}</button>
           <button disabled={!!busy || dirty} title={dirty ? "Enregistrez d'abord les réglages" : ""} onClick={() => act("run", { action: "run" }, (j) => { flash?.(j.lance ? "Passage lancé : résultat dans quelques secondes" : "⚠ Lancement impossible (CRON_SECRET ?)"); if (j.lance) setTimeout(charger, 15000); })}
             style={btn("#f1f5f9", "#0f2d3d")}>{busy === "run" ? "Lancement…" : "🔄 Vérifier maintenant"}</button>
         </div>

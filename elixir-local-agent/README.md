@@ -1,48 +1,21 @@
-# Elixir Pharma — Agent local PharmaML (v2.1)
+# Agent PharmaML (Mac du bureau) — v3, relais
 
-Petit serveur local qui reçoit les commandes du site
-[commandes-elixir.netlify.app](https://commandes-elixir.netlify.app) et les
-transmet à **PharmaML**. Si le CIP de la pharmacie manque, il le retrouve
-automatiquement via l'email (endpoint `pharmacy-lookup` du site).
+PharmaML (InfoSoft) n'accepte les envois de commandes (`commandes.php`) que depuis l'adresse du bureau :
+depuis Netlify, tout envoi reçoit 403. Le site de commande met donc chaque envoi en file ; cet agent,
+sur le Mac du bureau, interroge le site toutes les 20 s, envoie à PharmaML et rend compte.
 
-## Contenu du dossier
+- Commandes du site (envoi automatique des lignes en stock, synchro manuelle de l'admin depuis n'importe quel poste)
+  et commandes Sanofi Pro passent toutes par ici : **un seul émetteur vers PharmaML**.
+- Requêtes signées (Ed25519) : `relais-cle.pem` (clé privée, créée au premier lancement, jamais copiée ni
+  committée) ; la clé publique (`relais-cle.pub`) est déclarée dans `elixir-commande/netlify/functions/_relais.js`.
+- Journal local `relais-journal.jsonl` : une référence déjà tentée n'est jamais renvoyée automatiquement.
+- Le port 3001 ne fait plus aucun envoi (les anciennes pages admin reçoivent « actualisez »).
 
-| Fichier | Rôle |
-|---|---|
-| `agent.js` | Le serveur (écoute sur `http://localhost:3001`) |
-| `LANCER_AGENT.command` | Lanceur **double-clic** (macOS) : libère le port 3001 puis démarre l'agent |
-| `.env` | Vos réglages **privés** (mot de passe PharmaML) — **jamais** partagé |
-| `.env.example` | Modèle à copier en `.env` |
-| `package.json` | Métadonnées Node |
+## Installer / mettre à jour
 
-## Première installation
+1. `.env` : `PHARMAML_URL`, `PHARMAML_USER`, `PHARMAML_PASS`, `SITE_URL` (voir `.env.example`).
+2. Double-clic sur `installer-service.command` : service macOS (démarrage automatique, relance en cas d'arrêt).
+   Journal : `agent.log`. Retirer : `./installer-service.command --retirer`.
+3. Vérifier dans l'admin du site (onglet Commandes, bandeau « Relais PharmaML ») : agent « connecté », puis « 🔌 Tester ».
 
-1. Installer [Node.js](https://nodejs.org) (une seule fois sur la machine).
-2. Copier `.env.example` en `.env` et y renseigner le mot de passe PharmaML :
-   ```
-   PHARMAML_URL=https://pharmaml.elixirpharma.fr
-   PHARMAML_USER=admin
-   PHARMAML_PASS=VOTRE_MOT_DE_PASSE
-   NETLIFY_URL=https://commandes-elixir.netlify.app
-   PORT=3001
-   ```
-   (Le lanceur crée automatiquement `.env` depuis le modèle au premier démarrage.)
-
-## Lancer l'agent
-
-- **Simple** : double-cliquer sur `LANCER_AGENT.command`.
-- **Terminal** :
-  ```bash
-  node agent.js
-  ```
-
-L'agent doit rester ouvert pendant les heures de commande. Pour l'arrêter,
-fermer la fenêtre du terminal (ou `Ctrl-C`).
-
-## Dépannage
-
-- **« port déjà utilisé »** : un agent tourne déjà. Le lanceur libère le port
-  3001 tout seul ; sinon : `lsof -ti:3001 | xargs kill`.
-- **« CIP introuvable »** : l'email de la pharmacie n'est pas dans Odoo — vérifier
-  la fiche client Odoo.
-- **Erreur PharmaML** : vérifier `PHARMAML_PASS` dans `.env`.
+`LANCER_AGENT.command` (lancement à la main dans un Terminal) reste possible, mais pas en même temps que le service.

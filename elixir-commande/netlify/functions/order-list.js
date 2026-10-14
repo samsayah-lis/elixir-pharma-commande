@@ -4,6 +4,7 @@
 // GET /order-list?pharmacy_cip=XXX        → filtre par pharmacie
 import { verifyTokenAsync } from "./auth.js";
 import { frise, etatCommandeDemande } from "./_lab-justif.js";
+import { resumeTache } from "./_relais.js";
 import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -102,6 +103,23 @@ export const handler = async (event) => {
       }
     } catch { /* suivi indisponible */ }
 
+    // Admin : envois par le relais PharmaML (agent du Mac) de chaque commande (état, référence, message)
+    const relais = {};
+    if (isAdmin) try {
+      const kr = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=like.${encodeURIComponent("pmlr:tache:")}*&select=value&order=updated_at.desc&limit=1500`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+      for (const row of kr.ok ? await kr.json() : []) {
+        let v = row.value; if (typeof v === "string") { try { v = JSON.parse(v); } catch { continue; } }
+        if (v?.orderId) (relais[v.orderId] ||= []).push(resumeTache(v));
+      }
+      for (const k of Object.keys(relais)) relais[k].sort((a, b) => String(a.creeA).localeCompare(String(b.creeA)));
+    } catch { /* état du relais indisponible : la liste s'affiche quand même */ }
+    // envoi automatique écarté avec un avis à montrer (commande identique à une autre : possible doublon)
+    const avis = {};
+    if (isAdmin) try {
+      const kr = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=like.${encodeURIComponent("pmlr:avis:")}*&select=key,value&order=updated_at.desc&limit=500`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+      for (const row of kr.ok ? await kr.json() : []) { let v = row.value; if (typeof v === "string") { try { v = JSON.parse(v); } catch { continue; } } avis[row.key.slice("pmlr:avis:".length)] = v; }
+    } catch { /* sans avis */ }
+
     const orders = rows.map(r => ({
       id: r.id,
       date: r.date,
@@ -117,6 +135,8 @@ export const handler = async (event) => {
       source: r.source || "catalogue",
       enteredBy: r.entered_by || null,
       ...(justif[String(r.id)] ? { justif: justif[String(r.id)] } : {}),
+      ...(relais[String(r.id)] ? { relais: relais[String(r.id)] } : {}),
+      ...(avis[String(r.id)] ? { avisAuto: avis[String(r.id)] } : {}),
     }));
 
     return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };

@@ -1,17 +1,19 @@
 import { getCors } from "./cors.js";
 import { rateLimit } from "./rate-limit.js";
 import { verifyTokenAsync } from "./auth.js";
-// Soumet une commande au frontal PharmaML via l'API INFOSOFT
-const PHARMAML_URL  = process.env.PHARMAML_URL  || "https://pharmaml.elixirpharma.fr";
-const PHARMAML_USER = process.env.PHARMAML_USER || "admin";
-const PHARMAML_PASS = process.env.PHARMAML_PASS || "";
+import { envoiAuto } from "./_relais.js";
+// Envoi automatique d'une commande du site vers PharmaML, appelé par la page juste après l'enregistrement.
+// PharmaML refuse tout envoi venant de Netlify (403, adresse non autorisée) : la commande est mise dans la
+// file du relais, que l'agent du Mac du bureau envoie (voir _relais.js). Cette fonction n'appelle JAMAIS
+// PharmaML, même si InfoSoft autorisait un jour Netlify : un seul émetteur, l'agent.
+// La commande est relue en base (jamais le contenu envoyé par la page) ; identité vérifiée par le jeton
+// (pharmacie : CIP du jeton = CIP de la commande ; admin : saisie Elixir). Sans jeton valide, ou si une
+// condition manque (lignes en précommande, client bloqué, double…), la commande reste à la synchro manuelle.
 const SUPABASE_URL  = process.env.SUPABASE_URL;
 const SUPABASE_KEY  = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
 
-// ── Phase 1 (observation) : journal de chaque tentative d'envoi vers PharmaML ──
-// Entrées dans kv_store sous la clé pml:<orderId>:<ts> — lisibles avec
-// scripts/pharmaml-journal (voir mémoire). Jamais bloquant.
+// Journal de chaque demande (kv_store pml:<orderId>:<ts>), lisible par le diagnostic de l'admin Sanofi Pro
 async function journal(entry) {
   if (!SUPABASE_URL) return;
   try {
@@ -19,122 +21,40 @@ async function journal(entry) {
       method: "POST", headers: { ...SB, Prefer: "resolution=merge-duplicates" },
       body: JSON.stringify({ key: `pml:${entry.orderId || "sans-id"}:${Date.now()}`, value: JSON.stringify({ ts: new Date().toISOString(), ...entry }), updated_at: new Date().toISOString() }),
     });
-  } catch { /* le journal ne doit jamais faire échouer l'envoi */ }
-}
-// Une commande transmise avec succès est marquée « traitée » → l'admin ne la
-// propose plus à la synchro manuelle (évite les doubles envois).
-async function markProcessed(orderId) {
-  if (!SUPABASE_URL || !/^\d+$/.test(String(orderId))) return;
-  try {
-    await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${orderId}`, {
-      method: "PATCH", headers: { ...SB, Prefer: "return=minimal" }, body: JSON.stringify({ processed: true }),
-    });
-  } catch { /* non bloquant */ }
-}
-async function alreadyProcessed(orderId) {
-  if (!SUPABASE_URL || !/^\d+$/.test(String(orderId))) return false;
-  try {
-    const r = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${orderId}&select=processed`, { headers: SB });
-    const rows = await r.json();
-    return Array.isArray(rows) && rows[0]?.processed === true;
-  } catch { return false; }
+  } catch { /* le journal ne doit jamais faire échouer la demande */ }
 }
 
 export const handler = async (event) => {
   const cors = getCors(event);
+  const json = (code, body) => ({ statusCode: code, headers: cors, body: JSON.stringify(body) });
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return { statusCode: 405, headers: cors, body: "Method Not Allowed" };
-
-  // Transmission fournisseur : plafonner les envois par IP pour limiter l'abus.
-  // (mitigation — une auth pharmacie reste à mettre en place pour fermer l'IDOR)
   const rl = rateLimit(event, 10, 60);
   if (rl) return { ...rl, headers: { ...rl.headers, ...cors } };
 
   let payload;
   try { payload = JSON.parse(event.body); }
-  catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
-
-  let { items, pharmacyName, pharmacyEmail, pharmacyCip, orderId } = payload;
-  // Envoi d'une partie des lignes (admin) : référence PharmaML propre à cet envoi (ex. 1790…P2)
-  // et commande non marquée « traitée » (l'admin le fait quand toutes les lignes sont parties)
-  const partial = payload.partial === true;
-  const reference = /^[0-9A-Za-z]{1,30}$/.test(String(payload.reference || "")) ? String(payload.reference) : String(orderId || Date.now());
+  catch { return json(400, { error: "JSON invalide" }); }
+  const orderId = String(payload.orderId || "");
   const via = payload.via === "admin" ? "admin" : payload.via === "auto" ? "auto" : "inconnu";
-  const t0 = Date.now();
-  if (!items?.length) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "items manquants" }) };
 
-  // Sécurité : si un jeton pharmacie valide est présent, le CIP vient du jeton
-  // (email vérifié) et non du corps de la requête → pas d'usurpation possible.
+  // ancienne page admin encore ouverte (synchro directe) : la synchro passe désormais par le relais
+  if (via !== "auto") {
+    await journal({ via, orderId, outcome: "ancienne_page" });
+    return json(200, { success: false, error: "La synchro PharmaML passe désormais par le relais : actualisez la page admin (Cmd+R) puis relancez la synchro." });
+  }
+  if (!/^\d{6,20}$/.test(orderId)) return json(400, { error: "numéro de commande invalide" });
+
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const tok = authHeader.replace(/^Bearer\s+/i, "");
-  const authUser = tok ? await verifyTokenAsync(tok) : null;
-  if (authUser?.cip) pharmacyCip = authUser.cip;
-
-  // Saisie par Elixir (jeton admin) sans CIP : pas de recherche par e-mail (une adresse peut mener à une autre officine)
-  if (authUser?.isAdmin && (!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0)) {
-    await journal({ via, orderId, pharmacy: pharmacyName, cip: null, lignes: items.length, outcome: "cip_introuvable" });
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "Saisie Elixir pour une pharmacie sans CIP : commande à traiter à la main" }) };
-  }
-  // Si pas de CIP, essayer de le retrouver dans Supabase par email
-  if ((!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) && pharmacyEmail && SUPABASE_URL) {
-    try {
-      const res = await fetch(
-        `${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(pharmacyEmail.trim().toLowerCase())}&select=cip&limit=1`,
-        { headers: { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` } }
-      );
-      const rows = await res.json();
-      if (rows?.[0]?.cip) pharmacyCip = rows[0].cip;
-    } catch (e) { console.warn("[submit-order] Lookup CIP error:", e.message); }
-  }
-
-  if (!pharmacyCip || pharmacyCip === "0" || pharmacyCip === 0) {
-    await journal({ via, orderId, pharmacy: pharmacyName, cip: null, lignes: items.length, outcome: "cip_introuvable" });
-    return { statusCode: 400, headers: cors, body: JSON.stringify({ error: `CIP introuvable pour ${pharmacyEmail || "email inconnu"}` }) };
-  }
-
-  // Garde-fou (envoi automatique uniquement) : une commande déjà transmise n'est pas renvoyée.
-  if (via === "auto" && await alreadyProcessed(orderId)) {
-    await journal({ via, orderId, pharmacy: pharmacyName, cip: String(pharmacyCip), lignes: items.length, outcome: "deja_transmise" });
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, already_sent: true }) };
-  }
-
-  const body = [{
-    identifiantPML: String(pharmacyCip),
-    referenceCommande: reference,
-    lignes: items.map(i => ({
-      CIP: i.cip || "",
-      libelle: (i.name || "").substring(0, 50),
-      quantiteCommandee: parseInt(i.qty) || 0,
-      quantiteLivree: parseInt(i.qty) || 0,
-      prix: i.pn != null ? Math.round(parseFloat(i.pn) * 100) / 100 : 0
-    }))
-  }];
-
+  const user = tok ? await verifyTokenAsync(tok) : null;
   try {
-    const url = `${PHARMAML_URL}/commandes.php?U=${encodeURIComponent(PHARMAML_USER)}&P=${encodeURIComponent(PHARMAML_PASS)}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json" },
-      body: JSON.stringify(body)
-    });
-    const text = await res.text();
-    let result;
-    try { result = JSON.parse(text); } catch { result = { raw: text }; }
-
-    if (!res.ok || result?.status === "error") {
-      const msg = result?.message || result?.errors?.[0]?.message || `HTTP ${res.status}`;
-      await journal({ via, orderId, pharmacy: pharmacyName, cip: String(pharmacyCip), lignes: items.length, outcome: "refusee",
-                      http: res.status, ms: Date.now() - t0, pharmaml: String(msg).slice(0, 200), brut: text.replace(/\s+/g, " ").slice(0, 200) });
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: msg, detail: result }) };
-    }
-
-    await journal({ via, orderId, pharmacy: pharmacyName, cip: String(pharmacyCip), lignes: items.length, outcome: "transmise",
-                    http: res.status, ms: Date.now() - t0, commandes: result?.commandes ?? null, ...(partial ? { partiel: true, reference } : {}) });
-    if (!partial) await markProcessed(orderId);
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true, commandes: result?.commandes || 1, pharmaml: result }) };
-  } catch (err) {
-    console.error("[submit-order] ERREUR:", err.message);
-    await journal({ via, orderId, pharmacy: pharmacyName, cip: String(pharmacyCip), lignes: items.length, outcome: "exception", ms: Date.now() - t0, erreur: String(err.message).slice(0, 200) });
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err.message }) };
+    const r = await envoiAuto({ orderId, user });
+    await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null, motif: r.ok ? null : r.error });
+    return json(200, r.ok ? { success: true, queued: true, reference: r.ref, lignes: r.lignes, retenues: r.retenues || 0 } : { success: false, manuelle: true, code: r.code, error: r.error });
+  } catch (e) {
+    console.error("[submit-order]", e);
+    await journal({ via, orderId, outcome: "exception", erreur: String(e.message).slice(0, 200) });
+    return json(500, { success: false, error: "erreur : la commande reste à synchroniser à la main" });
   }
 };
