@@ -10,6 +10,23 @@ async function tryFind(param, value) {
   return extractProduct(data);
 }
 
+// Recherche par code-barres (EAN, CIP13 ou ACL13) en un appel, comme l'outil étiquettes : trouve la
+// parapharmacie que /products/find (cip7/cip13) manque.
+async function parCode(code) {
+  if (!/^\d{8,14}$/.test(code || "")) return null;
+  const q = code.length === 12 ? "0" + code : code;
+  const res = await fetch(`${MEDIPIM_BASE}/products/query`, {
+    method: "POST", headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify({ filter: { and: [{ status: "active" }, { search: { type: "refcode", query: q, locale: "fr" } }] }, page: { no: 0, size: 10 } }),
+  });
+  if (!res.ok) return null;
+  const data = await res.json().catch(() => ({}));
+  const liste = (data.results || []).filter(p => [p.cip13, p.acl13, ...(p.ean || [])].includes(q));
+  if (!liste.length) return null;
+  const produits = liste.map(p => extractProduct({ product: p }));
+  return produits.find(p => p.image_url) || produits[0];
+}
+
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -26,12 +43,15 @@ export const handler = async (event) => {
     const attempts = [];
     if (cip7) attempts.push(["cip7", cip7]);
     if (cip && cip.length === 13 && cip.startsWith("34")) attempts.push(["cip13", cip]);
-    // para (EAN hors 34…) : recherche par EAN d'abord (le CIP7 tiré des 7 derniers chiffres trouve rarement)
-    if (cip && /^\d{8}$|^\d{12,14}$/.test(cip) && !cip.startsWith("34")) attempts.push(["ean", cip]);
     if (cip && cip.length === 13 && !cip.startsWith("34")) attempts.push(["cip7", cip.slice(-7)]);
     if (cip && cip.length === 13) attempts.push(["cip13", cip]);
 
     let sansImage = null;
+    if (cip) {
+      const r = await parCode(cip);
+      if (r?.image_url) return { statusCode: 200, headers: cors, body: JSON.stringify(r) };
+      if (r) sansImage = r;
+    }
     const faits = new Set();
     for (const [param, val] of attempts) {
       if (faits.has(`${param}=${val}`)) continue; // même requête Medipim déjà faite
