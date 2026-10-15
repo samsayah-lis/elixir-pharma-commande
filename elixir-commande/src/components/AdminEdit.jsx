@@ -51,6 +51,7 @@ export default function AdminEdit({
     const pct = parseFloat(typeof p.pct === "string" ? p.pct.replace(/[-% ]/g,"") : (p.pct ?? "")) || 0;
     const remise_eur = pv && pct ? (pv * pct / 100).toFixed(2) : "";
     setEditForm({
+      name: String(p.name ?? ""), section: String(p._section ?? p.section ?? ""),
       cip: String(p.cip ?? ""), pv: String(p.pv ?? ""), pct: String(pct || ""),
       remise_eur: String(p.remise_eur ?? remise_eur), pn: String(p.pn ?? ""),
       palier: String(p.colis ?? ""), note: String(p.note ?? ""), _lastEdited: "",
@@ -62,8 +63,10 @@ export default function AdminEdit({
     const pv=parseFloat(editForm.pv), pct=parseFloat(editForm.pct), pn=parseFloat(editForm.pn);
     const newCip = editForm.cip?.trim() || p.cip;
     const cipChanged = newCip !== p.cip;
+    const name = (editForm.name ?? "").trim() || p.name;
+    const section = editForm.section || p._section;
     const product = {
-      cip: newCip, name: p.name, section: p._section,
+      cip: newCip, name, section,
       pv: !isNaN(pv) ? pv : p.pv, pct: !isNaN(pct) ? pct : p.pct, pn: !isNaN(pn) ? pn : p.pn,
       remise_eur: parseFloat(editForm.remise_eur) || null,
       colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
@@ -80,7 +83,7 @@ export default function AdminEdit({
       if (!json.success) throw new Error(json.error);
       await fetchProducts();
       setEditingKey(null);
-      flash("✅ Modification enregistrée !" + (cipChanged ? " (CIP changé)" : ""));
+      flash("✅ Modification enregistrée !" + (cipChanged ? " (CIP changé)" : "") + (section !== p._section ? " (section changée)" : ""));
     } catch(e) { alert("Erreur : " + e.message); }
   };
 
@@ -199,10 +202,30 @@ export default function AdminEdit({
                   {isEditing&&(
                     <div style={{background:"white",borderTop:"1px solid #e8eaed",padding:"14px 14px 16px"}}>
                       <div style={{marginBottom:10}}>
-                        <label style={{...LS,fontSize:10}}>Code CIP / Référence</label>
-                        <input value={editForm.cip} onChange={e=>setEditForm(f=>({...f,cip:e.target.value}))}
-                          placeholder="3400930000000" style={{...IS,fontSize:12,padding:"7px 10px"}}/>
+                        <label style={{...LS,fontSize:10}}>Nom affiché aux pharmacies</label>
+                        <input value={editForm.name ?? ""} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))}
+                          style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                       </div>
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
+                        <div>
+                          <label style={{...LS,fontSize:10}}>Code CIP / Référence</label>
+                          <input value={editForm.cip} onChange={e=>setEditForm(f=>({...f,cip:e.target.value}))}
+                            placeholder="3400930000000" style={{...IS,fontSize:12,padding:"7px 10px"}}/>
+                        </div>
+                        <div>
+                          <label style={{...LS,fontSize:10}}>Section</label>
+                          <select value={editForm.section ?? p._section} onChange={e=>setEditForm(f=>({...f,section:e.target.value}))}
+                            style={{...IS,fontSize:12,padding:"7px 10px"}}>
+                            {(allSectionsList||[]).filter(s=>!String(s.key).startsWith("promo_")).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                            {!(allSectionsList||[]).some(s=>s.key===p._section) && <option value={p._section}>{p._section}</option>}
+                          </select>
+                        </div>
+                      </div>
+                      {p._price_source === "odoo" && (
+                        <div style={{fontSize:11,color:"#475569",background:"#f1f5f9",borderRadius:8,padding:"6px 10px",marginBottom:10}}>
+                          ℹ️ Prix affichés aux pharmacies = Odoo (prix de vente et liste n°5), mis à jour automatiquement : pour les changer, modifiez-les dans Odoo. Les prix ci-dessous ne servent que si le produit sort d'Odoo.
+                        </div>
+                      )}
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:8}}>
                         {[
                           {key:"pv",  label:"Prix brut (€)"},
