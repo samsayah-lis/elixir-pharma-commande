@@ -48,9 +48,13 @@ export const handler = async (event) => {
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const tok = authHeader.replace(/^Bearer\s+/i, "");
   const user = tok ? await verifyTokenAsync(tok) : null;
+  // diagnostic de l'identité (sans jeton : session ancienne ou page d'avant la mise à jour ; jeton refusé : expiré)
+  const jeton = !tok ? "absent" : !user ? "refusé (expiré ?)" : user.isAdmin ? "admin" : user.cip ? `pharmacie ${user.cip}` : `sans CIP (${user.email || "?"})`;
+  const versionPage = payload.items ? "ancienne page" : "page à jour";
   try {
     const r = await envoiAuto({ orderId, user });
-    await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null, motif: r.ok ? null : r.error });
+    await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null,
+      motif: r.ok ? null : r.error, jeton, versionPage });
     return json(200, r.ok ? { success: true, queued: true, reference: r.ref, lignes: r.lignes, retenues: r.retenues || 0 } : { success: false, manuelle: true, code: r.code, error: r.error });
   } catch (e) {
     console.error("[submit-order]", e);

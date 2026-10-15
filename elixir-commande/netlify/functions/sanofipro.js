@@ -84,7 +84,8 @@ export const handler = async (event) => {
           passEspaces: pass !== pass.trim(), passGuillemets: /^(["']).*\1$/.test(pass) },
         ipNetlify: ip, essaiAvecIdentifiants: avec, essaiSansIdentifiants: sans,
         journal: { total: journal.length, groupes, derniers: journal.slice(0, 15).map(e => ({ ts: e.ts, via: e.via, orderId: e.orderId, outcome: e.outcome, http: e.http, ms: e.ms,
-          detail: texte(e.erreur || (typeof e.brut === "string" ? e.brut : "") || JSON.stringify(e.pharmaml || "")).slice(0, 200) })) },
+          detail: texte(e.erreur || e.motif || (typeof e.brut === "string" ? e.brut : "") || JSON.stringify(e.pharmaml || "")).slice(0, 200),
+          ...(e.jeton ? { jeton: e.jeton, versionPage: e.versionPage } : {}) })) },
       });
     }
     if (b.action === "run") {
