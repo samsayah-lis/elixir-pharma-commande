@@ -92,5 +92,7 @@ function extractProduct(data) {
   if (mainPhoto?.formats) {
     image_url = mainPhoto.formats.mediumWebp || mainPhoto.formats.medium || mainPhoto.formats.mediumJpeg || mainPhoto.formats.large || null;
   }
-  return { name, seo_name, brand, image_url, medipim_id: p.id || null };
+  // codes-barres connus de la fiche (un EAN-8 peut avoir un EAN-13 rattaché)
+  const codes = [...new Set([p.cip13, p.acl13, ...(p.ean || [])].filter(Boolean).map(String))];
+  return { name, seo_name, brand, image_url, medipim_id: p.id || null, codes };
 }
