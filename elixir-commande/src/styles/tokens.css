@@ -98,6 +98,48 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-app header, .ex-app header *, .ex-marque, .ex-marque * { color: var(--ink) !important; }
 }
 
+/* ── Catalogue (lot 4) : états impossibles en inline (survol, zébrure, rupture, pastilles pilotées par aria-pressed).
+   Le fond est posé ici et non en inline, sinon pas de survol ; survols réservés aux pointeurs (pas de survol
+   « collé » après un toucher sur tablette) ── */
+/* en-tête de vue (src/components/ui/EnteteVue.jsx) : marges et titre resserrés sur mobile */
+.ex-entete-vue { padding: 20px 24px; }
+@media (max-width: 767px) {
+  .ex-entete-vue { padding: 16px; }
+  .ex-entete-vue__titre { font-size: 21px !important; }
+  .ex-entete-vue__icone { width: 38px !important; height: 38px !important; font-size: 19px !important; }
+}
+/* lignes du tableau et de la liste mobile : zébrure, survol, rupture. Le fond n'est plus réécrit en JS
+   (onMouseEnter / onMouseLeave effaçaient le fond « rupture ») */
+.ex-tr { background: var(--surface); transition: background-color .15s var(--ease); }
+.ex-tr:nth-child(even) { background: var(--paper); }
+.ex-tr[data-rupture] { background: #fcf1f0; }   /* --danger-bg éclairci : CIP en --ink-mute à 4,9:1 */
+@media (hover: hover) {
+  .ex-tr:hover { background: var(--surface-2); }
+  .ex-tr[data-rupture]:hover { background: #f9e9e8; }
+}
+/* filtres : sable + encre ; actif (aria-pressed) encre + paper, comme les liens actifs de la vitrine */
+.ex-filtre { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease), color .15s var(--ease); }
+.ex-filtre[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+@media (hover: hover) { .ex-filtre:not([aria-pressed="true"]):hover { background: #e2dccf; } }
+/* boutons de quantité : « − » sable + encre, « + » pétrole + paper (survol sarcelle) */
+.ex-qte-moins { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease); }
+.ex-qte-plus { background: var(--petrol); color: var(--paper); transition: background-color .15s var(--ease); }
+@media (hover: hover) {
+  .ex-qte-moins:hover { background: #e2dccf; }
+  .ex-qte-plus:hover { background: var(--teal); }
+}
+/* cartes produit : blanc, filet --line, ombre douce ; produit au panier = anneau sarcelle de 2 px (filet + 1 px).
+   Jamais de transform ni de filter : jusqu'à 675 cartes en Centrale OTC */
+.ex-carte { border: 1px solid var(--line); box-shadow: var(--shadow-1); transition: box-shadow .15s var(--ease), border-color .15s var(--ease); }
+.ex-carte[data-choisi] { border-color: var(--teal); box-shadow: 0 0 0 1px var(--teal), var(--shadow-1); }
+@media (hover: hover) {
+  .ex-carte:hover { box-shadow: var(--shadow-2); }
+  .ex-carte[data-choisi]:hover { box-shadow: 0 0 0 1px var(--teal), var(--shadow-2); }
+}
+/* petits boutons discrets (copier le CIP, lien du menu, remise à zéro) */
+.ex-btn-discret { background: var(--surface-2); color: var(--ink-soft); transition: background-color .15s var(--ease), color .15s var(--ease); }
+@media (hover: hover) { .ex-btn-discret:hover { background: var(--sand); color: var(--ink); } }
+
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }

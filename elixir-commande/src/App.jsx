@@ -13,8 +13,9 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
-import { T, R, tone, ui } from "./theme.js";
+import { T, R, tone, ui, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
+import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -45,14 +46,17 @@ const SECTION_META = {
 // ── Coquille (refonte charte, lot 2) ──
 // Icône d'un menu de la barre latérale : SVG pour un rayon connu resté à son icône d'origine ; une icône saisie
 // dans l'admin (dc.icons, campagne…), un menu promo ou une section perso gardent leur emoji
-const iconeMenu = (key, c) => {
+const iconeMenu = (key, c, taille = 18) => {
   const nom = ICONES_RAYON[key];
   const origine = key === "groupees" ? "🤝" : SECTION_META[key]?.icon;
-  return nom && c.icon === origine ? <Icone nom={nom} taille={18} /> : c.icon;
+  return nom && c.icon === origine ? <Icone nom={nom} taille={taille} /> : c.icon;
 };
 // bouton rond de 36 px de l'en-tête pétrole (fond au survol : classe ex-icone-entete)
 const btnEntete = { width: 36, height: 36, padding: 0, border: "none", borderRadius: R.pill, color: T.paper, cursor: "pointer",
   flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" };
+// ── Catalogue (refonte charte, lot 4) ──
+// pastille de filtre de 32 px : fond et couleur posés par la classe ex-filtre selon aria-pressed (survol possible)
+const filtreStyle = { ...ui.pill(false), background: undefined, color: undefined };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
 // (sessionStorage de l'onglet, une clé par fiche) — jamais l'un pour l'autre
@@ -186,12 +190,13 @@ const campGratuite = (p, qty, allProducts, quantities, tabKey, groupes) => {
   return { livrées: 0, type: groupe.gratuite.type };
 };
 
-// Couleurs de conditions affichées dans le header de groupe
+// Couleurs de conditions affichées dans le header de groupe (refonte charte, lot 4 : tons { bg, fg, border } de
+// src/theme.js ; obligatoire en sarcelle, comme le justificatif et la précommande)
 const COND_COLORS = {
-  "aucune": ["#f3f4f6","#374151"],
-  "6+2":    ["#d1fae5","#065f46"],
-  "3+1":    ["#dbeafe","#1e40af"],
-  "oblig":  ["#ede9fe","#4c1d95"],
+  "aucune": tone("neutral"),
+  "6+2":    tone("ok"),
+  "3+1":    tone("info"),
+  "oblig":  tone("labo"),
 };
 
 const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
@@ -200,28 +205,33 @@ const OUTILS_LIEN = ["fauteuil", "transfert", "saisie", "peremption", "groupees"
 // Menus classés par ordre alphabétique (voir filteredProducts) : barre A–Z en haut
 const ALPHA_SECTIONS = ["otc", "nr"];
 
-const fmtPct = (pct) => {
-  if (pct == null || pct === "" || pct === "–") return "–";
-  const n = Math.abs(parseFloat(String(pct).replace(/[^0-9.-]/g, "")));
-  if (isNaN(n) || n === 0) return "–";
-  return `-${n % 1 === 0 ? n : n.toFixed(2)} %`;
-};
+// Remise affichée (catalogue seulement, jamais envoyée) : format français de src/theme.js (refonte charte, lot 4) —
+// « −9,7 % » (vrai signe moins, virgule, espace insécable) au lieu de « -9.70 % » ; vide ou 0 → « – »
+const fmtPct = (pct) => fmtPctFr(pct);
+// Remise en badge or + encre (refonte charte, lot 4) ; sans remise, un tiret discret
+function BadgeRemise({ pct }) {
+  const t = fmtPct(pct);
+  return t === "–" ? <span style={{ color: T.inkFaint }}>–</span> : <span style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{t}</span>;
+}
+// Alignement des colonnes du tableau : textes à gauche, colis au centre, montants et remises à droite
+const alignCol = (col) => /^(CIP|CIP13|Désignation)$/.test(col) ? "left" : (col === "Colis" || col === "Qté") ? "center" : "right";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
+// CIP/EAN en chasse fixe 12 px --ink-mute (refonte charte, lot 4) ; bouton de copie discret, coche verte une fois copié
 function CipCell({ cip }) {
   const [copied, setCopied] = React.useState(false);
-  if (!cip || cip === "–") return <span style={{ fontFamily:"monospace", fontSize:11, color:"#bbb" }}>–</span>;
+  if (!cip || cip === "–") return <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkFaint }}>–</span>;
   const copy = () => {
     navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
   };
   return (
-    <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
-      <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
-      <button onClick={copy} title="Copier CIP" style={{
-        background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
-        padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
-        fontWeight:700, lineHeight:"14px", transition:"all 0.2s"
-      }}>{copied ? "✓" : "⎘"}</button>
+    <span style={{ display:"inline-flex", alignItems:"center", gap:5, verticalAlign:"middle" }}>
+      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkMute, letterSpacing: "-0.01em" }}>{cip}</span>
+      <button className={copied ? undefined : "ex-btn-discret"} onClick={copy} title="Copier CIP" aria-label={copied ? "CIP copié" : `Copier le CIP ${cip}`} style={{
+        width: 18, height: 18, padding: 0, border: "none", borderRadius: R.xs, cursor: "pointer", flexShrink: 0,
+        display: "inline-flex", alignItems: "center", justifyContent: "center",
+        ...(copied ? { background: T.okBg, color: T.ok } : {}),
+      }}><Icone nom={copied ? "coche" : "copier"} taille={12} epaisseur={2.2} /></button>
     </span>
   );
 }
@@ -246,10 +256,11 @@ function LienMenu({ menu }) {
   const lien = `${window.location.origin}/?menu=${encodeURIComponent(menu)}`;
   const copier = () => { navigator.clipboard?.writeText(lien).then(() => { setCopie(true); setTimeout(() => setCopie(false), 1600); }).catch(() => window.prompt("Lien du menu :", lien)); };
   return (
-    <button onClick={copier} title={`Copier le lien de ce menu :\n${lien}`} style={{
-      marginTop: 8, background: copie ? "#dcfce7" : "#eef2ff", border: "none", borderRadius: 6, padding: "3px 10px",
-      cursor: "pointer", fontSize: 11, fontWeight: 700, color: copie ? "#166534" : "#4f46e5",
-    }}>{copie ? "✓ Lien copié" : "🔗 Lien du menu"}</button>
+    <button className={copie ? undefined : "ex-btn-discret"} onClick={copier} title={`Copier le lien de ce menu :\n${lien}`} style={{
+      marginTop: 10, height: 28, padding: "0 12px", border: "none", borderRadius: R.pill, cursor: "pointer",
+      display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700,
+      ...(copie ? { background: T.okBg, color: T.ok } : {}),
+    }}><Icone nom={copie ? "coche" : "lien"} taille={14} />{copie ? "Lien copié" : "Lien du menu"}</button>
   );
 }
 
@@ -2082,32 +2093,19 @@ export default function App() {
             />
           )}
 
-          {/* Category header */}
-          <div style={{
-            background: "#ffffff",
-            borderRadius: 16, padding: "20px 28px", marginBottom: 20,
-            border: "1px solid #e8e8e8", borderLeft: `3px solid ${catEffective.accent}`
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-              <div>
-                <div style={{ fontSize: 26, fontWeight: 800, color: "#0f2d3d", display: "flex", alignItems: "center", gap: 12 }}>
-                  <span>{catEffective.icon}</span> {catEffective.label}
-                </div>
-                <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>{catEffective.subtitle}</div>
-                {hasAdminToken && <LienMenu menu={activeTab} />}
-              </div>
-              <div style={{ background: "#f5f6f7", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
-                {activeTab === "ulabs" ? (<>
-                  <div style={{ color: "#888", fontSize: 11 }}>Pharmacies participantes</div>
-                  <div style={{ color: "#0f2d3d", fontWeight: 700, fontSize: 22 }}>
-                    {new Set(groupOrders.map(r => r.pharmacy_cip)).size}
-                  </div>
-                </>) : (<>
-                  <div style={{ color: "#888", fontSize: 11 }}>Lignes dans cette gamme</div>
-                  <div style={{ color: "#0f2d3d", fontWeight: 700, fontSize: 22 }}>{(cat.products||[]).length}</div>
-                </>)}
-              </div>
-            </div>
+          {/* Category header : en-tête de vue (refonte charte, lot 4) — la couleur du rayon n'est plus qu'un filet
+              et une pastille d'icône ; titres, compteurs et filtres aux jetons */}
+          <EnteteVue
+            icone={iconeMenu(activeTab, catEffective, 24)}
+            couleur={catEffective.accent}
+            titre={catEffective.label}
+            sousTitre={catEffective.subtitle}
+            actions={hasAdminToken && <LienMenu menu={activeTab} />}
+            aside={activeTab === "ulabs"
+              ? <CompteurVue valeur={new Set(groupOrders.map(r => r.pharmacy_cip)).size} libelle="Pharmacies participantes" />
+              : <CompteurVue valeur={(cat.products||[]).length} libelle={(cat.products||[]).length > 1 ? "références" : "référence"}
+                  detail={filteredProducts.length !== (cat.products||[]).length ? `${filteredProducts.length} affichée${filteredProducts.length > 1 ? "s" : ""}` : null} />}
+          >
             {/* Bloc groupement U-Labs */}
             {activeTab === "ulabs" && (() => {
               // Nb de références distinctes (locales + autres pharmacies)
@@ -2156,105 +2154,98 @@ export default function App() {
                         ...(minRefsHdr > 0 ? [{ val: cmdRefsHdr.length, total: minRefsHdr, label: "réf. min", ok: cmdRefsHdr.length >= minRefsHdr }] : []),
                         ...condStats,
                       ];
+                      // condition remplie : ton ok ; à compléter : ton danger (libellé et ✓, jamais la couleur seule)
                       return allStats.length === 0 ? null : (
-                        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 10 }}>
-                          {allStats.map(s => (
-                            <div key={s.label} style={{ background: s.ok ? "#d1fae5" : "#fee2e2", borderRadius: 8, padding: "5px 12px", border: `1px solid ${s.ok ? "#059669" : "#dc2626"}` }}>
-                              <span style={{ fontWeight: 800, color: "#0f2d3d", fontSize: 16 }}>{s.val}</span>
-                              <span style={{ color: "#555", fontSize: 10 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
+                        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+                          {allStats.map(s => { const ton = tone(s.ok ? "ok" : "danger"); return (
+                            <div key={s.label} style={{ background: ton.bg, borderRadius: R.pill, padding: "4px 12px", border: `1px solid ${ton.border}`, display: "inline-flex", alignItems: "baseline", gap: 1 }}>
+                              <span className="num" style={{ fontWeight: 700, color: T.ink, fontSize: 16 }}>{s.val}</span>
+                              <span style={{ color: ton.fg, fontSize: 11, fontWeight: 600 }}>/{s.total} {s.label} {s.ok ? "✓" : ""}</span>
                             </div>
-                          ))}
+                          ); })}
                         </div>
                       );
                     })()}
-                    <div style={{ background: "#f0f2f5", borderRadius: 8, padding: "6px 14px", display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 16 }}>⏱️</span>
+                    <div style={{ background: T.surface2, borderRadius: R.s, padding: "6px 14px", display: "flex", alignItems: "center", gap: 10 }}>
+                      <Icone nom="horloge" taille={18} style={{ color: T.teal }} />
                       <div>
-                        <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Fermeture dimanche 23h59</div>
-                        <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d", fontVariantNumeric: "tabular-nums" }}><CompteARebours /></div>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: T.inkMute, textTransform: "uppercase", letterSpacing: "0.06em" }}>Fermeture dimanche 23h59</div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: T.ink, fontVariantNumeric: "tabular-nums" }}><CompteARebours /></div>
                       </div>
                     </div>
                   </div>
-                  {/* Barre de progression — nb de références distinctes tous clients */}
+                  {/* Barre de progression — nb de références distinctes tous clients (piste sable, sarcelle puis or au palier) */}
                   <div style={{ marginTop: 4 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline" }}>
-                      <span style={{ fontSize: 13, color: "#0f2d3d", fontWeight: 800 }}>
-                        {totalUnites} <span style={{ fontWeight: 400, fontSize: 11, color: "#888" }}>/ {PALIER_EXPERT} références différentes</span>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                      <span className="num" style={{ fontSize: 13, color: T.ink, fontWeight: 700 }}>
+                        {totalUnites} <span style={{ fontWeight: 400, fontSize: 12, color: T.inkSoft }}>/ {PALIER_EXPERT} références différentes</span>
                       </span>
                       {palierAtteint
-                        ? <span style={{ fontSize: 12, color: "#b45309", fontWeight: 800 }}>⭐ −{PALIER_REMISE}% atteint !</span>
-                        : <span style={{ fontSize: 11, color: "#888" }}>encore {PALIER_EXPERT - totalUnites} réf. pour −{PALIER_REMISE}%</span>
+                        ? <span style={{ ...ui.badge("tier"), border: `1px solid ${T.or}`, fontSize: 12 }}>⭐ −{PALIER_REMISE}% atteint !</span>
+                        : <span style={{ fontSize: 12, color: T.inkSoft }}>encore {PALIER_EXPERT - totalUnites} réf. pour −{PALIER_REMISE}%</span>
                       }
                     </div>
-                    <div style={{ position: "relative", background: "#e5e7eb", borderRadius: 99, height: 16 }}>
+                    <div style={{ position: "relative", background: T.sand, borderRadius: R.pill, height: 12 }}>
                       <div style={{
-                        width: `${pctExpert}%`, height: "100%", borderRadius: 99, transition: "width 0.6s ease",
-                        background: palierAtteint ? "linear-gradient(90deg,#f59e0b,#fcd34d)" : "linear-gradient(90deg,#059669,#34d399)"
+                        width: `${pctExpert}%`, height: "100%", borderRadius: R.pill, transition: "width 0.6s var(--ease)",
+                        background: palierAtteint ? T.or : T.teal2
                       }}/>
                       {!palierAtteint && totalUnites > 0 && (
-                        <div style={{ position: "absolute", top: "50%", left: `${pctExpert}%`, transform: "translateY(-50%) translateX(-50%)", background: "#0f2d3d", borderRadius: 99, width: 8, height: 8 }}/>
+                        <div style={{ position: "absolute", top: "50%", left: `${pctExpert}%`, transform: "translateY(-50%) translateX(-50%)", background: T.petrol, borderRadius: R.pill, width: 8, height: 8 }}/>
                       )}
                     </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5 }}>
-                      <span style={{ fontSize: 10, color: "#999" }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", marginTop: 5, gap: 8 }}>
+                      <span style={{ fontSize: 11, color: T.inkMute }}>
                         {nbPharm > 0 ? `${nbPharm} pharmacie${nbPharm>1?"s":""} participante${nbPharm>1?"s":""}` : "Soyez le premier !"}
                       </span>
-                      <span style={{ fontSize: 10, color: "#999" }}>dont commandes validées incluses</span>
+                      <span style={{ fontSize: 11, color: T.inkMute }}>dont commandes validées incluses</span>
                     </div>
                   </div>
                   {/* Prix */}
                   <div style={{ marginTop: 6 }}>
-                    <span style={{ fontSize: 10, color: "#888" }}>· Prix affichés avec remise −33% sur facture incluse</span>
+                    <span style={{ fontSize: 11, color: T.inkMute }}>· Prix affichés avec remise −33% sur facture incluse</span>
                   </div>
                 </div>
               );
             })()}
-            {/* Search */}
+            {/* Search : pastille blanche, loupe au trait (16 px de police sur mobile : Safari iOS ne zoome plus à la saisie) */}
             <div style={{ marginTop: 16 }}>
-              <input
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="🔍  Rechercher par nom ou CIP..."
-                style={{
-                  width: "100%", background: "#f5f6f7", border: "1px solid #e2e2e2",
-                  borderRadius: 10, color: "#0f2d3d", padding: "8px 16px", fontSize: 13,
-                  outline: "none", boxSizing: "border-box"
-                }}
-              />
-              {/* Filters */}
-              <div style={{ display:"flex", gap:8, marginTop:8, flexWrap:"wrap" }}>
-                <button onClick={() => setShowFavOnly(!showFavOnly)} style={{
-                  background: showFavOnly ? "#fef3c7" : "#f0f2f5",
-                  border: showFavOnly ? "1px solid #fbbf24" : "1px solid #e2e2e2",
-                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:showFavOnly?700:400,
-                  color: showFavOnly ? "#92400e" : "#555", cursor:"pointer"
-                }}>{showFavOnly ? "⭐ Favoris" : "☆ Favoris"} ({favorites.size})</button>
+              <div style={{ position: "relative" }}>
+                <Icone nom="recherche" taille={16} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: T.inkMute, pointerEvents: "none" }} />
+                <input
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  placeholder="Rechercher par nom ou CIP…"
+                  aria-label={`Rechercher dans ${catEffective.label}`}
+                  style={{
+                    width: "100%", height: 40, background: T.surface, border: `1px solid ${T.lineField}`,
+                    borderRadius: R.pill, color: T.ink, padding: "0 16px 0 40px", fontSize: isMobile ? 16 : 14,
+                    outline: "none", boxSizing: "border-box"
+                  }}
+                />
+              </div>
+              {/* Filters : pastilles de 32 px, état porté par aria-pressed (sable / encre : classe ex-filtre) */}
+              <div style={{ display:"flex", gap:8, marginTop:10, flexWrap:"wrap" }}>
+                <button className="ex-filtre" aria-pressed={showFavOnly} onClick={() => setShowFavOnly(!showFavOnly)} style={filtreStyle}>
+                  <Icone nom="favori" taille={14} plein={showFavOnly} />Favoris <span className="num">({favorites.size})</span>
+                </button>
 
                 {!cat?.sansStock && <>
-                <button onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={{
-                  background: filterStock === "instock" ? "#d1fae5" : "#f0f2f5",
-                  border: filterStock === "instock" ? "1px solid #34d399" : "1px solid #e2e2e2",
-                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "instock"?700:400,
-                  color: filterStock === "instock" ? "#065f46" : "#555", cursor:"pointer"
-                }}>✓ En stock</button>
+                <button className="ex-filtre" aria-pressed={filterStock === "instock"} onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={filtreStyle}>
+                  <Icone nom="coche" taille={14} />En stock
+                </button>
 
-                <button onClick={() => setFilterStock(filterStock === "rupture" ? "all" : "rupture")} style={{
-                  background: filterStock === "rupture" ? "#fee2e2" : "#f0f2f5",
-                  border: filterStock === "rupture" ? "1px solid #fca5a5" : "1px solid #e2e2e2",
-                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "rupture"?700:400,
-                  color: filterStock === "rupture" ? "#991b1b" : "#555", cursor:"pointer"
-                }}>⚠ Ruptures</button>
+                <button className="ex-filtre" aria-pressed={filterStock === "rupture"} onClick={() => setFilterStock(filterStock === "rupture" ? "all" : "rupture")} style={filtreStyle}>
+                  <Icone nom="alerte" taille={14} />Ruptures
+                </button>
                 </>}
 
-                <button onClick={() => setFilterRemise(!filterRemise)} style={{
-                  background: filterRemise ? "#dbeafe" : "#f0f2f5",
-                  border: filterRemise ? "1px solid #93c5fd" : "1px solid #e2e2e2",
-                  borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterRemise?700:400,
-                  color: filterRemise ? "#1e40af" : "#555", cursor:"pointer"
-                }}>💰 Avec remise</button>
+                <button className="ex-filtre" aria-pressed={filterRemise} onClick={() => setFilterRemise(!filterRemise)} style={filtreStyle}>
+                  <Icone nom="etiquette" taille={14} />Avec remise
+                </button>
               </div>
             </div>
-          </div>
+          </EnteteVue>
 
           {/* Products grid (photos) + table */}
           <>
@@ -2319,101 +2310,101 @@ export default function App() {
                           return (parseInt(quantities[`ulabs-${gi}`]) || 0) > 0;
                         }).length;
                         return (
-                          <div style={{ gridColumn: "1 / -1", marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: 12, overflow: "hidden", border: `1px solid ${gInfo.accent}40` }}>
-                            {/* Titre groupe */}
-                            <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${gInfo.color||"#0d4f3c"} 0%, ${gInfo.accent||"#059669"}55 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                              <div>
-                                <div style={{ fontWeight: 800, fontSize: 17, color: "white" }}>{gInfo.label}</div>
-                                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.65)", marginTop: 2 }}>{groupProds.length} référence{groupProds.length>1?"s":""}</div>
+                          <div style={{ gridColumn: "1 / -1", marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: R.m, overflow: "hidden", background: T.paper, border: `1px solid ${T.line}`, borderLeft: `3px solid ${gInfo.accent || T.line}` }}>
+                            {/* Titre groupe (la couleur du groupe n'est plus qu'un filet, comme l'en-tête de vue) */}
+                            <div style={{ padding: "12px 18px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 640, fontSize: 17, letterSpacing: "-0.01em", color: T.petrol }}>{gInfo.label}</div>
+                                <div className="num" style={{ fontSize: 12, color: T.inkMute, marginTop: 2 }}>{groupProds.length} référence{groupProds.length>1?"s":""}</div>
                               </div>
                               {groupRefsCmd > 0 && (
-                                <div style={{ background: "rgba(255,255,255,0.18)", borderRadius: 8, padding: "6px 14px", textAlign: "center" }}>
-                                  <div style={{ fontWeight: 800, fontSize: 18, color: "white" }}>{groupRefsCmd}</div>
-                                  <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>réf. sélectionnées</div>
+                                <div style={{ background: T.mint, borderRadius: R.s, padding: "6px 14px", textAlign: "center", flexShrink: 0 }}>
+                                  <div className="num" style={{ fontWeight: 700, fontSize: 18, color: T.teal }}>{groupRefsCmd}</div>
+                                  <div style={{ fontSize: 11, color: T.teal }}>réf. sélectionnées</div>
                                 </div>
                               )}
                             </div>
-                            {/* Conditions depuis la config campagne */}
+                            {/* Conditions depuis la config campagne (tons de COND_COLORS) */}
                             {(()=>{
                               const rows = [];
                               if (gInfo?.desc) {
-                                const [bg, col] = !gInfo.gratuite ? ["#f3f4f6","#374151"] : gInfo.gratuite?.type==="6+2" ? ["#d1fae5","#065f46"] : ["#dbeafe","#1e40af"];
-                                rows.push([gInfo.label, gInfo.desc, bg, col]);
+                                const ton = !gInfo.gratuite ? COND_COLORS.aucune : gInfo.gratuite?.type==="6+2" ? COND_COLORS["6+2"] : COND_COLORS["3+1"];
+                                rows.push([gInfo.label, gInfo.desc, ton.bg, ton.fg]);
                               }
                               return rows;
                             })().map(([titre, detail, bg, color], ci) => (
-                              <div key={ci} style={{ padding: "10px 18px", background: bg, borderTop: "1px solid rgba(0,0,0,0.06)", display: "flex", gap: 10, alignItems: "flex-start" }}>
+                              <div key={ci} style={{ padding: "10px 18px", background: bg, borderTop: `1px solid ${T.lineSoft}`, display: "flex", gap: 10, alignItems: "flex-start" }}>
                                 <div>
-                                  <div style={{ fontWeight: 800, fontSize: 13, color }}>{titre}</div>
-                                  <div style={{ fontSize: 12, color, opacity: 0.8, marginTop: 2 }}>{detail}</div>
+                                  <div style={{ fontWeight: 700, fontSize: 13, color }}>{titre}</div>
+                                  <div style={{ fontSize: 12, color, marginTop: 2 }}>{detail}</div>
                                 </div>
                               </div>
                             ))}
                           </div>
                         );
                       })()}
-                      <div id={avecAlphabet && premierParLettre[lettreDe(p.name)] === p ? `lettre-${lettreDe(p.name)}` : undefined} style={{
-                        background: "white", borderRadius: 14,
-                        boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 2px 12px rgba(0,0,0,0.08)` : "0 1px 6px rgba(0,0,0,0.06)",
-                        border: `1px solid ${qty > 0 ? cat.accent : "#eef0f3"}`,
+                      <div id={avecAlphabet && premierParLettre[lettreDe(p.name)] === p ? `lettre-${lettreDe(p.name)}` : undefined}
+                        className="ex-carte" data-choisi={qty > 0 ? "" : undefined} style={{
+                        background: T.surface, borderRadius: R.m,
                         display: "flex", flexDirection: "column", gap: 0, minWidth: 0,
-                        overflow: "hidden", transition: "box-shadow 0.2s, border 0.2s"
+                        overflow: "hidden"
                       }}>
-                        {/* Photo */}
-                        <div style={{ width: "100%", height: isMobile ? 120 : 160, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: "1px solid #f0f2f5", boxSizing: "border-box" }}>
+                        {/* Photo : puits blanc (photos Medipim sur fond blanc) ; sans photo, puits sable et icône du rayon */}
+                        <div style={{ width: "100%", height: isMobile ? 120 : 160, background: p.image_url ? T.surface : T.surface2, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: `1px solid ${T.lineSoft}`, boxSizing: "border-box" }}>
                           {p.image_url
                             ? <img src={p.image_url} alt={p.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10, boxSizing: "border-box" }}/>
-                            : <span style={{ fontSize: 34, opacity: 0.2 }}>{cat.icon}</span>
+                            : (() => { const ic = iconeMenu(activeTab, cat, 40); return <span aria-hidden="true" style={typeof ic === "string" ? { fontSize: 34, opacity: 0.2 } : { display: "flex", color: T.inkFaint }}>{ic}</span>; })()
                           }
                           {isRupture && (
-                            <div style={{ position: "absolute", top: 4, left: 4, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
+                            <div style={{ position: "absolute", top: 8, left: 8, ...ui.badge("danger", true) }}><Icone nom="alerte" taille={12} />Rupture</div>
                           )}
                         </div>
                         {/* Info centrale */}
                         <div style={{ flex: 1, padding: isMobile ? "10px 10px 4px" : "12px 14px 6px", minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: isMobile ? 12.5 : 13.5, color: "#1a2a3a", lineHeight: 1.35, marginBottom: 4, overflowWrap: "anywhere" }}>{p.name}</div>
-                          {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
-                          {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
+                          <div style={{ fontWeight: 600, fontSize: isMobile ? 12.5 : 13.5, color: T.ink, lineHeight: 1.35, marginBottom: 4, overflowWrap: "anywhere" }}>{p.name}</div>
+                          {p.cip && <div style={{ fontSize: 11, color: T.inkMute, marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
+                          {p.note && <span style={{ ...ui.badge("warn"), whiteSpace: "normal" }}>{p.note}</span>}
                           {activeTab && (() => {
                             const _campBadge = getCampaign(activeTab);
                             const _conds = _campBadge?.conditions || [];
                             const isOblig = _conds.some(cond => {
                               try { return new RegExp(cond.match_regex,"i").test(p.name); } catch(e){ return false; }
                             });
-                            return isOblig ? <span style={{ fontSize: 10, color: "white", background: "#7c3aed", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4 }}>⚠️ Obligatoire</span> : null;
+                            return isOblig ? <span style={{ ...ui.badge("labo"), marginLeft: 4 }}><Icone nom="alerte" taille={11} />Obligatoire</span> : null;
                           })()}
                           {has6plus2 && ulabsGInfo?.note && (
-                            <span style={{ fontSize: 10, color: "#065f46", background: "#d1fae5", borderRadius: 4, padding: "2px 7px", fontWeight: 700, marginLeft: 4, border: "1px solid #6ee7b7" }}>{ulabsGInfo.note}</span>
+                            <span style={{ ...ui.badge("ok"), whiteSpace: "normal", marginLeft: 4, border: `1px solid ${COND_COLORS["6+2"].border}` }}>{ulabsGInfo.note}</span>
                           )}
                           {has6plus2 && ulabsGrat.hint && qty === 0 && (
-                            <div style={{ fontSize: 10, color: "#b45309", marginTop: 3 }}>💡 {ulabsGrat.hint}</div>
+                            <div style={{ fontSize: 11, color: T.warn, marginTop: 3 }}>💡 {ulabsGrat.hint}</div>
                           )}
-                          {p.colis && p.colis > 1 && <div style={{ fontSize: 11, color: "#666", marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
+                          {p.colis && p.colis > 1 && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>Conditionnement : ×{p.colis}</div>}
                           {activeTab === "ulabs" && groupTotal > 0 && (
-                            <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: "#d1fae5", borderRadius: 6, padding: "3px 8px" }}>
-                              <span style={{ fontSize: 11, fontWeight: 700, color: "#065f46" }}>🤝 {groupTotal} réf. groupées</span>
-                              <span style={{ fontSize: 10, color: "#6ee7b7" }}>· {groupPharm} pharm.</span>
+                            <div style={{ marginTop: 6, display: "inline-flex", alignItems: "center", gap: 5, background: T.okBg, borderRadius: R.pill, padding: "3px 10px", flexWrap: "wrap" }}>
+                              <span className="num" style={{ fontSize: 11, fontWeight: 700, color: T.ok }}>🤝 {groupTotal} réf. groupées</span>
+                              <span className="num" style={{ fontSize: 11, color: T.ok }}>· {groupPharm} pharm.</span>
                             </div>
                           )}
                         </div>
                         {/* Prix + remise + qté */}
-                        <div style={{ padding: isMobile ? "8px 8px 10px" : "10px 14px 14px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, borderTop: "1px solid #f0f2f5" }}>
+                        <div style={{ padding: isMobile ? "8px 8px 10px" : "10px 14px 14px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, borderTop: `1px solid ${T.lineSoft}` }}>
+                          {/* prix barré --ink-mute, remise en badge or + encre, prix net 20/700 encre */}
                           {(p.pv && p.pct || remisePct > 0) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                              <span style={{ fontSize: 12, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.pv)}</span>
-                              <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: remisePct > 0 ? (ulabsPalier === "expert" ? "#f59e0b" : "#06b6d4") : cat.accent, borderRadius: 4, padding: "1px 6px" }}>
-                                {remisePct > 0 ? `-${remisePct}%` : fmtPct(p.pct)}
+                              <span className="num" style={{ fontSize: 12, color: T.inkMute, textDecoration: "line-through" }}>{fmt(p.pv)}</span>
+                              <span className="num" style={{ ...ui.badge("promo"), padding: "1px 7px", lineHeight: 1.25 }}>
+                                {remisePct > 0 ? fmtPct(remisePct) : fmtPct(p.pct)}
                               </span>
                             </div>
                           )}
-                          <div style={{ fontSize: 20, fontWeight: 800, color: remisePct > 0 ? "#d97706" : cat.color }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
+                          <div className="num" style={{ fontSize: 20, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em" }}>{pnAffiche != null ? fmt(pnAffiche) : "–"}</div>
                           {has6plus2 && qty >= 6 ? (
-                            <div style={{ background: "#d1fae5", border: "1px solid #6ee7b7", borderRadius: 8, padding: "5px 10px", textAlign: "center", marginTop: 2 }}>
-                              <div style={{ fontSize: 9, color: "#065f46", fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>prix effectif avec UG</div>
-                              <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(pnEffectif)}<span style={{ fontSize: 11, fontWeight: 500 }}>/u livrée</span></div>
+                            <div style={{ background: T.okBg, border: `1px solid ${COND_COLORS["6+2"].border}`, borderRadius: R.s, padding: "5px 10px", textAlign: "center", marginTop: 2 }}>
+                              <div style={{ fontSize: 11, color: T.ok, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>prix effectif avec UG</div>
+                              <div className="num" style={{ fontSize: 18, fontWeight: 700, color: T.ok }}>{fmt(pnEffectif)}<span style={{ fontSize: 11, fontWeight: 500 }}>/u livrée</span></div>
                             </div>
                           ) : has6plus2 ? (
-                            <div style={{ fontSize: 10, color: "#6ee7b7", background: "#065f46", borderRadius: 6, padding: "2px 7px", fontWeight: 600 }}>🎁 dès 6 u. : prix réduit</div>
+                            <div style={{ ...ui.badge("ok"), border: `1px solid ${COND_COLORS["6+2"].border}` }}><Icone nom="cadeau" taille={12} />dès 6 u. : prix réduit</div>
                           ) : null}
                           {(() => {
                             const m = multiple > 1 ? multiple : 1;
@@ -2447,12 +2438,9 @@ export default function App() {
                               setQuantities(prev=>({...prev,[key]:v})); syncGroup(v);
                             };
                             return (<>
+                              {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité */}
                               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <button onClick={handleMinus} style={{
-                                  background: cat.accent+"15", border:`1px solid ${catEffective.accent}40`,
-                                  color: cat.accent, borderRadius:7, width:32, height:32,
-                                  cursor:"pointer", fontWeight:800, fontSize:18, lineHeight:1
-                                }}>−</button>
+                                <button className="ex-qte-moins" onClick={handleMinus} aria-label="Diminuer la quantité" style={qtyBtnStyle("moins", 32)}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
                                 <input
                                   type="number"
                                   min={stepMin || 0}
@@ -2461,32 +2449,25 @@ export default function App() {
                                   onChange={e => setQuantities(prev=>({...prev,[key]: e.target.value === "" ? 0 : parseInt(e.target.value)||0}))}
                                   onBlur={e => handleBlur(e.target.value)}
                                   placeholder="0"
-                                  style={{
-                                    width:50, textAlign:"center", border:`1.5px solid ${qty>0 ? cat.accent : "#ddd"}`,
-                                    borderRadius:7, padding:"5px 4px", fontSize:14,
-                                    fontWeight: qty>0 ? 700 : 400, outline:"none"
-                                  }}/>
-                                <button onClick={handlePlus} style={{
-                                  background: qty>0 ? cat.accent : "#0f2d3d", border:"none",
-                                  color:"white", borderRadius:7, width:32, height:32,
-                                  cursor:"pointer", fontWeight:800, fontSize:18, lineHeight:1
-                                }}>+</button>
+                                  aria-label={`Quantité ${p.name}`}
+                                  style={{ ...ui.qtyInput(qty > 0), height: 32, fontSize: 14 }}/>
+                                <button className="ex-qte-plus" onClick={handlePlus} aria-label="Augmenter la quantité" style={qtyBtnStyle("plus", 32)}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
                               </div>
                               {(stepMin > 0 || m > 1) && (
-                                <div style={{ fontSize:9, color: qty>0 ? cat.accent : "#bbb", marginTop:2 }}>
+                                <div className="num" style={{ fontSize: 11, color: qty > 0 ? T.teal : T.inkMute, marginTop: 2 }}>
                                   {stepMin > 0 && `min ${stepMin}`}{stepMin > 0 && m > 1 && " · "}{m > 1 && `×${m}`}
                                 </div>
                               )}
                               {qty > 0 && p.pn != null && (
-                                <div style={{ fontSize:12, fontWeight:700, color:cat.color, background:cat.accent+"15", borderRadius:6, padding:"2px 10px" }}>
+                                <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.surface2, borderRadius: R.s, padding: "2px 10px" }}>
                                   = {fmt((pnAffiche ?? p.pn) * qty)}
-                                  {livrées6plus2 > 0 && <span style={{ color:"#059669", fontWeight:800, marginLeft:6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
+                                  {livrées6plus2 > 0 && <span style={{ color: T.ok, fontWeight: 700, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
                                 </div>
                               )}
                               {qty > 0 && (
-                                <button onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
-                                  style={{ background:"none", border:"none", cursor:"pointer", color:"#ccc", fontSize:14, padding:"2px 4px", lineHeight:1 }}
-                                  title="Remettre à zéro">✕</button>
+                                <button className="ex-btn-discret" onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
+                                  style={{ width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+                                  title="Remettre à zéro" aria-label="Remettre à zéro"><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
                               )}
                             </>);
                           })()}
@@ -2498,14 +2479,15 @@ export default function App() {
                 </div>
               )}
               {gridWithoutPhoto.length > 0 && (
-          <div style={{ background: "white", borderRadius: 16, overflow: "hidden", boxShadow: "0 2px 16px rgba(0,0,0,0.08)" }}>
+          <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: R.m, overflow: "hidden", boxShadow: T.shadow1 }}>
             {isMobile ? (
-              /* ── VUE MOBILE : liste simplifiée nom + PN + quantité ── */
+              /* ── VUE MOBILE : liste simplifiée nom + PN + quantité (en-tête neutre ; zébrure et rupture : classe ex-tr) ── */
               <div>
-                <div style={{ background: cat.color, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ color: "white", fontWeight: 700, fontSize: 12 }}>DÉSIGNATION</span>
-                  <span style={{ color: "white", fontWeight: 700, fontSize: 12 }}>PN · QTÉ</span>
+                <div style={{ ...ui.th, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span>DÉSIGNATION</span>
+                  <span>PN · QTÉ</span>
                 </div>
+                <div>
                 {gridWithoutPhoto.map((p, idx) => {
                   const realIdx = cat.products.indexOf(p);
                   const key = `${activeTab}-${realIdx}`;
@@ -2513,44 +2495,44 @@ export default function App() {
                   const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                   const step = getStep(activeTab, p);
                   return (
-                    <div key={key} style={{
-                      padding: "10px 14px", borderBottom: "1px solid #f0f2f5",
-                      background: isRupture ? "#fff8f8" : idx % 2 === 0 ? "white" : "#fafbfc",
+                    <div key={key} className="ex-tr" data-rupture={isRupture ? "" : undefined} style={{
+                      padding: "10px 14px", borderBottom: `1px solid ${T.lineSoft}`,
                       display: "flex", alignItems: "center", gap: 10
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 600, fontSize: 13, color: "#0f2d3d", lineHeight: 1.3 }}>
+                        <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.3 }}>
                           {p.name}
-                          {p.note && <span style={{ marginLeft: 5, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
-                          {isRupture && <span style={{ marginLeft: 5, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span>}
+                          {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 5, whiteSpace: "normal" }}>{p.note}</span>}
+                          {isRupture && <span style={{ ...ui.badge("danger"), marginLeft: 5 }}><Icone nom="alerte" taille={11} />Rupture</span>}
                         </div>
-                        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>{fmt(p.pn)} {p.pct ? <span style={{ color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</span> : null}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></div>
+                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{fmt(p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        <button onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
-                          style={{ background: cat.accent+"20", border: `1px solid ${catEffective.accent}40`, color: cat.accent, borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>−</button>
-                        <span style={{ width: 28, textAlign: "center", fontWeight: 700, fontSize: 15 }}>{qty}</span>
-                        <button onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
-                          style={{ background: cat.accent, border: "none", color: "white", borderRadius: 6, width: 30, height: 30, cursor: "pointer", fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>+</button>
+                        <button className="ex-qte-moins" aria-label="Diminuer la quantité" onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
+                          style={qtyBtnStyle("moins", 30)}><Icone nom="moins" taille={15} epaisseur={2.4} /></button>
+                        <span className="num" style={{ width: 28, textAlign: "center", fontWeight: 700, fontSize: 15, color: qty > 0 ? T.ink : T.inkMute }}>{qty}</span>
+                        <button className="ex-qte-plus" aria-label="Augmenter la quantité" onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
+                          style={qtyBtnStyle("plus", 30)}><Icone nom="plus" taille={15} epaisseur={2.4} /></button>
                       </div>
                     </div>
                   );
                 })}
+                </div>
               </div>
             ) : (
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              {/* chiffres tabulaires dans tout le tableau : les colonnes de prix s'alignent */}
+              <table style={{ width: "100%", borderCollapse: "collapse", fontVariantNumeric: "tabular-nums" }}>
                 <thead>
-                  <tr style={{ background: cat.color }}>
-                    <th style={{ color: "white", padding: "12px 4px 12px 10px", fontSize: 11, width: 28 }}>★</th>
+                  {/* en-tête neutre (sable clair + eyebrow --ink-mute), plus à la couleur du rayon ; libellés sur deux
+                      lignes au besoin (comme avant) : la largeur va à la désignation */}
+                  <tr>
+                    <th style={{ ...thStyle, padding: "10px 4px 10px 10px", width: 28 }}><Icone nom="favori" taille={13} titre="Favori" /></th>
                     {cat.columns.map(col => (
-                      <th key={col} style={{
-                        color: "white", padding: "12px 14px", textAlign: "left",
-                        fontSize: 11, fontWeight: 700, letterSpacing: 0.5, whiteSpace: "nowrap"
-                      }}>{col.toUpperCase()}</th>
+                      <th key={col} style={{ ...thStyle, textAlign: alignCol(col) }}>{col.toUpperCase()}</th>
                     ))}
-                    <th style={{ color: "white", padding: "12px 14px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>QTÉ</th>
-                    <th style={{ color: "white", padding: "12px 14px", fontSize: 11, fontWeight: 700, letterSpacing: 0.5 }}>SOUS-TOTAL</th>
+                    <th style={{ ...thStyle, textAlign: "center" }}>QTÉ</th>
+                    <th style={{ ...thStyle, textAlign: "right" }}>SOUS-TOTAL</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -2561,143 +2543,134 @@ export default function App() {
                     const subtotal = p.pn != null ? p.pn * qty : null;
 
                     const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
-                    const ruptureBadge = isRupture ? <span style={{ marginLeft: 6, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span> : null;
+                    const ruptureBadge = isRupture ? <span style={{ ...ui.badge("danger"), marginLeft: 6, verticalAlign: "middle" }}><Icone nom="alerte" taille={11} />Rupture</span> : null;
+                    // zébrure, survol et fond rupture : classe ex-tr + data-rupture (tokens.css) — le survol ne l'efface plus
                     return (
-                      <tr key={key} style={{
-                        background: isRupture ? "#fff8f8" : idx % 2 === 0 ? "white" : "#fafbfc",
-                        borderBottom: "1px solid #f0f2f5",
-                        transition: "background 0.15s"
-                      }}
-                        onMouseEnter={e => e.currentTarget.style.background = `${cat.accent}10`}
-                        onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? "white" : "#fafbfc"}
-                      >
-                        {/* Favori */}
+                      <tr key={key} className="ex-tr" data-rupture={isRupture ? "" : undefined} style={{
+                        borderBottom: `1px solid ${T.lineSoft}`
+                      }}>
+                        {/* Favori (reste un td cliquable : pas d'arrêt de tabulation en plus) */}
                         <td style={{ ...tdStyle, width:28, padding:"6px 2px 6px 10px", cursor:"pointer" }}
-                          onClick={() => p.cip && toggleFav(p.cip)}>
-                          <span style={{ fontSize:14, color: favorites.has(p.cip) ? "#f59e0b" : "#ddd" }}>
-                            {favorites.has(p.cip) ? "★" : "☆"}
-                          </span>
+                          onClick={() => p.cip && toggleFav(p.cip)} title={favorites.has(p.cip) ? "Retirer des favoris" : "Ajouter aux favoris"}>
+                          <Icone nom="favori" taille={16} plein={favorites.has(p.cip)} style={{ color: favorites.has(p.cip) ? T.teal2 : T.lineField }} />
                         </td>
-                        {/* Render cells based on category */}
+                        {/* Render cells based on category (désignation sans largeur maximale : en 13 px, la limite renvoyait
+                            nom et badges sur deux lignes ; la colonne prend la place libre, les lignes restent basses) */}
                         {activeTab === "expert" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 300 }}>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
-                            {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
                             {ruptureBadge}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                          <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : fmt(30)}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
-                          <td style={{ ...tdStyle, textAlign: "center" }}>{p.colis}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.prix)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#666" }}>{fmt(p.carton)}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft }}>{fmt(p.carton)}</td>
                         </>}
                         {activeTab === "master" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>{p.name}{ruptureBadge}</td>
-                          <td style={{ ...tdStyle, textAlign: "center", color: cat.accent, fontWeight: 700 }}>×{p.palier}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft, fontWeight: 600 }}>×{p.palier}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pb)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "obeso" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.groupe && (
-                              <div style={{ fontSize: 9, color: "#3b82f6", fontWeight: 700, letterSpacing: 0.5, marginBottom: 2 }}>{p.groupe.toUpperCase()}</div>
+                              <div style={{ fontSize: 11, color: T.teal, fontWeight: 700, letterSpacing: "0.06em", marginBottom: 2 }}>{p.groupe.toUpperCase()}</div>
                             )}
                             {p.name}
-                            {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: "#3b82f6", fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "nr" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
-                            {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "molnlycke" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 350 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: cat.accent }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "blanche" && <>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 300 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, textAlign: "center", color: "#666" }}>{p.colis}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "covid" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 320 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {activeTab === "otc" && <>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 260 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
                         {cat.isPromo && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 280 }}>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
-                            {p.note && <span style={{ marginLeft: 6, fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "1px 5px" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
                             {ruptureBadge}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{fmtPct(p.pct)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 800, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
+                          <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
 
-                        {/* Qty input */}
+                        {/* Qty input : « − » sable, « + » pétrole (24 px), champ à filet --line-field puis 2 px sarcelle */}
                         <td style={{ ...tdStyle, textAlign: "center" }}>
                           {(() => {
                             const { step, min: stepMin, multiple } = getStepMin(activeTab, p);
                             return (
-                              <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flexDirection: "column" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "center", flexDirection: "column" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                  <button onClick={() => setQty(key, (quantities[key] || 0) - step, step)} style={qtyBtnStyle(cat.accent)}>−</button>
+                                  <button className="ex-qte-moins" aria-label="Diminuer la quantité" onClick={() => setQty(key, (quantities[key] || 0) - step, step)} style={qtyBtnStyle("moins")}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
                                   <ChampQteColis
                                     min="0" step={step} valeur={quantities[key]}
                                     onValider={v => setQty(key, v, step)}
                                     placeholder="0"
-                                    style={{
-                                      width: 50, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
-                                      borderRadius: 6, padding: "4px 4px", fontSize: 13,
-                                      fontWeight: qty > 0 ? 700 : 400, color: qty > 0 ? cat.color : "#999",
-                                      outline: "none"
-                                    }}
+                                    aria-label={`Quantité ${p.name}`}
+                                    style={{ ...ui.qtyInput(qty > 0), height: 26 }}
                                   />
-                                  <button onClick={() => setQty(key, (quantities[key] || 0) + step, step)} style={qtyBtnStyle(cat.accent)}>+</button>
+                                  <button className="ex-qte-plus" aria-label="Augmenter la quantité" onClick={() => setQty(key, (quantities[key] || 0) + step, step)} style={qtyBtnStyle("plus")}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
                                 </div>
-                                {step > 1 && <span style={{ fontSize: 9, color: "#aaa" }}>par {step}</span>}
+                                {step > 1 && <span style={{ fontSize: 11, lineHeight: 1.1, color: T.inkMute }}>par {step}</span>}
                               </div>
                             );
                           })()}
@@ -2705,8 +2678,8 @@ export default function App() {
                         {/* Subtotal */}
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>
                           {qty > 0 && subtotal != null
-                            ? <span style={{ color: cat.color, background: `${cat.accent}15`, borderRadius: 6, padding: "2px 8px" }}>{fmt(subtotal)}</span>
-                            : <span style={{ color: "#ccc" }}>–</span>
+                            ? <span style={{ color: T.ink }}>{fmt(subtotal)}</span>
+                            : <span style={{ color: T.inkFaint }}>–</span>
                           }
                         </td>
                       </tr>
@@ -3163,13 +3136,12 @@ function PharmacyPicker({ onPick, onClose }) {
   );
 }
 
-const tdStyle = {
-  padding: "10px 14px", fontSize: 12, color: "#333", verticalAlign: "middle"
-};
+// Cellule de tableau (refonte charte, lot 4) : gabarit conservé (10 × 14 px, lignes de 44 à 60 px), 13 px encre
+const tdStyle = ui.td;
+// En-tête de colonne : eyebrow neutre ; retour à la ligne permis (« SOUS-TOTAL », « PRIX CARTON »…) pour laisser
+// la largeur à la désignation, comme avant la refonte
+const thStyle = { ...ui.th, whiteSpace: "normal", letterSpacing: "0.04em", lineHeight: 1.25, verticalAlign: "bottom" };
 
-const qtyBtnStyle = (accent) => ({
-  background: accent + "20", border: `1px solid ${accent}40`,
-  color: accent, borderRadius: 5, width: 24, height: 24,
-  cursor: "pointer", fontWeight: 700, fontSize: 14,
-  display: "flex", alignItems: "center", justifyContent: "center", padding: 0
-});
+// Boutons de quantité : « − » sable, « + » pétrole. Fond et couleur posés par les classes ex-qte-moins / ex-qte-plus
+// (survol) ; 24 px dans le tableau d'ordinateur, 30 en liste mobile, 32 en grille. Plus de couleur du rayon.
+const qtyBtnStyle = (kind, taille = 24) => ({ ...ui.qtyBtn(kind), background: undefined, color: undefined, width: taille, height: taille });
