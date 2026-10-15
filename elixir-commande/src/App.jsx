@@ -682,6 +682,8 @@ export default function App() {
         products: (ps.products || []),
         // grille avec visuels (image_url de chaque produit) ; sans aucune photo, le tableau habituel
         withPhotos: !!ps.withPhotos && (ps.products || []).some(pr => pr.image_url),
+        // menu sans mention de stock (précommande) : ni filtre « En stock / Ruptures » ni badge rupture
+        sansStock: !!ps.sansStock,
         isPromo: true,
         promoId: ps.id,
       };
@@ -1078,8 +1080,8 @@ export default function App() {
       (p.cip && p.cip.includes(search))
     );
     if (showFavOnly) filtered = filtered.filter(p => p.cip && favorites.has(p.cip));
-    if (filterStock === "instock") filtered = filtered.filter(p => !p.cip || !stockData[p.cip] || stockData[p.cip]?.dispo > 0);
-    if (filterStock === "rupture") filtered = filtered.filter(p => p.cip && stockData[p.cip]?.dispo === 0);
+    if (filterStock === "instock" && !cat?.sansStock) filtered = filtered.filter(p => !p.cip || !stockData[p.cip] || stockData[p.cip]?.dispo > 0);
+    if (filterStock === "rupture" && !cat?.sansStock) filtered = filtered.filter(p => p.cip && stockData[p.cip]?.dispo === 0);
     if (filterRemise) filtered = filtered.filter(p => p.pct > 0 || p.remise_eur > 0);
     if (activeTab === "otc" || activeTab === "nr") {
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
@@ -2157,6 +2159,7 @@ export default function App() {
                   color: showFavOnly ? "#92400e" : "#555", cursor:"pointer"
                 }}>{showFavOnly ? "⭐ Favoris" : "☆ Favoris"} ({favorites.size})</button>
 
+                {!cat?.sansStock && <>
                 <button onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={{
                   background: filterStock === "instock" ? "#d1fae5" : "#f0f2f5",
                   border: filterStock === "instock" ? "1px solid #34d399" : "1px solid #e2e2e2",
@@ -2170,6 +2173,7 @@ export default function App() {
                   borderRadius:8, padding:"4px 12px", fontSize:11, fontWeight:filterStock === "rupture"?700:400,
                   color: filterStock === "rupture" ? "#991b1b" : "#555", cursor:"pointer"
                 }}>⚠ Ruptures</button>
+                </>}
 
                 <button onClick={() => setFilterRemise(!filterRemise)} style={{
                   background: filterRemise ? "#dbeafe" : "#f0f2f5",
@@ -2214,7 +2218,7 @@ export default function App() {
                     const showGroupHeader = activeTab === "ulabs" && currentGroupe?.key !== prevGroupe?.key;
                     const qty = quantities[key] || 0;
                     const { step, min: stepMin, multiple } = getStepMin(activeTab, p);
-                    const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                    const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const groupTotal = activeTab === "ulabs" ? groupOrders.filter(r => r.cip === p.cip).reduce((s,r) => s + (parseInt(r.qty)||0), 0) : 0;
                     const groupPharm = activeTab === "ulabs" ? new Set(groupOrders.filter(r => r.cip === p.cip).map(r => r.pharmacy_cip)).size : 0;
                     const remisePct = (() => { const _cr = getCampaign(activeTab); return _cr ? (_cr.palier_remise ?? 33) : 0; })();
@@ -2433,7 +2437,7 @@ export default function App() {
                   const realIdx = cat.products.indexOf(p);
                   const key = `${activeTab}-${realIdx}`;
                   const qty = quantities[key] || 0;
-                  const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                  const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                   const step = getStep(activeTab, p);
                   return (
                     <div key={key} style={{
@@ -2483,7 +2487,7 @@ export default function App() {
                     const qty = quantities[key] || 0;
                     const subtotal = p.pn != null ? p.pn * qty : null;
 
-                    const isRupture = p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                    const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const ruptureBadge = isRupture ? <span style={{ marginLeft: 6, fontSize: 10, color: "#dc2626", background: "#fee2e2", borderRadius: 4, padding: "1px 5px", fontWeight: 700 }}>⚠️ Rupture</span> : null;
                     return (
                       <tr key={key} style={{
