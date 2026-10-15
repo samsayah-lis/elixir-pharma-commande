@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from "react";
 import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
+import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js ; le panier reçoit les prix calculés
 // par getDiscountedPrice, inchangés.
@@ -158,7 +159,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
             {syncing && syncProgress ? `${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "Démarrage…" : "Actualiser depuis Odoo"}
           </button>
         )}
-        aside={!loading && <CompteurVue valeur={products.length.toLocaleString("fr-FR")} libelle={products.length > 1 ? "références" : "référence"} />}
+        aside={<CompteurVue chargement={loading} valeur={products.length.toLocaleString("fr-FR")} libelle={loading || products.length > 1 ? "références" : "référence"} />}
       />
 
       {/* Recherche en pastille blanche + tri (comme la recherche de section du catalogue) */}
@@ -177,35 +178,33 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
         </select>
       </div>
 
-      {/* Loading */}
-      {loading && <div role="status" style={{ textAlign: "center", padding: 40, color: T.inkMute, fontSize: 14 }}>Chargement des produits à péremption courte…</div>}
+      {/* Chargement, erreur, liste vide, filtre sans résultat : composants communs (lot 8) */}
+      {loading && <Chargement texte="Chargement des produits à péremption courte…" style={{ ...ui.card, padding: "40px 20px" }} />}
 
-      {/* Error */}
+      {/* Erreur : même message, « Réessayer » relance le même chargement (fetchData) */}
       {!loading && error && (
-        <div role="alert" style={{ ...ui.encart("danger"), padding: "14px 18px", marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={16} style={{ marginTop: 1 }} />{error}</div>
-          <button className="ex-btn-danger-ligne" onClick={fetchData} style={{ ...ui.btn("ligne", "s"), background: undefined, color: undefined, boxShadow: undefined, marginTop: 10 }}>Réessayer</button>
-        </div>
+        <EtatVide cadre erreur icone="alerte" titre="Les produits n’ont pas pu être chargés" texte={error}
+          actions={<ActionEtat principal icone="actualiser" onClick={fetchData}>Réessayer</ActionEtat>} />
       )}
 
-      {/* Empty */}
+      {/* Liste vide : bouton de synchronisation inchangé (même onClick, même état) */}
       {!loading && !error && products.length === 0 && (
-        <div style={{ ...ui.card, textAlign: "center", padding: "48px 20px" }}>
-          <span aria-hidden="true" style={{ width: 56, height: 56, borderRadius: R.pill, background: T.mint, color: T.teal, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
-            <Icone nom="horloge" taille={26} />
-          </span>
-          <div style={{ fontWeight: 640, fontSize: 16, color: T.ink, marginBottom: 8 }}>
-            {syncing ? "Synchronisation des péremptions en cours…" : "Aucune donnée de péremption"}
-          </div>
-          <div style={{ fontSize: 13, color: T.inkSoft, marginBottom: 20 }}>
-            Les dates de péremption doivent être synchronisées depuis Odoo.
-          </div>
-          <button className={syncing ? undefined : "ex-btn-petrole"} onClick={triggerExpirySync} disabled={syncing}
-            style={{ ...ui.btn("primaire", "l"), background: syncing ? T.sand : undefined, color: syncing ? T.inkSoft : undefined, cursor: syncing ? "default" : "pointer" }}>
-            <Icone nom={syncing ? "horloge" : "actualiser"} taille={18} />
-            {syncing ? "Synchronisation en cours…" : "Synchroniser les péremptions Odoo"}
-          </button>
-        </div>
+        <EtatVide cadre icone="horloge"
+          titre={syncing ? "Synchronisation des péremptions en cours…" : "Aucune donnée de péremption"}
+          texte="Les dates de péremption doivent être synchronisées depuis Odoo."
+          actions={
+            <button className={syncing ? undefined : "ex-btn-petrole"} onClick={triggerExpirySync} disabled={syncing}
+              style={{ ...ui.btn("primaire", "l"), background: syncing ? T.sand : undefined, color: syncing ? T.inkSoft : undefined, cursor: syncing ? "default" : "pointer" }}>
+              <Icone nom={syncing ? "horloge" : "actualiser"} taille={18} />
+              {syncing ? "Synchronisation en cours…" : "Synchroniser les péremptions Odoo"}
+            </button>
+          } />
+      )}
+
+      {/* Filtre sans résultat (était : rien d'affiché) */}
+      {!loading && !error && products.length > 0 && sorted.length === 0 && (
+        <EtatVide cadre icone="recherche" titre="Aucun produit ne correspond" texte={`Filtre actif : « ${search} »`}
+          actions={<ActionEtat icone="fermer" onClick={() => setSearch("")}>Effacer le filtre</ActionEtat>} />
       )}
 
       {/* Table : carte blanche, en-tête neutre (eyebrow --ink-mute), lignes .ex-tr (zébrure, survol) ; défilement

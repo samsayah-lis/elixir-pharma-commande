@@ -40,11 +40,14 @@ export default function EnteteVue({ icone, couleur, titre, sousTitre, actions, a
   );
 }
 
-// Compteur à droite de l'en-tête : grand chiffre (chiffres tabulaires) + libellé en eyebrow
-export function CompteurVue({ valeur, libelle, detail }) {
+// Compteur à droite de l'en-tête : grand chiffre (chiffres tabulaires) + libellé en eyebrow.
+// chargement (lot 8) : bloc sable à la place du chiffre, la place est tenue (l'en-tête ne saute pas à l'arrivée des données)
+export function CompteurVue({ valeur, libelle, detail, chargement }) {
   return (
     <div style={{ textAlign: "right", flexShrink: 0, marginLeft: "auto" }}>
-      <div className="num" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, color: T.ink }}>{valeur}</div>
+      <div className="num" style={{ fontSize: 22, fontWeight: 700, lineHeight: 1.1, color: T.ink }}>
+        {chargement ? <span aria-hidden="true" className="ex-squelette" style={{ display: "inline-block", width: 48, height: 20, borderRadius: 6, verticalAlign: "-3px" }} /> : valeur}
+      </div>
       <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute, marginTop: 2 }}>{libelle}</div>
       {detail && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 2 }}>{detail}</div>}
     </div>

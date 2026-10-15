@@ -16,6 +16,7 @@ import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharm
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
+import EtatVide, { ActionEtat, SqueletteCatalogue } from "./components/ui/EtatVide.jsx";
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
@@ -365,7 +366,7 @@ export default function App() {
   const flashTimer = useRef(null);
   const flash = (msg, duree = 3000) => { setFlashMsg(msg); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setFlashMsg(""), duree); };
 
-  // ── Suggestions de récommande (ML) ───────────────────────────────────
+  // ── Suggestions de recommande (ML) ───────────────────────────────────
   const [reorderSuggestions, setReorderSuggestions] = useState([]);
   const [showReorder, setShowReorder] = useState(false);
   const [showMyOrders, setShowMyOrders] = useState(false);
@@ -416,8 +417,9 @@ export default function App() {
 
   // Debounced Odoo search
   useEffect(() => {
-    if (globalSearch.trim().length < 2) { setGlobalResults([]); return; }
+    if (globalSearch.trim().length < 2) { setGlobalResults([]); setGlobalSearching(false); return; }
     clearTimeout(globalSearchRef.current);
+    setGlobalSearching(true);   // lot 8 : « Recherche… » dès la frappe, plus de « 0 produit » pendant le délai de 350 ms
     globalSearchRef.current = setTimeout(async () => {
       setGlobalSearching(true);
       try {
@@ -1245,7 +1247,7 @@ export default function App() {
         setObStep("new_client");
       }
     } catch (err) {
-      setOnboardingError("Erreur de connexion. Veuillez reessayer.");
+      setOnboardingError("Erreur de connexion. Veuillez réessayer.");
       setObStep("email");
     }
   };
@@ -1989,15 +1991,17 @@ export default function App() {
               {/* titre posé sur le fond de page (cream) : encre ; était #f0f0f0, pensé pour l'ancien fond noir */}
               <div style={{ fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
                 <Icone nom="recherche" taille={18} style={{ color: T.teal }} /> Résultats pour « {globalSearch} »
-                {globalSearching && <span style={{ fontSize:12, color:T.teal, fontWeight:500 }}>Recherche…</span>}
+                {globalSearching && <span style={{ fontSize:12, color:T.inkSoft, fontWeight:500, display:"inline-flex", alignItems:"center", gap:8 }}><span className="ex-roue" aria-hidden="true" />Recherche…</span>}
                 {!globalSearching && <span className="num" style={{ ...ui.badge("neutral"), fontSize:12, fontWeight:500, padding:"2px 10px" }}>
                   {globalResults.length} produit{globalResults.length > 1 ? "s" : ""} · stock Odoo temps réel
                 </span>}
               </div>
-              {!globalSearching && globalResults.length === 0 ? (
-                <div style={{ ...ui.card, textAlign:"center", padding:"32px 20px", color:T.inkSoft, fontSize:14 }}>
-                  Aucun produit trouvé pour « {globalSearch} »
-                </div>
+              {/* lot 8 : première recherche en cours → lignes squelettes (plus de carte vide) ; aucun résultat → état vide */}
+              {globalSearching && globalResults.length === 0 ? (
+                <SqueletteCatalogue mobile={isMobile} lignes={4} entete={false} texte="Recherche en cours…" />
+              ) : !globalSearching && globalResults.length === 0 ? (
+                <EtatVide cadre compact icone="recherche" titre={<>Aucun produit trouvé pour « {globalSearch} »</>}
+                  texte="Vérifiez l’orthographe ou cherchez par code CIP / EAN." />
               ) : (
                 /* Résultats (lot 5) : carte blanche, lignes .ex-tr (zébrure, survol, rupture) disposées par .ex-resultat
                    (sous 768 px : nom sur toute la largeur, puis prix et « + Panier ») ; statut toujours écrit */
@@ -2140,7 +2144,8 @@ export default function App() {
             actions={hasAdminToken && <LienMenu menu={activeTab} />}
             aside={activeTab === "ulabs"
               ? <CompteurVue valeur={new Set(groupOrders.map(r => r.pharmacy_cip)).size} libelle="Pharmacies participantes" />
-              : <CompteurVue valeur={(cat.products||[]).length} libelle={(cat.products||[]).length > 1 ? "références" : "référence"}
+              : <CompteurVue valeur={(cat.products||[]).length} libelle={(cat.products||[]).length > 1 || productsLoading ? "références" : "référence"}
+                  chargement={productsLoading && !(cat.products||[]).length}
                   detail={filteredProducts.length !== (cat.products||[]).length ? `${filteredProducts.length} affichée${filteredProducts.length > 1 ? "s" : ""}` : null} />}
           >
             {/* Bloc groupement U-Labs */}
@@ -2729,6 +2734,34 @@ export default function App() {
           </div>
               )}
 
+          {/* ── États du catalogue (lot 8) : rien à afficher dans la grille ou le tableau ──
+              chargement du menu : squelettes aux dimensions des cartes / lignes (pas de saut à l'arrivée des produits) ;
+              catalogue non chargé (aucun produit reçu) : erreur + « Réessayer » (même chargement qu'à l'ouverture) ;
+              menu vide ; filtres ou recherche trop restrictifs : « Effacer les filtres » (états d'affichage seulement) */}
+          {filteredProducts.length === 0 && (
+            productsLoading && !(cat.products || []).length
+              ? <SqueletteCatalogue grille={isGridSection} mobile={isMobile} lignes={isGridSection ? 8 : 10} alphabet={ALPHA_SECTIONS.includes(activeTab)} />
+            : !dbProducts.length && !(cat.products || []).length
+              ? <EtatVide cadre erreur icone="alerte" titre="Le catalogue n’a pas pu être chargé"
+                  texte="Vérifiez votre connexion internet, puis réessayez."
+                  actions={<ActionEtat principal icone="actualiser" onClick={fetchProducts}>Réessayer</ActionEtat>} />
+            : !(cat.products || []).length
+              ? <EtatVide cadre icone="carton" titre="Aucun produit dans ce menu pour le moment"
+                  texte="Les références de ce menu seront affichées ici dès leur mise en ligne." />
+              : <EtatVide cadre icone={showFavOnly ? "favori" : "recherche"} titre="Aucun produit ne correspond"
+                  texte={(() => {
+                    const actifs = [
+                      search && `recherche « ${search} »`,
+                      showFavOnly && "favoris",
+                      filterStock === "instock" && !cat?.sansStock && "en stock",
+                      filterStock === "rupture" && !cat?.sansStock && "ruptures",
+                      filterRemise && "avec remise",
+                    ].filter(Boolean);
+                    return actifs.length ? `Filtres actifs : ${actifs.join(" · ")}` : null;
+                  })()}
+                  actions={<ActionEtat icone="fermer" onClick={() => { setSearch(""); setShowFavOnly(false); setFilterStock("all"); setFilterRemise(false); }}>Effacer les filtres</ActionEtat>} />
+          )}
+
           {/* Bouton confirmation commande groupée U-Labs */}
           {activeTab === "ulabs" && (() => {
             const myItems = (cat?.products || [])
@@ -2786,9 +2819,11 @@ export default function App() {
             };
             return (
               <div style={{ position: "sticky", bottom: 20, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 50, marginTop: 16 }}>
+                {/* conditions non remplies (lot 8) : encart danger annoncé (role="alert"), texte inchangé, ⚠️ remplacé par l'icône */}
                 {ulabsError && (
-                  <div style={{ background: "#dc2626", borderRadius: 10, padding: "10px 18px", marginBottom: 8, maxWidth: 480, textAlign: "center" }}>
-                    {ulabsError.split("\n").map((line, i) => <div key={i} style={{ color: "white", fontSize: i === 0 ? 13 : 11, fontWeight: i === 0 ? 700 : 400 }}>{line}</div>)}
+                  <div role="alert" style={{ ...ui.encart("danger"), boxShadow: T.shadow2, padding: "10px 18px", marginBottom: 8, maxWidth: 480, textAlign: "left", display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <Icone nom="alerte" taille={16} style={{ marginTop: 1 }} />
+                    <div>{ulabsError.replace(/^⚠️\s*/, "").split("\n").map((line, i) => <div key={i} style={{ fontSize: i === 0 ? 13 : 12, fontWeight: i === 0 ? 700 : 500, lineHeight: 1.45 }}>{line}</div>)}</div>
                   </div>
                 )}
                 <div style={{ background: ulabsConfirmed ? "#059669" : "#0d4f3c", borderRadius: 16, padding: "16px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 20, border: "1px solid #059669" }}>
@@ -2888,10 +2923,8 @@ export default function App() {
 
               <div style={{ overflowY: "auto", padding: isMobile ? "0 16px 16px" : "0 20px 20px" }}>
                 {cartItems.length === 0 ? (
-                  <div style={{ textAlign: "center", color: T.inkMute, padding: "48px 24px", fontSize: 14 }}>
-                    <Icone nom="panier" taille={40} epaisseur={1.6} style={{ display: "block", margin: "0 auto 12px", color: T.inkFaint }} />
-                    Aucun produit sélectionné
-                  </div>
+                  <EtatVide icone="panier" titre="Votre panier est vide" style={{ padding: "48px 12px" }}
+                    texte="Ajoutez des produits depuis les menus du catalogue ou la Saisie de commande." />
                 ) : (
                   <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
                   {cartItems.map((item, n) => (
@@ -3085,16 +3118,14 @@ export default function App() {
 
       {/* Admin Panel */}
       {showAdmin && (
-        <ErrorBoundary fallback={<div style={{position:"fixed",inset:0,zIndex:9999,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"sans-serif"}}>
-          <div style={{background:"white",borderRadius:16,padding:"40px",maxWidth:500,textAlign:"center",boxShadow:"0 8px 32px rgba(0,0,0,0.1)"}}>
-            <div style={{fontSize:48,marginBottom:16}}>⚠️</div>
-            <div style={{fontWeight:700,fontSize:18,color:"#0f2d3d",marginBottom:8}}>Erreur Admin Panel</div>
-            <div style={{fontSize:13,color:"#888",marginBottom:20}}>Une erreur s'est produite. Essayez de vider le cache du navigateur.</div>
-            <button onClick={() => { localStorage.removeItem("admin_token"); window.location.hash = ""; window.location.reload(); }}
-              style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:10,padding:"10px 24px",fontWeight:700,cursor:"pointer"}}>
+        /* erreur de l'admin (lot 8) : même dessin que les autres erreurs, textes et bouton (même onClick) inchangés */
+        <ErrorBoundary fallback={<div style={{position:"fixed",inset:0,zIndex:9999,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+          <EtatVide erreur icone="alerte" titre="Erreur Admin Panel" texte="Une erreur s'est produite. Essayez de vider le cache du navigateur."
+            style={{ ...ui.modal, maxWidth: 500, border: `1px solid ${T.line}`, padding: "40px 32px" }}
+            actions={<button className="ex-btn-petrole" onClick={() => { localStorage.removeItem("admin_token"); window.location.hash = ""; window.location.reload(); }}
+              style={{ ...ui.btn("primaire", "l"), background: undefined, color: undefined }}>
               Réinitialiser et recharger
-            </button>
-          </div>
+            </button>} />
         </div>}>
           <AdminPanel
             sectionMeta={SECTION_META}

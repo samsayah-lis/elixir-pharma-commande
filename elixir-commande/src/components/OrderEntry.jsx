@@ -6,6 +6,7 @@ import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import BadgeStatut from "./ui/BadgeStatut.jsx";
+import EtatVide, { ActionEtat, Squelette } from "./ui/EtatVide.jsx";
 
 // Affichage seulement (refonte charte, lot 5) : format français de src/theme.js — « 1 234,50 € », « −14,7 % ».
 // Rien de ce qui part (panier, search-track, restock-alert) ne passe par ces deux fonctions.
@@ -22,8 +23,10 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
-  const [searching, setSearching] = useState(false);
+  // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
+  const [searching, setSearching] = useState(() => (initialQuery || "").trim().length >= 2);
   const [catalogInfo, setCatalogInfo] = useState(null);
+  const [infoLue, setInfoLue] = useState(false);   // lot 8 : compte du catalogue reçu (ou en échec) — affichage seulement
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({});
   const [alertSaving, setAlertSaving] = useState({});
@@ -37,6 +40,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
       try {
         const countRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
         if (countRes.ok && !cancelled) setCatalogInfo(await countRes.json());
+        if (!cancelled) setInfoLue(true);
         if (pharmacyCip) {
           try {
             const alertRes = await fetch(`/.netlify/functions/restock-alert?pharmacy_cip=${pharmacyCip}`);
@@ -46,7 +50,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             if (!cancelled) setAlerts(map);
           } catch (e) { /* ignore */ }
         }
-      } catch (e) { console.warn("[init]", e.message); }
+      } catch (e) { console.warn("[init]", e.message); if (!cancelled) setInfoLue(true); }
     })();
     return () => { cancelled = true; };
   }, [pharmacyCip]);
@@ -55,6 +59,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   useEffect(() => {
     if (query.trim().length < 2) { setResults([]); return; }
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    setSearching(true);   // lot 8 : « Recherche… » dès la frappe, plus de « 0 résultat » pendant le délai de 350 ms
     debounceRef.current = setTimeout(async () => {
       setSearching(true);
       try {
@@ -121,7 +126,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         couleur={couleur}
         titre="Saisie de commande"
         sousTitre={<>Recherchez par code CIP ou nom de produit{majCatalogue && <span className="num"> · Màj : {majCatalogue}</span>}</>}
-        aside={hasProducts && <CompteurVue valeur={Number(catalogInfo.total).toLocaleString("fr-FR")} libelle="références"
+        aside={!infoLue ? <CompteurVue chargement libelle="références" />
+          : hasProducts && <CompteurVue valeur={Number(catalogInfo.total).toLocaleString("fr-FR")} libelle="références"
           detail={catalogInfo.in_stock != null ? `${Number(catalogInfo.in_stock).toLocaleString("fr-FR")} en stock` : null} />}
       />
 
@@ -145,38 +151,44 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           <Icone nom="coche" taille={14} />En stock seulement
         </button>
         {query.length >= 2 && (
-          <div className="num" role="status" style={{ fontSize: 13, color: T.inkMute }}>
-            {searching ? "Recherche…" : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
+          <div className="num" role="status" style={{ fontSize: 13, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 8 }}>
+            {searching ? <><span className="ex-roue" aria-hidden="true" />Recherche…</> : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
           </div>
         )}
       </div>
 
-      {/* Empty catalog */}
-      {!hasProducts && (
-        <div style={{ ...ui.card, textAlign: "center", padding: "48px 20px" }}>
-          <span aria-hidden="true" style={pastilleVide}><Icone nom="carton" taille={26} /></span>
-          <div style={{ fontSize: 16, fontWeight: 640, color: T.petrol, marginBottom: 6 }}>Catalogue non synchronisé</div>
-          <div style={{ fontSize: 13, color: T.inkSoft }}>Un administrateur doit lancer la synchronisation depuis le panneau admin.</div>
-        </div>
+      {/* États vides (lot 8 : composant commun EtatVide). « Catalogue non synchronisé » seulement une fois le compte lu :
+          pendant sa lecture, la consigne de recherche (avant le lot, le message s'affichait le temps de la réponse) */}
+      {infoLue && !hasProducts && (
+        <EtatVide cadre icone="carton" titre="Catalogue non synchronisé"
+          texte="Un administrateur doit lancer la synchronisation depuis le panneau admin." />
       )}
 
-      {/* Empty search */}
-      {hasProducts && query.length < 2 && (
-        <div style={{ textAlign: "center", padding: "48px 20px", color: T.inkMute }}>
-          <span aria-hidden="true" style={pastilleVide}><Icone nom="recherche" taille={26} /></span>
-          <div style={{ fontSize: 15, fontWeight: 600, color: T.ink }}>Saisissez au moins 2 caractères</div>
-          <div style={{ fontSize: 13, marginTop: 4 }}>Code CIP, EAN, ou début de nom</div>
-        </div>
+      {(!infoLue || hasProducts) && query.length < 2 && (
+        <EtatVide icone="recherche" titre="Saisissez au moins 2 caractères" texte="Code CIP, EAN, ou début de nom" />
       )}
 
       {/* Results : lignes blanches de rayon 16 (classe ex-saisie-ligne) ; en rupture, ligne à plat sur paper ;
           quantité saisie, anneau sarcelle (data-choisi) */}
       {query.length >= 2 && (
         <div>
-          {!searching && results.length === 0 && (
-            <div style={{ ...ui.card, textAlign: "center", padding: "32px 20px", color: T.inkSoft, fontSize: 14 }}>
-              Aucun produit trouvé pour « {query} »{stockOnly ? " (filtre en stock actif)" : ""}
+          {/* première recherche en cours (lot 8) : trois lignes squelettes aux dimensions des résultats ; la ligne d'état
+              au-dessus (role="status") annonce « Recherche… » */}
+          {searching && results.length === 0 && (
+            <div aria-hidden="true" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {["64%", "48%", "72%"].map(l => (
+                <div key={l} className="ex-saisie-ligne">
+                  <div className="ex-saisie-info" style={{ display: "grid", gap: 8 }}><Squelette hauteur={13} largeur={l} /><Squelette hauteur={18} largeur={170} rayon={R.pill} /></div>
+                  <div className="ex-saisie-prix" style={{ display: "grid", justifyItems: "end", gap: 6 }}><Squelette hauteur={18} largeur={84} /><Squelette hauteur={10} largeur={44} /></div>
+                  <div className="ex-saisie-actions"><Squelette hauteur={30} largeur={128} rayon={R.pill} /></div>
+                </div>
+              ))}
             </div>
+          )}
+          {!searching && results.length === 0 && (
+            <EtatVide cadre compact icone="recherche" titre={<>Aucun produit trouvé pour « {query} »</>}
+              texte={stockOnly ? "Le filtre « En stock seulement » est actif : les produits en rupture ne sont pas affichés." : "Vérifiez l’orthographe ou cherchez par code CIP / EAN."}
+              actions={stockOnly && <ActionEtat icone="fermer" onClick={() => setStockOnly(false)}>Afficher aussi les ruptures</ActionEtat>} />
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {results.map(p => {
@@ -264,6 +276,3 @@ const ajouterStyle = { ...ui.btn("primaire", "s"), background: undefined, color:
 // alerte de retour en stock : bouton à filet, puis ton info (menthe + sarcelle) une fois activée
 const alerteStyle = { ...ui.btn("ligne", "s"), background: undefined, height: undefined, gap: 6, padding: "0 14px", boxShadow: `inset 0 0 0 1.5px ${T.lineField}` };
 const alerteActive = { background: tone("info").bg, color: tone("info").fg, boxShadow: `inset 0 0 0 1px ${tone("info").border}` };
-// pastille ronde des états vides (icône au trait sur menthe)
-const pastilleVide = { width: 56, height: 56, borderRadius: R.pill, background: T.mint, color: T.teal, display: "inline-flex",
-  alignItems: "center", justifyContent: "center", marginBottom: 14 };

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { T, R, tone, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
+import { Chargement } from "./ui/EtatVide.jsx";
 
 // ── CROSS-SELL : "Les pharmacies qui commandent X commandent aussi Y" ──
 // Refonte charte (lot 6) : carte neutre (paper, filet), pertinence en ton info (menthe + sarcelle), « Ajouter » en
@@ -54,7 +55,7 @@ export function CrossSellBanner({ cartCips = [], onAdd }) {
         </div>
       </div>
       {loading && recs.length === 0 ? (
-        <div role="status" style={{ fontSize: 12, color: T.inkMute, padding: "8px 0" }}>Recherche de recommandations…</div>
+        <Chargement compact texte="Recherche de recommandations…" style={{ fontSize: 12, padding: "8px 0" }} />
       ) : (
         <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
           {recs.map(rec => (
@@ -125,7 +126,7 @@ export function ReorderSuggestion({ pharmacyCip, onApply }) {
           <Icone nom="fermer" taille={16} />
         </button>
       </div>
-      {loading ? <div role="status" style={{ fontSize: 12, color: T.inkMute }}>Analyse de votre historique…</div> : (<>
+      {loading ? <Chargement compact texte="Analyse de votre historique…" style={{ fontSize: 12, padding: 0 }} /> : (<>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
           {suggestions.slice(0, 6).map(s => (
             <div key={s.cip} style={{ display: "flex", alignItems: "center", gap: 12, background: T.surface, borderRadius: R.s, padding: "8px 14px", border: `1px solid ${T.line}` }}>

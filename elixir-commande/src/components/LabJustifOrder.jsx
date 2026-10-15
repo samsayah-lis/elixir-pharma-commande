@@ -4,6 +4,7 @@ import { loadJustifProducts, justifIssues, commanderJustif, mesDemandesJustif, J
 import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
+import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 
 // ── Page « Commande labo sur justificatif » ─────────────────────────────
 // Produits que certains laboratoires (Takeda, Pfizer…) ne livrent à Elixir que sur justificatif d'une
@@ -196,9 +197,10 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
 
       <div style={card}>
         <h2 style={h2}>Produits concernés</h2>
-        {!products ? <div role="status" style={{ color: T.inkMute, fontSize: 13 }}>Chargement…</div>
-          : erreurProduits ? <div style={{ ...ligneIcone, color: T.danger, fontSize: 13 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} />{erreurProduits}</div>
-          : !Object.keys(parLab).length ? <div style={{ color: T.inkSoft, fontSize: 13 }}>Aucun produit sur justificatif pour le moment.</div>
+        {/* chargement, erreur (annoncée : role="alert"), liste vide — composants communs (lot 8) */}
+        {!products ? <Chargement compact texte="Chargement des produits…" />
+          : erreurProduits ? <div role="alert" style={{ ...ui.encart("danger"), ...ligneIcone }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} /><span>{erreurProduits}</span></div>
+          : !Object.keys(parLab).length ? <EtatVide compact icone="document" titre="Aucun produit sur justificatif pour le moment" />
           : Object.entries(parLab).map(([lab, ps]) => (
             <div key={lab} style={{ marginBottom: 14 }}>
               <h3 style={{ fontSize: 15, fontWeight: 640, color: T.teal, margin: "6px 0 2px" }}>{lab}</h3>
@@ -291,9 +293,13 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
           <button className="ex-btn-ligne" onClick={chargerDemandes} style={{ ...btnLigne, ...ui.btn("ligne", "s"), background: undefined, boxShadow: btnLigne.boxShadow, fontSize: 12 }}><Icone nom="actualiser" taille={14} />Actualiser</button>
         </div>
         <div style={{ marginTop: 10 }}>
-          {demandes === null ? <div role="status" style={{ color: T.inkMute, fontSize: 13 }}>Chargement…</div>
-            : demandes.erreur ? <div style={{ ...ligneIcone, color: T.danger, fontSize: 13 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} />{demandes.erreur}</div>
-            : !demandes.length ? <div style={{ color: T.inkSoft, fontSize: 13 }}>Aucune demande pour le moment.</div>
+          {demandes === null ? <Chargement compact texte="Chargement de vos demandes…" />
+            : demandes.erreur ? (
+              <div role="alert" style={{ ...ui.encart("danger"), display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px 12px", flexWrap: "wrap" }}>
+                <span style={ligneIcone}><Icone nom="alerte" taille={14} style={{ marginTop: 2, flexShrink: 0 }} />{demandes.erreur}</span>
+                <ActionEtat icone="actualiser" onClick={chargerDemandes} style={{ height: 32 }}>Réessayer</ActionEtat>
+              </div>)
+            : !demandes.length ? <EtatVide compact icone="document" titre="Aucune demande pour le moment" texte="Vos demandes transmises au laboratoire apparaîtront ici, avec leur suivi." />
             : demandes.map(d => (
               <div key={d.id} style={{ padding: "10px 0", borderTop: `1px solid ${T.lineSoft}`, fontSize: 13, color: T.ink }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>

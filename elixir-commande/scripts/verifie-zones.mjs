@@ -56,6 +56,9 @@ const ECARTS_AUTORISES = [
   { zone: "quantités et ajout au panier", lot: "E2", motif: "même décision : l'ouverture du panier ne se fait plus que si ouvrirPanier",
     avant: "    setCartOpen(true);\n  };",
     apres: "    if (ouvrirPanier) setCartOpen(true);   // lot E2 : la Saisie de commande n'ouvre plus le panier\n  };" },
+  { zone: "identification de la pharmacie", lot: "8", motif: "coquille du message d'erreur affiché (docs/refonte-charte.md § 1.6) : « reessayer » → « réessayer », texte seulement",
+    avant: 'setOnboardingError("Erreur de connexion. Veuillez reessayer.");',
+    apres: 'setOnboardingError("Erreur de connexion. Veuillez réessayer.");' },
 ];
 
 // ── lecture ──

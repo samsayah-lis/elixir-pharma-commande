@@ -8,6 +8,7 @@ import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
 import BadgeStatut from "./ui/BadgeStatut.jsx";
+import { Chargement } from "./ui/EtatVide.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js. Le panier reçoit les prix bruts.
 const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
@@ -166,7 +167,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
       <div style={card}>
         <h2 style={h2}>3 · Fauteuil correspondant</h2>
         {loading ? (
-          <div role="status" style={{ color: T.inkMute, fontSize: 13 }}>Chargement du stock et des prix…</div>
+          <Chargement compact texte="Chargement du stock et des prix…" />
         ) : selectedIdx == null ? (
           <div style={{ color: T.inkSoft, fontSize: 13 }}>Le produit s'affichera dès qu'une taille est déterminée (ou choisie ci-dessus).</div>
         ) : !product ? (

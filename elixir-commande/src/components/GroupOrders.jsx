@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, packCheck, packIssues, packLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
-import { T, R, ui, tone } from "../theme.js";
+import { T, R, ui, tone, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
+import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 
-const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
-const pct = (n) => `${round2(n || 0).toLocaleString("fr-FR")} %`;
+// Affichage seulement (lot 8) : format français commun de src/theme.js (« 1 234,50 € », espace insécable avant € et %) ;
+// les montants enregistrés (gp-pharmacy, gp-admin) sont calculés par gp-pricing et ne passent pas par ces fonctions.
+const eur = (n) => fmtEur(n || 0);
+const pct = (n) => `${round2(n || 0).toLocaleString("fr-FR")}\u00a0%`;
 const dfr = (d, opts = { day: "numeric", month: "long" }) => d ? new Date(d.slice(0, 10) + "T00:00:00").toLocaleDateString("fr-FR", opts) : "";
 const dts = (t) => t ? new Date(t).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long" }) : "";
 const daysLeft = (d) => Math.round((Date.parse(d + "T12:00:00Z") - Date.parse(parisToday() + "T12:00:00Z")) / 86400e3);
@@ -204,12 +207,31 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
     if (req === reqRef.current) setBusy("");
   };
 
-  if (ops === null) return <div role="status" style={{ ...card, color: T.inkMute, fontSize: 14 }}>Chargement des commandes groupées…</div>;
+  // En-tête de vue commun (lot 7) au lieu du bandeau en dégradé (pharmacie seulement ; l'admin a son propre cadre).
+  // Lot 8 : affiché dès le chargement, la liste arrive dessous sans décaler la page.
+  const entete = !admin && <EnteteVue
+    icone={icone || <Icone nom="groupe" taille={24} />}
+    couleur={couleur}
+    titre="Commandes groupées"
+    sousTitre="Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues."
+    style={{ marginBottom: 0 }}
+  />;
+  // chargement, aucune opération, liste en échec (« Réessayer » : même chargement qu'à l'ouverture) — composants communs (lot 8)
+  if (ops === null) return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {entete}
+      <Chargement texte="Chargement des commandes groupées…" style={{ ...card, padding: "40px 20px" }} />
+    </div>
+  );
   if (!ops.length) return (
-    <div style={card}>
-      <div style={h2}>Commandes groupées</div>
-      <div style={{ color: T.inkSoft, fontSize: 14 }}>Aucune opération de commande groupée ne vous est proposée pour le moment.</div>
-      {msg && <div style={{ marginTop: 12 }}><Msg m={msg} /></div>}
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {entete}
+      {msg?.type === "err"
+        ? <EtatVide cadre erreur icone="alerte" titre="Les opérations n’ont pas pu être chargées" texte={msg.text}
+            actions={<ActionEtat principal icone="actualiser" onClick={() => { setMsg(null); setOps(null); loadList(false); }}>Réessayer</ActionEtat>} />
+        : <EtatVide cadre icone="groupe" titre="Aucune opération en cours"
+            texte="Aucune opération de commande groupée ne vous est proposée pour le moment." />}
+      {msg && msg.type !== "err" && <Msg m={msg} />}
     </div>
   );
 
@@ -219,14 +241,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
   const confirmerGrise = busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* En-tête de vue commun (lot 7) au lieu du bandeau en dégradé (pharmacie seulement ; l'admin a son propre cadre) */}
-      {!admin && <EnteteVue
-        icone={icone || <Icone nom="groupe" taille={24} />}
-        couleur={couleur}
-        titre="Commandes groupées"
-        sousTitre="Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues."
-        style={{ marginBottom: 0 }}
-      />}
+      {entete}
 
       {!selId && <OpsList ops={ops} onOpen={choose} />}
       {selId && !admin && (
@@ -236,7 +251,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
         </div>
       )}
 
-      {selId && busy === "load" && <div role="status" style={{ ...card, color: T.inkMute, fontSize: 14 }}>Chargement…</div>}
+      {selId && busy === "load" && <Chargement texte="Chargement de l’opération…" style={{ ...card, padding: "40px 20px" }} />}
       {selId && op && calc && busy !== "load" && (<>
         <div style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
@@ -468,11 +483,12 @@ function Tot({ label, v, strong }) {
   return <tr><td style={{ padding: strong ? "6px 16px 3px 0" : "3px 16px 3px 0", color: strong ? T.ink : T.inkSoft, fontWeight: strong ? 700 : 500 }}>{label}</td><td style={{ textAlign: "right", padding: strong ? "6px 0 3px" : undefined, fontWeight: 700, fontSize: strong ? 16 : undefined, color: T.ink, whiteSpace: "nowrap" }}>{v}</td></tr>;
 }
 
-// message d'état : ok (vert), erreur (danger), information (menthe + sarcelle) ; toujours avec une icône
+// message d'état : ok (vert), erreur (danger), information (menthe + sarcelle) ; toujours avec une icône.
+// Erreur annoncée aussitôt (role="alert", lot 8) ; les autres restent polies (role="status")
 const MSG = { ok: ["ok", "coche"], err: ["danger", "alerte"], info: ["info", "horloge"] };
 function Msg({ m }) {
   const [ton, icone] = MSG[m.type] || ["neutral", "alerte"];
-  return <div role="status" style={{ ...ui.encart(ton), fontWeight: 600, display: "flex", alignItems: "flex-start", gap: 8 }}><Icone nom={icone} taille={16} style={{ marginTop: 1 }} /><span>{m.text}</span></div>;
+  return <div role={m.type === "err" ? "alert" : "status"} style={{ ...ui.encart(ton), fontWeight: 600, display: "flex", alignItems: "flex-start", gap: 8 }}><Icone nom={icone} taille={16} style={{ marginTop: 1 }} /><span>{m.text}</span></div>;
 }
 
 export function Objective({ o }) {
