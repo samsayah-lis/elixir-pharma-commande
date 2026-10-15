@@ -54,7 +54,7 @@ export const handler = async (event) => {
   try {
     const r = await envoiAuto({ orderId, user });
     await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null,
-      motif: r.ok ? null : r.error, jeton, versionPage });
+      motif: r.ok ? null : r.error, jeton, versionPage, identite: r.identite || null });
     return json(200, r.ok ? { success: true, queued: true, reference: r.ref, lignes: r.lignes, retenues: r.retenues || 0 } : { success: false, manuelle: true, code: r.code, error: r.error });
   } catch (e) {
     console.error("[submit-order]", e);

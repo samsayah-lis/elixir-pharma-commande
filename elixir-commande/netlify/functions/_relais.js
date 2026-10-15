@@ -414,7 +414,6 @@ async function stockLibre(cips) {
 export async function envoiAuto({ orderId, user }) {
   const cfg = await lireConfig();
   if (!cfg.autoSite) return { ok: false, code: "inactif", error: "envoi automatique désactivé : synchro manuelle" };
-  if (!user) return { ok: false, code: "identite", error: "pharmacie non identifiée (session expirée) : synchro manuelle" };
   const o = await lireCommande(orderId);
   if (!o) return { ok: false, code: "introuvable", error: "commande introuvable" };
   if ((o.source || "catalogue") !== "catalogue") return { ok: false, code: "source", error: `commande « ${o.source} » : synchro manuelle` };
@@ -423,9 +422,25 @@ export async function envoiAuto({ orderId, user }) {
   if (!(creee >= Date.parse(cfg.depuis || 0))) return { ok: false, code: "avant", error: "commande antérieure à l'activation de l'envoi automatique" };
   if (!(Date.now() - creee < AUTO_AGE_MAX_MS)) return { ok: false, code: "ancienne", error: "commande de plus de 30 min : synchro manuelle" };
   const cip = String(o.pharmacy_cip || "").trim();
-  if (user.isAdmin) { if (!o.entered_by) return { ok: false, code: "identite", error: "commande non saisie par Elixir" }; }
-  else if (!user.cip || String(user.cip) !== cip) return { ok: false, code: "identite", error: "commande d'une autre pharmacie que celle connectée" };
   if (!/^\d{7}$/.test(cip)) return { ok: false, code: "cip", error: "commande sans CIP de pharmacie" };
+  // Identité : connexion valide (jeton) ; à défaut (connexion expirée, page ancienne), la fiche, comme la synchro
+  // manuelle (décision de Zineb, 15/10/2026) : saisie Elixir (entered_by n'est posé par order-save qu'après
+  // vérification de la session admin), ou e-mail de la commande associé à ce CIP dans la liste des pharmacies.
+  let identite;
+  if (user?.isAdmin) {
+    if (!o.entered_by) return { ok: false, code: "identite", error: "commande non saisie par Elixir" };
+    identite = "jeton admin";
+  } else if (user?.cip) {
+    if (String(user.cip) !== cip) return { ok: false, code: "identite", error: "commande d'une autre pharmacie que celle connectée" };
+    identite = "jeton";
+  } else if (o.entered_by) identite = "saisie Elixir";
+  else {
+    const em = String(o.pharmacy_email || "").trim();
+    const lire = async (e) => (await sb(`elixir_pharmacies?email=eq.${encodeURIComponent(e)}&select=cip`).catch(() => null)) || [];
+    const fiches = [...await lire(em.toLowerCase()), ...(em !== em.toLowerCase() ? await lire(em) : [])];
+    if (!em || !fiches.some(f => String(f.cip || "").trim() === cip)) return { ok: false, code: "identite", error: "pharmacie non identifiée (connexion expirée et e-mail de la commande non associé à ce CIP) : synchro manuelle" };
+    identite = "fiche";
+  }
   const fiche = await fichePharmacie({ cip });
   if (!fiche || fiche.bloque) return { ok: false, code: "client", error: fiche ? "client bloqué dans Odoo" : "pas de fiche client Elixir pour ce CIP" };
   const its = items(o);
@@ -452,8 +467,8 @@ export async function envoiAuto({ orderId, user }) {
     if (l >= q) { enStock.push(i); libre.set(String(it.cip), l - q); }
   }
   if (!enStock.length) return { ok: false, code: "precommande", error: "aucune ligne en stock : synchro manuelle" };
-  const r = await envoyerCommande({ orderId: o.id, idx: enStock, par: user.isAdmin ? `auto-saisie:${user.email || "admin"}` : "auto", auto: true, cipVerifie: cip });
-  return r.ok ? { ...r, retenues: its.length - enStock.length } : r;
+  const r = await envoyerCommande({ orderId: o.id, idx: enStock, par: user?.isAdmin ? `auto-saisie:${user.email || "admin"}` : o.entered_by ? `auto-saisie:${o.entered_by}` : "auto", auto: true, cipVerifie: cip });
+  return r.ok ? { ...r, retenues: its.length - enStock.length, identite } : { ...r, identite };
 }
 
 // ── Lecture pour l'admin ────────────────────────────────────────────────
