@@ -11,6 +11,7 @@ export const T = {
   ink: "var(--ink)", inkSoft: "var(--ink-soft)", inkMute: "var(--ink-mute)", inkFaint: "var(--ink-faint)",
   // marque
   teal: "var(--teal)", teal2: "var(--teal-2)", petrol: "var(--petrol)", petrolField: "var(--petrol-field)", deep: "var(--deep)",
+  paperMute: "var(--paper-mute)",   // texte secondaire sur pétrole
   mint: "var(--mint)", mint2: "var(--mint-2)", or: "var(--or)", orClair: "var(--or-clair)",
   // filets
   line: "var(--line)", lineSoft: "var(--line-soft)", lineField: "var(--line-field)",

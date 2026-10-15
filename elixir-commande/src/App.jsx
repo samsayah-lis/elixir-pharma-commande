@@ -13,6 +13,8 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
+import { T, R, tone, ui } from "./theme.js";
+import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -40,6 +42,17 @@ const SECTION_META = {
   transfert:{ label: "Fauteuil de transfert", subtitle: "Largeur d'assise → fauteuil de transfert Invacare (43 ou 45,5 cm)", color: "#1e3a5f", accent: "#3b82f6", icon: "🪑", columns: [], specialView: "transferChair" },
   justificatif:{ label: "Commande labo sur justificatif", subtitle: "Takeda, Pfizer… : commande transmise au laboratoire avec votre justificatif (ordonnance anonymisée)", color: "#2e1065", accent: "#7c3aed", icon: "📑", columns: [], specialView: "labJustif" },
 };
+// ── Coquille (refonte charte, lot 2) ──
+// Icône d'un menu de la barre latérale : SVG pour un rayon connu resté à son icône d'origine ; une icône saisie
+// dans l'admin (dc.icons, campagne…), un menu promo ou une section perso gardent leur emoji
+const iconeMenu = (key, c) => {
+  const nom = ICONES_RAYON[key];
+  const origine = key === "groupees" ? "🤝" : SECTION_META[key]?.icon;
+  return nom && c.icon === origine ? <Icone nom={nom} taille={18} /> : c.icon;
+};
+// bouton rond de 36 px de l'en-tête pétrole (fond au survol : classe ex-icone-entete)
+const btnEntete = { width: 36, height: 36, padding: 0, border: "none", borderRadius: R.pill, color: T.paper, cursor: "pointer",
+  flexShrink: 0, display: "inline-flex", alignItems: "center", justifyContent: "center" };
 const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
 // (sessionStorage de l'onglet, une clé par fiche) — jamais l'un pour l'autre
@@ -537,7 +550,7 @@ export default function App() {
   }, [activeTab, fetchGroupOrders]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
-  // Hauteur de l'en-tête noir collant : la barre A–Z se colle juste dessous
+  // Hauteur de l'en-tête pétrole collant : la barre A–Z se colle juste dessous (et le bloc de marque de la barre latérale s'y aligne)
   const [hauteurEntete, setHauteurEntete] = useState(64);
   const obsEntete = useRef(null);
   const refEntete = useCallback((el) => {
@@ -1631,53 +1644,73 @@ export default function App() {
     </div>
   );
 
+  // Recherche globale de l'en-tête : pastille sur pétrole (même champ sur ordinateur et, sous la barre, sur mobile)
+  const rechercheGlobale = (mobile) => (
+    <div style={mobile ? { position: "relative" } : { position: "relative", flex: "1 1 300px", minWidth: 150, maxWidth: 420, marginLeft: "auto" }}>
+      <Icone nom="recherche" taille={16} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", color: T.paperMute, pointerEvents: "none" }} />
+      <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…" aria-label="Rechercher un produit par CIP ou nom"
+        style={{ width: "100%", height: mobile ? 40 : 36, background: T.petrolField, border: "none", borderRadius: R.pill, color: T.paper, padding: "0 36px 0 38px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
+      {globalSearch && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setGlobalSearch("")} aria-label="Effacer la recherche" style={{ ...btnEntete, width: 28, height: 28, position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)" }}><Icone nom="fermer" taille={14} /></button>}
+    </div>
+  );
+  // panier flottant affiché (panier fermé et non vide) : main réserve sa place en bas
+  const panierFlottant = !cartOpen && cartCount > 0;
+  // message flash : un « ⚠ » en tête décide du ton (avertissement), sinon confirmation
+  const tonFlash = tone(flashMsg.startsWith("⚠") ? "warn" : "ok");
+
   return (
-    <div className="ex-app" style={{ fontFamily: "inherit", minHeight: "100vh", background: "#0c0d0e", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
+    <div className="ex-app" style={{ fontFamily: "inherit", minHeight: "100vh", background: T.cream, color: T.ink, display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
 
       {/* ── SIDEBAR (navigation colonne gauche) ── */}
       {!isDesktop && sidebarOpen && (
-        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 140 }} />
+        <div onClick={() => setSidebarOpen(false)} style={{ position: "fixed", inset: 0, background: T.scrim, zIndex: 140 }} />
       )}
       <aside style={{
-        position: "fixed", top: 0, left: 0, bottom: 0, width: 248, background: "#ffffff",
-        borderRight: "1px solid #ededed", zIndex: 150, display: "flex", flexDirection: "column",
+        position: "fixed", top: 0, left: 0, bottom: 0, width: 248, background: T.paper,
+        borderRight: `1px solid ${T.line}`, zIndex: 150, display: "flex", flexDirection: "column",
         transform: (isDesktop || sidebarOpen) ? "translateX(0)" : "translateX(-100%)",
         transition: "transform 0.25s ease", overflowY: "auto"
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 20px 16px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-            <span style={{ width: 9, height: 9, borderRadius: "50%", background: "#2d9cbc" }} />
-            <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: 3, color: "#111" }}>ELIXIR</span>
+        {/* Marque : bloc pétrole à la hauteur de l'en-tête (sur ordinateur, ils forment une seule bande) */}
+        <div className="ex-marque ex-on-dark" style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0,
+          height: isDesktop ? hauteurEntete : undefined, padding: isDesktop ? "0 20px" : "12px 12px 12px 20px",
+          background: T.petrol, color: T.paper,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <CroixElixir taille={26} style={{ color: T.orClair }} />
+            <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "0.28em", lineHeight: 1 }}>ELIXIR</span>
           </div>
           {!isDesktop && (
-            <button onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#111", lineHeight: 1 }}>✕</button>
+            <button className="ex-icone-entete" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={btnEntete}><Icone nom="fermer" /></button>
           )}
         </div>
+        <nav aria-label="Menus" style={{ padding: "8px 0 16px" }}>
         {[
           { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
           { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
-          <div key={group.title} style={{ marginBottom: 4 }}>
-            <div style={{ padding: "10px 20px 5px", fontSize: 10, letterSpacing: 1.5, color: "#b0b0b0", fontWeight: 700 }}>{group.title}</div>
+          <div key={group.title} style={{ marginBottom: 6 }}>
+            <div style={{ padding: "12px 22px 6px", fontSize: 11, letterSpacing: "0.14em", color: T.inkMute, fontWeight: 700 }}>{group.title}</div>
             {group.keys.map(key => {
               const c = CATALOG_WITH_ADMIN[key];
               if (!c) return null;
               const active = activeTab === key;
               return (
-                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
-                  display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left",
-                  background: active ? "#f5f6f7" : "transparent", border: "none",
-                  borderLeft: active ? "2px solid #111" : "2px solid transparent",
-                  color: active ? "#111" : "#555", padding: "9px 20px", cursor: "pointer",
-                  fontSize: 13, fontWeight: active ? 700 : 500, fontFamily: "inherit",
+                <button key={key} className="ex-menu" aria-current={active ? "page" : undefined} title={c.label} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                  display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 20px)", margin: "1px 10px", textAlign: "left",
+                  background: active ? T.mint : undefined, border: "none", borderRadius: R.pill,
+                  color: active ? T.teal : T.inkSoft, padding: "8px 12px", cursor: "pointer",
+                  fontSize: 13, fontWeight: active ? 600 : 500, fontFamily: "inherit", lineHeight: 1.3,
                 }}>
-                  <span style={{ fontSize: 15, width: 20, textAlign: "center", flexShrink: 0 }}>{c.icon}</span>
+                  <span aria-hidden="true" style={{ fontSize: 15, width: 20, display: "inline-flex", justifyContent: "center", flexShrink: 0 }}>{iconeMenu(key, c)}</span>
                   <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</span>
                 </button>
               );
             })}
           </div>
         ))}
+        </nav>
       </aside>
 
       {/* ── PROMO POPUP ── */}
@@ -1715,61 +1748,60 @@ export default function App() {
         </div>
       )}
 
-      {/* ── TOP BAR (sombre) ── */}
+      {/* ── EN-TÊTE (pétrole, collant) ── */}
       <header ref={refEntete} className="ex-on-dark" style={{
-        background: "#0c0d0e", color: "#f0f0f0", position: "sticky", top: 0, zIndex: 90,
-        borderBottom: "1px solid #1e1e1e"
+        background: T.petrol, color: T.paper, position: "sticky", top: 0, zIndex: 90,
       }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: isMobile ? "10px 12px" : "12px 22px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 12, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, padding: isMobile ? "10px 12px" : "12px 22px", minHeight: isMobile ? undefined : 64 }}>
+          {/* titre : jamais plus de 30 % de la barre (libellé long → points de suspension) ; la recherche prend le reste */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "0 0 auto", maxWidth: isDesktop ? "30%" : undefined }}>
             {!isDesktop && (
-              <button onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 22, lineHeight: 1, color: "#f0f0f0", padding: 4, flexShrink: 0 }}>☰</button>
+              <button className="ex-icone-entete" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" aria-expanded={sidebarOpen} style={btnEntete}><Icone nom="menu" /></button>
             )}
             {!isDesktop && (
-              <span style={{ fontSize: 15, fontWeight: 800, letterSpacing: 2, color: "#fff", flexShrink: 0 }}>ELIXIR</span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                <CroixElixir taille={24} style={{ color: T.orClair }} />
+                <span className="ex-mot-elixir" style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.28em", lineHeight: 1 }}>ELIXIR</span>
+              </div>
             )}
             {isDesktop && (
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: "#fff", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div style={{ fontSize: 16, fontWeight: 640, letterSpacing: "-0.01em", color: T.paper, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {CATALOG_WITH_ADMIN[activeTab]?.label || "Catalogue"}
                 </div>
-                <div style={{ fontSize: 11, color: "#888" }}>
+                <div style={{ fontSize: 11, color: T.paperMute, display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>
                   Bon de commande
                   {stockUpdatedAt && (
-                    <span style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                    <span className="num" style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
                   )}
-                  <button onClick={handleRefresh} disabled={stockRefreshing || stockLoading}
+                  <button onClick={handleRefresh} disabled={stockRefreshing || stockLoading} aria-label="Actualiser les stocks"
                     title={stockRefreshing ? "Actualisation Odoo en cours (~40s)…" : "Forcer la mise à jour depuis Odoo"}
-                    style={{ marginLeft: 6, background: "none", border: "none", cursor: (stockRefreshing || stockLoading) ? "default" : "pointer", padding: "0 2px", opacity: (stockRefreshing || stockLoading) ? 0.4 : 0.7, fontSize: 12, color: "inherit" }}
-                  >{stockRefreshing ? "⏳" : "🔄"}</button>
+                    style={{ marginLeft: 4, background: "none", border: "none", borderRadius: R.pill, cursor: (stockRefreshing || stockLoading) ? "default" : "pointer", padding: 3, opacity: (stockRefreshing || stockLoading) ? 0.4 : 0.8, color: "inherit", display: "inline-flex" }}
+                  ><Icone nom={stockRefreshing ? "horloge" : "actualiser"} taille={13} /></button>
                 </div>
               </div>
             )}
           </div>
-          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-            {!isMobile && (
-              <div style={{ position: "relative", width: 260 }}>
-                <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#777" }}>🔍</span>
-                <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
-                  style={{ width: "100%", background: "#16181b", border: "1px solid #2a2a2a", borderRadius: 9, color: "#f0f0f0", padding: "7px 12px 7px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
-                {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
-              </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, border: "1px solid #262626", borderRadius: 9, padding: "4px 4px 4px 12px" }}>
-              <span style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : "#cfcfcf", maxWidth: isMobile ? 80 : 150, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block" }}>{actingFor ? "🛠" : "🏥"} {pharmacyName}</span>
-              {!actingFor && hasAdminToken && <button onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#fdba74", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>🛠</button>}
-              {!actingFor && <button onClick={handleLogout} title="Se déconnecter" style={{ background: "#1f1f1f", border: "none", borderRadius: 6, color: "#aaa", cursor: "pointer", padding: "3px 8px", fontSize: 11, lineHeight: 1 }}>⎋</button>}
+          {!isMobile && rechercheGlobale(false)}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, marginLeft: isMobile ? "auto" : undefined }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, height: 36, background: T.petrolField, borderRadius: R.pill, padding: "0 4px 0 12px" }}>
+              {/* or orangé clair (saisie Elixir pour une pharmacie) : 8,5:1 sur pétrole */}
+              <span title={pharmacyName} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 80 : "clamp(110px, 10vw, 150px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor ? "🛠 " : ""}{pharmacyName}</span>
+              {!actingFor && hasAdminToken && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" aria-label="Commander pour une pharmacie" style={{ ...btnEntete, width: 28, height: 28, fontSize: 13 }}>🛠</button>}
+              {!actingFor && <button className="ex-icone-entete ex-icone-pastille" onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
-            {!isMobile && <button onClick={handlePrint} style={{ background: "#16181b", border: "1px solid #2a2a2a", color: "#ddd", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>🖨</button>}
+            {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
             {pharmacyCip && pharmacyCip !== "0" && (
-              <button onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} style={{ background: "#16181b", border: "1px solid #2a2a2a", color: "#ddd", borderRadius: 9, padding: "7px 12px", cursor: "pointer", fontSize: 12 }}>📋{isMobile ? "" : " Mes commandes"}</button>
+              <button className="ex-icone-entete" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
             )}
-            <button onClick={() => setCartOpen(!cartOpen)} style={{
-              background: cartCount > 0 ? "#ffffff" : "#16181b", border: cartCount > 0 ? "1px solid #ffffff" : "1px solid #2a2a2a",
-              color: cartCount > 0 ? "#111" : "#f0f0f0", borderRadius: 9, padding: "7px 14px",
-              cursor: "pointer", fontWeight: 700, fontSize: 13, display: "flex", alignItems: "center", gap: 7, transition: "all 0.2s"
-            }}>
-              🛒{isMobile ? "" : " Panier"} {cartCount > 0 && <span style={{ background: "#111", color: "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 11, fontWeight: 800 }}>{cartCount}</span>}
+            {/* panier rempli : pastille or + encre avec le compteur (seul rôle de l'or dans l'en-tête) */}
+            <button className={cartCount > 0 ? undefined : "ex-icone-entete"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
+              aria-label={cartCount > 0 ? `Panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}` : "Panier (vide)"} title="Panier"
+              style={cartCount > 0
+                ? { ...btnEntete, width: "auto", gap: 6, padding: "0 13px 0 10px", background: T.or, color: T.ink, fontSize: 13, fontWeight: 700 }
+                : btnEntete}>
+              <Icone nom="panier" />
+              {cartCount > 0 && <span className="num">{cartCount}</span>}
             </button>
           </div>
         </div>
@@ -1777,29 +1809,27 @@ export default function App() {
         {/* Recherche (mobile : sous la barre) */}
         {isMobile && (
           <div style={{ padding: "0 12px 10px" }}>
-            <div style={{ position: "relative" }}>
-              <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", fontSize: 13, color: "#777" }}>🔍</span>
-              <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…"
-                style={{ width: "100%", background: "#16181b", border: "1px solid #2a2a2a", borderRadius: 9, color: "#f0f0f0", padding: "8px 12px 8px 32px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
-              {globalSearch && <button onClick={() => setGlobalSearch("")} style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", color: "#888", cursor: "pointer", fontSize: 15, padding: 0 }}>✕</button>}
-            </div>
+            {rechercheGlobale(true)}
           </div>
         )}
       </header>
 
       <div style={{ display: "flex", flex: 1, position: "relative" }}>
         {/* Main content */}
-        <main style={{ flex: 1, padding: isMobile ? "12px 10px" : "20px 24px", minWidth: 0 }}>
+        <main style={{ flex: 1, padding: isMobile ? `12px 10px ${panierFlottant ? 96 : 12}px` : `20px 24px ${panierFlottant ? 96 : 20}px`, minWidth: 0 }}>
 
-          {/* Flash toast */}
-          {flashMsg && (
-            <div style={{ position:"fixed", top:20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
-              background: flashMsg.startsWith("⚠") ? "#fef3c7" : "#d1fae5", color: flashMsg.startsWith("⚠") ? "#92400e" : "#065f46",
-              padding:"10px 24px", borderRadius:10, fontSize:13, fontWeight:700, boxShadow:"0 4px 20px rgba(0,0,0,0.15)",
-              animation:"fadeIn 0.2s" }}>
-              {flashMsg}
-            </div>
-          )}
+          {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement */}
+          <div role="status" aria-live="polite" style={{ position:"fixed", top:20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
+            width:"max-content", maxWidth:"calc(100vw - 32px)", pointerEvents:"none" }}>
+            {flashMsg && (
+              <div style={{
+                background: tonFlash.bg, color: tonFlash.fg, border: `1px solid ${tonFlash.border}`,
+                padding:"10px 20px", borderRadius:R.m, fontSize:13, fontWeight:600, lineHeight:1.4, boxShadow:T.shadow2,
+                animation:"fadeIn 0.2s" }}>
+                {flashMsg}
+              </div>
+            )}
+          </div>
 
           {/* Saisie par Elixir pour une pharmacie */}
           {actingFor && (
@@ -1856,10 +1886,11 @@ export default function App() {
           {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
           {globalSearch.trim().length >= 2 && (
             <div style={{ marginBottom: 24 }}>
-              <div style={{ fontWeight: 800, fontSize: 16, color: "#f0f0f0", marginBottom: 12, display:"flex", alignItems:"center", gap:10 }}>
-                🔍 Résultats pour « {globalSearch} »
-                {globalSearching && <span style={{ fontSize:12, color:"#3b82f6", fontWeight:400 }}>Recherche...</span>}
-                {!globalSearching && <span style={{ fontSize:12, fontWeight:400, color:"#888", background:"#f0f2f5", borderRadius:8, padding:"2px 10px" }}>
+              {/* titre posé sur le fond de page (cream) : encre ; était #f0f0f0, pensé pour l'ancien fond noir */}
+              <div style={{ fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+                <Icone nom="recherche" taille={18} style={{ color: T.teal }} /> Résultats pour « {globalSearch} »
+                {globalSearching && <span style={{ fontSize:12, color:T.teal, fontWeight:500 }}>Recherche…</span>}
+                {!globalSearching && <span className="num" style={{ ...ui.badge("neutral"), fontSize:12, fontWeight:500, padding:"2px 10px" }}>
                   {globalResults.length} produit(s) · stock Odoo temps réel
                 </span>}
               </div>
@@ -2166,17 +2197,19 @@ export default function App() {
           {/* Products grid (photos) + table */}
           <>
 {avecAlphabet && (
-                <div id="barre-alphabet" style={{ position: "sticky", top: hauteurEntete, zIndex: 80, background: "#0c0d0e", padding: "6px 0 10px", marginBottom: 4 }}>
-                  <div style={isMobile
-                    ? { display: "flex", overflowX: "auto", gap: 4, background: "white", borderRadius: 12, padding: "6px 8px", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }
-                    : { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(30px, 1fr))", gap: 4, background: "white", borderRadius: 12, padding: "6px 8px", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }}>
+                <div id="barre-alphabet" style={{ position: "sticky", top: hauteurEntete, zIndex: 80, background: T.cream, padding: "6px 0 10px", marginBottom: 4 }}>
+                  {/* rail blanc en pastille ; ordinateur : 27 colonnes, une seule rangée dès 720 px de large */}
+                  <div className={isMobile ? "ex-sans-barre" : undefined} style={isMobile
+                    ? { display: "flex", overflowX: "auto", scrollbarWidth: "none", gap: 4, background: T.surface, borderRadius: R.pill, padding: "5px 8px", boxShadow: T.shadow1, border: `1px solid ${T.lineSoft}` }
+                    : { display: "grid", gridTemplateColumns: "repeat(27, minmax(0, 1fr))", gap: 3, justifyItems: "center", background: T.surface, borderRadius: R.pill, padding: "5px 8px", boxShadow: T.shadow1, border: `1px solid ${T.lineSoft}` }}>
                     {["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map(l => {
                       const dispo = !!premierParLettre[l];
                       return (
                         <button key={l} onClick={() => allerLettre(l)} disabled={!dispo} aria-label={l === "#" ? "Produits commençant par un chiffre" : `Produits commençant par ${l}`} style={{
-                          flex: isMobile ? "0 0 auto" : undefined, minWidth: 28, height: 28, borderRadius: 7, border: "none", fontFamily: "inherit",
-                          background: dispo ? cat.accent + "18" : "transparent", color: dispo ? cat.color : "#c8ccd2",
-                          fontWeight: 800, fontSize: 13, cursor: dispo ? "pointer" : "default",
+                          flex: isMobile ? "0 0 auto" : undefined, minWidth: isMobile ? 28 : undefined, width: isMobile ? undefined : "100%", maxWidth: isMobile ? undefined : 32,
+                          height: 28, padding: 0, borderRadius: R.pill, border: "none", fontFamily: "inherit",
+                          background: dispo ? T.mint : "transparent", color: dispo ? T.inkSoft : T.inkFaint,
+                          fontWeight: 700, fontSize: 13, cursor: dispo ? "pointer" : "default",
                         }}>{l}</button>
                       );
                     })}
@@ -2974,15 +3007,17 @@ export default function App() {
 
       {/* Floating cart button when closed */}
       {!cartOpen && cartCount > 0 && (
-        <button onClick={() => setCartOpen(true)} style={{
-          position: "fixed", bottom: 24, right: 24,
-          background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-          color: "white", border: "none", borderRadius: 50, width: 64, height: 64,
-          fontSize: 24, cursor: "pointer", boxShadow: "0 8px 24px rgba(16,185,129,0.4)",
-          display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column"
+        <button className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
+          position: "fixed", bottom: 24, right: 24, zIndex: 290,   // sous le voile du panier (300)
+          color: T.paper, border: "none", borderRadius: R.pill, width: 60, height: 60,   // fond pétrole : classe (survol)
+          cursor: "pointer", boxShadow: T.shadow2, padding: 0,
+          display: "flex", alignItems: "center", justifyContent: "center"
         }}>
-          🛒
-          <span style={{ fontSize: 10, fontWeight: 800, background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "0 4px" }}>{cartCount}</span>
+          <Icone nom="panier" taille={24} />
+          {/* compteur or + encre, comme le compteur du panier de l'en-tête */}
+          <span className="num" style={{ position: "absolute", top: -4, right: -4, minWidth: 24, height: 24, padding: "0 6px", boxSizing: "border-box",
+            borderRadius: R.pill, background: T.or, color: T.ink, fontSize: 12, fontWeight: 700, lineHeight: "24px", textAlign: "center",
+            boxShadow: `0 0 0 2px ${T.cream}` }}>{cartCount}</span>
         </button>
       )}
 

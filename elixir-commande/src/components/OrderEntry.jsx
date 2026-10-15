@@ -5,6 +5,7 @@ const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
 
 import { applyTiers, TierBadge } from "../tiers.jsx";
 import { loadGroups, collapseGroups } from "../product-groups.js";
+import { T } from "../theme.js";
 
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {} }) {
   const [query, setQuery] = useState(initialQuery || "");
@@ -122,7 +123,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", fontSize: 13 }}>
           <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)}
             style={{ width: 16, height: 16, accentColor: "#10b981", cursor: "pointer" }} />
-          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? "#059669" : "#666" }}>N'afficher que les produits en stock</span>
+          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? T.ok : T.inkSoft }}>N'afficher que les produits en stock</span>
         </label>
       </div>
 
@@ -137,7 +138,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 
       {/* Empty search */}
       {hasProducts && query.length < 2 && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: "#aaa" }}>
+        <div style={{ textAlign: "center", padding: "60px 20px", color: T.inkMute }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
           <div style={{ fontSize: 15, fontWeight: 600 }}>Saisissez au moins 2 caractères</div>
           <div style={{ fontSize: 13, marginTop: 4 }}>Code CIP, EAN, ou début de nom</div>
@@ -147,11 +148,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
       {/* Results */}
       {query.length >= 2 && (
         <div>
-          <div style={{ fontSize: 12, color: "#888", marginBottom: 10 }}>
+          <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>
             {searching ? "Recherche..." : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
           </div>
           {!searching && results.length === 0 && (
-            <div style={{ textAlign: "center", padding: 40, color: "#aaa", background: "white", borderRadius: 14 }}>
+            <div style={{ textAlign: "center", padding: 40, color: T.inkMute, background: "white", borderRadius: 14 }}>
               Aucun produit trouvé pour « {query} »{stockOnly ? " (filtre en stock actif)" : ""}
             </div>
           )}

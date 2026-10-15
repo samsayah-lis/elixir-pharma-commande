@@ -26,8 +26,30 @@ const TRACES = {
   horloge: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   moins: <path d="M5 12h14" />,
+  // ── rayons (barre latérale ; lot 2) ──
+  gelule: <><path d="M10.6 19.9a4.9 4.9 0 0 1-6.9-6.9l6.4-6.4a4.9 4.9 0 0 1 6.9 6.9z" /><path d="m7.4 9.8 6.8 6.8" /></>,
+  carton: <><path d="M3.5 7.5 12 3.2l8.5 4.3v9L12 20.8l-8.5-4.3z" /><path d="M3.5 7.5 12 11.8l8.5-4.3" /><path d="M12 11.8v9" /></>,
+  feuille: <><path d="M19.5 4.5C11 4.5 4.5 8.6 4.5 15.2c0 1.6.3 3 .8 4 1 .5 2.4.8 4 .8 6.6 0 10.2-6.5 10.2-15.5z" /><path d="M5 19.5c2.6-4.6 6-8 10-10" /></>,
+  balance: <><path d="M12 4v16M8 20h8M5 7h14" /><path d="M2.5 13.5 5 7l2.5 6.5M16.5 13.5 19 7l2.5 6.5" /><path d="M2.5 13.5a2.5 2.5 0 0 0 5 0zM16.5 13.5a2.5 2.5 0 0 0 5 0z" /></>,
+  flacon: <><path d="M8.5 3.5h7V8h-7z" /><rect x="6" y="8" width="12" height="13" rx="2.5" /><path d="M9.5 14.5h5M12 12v5" /></>,
+  pansement: <><rect x="1.8" y="8" width="20.4" height="8" rx="4" transform="rotate(-45 12 12)" /><path d="M10.6 10.6h.01M13.4 13.4h.01M10.6 13.4h.01M13.4 10.6h.01" /></>,
+  etiquette: <><path d="M3.5 12.2V4.5a1 1 0 0 1 1-1h7.7a2 2 0 0 1 1.4.6l7.3 7.3a2 2 0 0 1 0 2.8l-6.6 6.6a2 2 0 0 1-2.8 0l-7.4-7.2a2 2 0 0 1-.6-1.4z" /><circle cx="8" cy="8" r="1.3" /></>,
+  tube: <><path d="M8 3.5h8" /><path d="M14.5 3.5V17a2.5 2.5 0 0 1-5 0V3.5" /><path d="M9.5 11.5h5" /></>,
+  sac: <><path d="M5 8h14l-1.1 12.5H6.1z" /><path d="M9 10.5V7a3 3 0 0 1 6 0v3.5" /></>,
+  groupe: <><circle cx="9" cy="8" r="3.2" /><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6" /><path d="M16 4.8a3.2 3.2 0 0 1 0 6.4" /><path d="M18 14.4c1.8.7 3 2.6 3 5.6" /></>,
+  crayon: <><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z" /><path d="m13.5 6.5 4 4" /></>,
+  fauteuil: <><circle cx="9" cy="4" r="1.6" /><path d="M9 7.5V13h6l2.5 6" /><path d="M9 10.5h5" /><path d="M6 10.6a5.5 5.5 0 1 0 8 6.4" /></>,
+  chaise: <><path d="M7 3.5V13h10v6" /><path d="M7 13v6M7 8.5h7" /><circle cx="7" cy="20" r="1.3" /><circle cx="17" cy="20" r="1.3" /></>,
 };
 export const NOMS_ICONES = Object.keys(TRACES);
+
+// Rayons connus → icône (barre latérale). Une icône saisie dans l'admin (dc.icons, campagne) prime : elle reste
+// affichée telle quelle (décision de la cliente, docs/refonte-charte.md § 6).
+export const ICONES_RAYON = {
+  expert: "gelule", stratege: "carton", master: "feuille", obeso: "balance", nr: "flacon", molnlycke: "pansement",
+  blanche: "etiquette", covid: "tube", otc: "sac", ulabs: "groupe", saisie: "crayon", peremption: "horloge",
+  fauteuil: "fauteuil", transfert: "chaise", justificatif: "document", groupees: "groupe",
+};
 
 export function Icone({ nom, taille = 20, epaisseur = 2, plein = false, titre, style, ...reste }) {
   const trace = TRACES[nom];

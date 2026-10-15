@@ -19,6 +19,7 @@
   --line: rgba(32,25,23,.14); --line-soft: rgba(32,25,23,.08); --line-field: #949190;
   --ink-mute: #6f6863; --ink-faint: #b9b5b0;     /* ink-mute jamais sur --sand (4,40:1) ; ink-faint : décoratif seulement */
   --petrol-field: #2b4553;                        /* champ sur pétrole (paper 12 %) */
+  --paper-mute: rgba(251,248,242,.72);            /* texte secondaire sur pétrole (≥ 7:1) */
   --ok: #065f46; --ok-bg: #dce9e5; --danger: #b91c1c; --danger-bg: #f7e4e4;
   --warn: #92400e; --warn-bg: #f4e7dd; --tier-bg: #f0e9da; --orange-acting: #9a3412;
   --scrim: rgba(10,29,34,.55);
@@ -50,7 +51,7 @@ i, em { font-style: normal; }
 .ex-on-dark { --focus: var(--or-clair); }
 ::selection { background: var(--or); color: var(--ink); }
 ::placeholder { color: var(--ink-mute); opacity: 1; }
-.ex-on-dark ::placeholder { color: rgba(251,248,242,.7); }   /* paper 70 % : 7,36:1 sur pétrole */
+.ex-on-dark ::placeholder { color: var(--paper-mute); }   /* paper 72 % : ≥ 7:1 sur pétrole, 5,6:1 sur --petrol-field */
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
 input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .num { font-variant-numeric: tabular-nums; }
@@ -74,6 +75,24 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   header button, aside button { display: none !important; }
   aside { display: block !important; width: 100% !important; min-width: 100% !important; }
 }
+/* ── Coquille (lot 2) : survols impossibles en inline. Le fond actif reste posé en inline (il l'emporte) ── */
+.ex-menu { background: transparent; transition: background-color .15s var(--ease), color .15s var(--ease); }
+.ex-menu:hover { background: var(--surface-2); }
+.ex-icone-entete { background: transparent; transition: background-color .15s var(--ease); }
+.ex-icone-entete:hover:not(:disabled) { background: var(--petrol-field); }
+.ex-icone-pastille:hover:not(:disabled) { background: rgba(251,248,242,.14); }   /* bouton posé sur --petrol-field */
+.ex-panier-flottant { background: var(--petrol); transition: background-color .15s var(--ease); }
+.ex-panier-flottant:hover { background: var(--teal); }
+/* rail A–Z défilant sur mobile : pas de barre de défilement rognée par la pastille (la lettre coupée au bord suffit) */
+.ex-sans-barre::-webkit-scrollbar { display: none; }
+/* petits téléphones : la croix seule dans l'en-tête, le mot ELIXIR laisse la place à la pharmacie et au panier */
+@media (max-width: 479px) { .ex-mot-elixir { display: none; } }
+/* impression : en-tête et bloc de marque en encre sur papier (les fonds ne s'impriment pas) */
+@media print {
+  .ex-app header, .ex-marque { background: none !important; }
+  .ex-app header, .ex-app header *, .ex-marque, .ex-marque * { color: var(--ink) !important; }
+}
+
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }
