@@ -69,24 +69,23 @@ export const handler = async (event) => {
   row.updated_at = now;
   if (action === "create") row.created_at = now;
 
-  const res = cipChange
-    ? await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(oldCip)}`, {
-        method: "PATCH", headers: { ...SB, "Prefer": "return=representation" }, body: JSON.stringify(row),
-      })
-    : await fetch(`${SUPABASE_URL}/rest/v1/elixir_products`, {
-        method: "POST", headers: { ...SB, "Prefer": "resolution=merge-duplicates" }, body: JSON.stringify(row),
-      });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("[products-upsert] Supabase error:", err);
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
-  }
-
-  if (cipChange) {
+  // Mise à jour = PATCH de la ligne existante (un upsert partiel échoue : la ligne proposée à l'insertion
+  // doit déjà respecter les NOT NULL, nom compris). Ligne absente → insertion, si le nom est fourni.
+  const erreur = async (r) => { const err = await r.text(); console.error("[products-upsert] Supabase error:", err); return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) }; };
+  if (action !== "create") {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(lookupCip)}`, {
+      method: "PATCH", headers: { ...SB, "Prefer": "return=representation" }, body: JSON.stringify(row),
+    });
+    if (!res.ok) return erreur(res);
     const maj = await res.json().catch(() => []);
-    if (!Array.isArray(maj) || !maj.length) return { statusCode: 404, headers: cors, body: JSON.stringify({ error: `produit ${oldCip} introuvable` }) };
+    if (Array.isArray(maj) && maj.length) return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
+    if (cipChange || !row.name) return { statusCode: 404, headers: cors, body: JSON.stringify({ error: `produit ${lookupCip} introuvable` }) };
+    row.created_at = now;
   }
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products`, {
+    method: "POST", headers: { ...SB, "Prefer": "resolution=merge-duplicates" }, body: JSON.stringify(row),
+  });
+  if (!res.ok) return erreur(res);
 
   return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
 };
