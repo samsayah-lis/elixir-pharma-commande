@@ -26,6 +26,8 @@ export const handler = async (event) => {
     const attempts = [];
     if (cip7) attempts.push(["cip7", cip7]);
     if (cip && cip.length === 13 && cip.startsWith("34")) attempts.push(["cip13", cip]);
+    // para (EAN hors 34…) : recherche par EAN d'abord (le CIP7 tiré des 7 derniers chiffres trouve rarement)
+    if (cip && /^\d{8}$|^\d{12,14}$/.test(cip) && !cip.startsWith("34")) attempts.push(["ean", cip]);
     if (cip && cip.length === 13 && !cip.startsWith("34")) attempts.push(["cip7", cip.slice(-7)]);
     if (cip && cip.length === 13) attempts.push(["cip13", cip]);
 
