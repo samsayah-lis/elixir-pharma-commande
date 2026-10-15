@@ -1,27 +1,50 @@
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { MEDIPIM_BASE, MEDIPIM_HEADERS as H } from "./_medipim.js";
-async function tryFind(param, value) {
-  if (!value) return null;
-  const res = await fetch(`${MEDIPIM_BASE}/products/find?${param}=${value}`, { headers: H });
-  if (!res.ok) return null;
-  const data = await res.json();
-  if (!data?.product) return null;
-  return extractProduct(data);
+// Fiche Medipim (nom, marque, photo) d'un produit par code, pour l'admin.
+// 404 = produit absent de Medipim (ou sans photo, sauf sansPhoto=1) ; 429/503 = base saturée ou indisponible
+// (jamais confondu avec « non trouvé » : la clé est partagée, 100 appels/min).
+
+// Erreur Medipim autre que « pas trouvé » : remontée telle quelle à l'appelant
+class Indisponible extends Error { constructor(status) { super(status === 429 ? "Base photos saturée" : `Base photos indisponible (${status})`); this.status = status; } }
+
+async function requete(filter) {
+  const res = await fetch(`${MEDIPIM_BASE}/products/query`, {
+    method: "POST", headers: { ...H, "Content-Type": "application/json" },
+    body: JSON.stringify({ filter: { and: [{ status: "active" }, filter] }, page: { no: 0, size: 10 } }),
+  });
+  if (res.status === 429 || res.status >= 500) throw new Indisponible(res.status);
+  if (!res.ok) return [];
+  const data = await res.json().catch(() => ({}));
+  return data.results || [];
 }
 
-// Recherche par code-barres (EAN, CIP13 ou ACL13) en un appel, comme l'outil étiquettes : trouve la
-// parapharmacie que /products/find (cip7/cip13) manque.
+// Recherche par code-barres (EAN, CIP13 ou ACL13) en un appel, comme l'outil étiquettes : trouve aussi la
+// parapharmacie que /products/find (cip13) manque.
 async function parCode(code) {
   if (!/^\d{8,14}$/.test(code || "")) return null;
   const q = code.length === 12 ? "0" + code : code;
-  const res = await fetch(`${MEDIPIM_BASE}/products/query`, {
-    method: "POST", headers: { ...H, "Content-Type": "application/json" },
-    body: JSON.stringify({ filter: { and: [{ status: "active" }, { search: { type: "refcode", query: q, locale: "fr" } }] }, page: { no: 0, size: 10 } }),
-  });
+  const liste = (await requete({ search: { type: "refcode", query: q, locale: "fr" } }))
+    .filter(p => [p.cip13, p.acl13, ...(p.ean || [])].includes(q));
+  return meilleur(liste);
+}
+
+// CIP7 / ACL7 explicite (le paramètre cip7 de /products/find n'existe pas : 422)
+async function parCip7(c7) {
+  if (!/^\d{7}$/.test(c7 || "")) return null;
+  return meilleur(await requete({ cipOrAcl7: c7 }));
+}
+
+// Repli pour les médicaments (CIP13 34009…) que la recherche par code ne renverrait pas
+async function parCip13(cip) {
+  const res = await fetch(`${MEDIPIM_BASE}/products/find?cip13=${encodeURIComponent(cip)}`, { headers: H });
+  if (res.status === 429 || res.status >= 500) throw new Indisponible(res.status);
   if (!res.ok) return null;
-  const data = await res.json().catch(() => ({}));
-  const liste = (data.results || []).filter(p => [p.cip13, p.acl13, ...(p.ean || [])].includes(q));
+  const data = await res.json().catch(() => null);
+  return data?.product ? extractProduct(data) : null;
+}
+
+function meilleur(liste) {
   if (!liste.length) return null;
   const produits = liste.map(p => extractProduct({ product: p }));
   return produits.find(p => p.image_url) || produits[0];
@@ -39,30 +62,21 @@ export const handler = async (event) => {
   if (!cip && !cip7) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip requis" }) };
 
   try {
-    // Ordre de priorité : cip7 (ACL) → cip13 → heuristique
-    const attempts = [];
-    if (cip7) attempts.push(["cip7", cip7]);
-    if (cip && cip.length === 13 && cip.startsWith("34")) attempts.push(["cip13", cip]);
-    if (cip && cip.length === 13 && !cip.startsWith("34")) attempts.push(["cip7", cip.slice(-7)]);
-    if (cip && cip.length === 13) attempts.push(["cip13", cip]);
-
-    let sansImage = null;
-    if (cip) {
+    // Ordre : CIP7/ACL7 explicite → code-barres exact → CIP13 (médicaments). Plus d'heuristique « 7 derniers
+    // chiffres d'un EAN » : elle pouvait tomber sur l'ACL7 d'un autre produit (mauvaise photo).
+    let trouve = cip7 ? await parCip7(cip7) : null;
+    if (!trouve?.image_url && cip) {
       const r = await parCode(cip);
-      if (r?.image_url) return { statusCode: 200, headers: cors, body: JSON.stringify(r) };
-      if (r) sansImage = r;
+      if (r && (!trouve || r.image_url)) trouve = r;
     }
-    const faits = new Set();
-    for (const [param, val] of attempts) {
-      if (faits.has(`${param}=${val}`)) continue; // même requête Medipim déjà faite
-      faits.add(`${param}=${val}`);
-      const result = await tryFind(param, val);
-      if (result?.image_url) return { statusCode: 200, headers: cors, body: JSON.stringify(result) };
-      if (result && !sansImage) sansImage = result;
-    }
-    if (sansImage && sansPhoto === "1") return { statusCode: 200, headers: cors, body: JSON.stringify(sansImage) };
+    if (!trouve && cip && /^34\d{11}$/.test(cip)) trouve = await parCip13(cip);
+    if (trouve && (trouve.image_url || sansPhoto === "1")) return { statusCode: 200, headers: cors, body: JSON.stringify(trouve) };
     return { statusCode: 404, headers: cors, body: JSON.stringify({ error: "Produit non trouvé" }) };
   } catch (e) {
+    if (e instanceof Indisponible) {
+      const code = e.status === 429 ? 429 : 503;
+      return { statusCode: code, headers: { ...cors, "Retry-After": "30" }, body: JSON.stringify({ error: e.message }) };
+    }
     return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
   }
 };

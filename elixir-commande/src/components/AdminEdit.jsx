@@ -69,8 +69,9 @@ export default function AdminEdit({
       cip: newCip, name, section,
       pv: !isNaN(pv) ? pv : p.pv, pct: !isNaN(pct) ? pct : p.pct, pn: !isNaN(pn) ? pn : p.pn,
       remise_eur: parseFloat(editForm.remise_eur) || null,
-      colis: editForm.palier !== "" ? parseInt(editForm.palier)||null : p.colis,
-      note: editForm.note !== "" ? editForm.note : p.note,
+      // formulaire pré-rempli avec les valeurs actuelles : un champ vidé = valeur effacée
+      colis: String(editForm.palier ?? "").trim() !== "" ? parseInt(editForm.palier)||null : null,
+      note: String(editForm.note ?? "").trim() || null,
       source: p.source || "catalog", active: true,
       ...(cipChanged ? { old_cip: p.cip } : {}),
     };
@@ -123,11 +124,16 @@ export default function AdminEdit({
       if (res.ok) {
         const data = await res.json();
         setMedipimLookup(prev => ({ ...prev, [cip]: { ...data, loading: false } }));
-      } else {
+      } else if (res.status === 404) {
         setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: "Non trouvé" } }));
+      } else {
+        // base photos saturée ou indisponible : rien n'est mémorisé, le bouton reste disponible
+        setMedipimLookup(prev => { const n = { ...prev }; delete n[cip]; return n; });
+        flash(res.status === 429 ? "⏳ Base photos saturée : réessayez dans une minute" : "⚠ Base photos indisponible");
       }
     } catch (e) {
-      setMedipimLookup(prev => ({ ...prev, [cip]: { loading: false, error: e.message } }));
+      setMedipimLookup(prev => { const n = { ...prev }; delete n[cip]; return n; });
+      flash("⚠ " + e.message);
     }
   };
 
@@ -319,29 +325,34 @@ export default function AdminEdit({
                   const toFetch = base.filter(p=>p.cip&&p.cip.length>=7&&!p.image_url);
                   if(toFetch.length===0){flash("Tous les produits filtrés ont déjà une photo (ou pas de CIP).");return;}
                   if(!window.confirm(`Importer les photos Medipim pour ${toFetch.length} produits (sans photo) ?`))return;
-                  let ok=0,ko=0;
-                  // Traitement par batches de 5 en parallèle
-                  const BATCH = 5;
-                  for(let i=0; i<toFetch.length; i+=BATCH){
-                    const batch = toFetch.slice(i, i+BATCH);
-                    await Promise.all(batch.map(async p => {
-                      try{
-                        const r=await adminFetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
-                        const d=await r.json();
-                        if(d.image_url){
-                          const up=await adminFetch("/.netlify/functions/product-upload-image",{
-                            method:"POST",headers:{"Content-Type":"application/json"},
-                            body:JSON.stringify({cip:p.cip,image_url:d.image_url})
-                          });
-                          const uj=await up.json();
-                          if(uj.success) ok++; else ko++;
-                        }else{ko++;}
-                      }catch(e){console.warn(p.cip,e);ko++;}
-                    }));
-                    flash(`⏳ ${ok+ko}/${toFetch.length} traités...`);
+                  let ok=0,ko=0,sature=0;
+                  // Un produit à la fois, ~1 par seconde : la clé de la base photos est partagée (100 appels/min) ;
+                  // une saturation (429) est réessayée après une pause et n'est pas comptée comme « non trouvée »
+                  const pause = ms => new Promise(r => setTimeout(r, ms));
+                  for (const p of toFetch) {
+                    try {
+                      let r = null;
+                      for (let essai = 0; essai < 3; essai++) {
+                        r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${p.cip}${p.cip7?`&cip7=${p.cip7}`:''}`);
+                        if (r.status !== 429 && r.status < 500) break;
+                        await pause((parseInt(r.headers.get("Retry-After")) || 20) * 1000);
+                      }
+                      if (r.status === 429 || r.status >= 500) { sature++; continue; }
+                      const d = await r.json().catch(() => ({}));
+                      if (d.image_url) {
+                        const up=await adminFetch("/.netlify/functions/product-upload-image",{
+                          method:"POST",headers:{"Content-Type":"application/json"},
+                          body:JSON.stringify({cip:p.cip,image_url:d.image_url})
+                        });
+                        const uj=await up.json();
+                        if(uj.success) ok++; else ko++;
+                      } else { ko++; }
+                    } catch(e) { console.warn(p.cip,e); ko++; }
+                    flash(`⏳ ${ok+ko+sature}/${toFetch.length} traités...`);
+                    await pause(1000);
                   }
                   await fetchProducts();
-                  flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}`)
+                  flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}${sature>0?`, ${sature} non traitées (base photos saturée : relancez plus tard)`:""}`)
                 }} style={{fontSize:12,background:"#0ea5e9",color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
                   🔄 Importer photos Medipim pour les produits filtrés sans photo
                 </button>
