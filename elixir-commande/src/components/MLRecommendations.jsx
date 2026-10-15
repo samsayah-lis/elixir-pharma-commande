@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useMemo } from "react";
-
-const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+import { T, R, tone, ui, fmtEur } from "../theme.js";
+import { Icone } from "../icons.jsx";
 
 // ── CROSS-SELL : "Les pharmacies qui commandent X commandent aussi Y" ──
-export function CrossSellBanner({ cartCips = [], onAdd, accent = "#10b981" }) {
+// Refonte charte (lot 6) : carte neutre (paper, filet), pertinence en ton info (menthe + sarcelle), « Ajouter » en
+// pastille pétrole ; la couleur verte passée par le panier (accent) n'est plus utilisée. Recherche et onAdd inchangés.
+const TON_PERTINENCE = tone("info");
+export function CrossSellBanner({ cartCips = [], onAdd }) {
   const [recs, setRecs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [dismissed, setDismissed] = useState(new Set());
@@ -42,35 +45,43 @@ export function CrossSellBanner({ cartCips = [], onAdd, accent = "#10b981" }) {
   if (recs.length === 0 && !loading) return null;
 
   return (
-    <div style={{ background: `linear-gradient(135deg, ${accent}08, ${accent}15)`, border: `1px solid ${accent}30`, borderRadius: 14, padding: "14px 18px", marginTop: 12 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-        <span style={{ fontSize: 16 }}>💡</span>
-        <span style={{ fontWeight: 700, fontSize: 13, color: "#0f2d3d" }}>Produits complémentaires</span>
-        <span style={{ fontSize: 11, color: "#888", fontStyle: "italic" }}>Basé sur les commandes d'autres pharmacies</span>
+    <section aria-label="Produits complémentaires" style={{ background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.m, padding: "14px 16px", marginTop: 16 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+        <Icone nom="ampoule" taille={18} style={{ color: T.teal, marginTop: 1 }} />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontWeight: 700, fontSize: 13, color: T.ink }}>Produits complémentaires</div>
+          <div style={{ fontSize: 11, color: T.inkMute, marginTop: 1 }}>Basé sur les commandes d'autres pharmacies</div>
+        </div>
       </div>
       {loading && recs.length === 0 ? (
-        <div style={{ fontSize: 12, color: "#aaa", padding: "8px 0" }}>Recherche de recommandations...</div>
+        <div role="status" style={{ fontSize: 12, color: T.inkMute, padding: "8px 0" }}>Recherche de recommandations…</div>
       ) : (
         <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
           {recs.map(rec => (
-            <div key={rec.cip} style={{ background: "white", borderRadius: 10, padding: "10px 14px", minWidth: 180, maxWidth: 220, border: "1px solid #e8ecf0", display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-              {rec.image_url && <img src={rec.image_url} alt="" style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6, background: "#f8fafc" }} />}
-              <div style={{ fontWeight: 600, fontSize: 12, color: "#1a2a3a", lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{rec.name || rec.cip}</div>
+            <div key={rec.cip} style={{ background: T.surface, borderRadius: R.s, padding: "10px 12px", minWidth: 168, maxWidth: 200, border: `1px solid ${T.line}`, display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
+              {rec.image_url && <img src={rec.image_url} alt="" style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6, background: T.surface }} />}
+              <div style={{ fontWeight: 600, fontSize: 12, color: T.ink, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{rec.name || rec.cip}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <div style={{ fontSize: 10, color: accent, fontWeight: 700, background: `${accent}15`, borderRadius: 4, padding: "1px 6px" }}>
+                <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.4, color: TON_PERTINENCE.fg, background: TON_PERTINENCE.bg, borderRadius: R.pill, padding: "1px 8px" }}>
                   {rec.lift >= 3 ? "Très pertinent" : rec.lift >= 2 ? "Pertinent" : "Suggéré"}
-                </div>
+                </span>
               </div>
-              {rec.pn != null && <div style={{ fontSize: 14, fontWeight: 800, color: "#0f2d3d" }}>{fmt(rec.pn)}</div>}
-              <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
-                <button onClick={() => onAdd?.(rec.cip, 1)} style={{ flex: 1, background: accent, color: "white", border: "none", borderRadius: 6, padding: "6px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>+ Ajouter</button>
-                <button onClick={() => setDismissed(p => new Set([...p, rec.cip]))} style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 14, padding: "0 4px" }} title="Masquer">✕</button>
+              {rec.pn != null && <div className="num" style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>{fmtEur(rec.pn)}</div>}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "auto" }}>
+                <button className="ex-btn-petrole" onClick={() => onAdd?.(rec.cip, 1)} aria-label={`Ajouter ${rec.name || rec.cip} au panier`}
+                  style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, flex: 1, height: 30, padding: "0 10px", fontSize: 12, gap: 4 }}>
+                  <Icone nom="plus" taille={14} epaisseur={2.4} />Ajouter
+                </button>
+                <button className="ex-btn-discret" onClick={() => setDismissed(p => new Set([...p, rec.cip]))} title="Masquer" aria-label={`Masquer ${rec.name || rec.cip}`}
+                  style={{ width: 28, height: 28, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <Icone nom="fermer" taille={14} epaisseur={2.4} />
+                </button>
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
+    </section>
   );
 }
 

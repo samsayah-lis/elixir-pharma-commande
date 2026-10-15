@@ -58,7 +58,22 @@ const btnEntete = { width: 36, height: 36, padding: 0, border: "none", borderRad
 // ── Catalogue (refonte charte, lot 4) ──
 // pastille de filtre de 32 px : fond et couleur posés par la classe ex-filtre selon aria-pressed (survol possible)
 const filtreStyle = { ...ui.pill(false), background: undefined, color: undefined };
-const fmt = (n) => n != null ? n.toFixed(2).replace(".", ",") + " €" : "–";
+// ── Panier (refonte charte, lot 6) ──
+// encart sous une ligne du panier (palier, contingentement, rupture…) : ton de theme.js, texte 12 px
+const encart = (ton) => {
+  const t = tone(ton);
+  return { marginTop: 8, padding: "7px 10px", borderRadius: R.s, fontSize: 12, lineHeight: 1.45, background: t.bg, color: t.fg, border: `1px solid ${t.border}` };
+};
+const ligneEncart = { display: "flex", alignItems: "flex-start", gap: 6 };   // icône calée sur la première ligne du texte
+const iconeEncart = { marginTop: 2 };
+// boutons ronds de 28 px du panier (quantité, suppression) : fond et survol par les classes ex-qte-* / ex-btn-discret
+const pasPanier = { width: 28, height: 28, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
+  display: "flex", alignItems: "center", justifyContent: "center" };
+// boutons secondaires à filet (Imprimer, Copier) : survol par la classe ex-btn-ligne (un fond inline l'empêcherait)
+const btnSecondaire = { ...ui.btn("ligne", "m"), background: undefined, width: "100%", height: 40, padding: "0 12px", boxShadow: `inset 0 0 0 1.5px ${T.lineField}` };
+// Montants au format français (« 3 630,04 € ») : affichage seulement — l'e-mail, le texte copié et les données envoyées
+// gardent leurs toFixed() d'origine (docs/refonte-charte.md § 0)
+const fmt = (n) => fmtEur(n);
 // Panier persisté : celui de la session (localStorage) ou, en saisie Elixir, celui de la pharmacie servie
 // (sessionStorage de l'onglet, une clé par fiche) — jamais l'un pour l'autre
 const cartKeys = (a) => a ? [`acting_cart_q_${a.odoo_id}`, `acting_cart_s_${a.odoo_id}`, `acting_cart_j_${a.odoo_id}`] : ["cart_quantities", "cart_special", "cart_justif"];
@@ -2816,103 +2831,93 @@ export default function App() {
           />
         )}
 
-        {/* Cart panel — overlay flottant fixe */}
+        {/* Panier — tiroir fixe (refonte charte, lot 6 : habillage seulement). Inchangés : handleSend, condition
+            disabled du bouton d'envoi, setItemQty, calculs du contingentement, balise <aside>, z-index 300 / 301 */}
         {cartOpen && (
-          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 300, backdropFilter: "blur(2px)" }}
+          <div style={{ position: "fixed", inset: 0, background: T.scrim, zIndex: 300 }}
             onClick={() => setCartOpen(false)} />
         )}
-        <aside style={{
+        <aside aria-label="Panier" style={{
           position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 301,
           width: isMobile ? "100%" : 380,
-          background: "white",
+          background: T.surface, color: T.ink,
           display: "flex", flexDirection: "column",
-          boxShadow: "-6px 0 32px rgba(0,0,0,0.18)",
+          boxShadow: cartOpen ? "-16px 0 48px -20px rgba(10,29,34,.5)" : "none",   // fermé : pas d'ombre au bord de l'écran
           transform: cartOpen ? "translateX(0)" : "translateX(100%)",
-          transition: "transform 0.28s cubic-bezier(0.4,0,0.2,1)",
+          transition: "transform .3s var(--ease)",
           pointerEvents: cartOpen ? "auto" : "none",
         }}>
-              <div style={{ padding: "20px 20px 0", borderBottom: "1px solid #f0f2f5" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div style={{ fontWeight: 800, fontSize: 18, color: "#1a2a3a" }}>🛒 Panier commun</div>
-                  <button onClick={() => setCartOpen(false)} style={{
-                    background: "none", border: "none", cursor: "pointer", fontSize: 20, color: "#888"
-                  }}>×</button>
+              <div style={{ padding: isMobile ? "16px 16px 0" : "20px 20px 0", borderBottom: `1px solid ${T.line}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                  <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: 10, fontSize: 20, fontWeight: 640, letterSpacing: "-0.02em", color: T.petrol }}>
+                    <Icone nom="panier" taille={22} />Panier
+                  </h2>
+                  <button className="ex-btn-ligne" onClick={() => setCartOpen(false)} aria-label="Fermer le panier" title="Fermer"
+                    style={{ ...btnEntete, color: T.ink }}><Icone nom="fermer" /></button>
                 </div>
                 {pharmacyName && (
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 4, marginBottom: 12 }}>📍 {pharmacyName}</div>
+                  <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 2, marginBottom: 12 }}>{pharmacyName}</div>
                 )}
-                <div style={{ display: "flex", gap: 12, paddingBottom: 16 }}>
-                  <div style={{ flex: 1, background: "#f0f9ff", borderRadius: 10, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 11, color: "#666" }}>Lignes</div>
-                    <div style={{ fontWeight: 800, fontSize: 20, color: "#0ea5e9" }}>{cartItems.length}</div>
-                  </div>
-                  <div style={{ flex: 1, background: "#f0fdf4", borderRadius: 10, padding: "10px 14px" }}>
-                    <div style={{ fontSize: 11, color: "#666" }}>Unités</div>
-                    <div style={{ fontWeight: 800, fontSize: 20, color: "#10b981" }}>{cartCount}</div>
-                  </div>
+                {/* tuiles neutres : la couleur ne distingue plus les deux chiffres, le libellé suffit */}
+                <div style={{ display: "flex", gap: 10, paddingBottom: 16 }}>
+                  {[["Lignes", cartItems.length], ["Unités", cartCount]].map(([libelle, valeur]) => (
+                    <div key={libelle} style={{ flex: 1, background: T.surface2, borderRadius: R.s, padding: "8px 14px" }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute }}>{libelle}</div>
+                      <div className="num" style={{ fontWeight: 700, fontSize: 20, lineHeight: 1.25, color: T.ink }}>{valeur}</div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              <div style={{ overflowY: "auto", padding: "12px 16px" }}>
+              <div style={{ overflowY: "auto", padding: isMobile ? "0 16px 16px" : "0 20px 20px" }}>
                 {cartItems.length === 0 ? (
-                  <div style={{ textAlign: "center", color: "#bbb", padding: 40, fontSize: 14 }}>
-                    <div style={{ fontSize: 40, marginBottom: 12 }}>🛒</div>
+                  <div style={{ textAlign: "center", color: T.inkMute, padding: "48px 24px", fontSize: 14 }}>
+                    <Icone nom="panier" taille={40} epaisseur={1.6} style={{ display: "block", margin: "0 auto 12px", color: T.inkFaint }} />
                     Aucun produit sélectionné
                   </div>
                 ) : (
-                  cartItems.map(item => (
-                    <div key={item.key} style={{
-                      background: "#fafbfc", borderRadius: 10, padding: "10px 12px",
-                      marginBottom: 8, border: `1px solid ${item.color}20`
-                    }}>
-                      {/* Category + delete button */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
-                        <div style={{ fontSize: 10, color: item.color, fontWeight: 700, letterSpacing: 0.5 }}>
-                          {item.cat.toUpperCase()}
+                  <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {cartItems.map((item, n) => (
+                    <li key={item.key} style={{ padding: "14px 0", borderTop: n ? `1px solid ${T.lineSoft}` : "none" }}>
+                      {/* Rayon (eyebrow ; sa couleur n'est plus qu'une pastille de repère) + suppression */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: T.inkMute }}>
+                          <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: R.pill, background: item.color, flexShrink: 0 }} />
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.cat.toUpperCase()}</span>
                         </div>
-                        <button onClick={() => setItemQty(item, 0)} style={{
-                          background: "none", border: "none", cursor: "pointer",
-                          color: "#ccc", fontSize: 15, lineHeight: 1, padding: "0 2px"
-                        }} title="Supprimer">✕</button>
+                        <button className="ex-btn-discret" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name} du panier`}
+                          style={{ ...pasPanier, width: isMobile ? 32 : 28, height: isMobile ? 32 : 28 }}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
                       </div>
-                      {/* Product name */}
-                      <div style={{ fontWeight: 600, fontSize: 12, color: "#1a2a3a", lineHeight: 1.3, marginBottom: 8 }}>{item.name}</div>
-                      {/* UG badge pour campagnes */}
+                      {/* Nom du produit */}
+                      <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
+                      {/* Unités gratuites des campagnes */}
                       {item.qtyUG > 0 && (
-                        <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:6 }}>
-                          <span style={{ fontSize:11, color:"#065f46", background:"#d1fae5", borderRadius:5, padding:"2px 8px", fontWeight:700, border:"1px solid #6ee7b7" }}>
-                            🎁 + {item.qtyUG} unité{item.qtyUG>1?"s":""} offerte{item.qtyUG>1?"s":""} → {item.qty + item.qtyUG} livrées au total
+                        <div style={{ marginBottom: 8 }}>
+                          <span style={{ ...ui.badge("ok"), whiteSpace: "normal", padding: "3px 10px 3px 8px" }}>
+                            <Icone nom="cadeau" taille={13} epaisseur={2.2} />+ {item.qtyUG} unité{item.qtyUG>1?"s":""} offerte{item.qtyUG>1?"s":""} → {item.qty + item.qtyUG} livrées au total
                           </span>
                         </div>
                       )}
-                      {/* Qty controls + subtotal */}
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <button onClick={() => setItemQty(item, item.qty - item.step)} style={{
-                            background: item.color + "20", border: `1px solid ${item.color}40`,
-                            color: item.color, borderRadius: 6, width: 26, height: 26,
-                            cursor: "pointer", fontWeight: 800, fontSize: 16, lineHeight: 1,
-                            display: "flex", alignItems: "center", justifyContent: "center"
-                          }}>−</button>
-                          <span style={{ fontWeight: 700, fontSize: 14, minWidth: 24, textAlign: "center", color: "#1a2a3a" }}>{item.qty}</span>
-                          <button onClick={() => setItemQty(item, item.qty + item.step)} style={{
-                            background: item.color + "20", border: `1px solid ${item.color}40`,
-                            color: item.color, borderRadius: 6, width: 26, height: 26,
-                            cursor: "pointer", fontWeight: 800, fontSize: 16, lineHeight: 1,
-                            display: "flex", alignItems: "center", justifyContent: "center"
-                          }}>+</button>
-                          <span style={{ fontSize: 10, color: "#999", marginLeft: 2 }}>× {fmt(item.pn)}</span>
-                          {item.step > 1 && <span style={{ fontSize: 9, color: "#bbb" }}>/ par {item.step}</span>}
+                      {/* Quantité (« − » sable, « + » pétrole, au pas du colis) + sous-total */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
+                          <button className="ex-qte-moins" onClick={() => setItemQty(item, item.qty - item.step)} aria-label={`Diminuer la quantité de ${item.name}`}
+                            style={pasPanier}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
+                          <span className="num" style={{ fontWeight: 700, fontSize: 14, minWidth: 28, textAlign: "center", color: T.ink }}>{item.qty}</span>
+                          <button className="ex-qte-plus" onClick={() => setItemQty(item, item.qty + item.step)} aria-label={`Augmenter la quantité de ${item.name}`}
+                            style={pasPanier}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
+                          <span className="num" style={{ fontSize: 12, color: T.inkMute, marginLeft: 4, whiteSpace: "nowrap" }}>× {fmt(item.pn)}</span>
+                          {item.step > 1 && <span className="num" style={{ fontSize: 11, color: T.inkMute, whiteSpace: "nowrap" }}>· par {item.step}</span>}
                         </div>
-                        <span style={{ fontWeight: 800, color: "#1a2a3a", fontSize: 13 }}>{fmt(item.total)}</span>
+                        <span className="num" style={{ fontWeight: 700, color: T.ink, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(item.total)}</span>
                       </div>
-                      {/* Palier de quantité : appliqué, ou à viser */}
+                      {/* Palier de quantité : appliqué (ton palier), ou à viser (ton avertissement) */}
                       {(item.tier || item.nextTier) && (
-                        <div style={{ marginTop: 6, fontSize: 11, borderRadius: 6, padding: "4px 8px", lineHeight: 1.4,
-                                      background: item.tier ? "#ecfdf5" : "#fffbeb", color: item.tier ? "#065f46" : "#92400e" }}>
-                          {item.tier && (<>✓ Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</>)}
-                          {item.tier && item.nextTier && <br />}
-                          {item.nextTier && (<>🎯 Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></>)}
+                        <div style={encart(item.tier ? "tier" : "warn")}>
+                          {item.tier && (<div style={ligneEncart}><Icone nom="coche" taille={14} epaisseur={2.4} style={iconeEncart} />
+                            <span>Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</span></div>)}
+                          {item.nextTier && (<div style={{ ...ligneEncart, marginTop: item.tier ? 2 : 0 }}><Icone nom="cible" taille={14} style={iconeEncart} />
+                            <span>Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></span></div>)}
                         </div>
                       )}
                       {/* Contingentement : quota de la période, déjà commandé, reste */}
@@ -2922,15 +2927,17 @@ export default function App() {
                         const room = Math.max(0, q.remaining - (quotaCheck.inCart[item.cip] - item.qty));   // reste pour CETTE ligne
                         const max = item.step > 1 ? Math.floor(room / item.step) * item.step : room;
                         return (
-                          <div style={{ marginTop: 6, fontSize: 11, borderRadius: 6, padding: "5px 8px", lineHeight: 1.45,
-                                        background: over ? "#fef2f2" : "#eff6ff", color: over ? "#991b1b" : "#1e3a8a", border: over ? "1px solid #fecaca" : "1px solid transparent" }}>
-                            🔒 Contingenté : <strong>{q.label}</strong>{q.used > 0 ? ` · déjà commandé ${q.used}` : ""} · reste <strong>{q.remaining}</strong>
-                            {q.end && <span style={{ color: over ? "#991b1b" : "#64748b" }}> (nouveau quota le {quotaDay(q.end)})</span>}
+                          <div style={encart(over ? "danger" : "info")}>
+                            <div style={ligneEncart}>
+                              <Icone nom="cadenas" taille={14} style={iconeEncart} />
+                              <span>Contingenté : <strong>{q.label}</strong>{q.used > 0 ? ` · déjà commandé ${q.used}` : ""} · reste <strong>{q.remaining}</strong>
+                                {q.end && <span style={{ color: over ? T.danger : T.inkSoft }}> (nouveau quota le {quotaDay(q.end)})</span>}</span>
+                            </div>
                             {over && (
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, fontWeight: 700 }}>
+                              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, marginTop: 6, paddingLeft: 20, fontWeight: 700 }}>
                                 {q.remaining === 0 ? "Quota atteint pour cette période" : `Maximum ${q.remaining} pour cette période`}
-                                <button onClick={() => setItemQty(item, max)} style={{ background: "white", border: "1px solid #fca5a5", color: "#b91c1c", borderRadius: 6,
-                                  padding: "2px 8px", fontSize: 11, fontWeight: 800, cursor: "pointer" }}>{max > 0 ? `Ramener à ${max}` : "Retirer"}</button>
+                                <button className="ex-btn-danger-ligne" onClick={() => setItemQty(item, max)} style={{ ...ui.btn("ligne", "s"), background: undefined, color: undefined, boxShadow: undefined,
+                                  height: 28, padding: "0 12px", fontSize: 12 }}>{max > 0 ? `Ramener à ${max}` : "Retirer"}</button>
                               </div>
                             )}
                           </div>
@@ -2943,19 +2950,20 @@ export default function App() {
                       )}
                       {/* Avertissement rupture */}
                       {item.cip && !needsJustif(item, justifProducts, cartTotalsByCip) && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
-                        <div style={{ marginTop: 6, fontSize: 11, color: "#dc2626", background: "#fff5f5", borderRadius: 6, padding: "4px 8px", display: "flex", alignItems: "center", gap: 4 }}>
-                          ⚠️ <strong>Rupture de stock</strong> — ce produit peut ne pas être disponible à la livraison
+                        <div style={{ ...encart("danger"), ...ligneEncart }}>
+                          <Icone nom="alerte" taille={14} style={iconeEncart} />
+                          <span><strong>Rupture de stock</strong> — ce produit peut ne pas être disponible à la livraison</span>
                         </div>
                       )}
-                    </div>
-                  ))
+                    </li>
+                  ))}
+                  </ul>
                 )}
 
                 {/* ── ML: Recommandations cross-sell dans le panier ── */}
                 {cartItems.length > 0 && (
                   <CrossSellBanner
                     cartCips={cartItems.map(i => i.cip).filter(Boolean)}
-                    accent="#10b981"
                     onAdd={(cip, qty) => {
                       Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
                         const idx = (c.products || []).findIndex(p => p.cip === cip);
@@ -2966,78 +2974,76 @@ export default function App() {
                 )}
 
                 {cartItems.length > 0 && (
-                <div style={{ padding: "8px 0 16px 0", borderTop: "2px solid #f0f2f5", marginTop: 8 }}>
+                <div style={{ paddingTop: 16, marginTop: 16, borderTop: `1px solid ${T.line}` }}>
 
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                    <span style={{ color: "#666", fontSize: 13 }}>Total HT estimé</span>
-                    <span style={{ fontWeight: 800, fontSize: 20, color: "#0f2d3d" }}>{fmt(cartTotal)}</span>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 2 }}>
+                    <span style={{ color: T.inkSoft, fontSize: 13 }}>Total HT estimé</span>
+                    <span className="num" style={{ fontWeight: 700, fontSize: 20, color: T.ink, whiteSpace: "nowrap" }}>{fmt(cartTotal)}</span>
                   </div>
-                  <div style={{ fontSize: 10, color: "#aaa", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, color: T.inkMute, marginBottom: 12 }}>
                     * Prix nets remisés – Hors conditions spéciales
                   </div>
-                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12 }}>
-                    <span style={{ color: "#15803d", fontWeight: 700 }}>🚚 Livraison estimée : </span>
-                    <span style={{ color: "#166534", fontWeight: 800 }}>{nextBusinessDay()}</span>
+                  <div style={{ ...encart("ok"), marginTop: 0, marginBottom: 12, display: "flex", alignItems: "center", gap: 8 }}>
+                    <Icone nom="camion" taille={18} />
+                    <span>Livraison estimée : <strong>{nextBusinessDay()}</strong></span>
                   </div>
 
-                  {/* Pharmacy recap */}
-                  <div style={{ background: "#f8fafc", borderRadius: 10, padding: "10px 12px", marginBottom: 14, fontSize: 12 }}>
-                    <div style={{ fontWeight: 700, color: "#0f2d3d" }}>🏥 {pharmacyName}</div>
-                    <div style={{ color: "#666", marginTop: 2 }}>📧 {pharmacyEmail}</div>
-                    <div style={{ color: isClient ? "#059669" : "#d97706", marginTop: 2, fontSize: 11 }}>
-                      {isClient ? "✅ Client existant" : "🆕 Nouveau client – RIB joint"}
+                  {/* Récapitulatif de la pharmacie */}
+                  <div style={{ background: T.surface2, borderRadius: R.s, padding: "10px 12px", marginBottom: 14, fontSize: 12 }}>
+                    <div style={{ fontWeight: 700, color: T.ink }}>{pharmacyName}</div>
+                    <div style={{ color: T.inkSoft, marginTop: 2, overflowWrap: "anywhere" }}>{pharmacyEmail}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, color: isClient ? T.ok : T.warn, marginTop: 4, fontSize: 11, fontWeight: 700 }}>
+                      <Icone nom={isClient ? "coche" : "document"} taille={12} epaisseur={2.4} />{isClient ? "Client existant" : "Nouveau client – RIB joint"}
                     </div>
                   </div>
 
                   {quotaCheck.over.length > 0 && (
-                    <div role="alert" style={{ background: "#fef2f2", border: "1px solid #fecaca", color: "#991b1b", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
-                      🔒 Contingentement dépassé : {quotaCheck.over.map(o => `${o.name} (${o.qty} demandés, reste ${o.remaining})`).join(" ; ")}. Ajustez ces lignes pour envoyer la commande.
+                    <div role="alert" style={{ ...encart("danger"), ...ligneEncart, gap: 8, marginTop: 0, marginBottom: 10, fontWeight: 600 }}>
+                      <Icone nom="cadenas" taille={16} style={{ marginTop: 1 }} />
+                      <span>Contingentement dépassé : {quotaCheck.over.map(o => `${o.name} (${o.qty} demandés, reste ${o.remaining})`).join(" ; ")}. Ajustez ces lignes pour envoyer la commande.</span>
                     </div>
                   )}
                   {justifCheck.length > 0 && (
-                    <div role="alert" style={{ background: "#f5f3ff", border: "1px solid #ddd6fe", color: "#5b21b6", borderRadius: 10, padding: "8px 12px", marginBottom: 10, fontSize: 12, fontWeight: 600 }}>
-                      📑 Commande sur justificatif labo : {justifCheck.map(o => `${o.name} — ${o.msg}`).join(" ; ")}.
+                    <div role="alert" style={{ ...encart("labo"), ...ligneEncart, gap: 8, marginTop: 0, marginBottom: 10, fontWeight: 600 }}>
+                      <Icone nom="document" taille={16} style={{ marginTop: 1 }} />
+                      <span>Commande sur justificatif labo : {justifCheck.map(o => `${o.name} — ${o.msg}`).join(" ; ")}.</span>
                     </div>
                   )}
-                  {/* Send button */}
+                  {/* Envoi : pastille or + encre (5,82:1, au lieu de blanc sur bleu à 2,77:1) ; succès ok + blanc (7,68:1),
+                      erreur danger + blanc ; bloqué (contingentement, justificatif) : sable. onClick et disabled inchangés */}
                   <button
+                    className="ex-btn-or"
                     onClick={handleSend}
                     disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || justifCheck.length > 0}
                     style={{
-                      width: "100%",
-                      background: sendStatus === "success"
-                        ? "linear-gradient(135deg, #10b981 0%, #059669 100%)"
-                        : sendStatus === "error"
-                        ? "linear-gradient(135deg, #e53e3e 0%, #c53030 100%)"
-                        : "linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%)",
-                      color: "white", border: "none", borderRadius: 10, padding: "12px",
-                      fontWeight: 700, fontSize: 14, cursor: sendStatus === "sending" ? "not-allowed" : "pointer",
-                      opacity: sendStatus === "sending" || quotaCheck.over.length > 0 || justifCheck.length > 0 ? 0.6 : 1, marginBottom: 8
+                      ...ui.btn("or", "l"), width: "100%", gap: 10,
+                      ...(sendStatus === "success" ? { background: T.ok, color: "#fff" }
+                        : sendStatus === "error" ? { background: T.danger, color: "#fff" }
+                        : quotaCheck.over.length > 0 || justifCheck.length > 0 ? { background: T.sand, color: T.inkSoft, cursor: "not-allowed" }
+                        : { background: undefined, color: undefined, cursor: sendStatus === "sending" ? "progress" : "pointer" }),
                     }}>
-                    {sendStatus === "sending" ? "⏳ Envoi en cours..." :
-                     sendStatus === "success" ? "✅ Commande envoyée !" :
-                     sendStatus === "error" ? "❌ Erreur – Réessayez" :
-                     "📧 Envoyer la commande"}
+                    {sendStatus === "sending" ? <><Icone nom="horloge" />Envoi en cours…</> :
+                     sendStatus === "success" ? <><Icone nom="coche" epaisseur={2.4} />Commande envoyée&nbsp;!</> :
+                     sendStatus === "error" ? <><Icone nom="alerte" />Erreur – Réessayez</> :
+                     <><Icone nom="envoyer" />Envoyer la commande</>}
                   </button>
 
-                  <button onClick={handlePrint} style={{
-                    width: "100%", background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",
-                    color: "white", border: "none", borderRadius: 10, padding: "10px",
-                    fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 8
-                  }}>🖨 Imprimer le bon de commande</button>
-                  <button onClick={handleCopy} style={{
-                    width: "100%", background: copyStatus ? "linear-gradient(135deg, #10b981 0%, #059669 100%)" : "linear-gradient(135deg, #374151 0%, #1f2937 100%)",
-                    color: "white", border: "none", borderRadius: 10, padding: "10px",
-                    fontWeight: 700, fontSize: 13, cursor: "pointer", marginBottom: 8,
-                    transition: "background 0.3s"
-                  }}>
-                    {copyStatus || "📋 Copier le bon de commande"}
-                  </button>
-                  <button onClick={() => { setQuantities({}); setSpecialItems([]); setJustifInfo({}); }} style={{
-                    width: "100%", background: "none", color: "#e53e3e",
-                    border: "1px solid #fed7d7", borderRadius: 10, padding: "8px",
-                    fontWeight: 600, fontSize: 12, cursor: "pointer"
-                  }}>🗑 Vider le panier</button>
+                  {/* secondaires à filet, côte à côte */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 10 }}>
+                    <button className="ex-btn-ligne" onClick={handlePrint} title="Imprimer le bon de commande" aria-label="Imprimer le bon de commande" style={btnSecondaire}>
+                      <Icone nom="imprimer" taille={18} />Imprimer
+                    </button>
+                    <button className={copyStatus ? undefined : "ex-btn-ligne"} onClick={handleCopy} title="Copier le bon de commande"
+                      aria-label={copyStatus ? undefined : "Copier le bon de commande"}
+                      style={{ ...btnSecondaire, ...(copyStatus ? (() => { const t = tone(copyStatus.startsWith("✓") ? "ok" : "danger"); return { background: t.bg, color: t.fg, boxShadow: `inset 0 0 0 1.5px ${t.border}` }; })() : {}) }}>
+                      {copyStatus
+                        ? <><Icone nom={copyStatus.startsWith("✓") ? "coche" : "alerte"} taille={18} />{copyStatus.replace(/^✓\s*/, "")}</>
+                        : <><Icone nom="copier" taille={18} />Copier</>}
+                    </button>
+                  </div>
+                  <button className="ex-lien-danger" onClick={() => { setQuantities({}); setSpecialItems([]); setJustifInfo({}); }} style={{
+                    ...ui.btn("lien"), display: "flex", gap: 6, margin: "12px auto 0", padding: "8px 12px", fontSize: 13, fontWeight: 600
+                  }}><Icone nom="corbeille" taille={16} />Vider le panier</button>
                 </div>
                 )}
               </div>

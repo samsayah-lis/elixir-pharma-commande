@@ -25,6 +25,10 @@ const TRACES = {
   copier: <><rect x="8.5" y="8.5" width="12" height="12" rx="2" /><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3" /></>,
   horloge: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
   cloche: <><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" /><path d="M10 21a2.2 2.2 0 0 0 4 0" /></>,   // alerte de retour en stock (lot 5)
+  // panier (lot 6) : envoi de la commande, vidage, produits complémentaires
+  envoyer: <><path d="M20.5 3.5 10 14" /><path d="M20.5 3.5 14 20.5l-4-6.5-6.5-4z" /></>,
+  corbeille: <><path d="M4 7h16" /><path d="M9.5 7V4.5h5V7" /><path d="M6 7l1 13h10l1-13" /><path d="M10 11v5.5M14 11v5.5" /></>,
+  ampoule: <><path d="M9.5 18h5M10.5 21h3" /><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.1v.1h5v-.1c0-.8.4-1.6 1.1-2.1A6 6 0 0 0 12 3z" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   moins: <path d="M5 12h14" />,
   // ── rayons (barre latérale ; lot 2) ──
