@@ -790,3 +790,21 @@ Contrôle à 375, 768, 1023, 1024 et 1440 px.
 - **Erreurs** en ton `danger` avec `role="alert"` et icône d'alerte (l'emoji ⚠️ est retiré, le texte du message est inchangé) ; étape de chargement en `role="status"`. Emojis 👋 ✓ 🏥 📞 ✅ 📋 ⏳ remplacés par les icônes au trait (ou retirés).
 - Inchangés : étapes `obStep`, touche Entrée, `autoFocus`, gestionnaires `handleEmailLookup` / `handleConfirmPharmacy` / `handleVerifyOtp`, lien Asana (href, target, rel). Vérifié sur le banc : legacy (e-mail, Entrée, confirmation, « Retour », « Oui, c'est moi ») et OTP (code, `000000` → erreur, code incomplet, « Changer d'e-mail », e-mail inconnu → formulaire Asana) ; corps envoyés `{email}` / `{email, token}` identiques.
 - Bundle après le lot 3 : JS 1 107 832 octets (lot 2 : 1 106 058), CSS 5 425 octets.
+
+## 11. Changements de comportement (lot E)
+
+Seuls changements de logique de la refonte, validés par la cliente (§ 6) : E1, E2 et E3, un commit chacun. Les autres points du lot E (E4 à E8, et le reste de E3 : Entrée dans la recherche, flèches, retour du focus) ne sont pas faits.
+
+### E1 — Arrondi au colis à la sortie du champ (tableaux)
+
+- **Avant.** Dans les tableaux d'ordinateur (produits sans photo : Stratège, Master, Gamme Blanche…), `onChange` appelait `setQty`, qui arrondit au colis à chaque touche. Avec un colis de 6, « 1 » devenait 0 et le champ se vidait : impossible de taper 12. Constaté sur le banc avant le lot : 1, 2, 0 tapés un à un dans BETADINE DERMIQUE (colis 60) → champ vide, quantité 0.
+- **Après.** Le champ est un petit composant, `ChampQteColis` (src/App.jsx, à côté de `CipCell`) :
+  - la frappe reste libre et vit dans le champ (brouillon local) ;
+  - l'arrondi se fait par `setQty`, inchangé, à la sortie du champ (Tab, clic ailleurs, clic sur − ou +) ou sur Entrée (le focus reste dans le champ) ;
+  - le panier et `cart_quantities` ne reçoivent donc que des quantités arrondies : un texte non validé est abandonné si la page change ou se recharge.
+- **Inchangé.** `setQty` et sa règle (multiple le plus proche : 7 avec un colis de 24 → 0, 30 → 24), boutons − / +, mention « par N », style du champ (mêmes attributs).
+- **Autres champs de quantité, vérifiés et laissés tels quels :**
+  - grille (cartes) : déjà conforme. La frappe est libre ; à la sortie, l'alerte min / multiple remet à 0 (`handleBlur`). Cette alerte est conservée ;
+  - liste mobile : pas de champ, seulement − / + au pas du colis ;
+  - Saisie de commande : pas d'arrondi au colis (produits Odoo au pas de 1), seulement le plafond `maxCommande` des produits sur justificatif, appliqué à la frappe.
+- **Tester.** Stratège à 1440 px : taper 4 puis 8 dans ADVILMED (colis 24) → le champ affiche 48 et le panier ne bouge pas ; Tab → 48 au panier. Taper 1, 2, 0 dans BETADINE (colis 60) puis Entrée → 120, focus dans le champ. Taper 30 dans DACUDOSES (colis 24) puis Tab → 24 ; taper 7 → 0. Taper 100 dans BETADINE SCRUB (colis 60) puis cliquer + → 120 puis 180. Taper 5 sans valider puis recharger la page → rien au panier.

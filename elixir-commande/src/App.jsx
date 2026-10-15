@@ -226,6 +226,20 @@ function CipCell({ cip }) {
   );
 }
 
+// Quantité d'un tableau à colis (lot E1) : la frappe reste libre (taper 12 avec un colis de 6 donne 12) ;
+// l'arrondi au colis (onValider → setQty) se fait à la sortie du champ ou sur Entrée, plus à chaque touche.
+// Le texte en cours de frappe reste dans le champ : le panier ne reçoit que des quantités arrondies.
+function ChampQteColis({ valeur, onValider, ...attributs }) {
+  const [brouillon, setBrouillon] = useState(null);
+  const valider = (v) => { setBrouillon(null); onValider(v); };
+  return (
+    <input {...attributs} type="number" value={brouillon ?? (valeur || "")}
+      onChange={e => setBrouillon(e.target.value)}
+      onBlur={e => valider(e.target.value)}
+      onKeyDown={e => { if (e.key === "Enter") valider(e.currentTarget.value); }} />
+  );
+}
+
 // Lien direct vers un menu (admin) : https://…/?menu=<clé>, à coller dans un e-mail ou un catalogue
 function LienMenu({ menu }) {
   const [copie, setCopie] = useState(false);
@@ -2655,10 +2669,9 @@ export default function App() {
                               <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center", flexDirection: "column" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                                   <button onClick={() => setQty(key, (quantities[key] || 0) - step, step)} style={qtyBtnStyle(cat.accent)}>−</button>
-                                  <input
-                                    type="number" min="0" step={step} value={quantities[key] || ""}
-                                    onChange={e => setQty(key, e.target.value, step)}
-                                    onBlur={e => setQty(key, e.target.value, step)}
+                                  <ChampQteColis
+                                    min="0" step={step} valeur={quantities[key]}
+                                    onValider={v => setQty(key, v, step)}
                                     placeholder="0"
                                     style={{
                                       width: 50, textAlign: "center", border: `1.5px solid ${qty > 0 ? cat.accent : "#ddd"}`,
