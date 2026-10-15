@@ -87,6 +87,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-sans-barre::-webkit-scrollbar { display: none; }
 /* petits téléphones : la croix seule dans l'en-tête, le mot ELIXIR laisse la place à la pharmacie et au panier */
 @media (max-width: 479px) { .ex-mot-elixir { display: none; } }
+/* ── Boutons pastille (lot 3, identification) : le fond est posé ici et non en inline, sinon pas de survol ── */
+.ex-btn-petrole { background: var(--petrol); color: var(--paper); transition: background-color .15s var(--ease); }
+.ex-btn-petrole:hover:not(:disabled) { background: var(--teal); }
+.ex-btn-ligne { background: transparent; transition: background-color .15s var(--ease); }
+.ex-btn-ligne:hover:not(:disabled) { background: var(--surface-2); }
 /* impression : en-tête et bloc de marque en encre sur papier (les fonds ne s'impriment pas) */
 @media print {
   .ex-app header, .ex-marque { background: none !important; }

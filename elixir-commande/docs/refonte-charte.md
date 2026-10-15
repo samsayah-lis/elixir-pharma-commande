@@ -780,3 +780,13 @@ Contrôle à 375, 768, 1023, 1024 et 1440 px.
 - **Impression** : en-tête et bloc de marque en encre sans fond (`@media print`, tokens.css) ; boutons toujours masqués.
 - Classes ajoutées (survols impossibles en inline) : `.ex-menu`, `.ex-icone-entete`, `.ex-icone-pastille`, `.ex-panier-flottant`, `.ex-sans-barre`, `.ex-mot-elixir`, `.ex-marque`.
 - Bundle après le lot 2 : JS 1 106 058 octets (lot 1 : 1 093 558 ; theme.js et icons.jsx désormais importés), CSS 5 115 octets.
+
+## 10. Identification posée (lot 3)
+
+- **Fond** `--deep` à plat ; croix Elixir en filigrane (`--mint-2` à 11 %, comme `.inscription__croix` de la vitrine), SVG statique sans animation, dans un calque `aria-hidden` qui la rogne lui-même : un `overflow:hidden` sur le fond en ferait un conteneur défilant, et le focus ou un `scrollIntoView` y décalerait la carte (constaté sur le banc avant correction).
+- **Carte** `--paper`, rayon 28, padding 24 px sur mobile (< 768 px, `isMobile`) et 40 px au-delà ; marge latérale de 12 px sur mobile : 303 px utiles à 375 px. Marque comme la vitrine (croix sarcelle, ELIXIR / PHARMA), pastille menthe « Bon de commande ». Titres d'étape en `<h1>` 22/640 `--petrol`.
+- **Champs** 44 px, filet `--line-field`, rayon 10, `<label htmlFor>` relié (`ident-email`, `ident-code`) ; 16 px de police sur mobile (Safari iOS ne zoome plus à la saisie). Attributs ajoutés : `autoComplete="email"`, `autoComplete="one-time-code"` (`inputMode="numeric"` existait déjà).
+- **Boutons** pastille pétrole de 48 px (`.ex-btn-petrole`, survol sarcelle) ; « Retour » de la confirmation en filet (`.ex-btn-ligne`) ; « Oui, c'est moi » et « Retour » passent l'un sous l'autre sous 312 px utiles. Liens « Changer d'e-mail » / « Retour » en `--ink-soft` souligné, 40 px de haut.
+- **Erreurs** en ton `danger` avec `role="alert"` et icône d'alerte (l'emoji ⚠️ est retiré, le texte du message est inchangé) ; étape de chargement en `role="status"`. Emojis 👋 ✓ 🏥 📞 ✅ 📋 ⏳ remplacés par les icônes au trait (ou retirés).
+- Inchangés : étapes `obStep`, touche Entrée, `autoFocus`, gestionnaires `handleEmailLookup` / `handleConfirmPharmacy` / `handleVerifyOtp`, lien Asana (href, target, rel). Vérifié sur le banc : legacy (e-mail, Entrée, confirmation, « Retour », « Oui, c'est moi ») et OTP (code, `000000` → erreur, code incomplet, « Changer d'e-mail », e-mail inconnu → formulaire Asana) ; corps envoyés `{email}` / `{email, token}` identiques.
+- Bundle après le lot 3 : JS 1 107 832 octets (lot 2 : 1 106 058), CSS 5 425 octets.

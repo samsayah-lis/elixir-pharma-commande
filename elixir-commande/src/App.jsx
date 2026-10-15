@@ -1508,37 +1508,63 @@ export default function App() {
   };
 
   // ── ONBOARDING SCREEN ──────────────────────────────────────────────
-  const obBg = { minHeight:"100vh", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 60%, #16637a 100%)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit", padding:24 };
-  const obCard = { background:"white", borderRadius:20, padding:"40px 44px", maxWidth:480, width:"100%", boxShadow:"0 24px 64px rgba(0,0,0,0.35)" };
-  const obInput = { width:"100%", border:"1.5px solid #e2e8f0", borderRadius:10, padding:"10px 14px", fontSize:14, outline:"none", boxSizing:"border-box" };
-  const obBtn = { width:"100%", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", color:"white", border:"none", borderRadius:12, padding:"14px", fontWeight:800, fontSize:15, cursor:"pointer" };
-  const obLabel = { fontSize:12, fontWeight:700, color:"#444", display:"block", marginBottom:6 };
+  // Refonte charte, lot 3 : fond --deep à plat, croix Elixir en filigrane (SVG statique, aria-hidden), carte paper au
+  // rayon 28. Habillage seulement : étapes obStep, touche Entrée, autoFocus, appels pharmacy-* et lien Asana inchangés.
+  const obBg = { position:"relative", isolation:"isolate", minHeight:"100vh", background:T.deep, display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit", padding: isMobile ? "24px 12px" : 24 };
+  // 24 px de padding sur mobile : à 375 px, plus de 300 px utiles pour les champs
+  const obCard = { position:"relative", background:T.paper, color:T.ink, borderRadius:R.l, padding: isMobile ? 24 : 40, maxWidth:480, width:"100%", boxShadow:T.shadow3 };
+  // 16 px sur mobile : Safari iOS ne zoome plus sur le champ à la saisie
+  const obInput = { width:"100%", height:44, border:`1px solid ${T.lineField}`, borderRadius:R.s, padding:"0 14px", fontSize: isMobile ? 16 : 14, background:T.surface, color:T.ink, outline:"none", boxSizing:"border-box" };
+  // fond pétrole et survol portés par la classe .ex-btn-petrole (un fond inline empêcherait le survol)
+  const obBtn = { width:"100%", height:48, display:"flex", alignItems:"center", justifyContent:"center", gap:8, color:T.paper, border:"none", borderRadius:R.pill, padding:"0 22px", fontWeight:700, fontSize:15, whiteSpace:"nowrap", cursor:"pointer" };
+  const obLabel = ui.label;
+  const obTitre = { margin:"0 0 6px", fontWeight:640, fontSize:22, lineHeight:1.2, letterSpacing:"-0.02em", color:T.petrol };
+  const obTexte = { fontSize:14, lineHeight:1.5, color:T.inkSoft };
+  const obLien = { display:"block", width:"100%", minHeight:40, background:"none", border:"none", cursor:"pointer", fontSize:13, color:T.inkSoft, textDecoration:"underline", textUnderlineOffset:3 };
+  const tonErreur = tone("danger");
+  const obErreur = onboardingError && (
+    <div role="alert" style={{ display:"flex", alignItems:"flex-start", gap:8, background:tonErreur.bg, border:`1px solid ${tonErreur.border}`, borderRadius:R.s, padding:"10px 14px", fontSize:13, lineHeight:1.45, color:tonErreur.fg, marginBottom:16 }}>
+      <Icone nom="alerte" taille={16} style={{ marginTop:1 }} />
+      <span>{onboardingError}</span>
+    </div>
+  );
+  // marque comme la vitrine (croix sarcelle + ELIXIR / PHARMA) ; jamais d'or sur fond clair
   const obLogo = (
-    <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:28 }}>
-      <div style={{ background:"#0f2d3d", borderRadius:10, padding:"6px 14px", fontWeight:800, fontSize:20, letterSpacing:2, color:"white" }}>ELIXIR</div>
-      <div>
-        <div style={{ fontWeight:700, fontSize:13, color:"#0f2d3d", letterSpacing:1 }}>PHARMA</div>
-        <div style={{ fontSize:11, color:"#aaa" }}>Bon de commande</div>
+    <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", gap:12, marginBottom:28 }}>
+      <div style={{ display:"flex", alignItems:"center", gap:10, color:T.teal }}>
+        <CroixElixir taille={34} epaisseur={71} />
+        <div style={{ display:"flex", flexDirection:"column", fontWeight:600, lineHeight:1 }}>
+          <span style={{ fontSize:15, letterSpacing:"0.32em" }}>ELIXIR</span>
+          <span style={{ fontSize:11, letterSpacing:"0.38em", marginTop:4 }}>PHARMA</span>
+        </div>
       </div>
+      <span style={{ background:T.mint, color:T.teal, borderRadius:R.pill, padding:"5px 12px", fontSize:12, fontWeight:700, whiteSpace:"nowrap" }}>Bon de commande</span>
     </div>
   );
   const obFooter = (
     <>
-      <div style={{ fontSize:11, color:"#bbb", textAlign:"center", marginTop:14 }}>Elixir Pharma · pharmacien@elixirpharma.fr · 01 86 04 39 95</div>
+      <div style={{ fontSize:12, lineHeight:1.5, color:T.inkMute, textAlign:"center", marginTop:20, paddingTop:16, borderTop:`1px solid ${T.lineSoft}` }}>Elixir Pharma · pharmacien@elixirpharma.fr · <span style={{ whiteSpace:"nowrap" }}>01 86 04 39 95</span></div>
     </>
   );
 
   if (!onboardingDone && !showAdmin && !actingFor) return (
     <div style={obBg}>
+      {/* filigrane : croix de la marque, statique et décorative. Rognée par son propre calque : un overflow:hidden
+          sur le fond en ferait un conteneur défilant (le focus ou un scrollIntoView y décaleraient la carte) */}
+      <div aria-hidden="true" style={{ position:"absolute", inset:0, zIndex:-1, overflow:"hidden", pointerEvents:"none" }}>
+        <CroixElixir style={{ position:"absolute", right: isMobile ? "-34vw" : "-6vw", bottom: isMobile ? "-10vh" : "-22vh", width: isMobile ? "120vw" : "min(62vw, 720px)", height: isMobile ? "120vw" : "min(62vw, 720px)", color:T.mint2, opacity:0.11 }} />
+      </div>
 
       {/* ── STEP LOADING ── */}
       {obStep === "loading" && (
         <div style={obCard}>
           {obLogo}
-          <div style={{ textAlign:"center", padding:"20px 0" }}>
-            <div style={{ fontSize:32, marginBottom:12 }}>⏳</div>
-            <div style={{ fontWeight:700, fontSize:15, color:"#0f2d3d" }}>Recherche en cours…</div>
-            <div style={{ fontSize:13, color:"#888", marginTop:6 }}>Vérification dans notre système</div>
+          <div role="status" style={{ textAlign:"center", padding:"20px 0" }}>
+            <div style={{ width:56, height:56, borderRadius:R.pill, background:T.mint, color:T.teal, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 14px" }}>
+              <Icone nom="horloge" taille={28} />
+            </div>
+            <div style={{ fontWeight:640, fontSize:16, color:T.petrol }}>Recherche en cours…</div>
+            <div style={{ fontSize:13, color:T.inkMute, marginTop:6 }}>Vérification dans notre système</div>
           </div>
         </div>
       )}
@@ -1547,19 +1573,19 @@ export default function App() {
       {obStep === "email" && (
         <div style={obCard}>
           {obLogo}
-          <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d", marginBottom:6 }}>Bienvenue 👋</div>
-          <div style={{ fontSize:13, color:"#666", marginBottom:28 }}>Saisissez votre adresse e-mail pour accéder au catalogue</div>
-          <label style={obLabel}>Adresse e-mail</label>
+          <h1 style={obTitre}>Bienvenue</h1>
+          <div style={{ ...obTexte, marginBottom:28 }}>Saisissez votre adresse e-mail pour accéder au catalogue</div>
+          <label htmlFor="ident-email" style={obLabel}>Adresse e-mail</label>
           <input
-            type="email" value={emailInput}
+            id="ident-email" type="email" autoComplete="email" value={emailInput}
             onChange={e => { setEmailInput(e.target.value); setOnboardingError(""); }}
             onKeyDown={e => e.key==="Enter" && handleEmailLookup()}
             placeholder="pharmacie@exemple.fr"
             style={{ ...obInput, marginBottom:16 }}
             autoFocus
           />
-          {onboardingError && <div style={{ background:"#fff5f5", border:"1px solid #fed7d7", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#c53030", marginBottom:16 }}>⚠️ {onboardingError}</div>}
-          <button onClick={handleEmailLookup} style={obBtn}>Continuer →</button>
+          {obErreur}
+          <button className="ex-btn-petrole" onClick={handleEmailLookup} style={obBtn}>Continuer →</button>
           {obFooter}
         </div>
       )}
@@ -1568,20 +1594,24 @@ export default function App() {
       {obStep === "confirm" && foundPharmacy && (
         <div style={obCard}>
           {obLogo}
-          <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d", marginBottom:6 }}>Pharmacie reconnue ✓</div>
-          <div style={{ fontSize:13, color:"#666", marginBottom:20 }}>Nous avons trouvé un compte associé à cet e-mail :</div>
-          <div style={{ background:"#f0fdf4", border:"2px solid #86efac", borderRadius:14, padding:"18px 20px", marginBottom:24 }}>
-            <div style={{ fontWeight:800, fontSize:17, color:"#0f2d3d", marginBottom:4 }}>🏥 {foundPharmacy.name}</div>
-            {foundPharmacy.street && <div style={{ fontSize:13, color:"#555" }}>{foundPharmacy.street}</div>}
-            <div style={{ fontSize:13, color:"#555" }}>{foundPharmacy.cp} {foundPharmacy.ville}</div>
-            {foundPharmacy.tel && <div style={{ fontSize:12, color:"#888", marginTop:4 }}>📞 {foundPharmacy.tel}</div>}
+          <h1 style={{ ...obTitre, display:"flex", alignItems:"center", gap:10 }}>
+            Pharmacie reconnue
+            <span style={{ width:26, height:26, borderRadius:R.pill, background:T.okBg, color:T.ok, display:"inline-flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}><Icone nom="coche" taille={16} epaisseur={2.5} /></span>
+          </h1>
+          <div style={{ ...obTexte, marginBottom:20 }}>Nous avons trouvé un compte associé à cet e-mail :</div>
+          <div style={{ background:T.surface, border:`1px solid ${T.line}`, borderRadius:R.m, padding:"16px 18px", marginBottom:24 }}>
+            <div style={{ fontWeight:600, fontSize:16, color:T.ink, marginBottom:4, overflowWrap:"anywhere" }}>{foundPharmacy.name}</div>
+            {foundPharmacy.street && <div style={{ fontSize:13, color:T.inkSoft }}>{foundPharmacy.street}</div>}
+            <div style={{ fontSize:13, color:T.inkSoft }}>{foundPharmacy.cp} {foundPharmacy.ville}</div>
+            {foundPharmacy.tel && <div className="num" style={{ fontSize:12, color:T.inkMute, marginTop:6 }}>Tél. {foundPharmacy.tel}</div>}
           </div>
-          <div style={{ fontSize:14, fontWeight:700, color:"#0f2d3d", marginBottom:14, textAlign:"center" }}>
+          <div style={{ fontSize:14, fontWeight:600, color:T.ink, marginBottom:14, textAlign:"center" }}>
             Êtes-vous bien cette pharmacie ?
           </div>
-          <div style={{ display:"flex", gap:12 }}>
-            <button onClick={handleConfirmPharmacy} style={{ ...obBtn, flex:1 }}>✅ Oui, c'est moi</button>
-            <button onClick={() => { setObStep("email"); setFoundPharmacy(null); setEmailInput(""); }} style={{ flex:1, background:"#f0f2f5", color:"#374151", border:"none", borderRadius:12, padding:"14px", fontWeight:700, fontSize:14, cursor:"pointer" }}>
+          {/* côte à côte dès 312 px utiles, sinon l'un sous l'autre */}
+          <div style={{ display:"flex", flexWrap:"wrap", gap:12 }}>
+            <button className="ex-btn-petrole" onClick={handleConfirmPharmacy} style={{ ...obBtn, flex:"1 1 150px", width:"auto" }}><Icone nom="coche" taille={18} epaisseur={2.5} />Oui, c'est moi</button>
+            <button className="ex-btn-ligne" onClick={() => { setObStep("email"); setFoundPharmacy(null); setEmailInput(""); }} style={{ flex:"1 1 150px", height:48, color:T.ink, border:"none", boxShadow:`inset 0 0 0 1.5px ${T.line}`, borderRadius:R.pill, padding:"0 22px", fontWeight:700, fontSize:14, whiteSpace:"nowrap", cursor:"pointer" }}>
               ← Retour
             </button>
           </div>
@@ -1593,23 +1623,23 @@ export default function App() {
       {obStep === "otp" && (
         <div style={obCard}>
           {obLogo}
-          <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d", marginBottom:6 }}>Vérification</div>
-          <div style={{ fontSize:13, color:"#666", marginBottom:24 }}>
-            Un code à 6 chiffres a été envoyé à<br /><strong>{emailInput.trim().toLowerCase()}</strong>
+          <h1 style={obTitre}>Vérification</h1>
+          <div style={{ ...obTexte, marginBottom:24 }}>
+            Un code à 6 chiffres a été envoyé à<br /><strong style={{ color:T.ink, fontWeight:600, overflowWrap:"anywhere" }}>{emailInput.trim().toLowerCase()}</strong>
           </div>
-          <label style={obLabel}>Code reçu par e-mail</label>
+          <label htmlFor="ident-code" style={obLabel}>Code reçu par e-mail</label>
           <input
-            inputMode="numeric" maxLength={6} value={otpInput}
+            id="ident-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={otpInput}
             onChange={e => { setOtpInput(e.target.value.replace(/\D/g, "").slice(0, 6)); setOnboardingError(""); }}
             onKeyDown={e => e.key === "Enter" && handleVerifyOtp()}
             placeholder="123456"
-            style={{ ...obInput, marginBottom:16, letterSpacing:6, textAlign:"center", fontSize:22, fontWeight:800 }}
+            style={{ ...obInput, marginBottom:16, padding:"0 14px 0 20px", letterSpacing:6, textAlign:"center", fontSize:22, fontWeight:700, fontVariantNumeric:"tabular-nums" }}
             autoFocus
           />
-          {onboardingError && <div style={{ background:"#fff5f5", border:"1px solid #fed7d7", borderRadius:10, padding:"10px 14px", fontSize:13, color:"#c53030", marginBottom:16 }}>⚠️ {onboardingError}</div>}
-          <button onClick={handleVerifyOtp} disabled={otpBusy} style={{ ...obBtn, opacity: otpBusy ? 0.6 : 1 }}>{otpBusy ? "Vérification…" : "Se connecter →"}</button>
+          {obErreur}
+          <button className="ex-btn-petrole" onClick={handleVerifyOtp} disabled={otpBusy} style={{ ...obBtn, opacity: otpBusy ? 0.6 : 1 }}>{otpBusy ? "Vérification…" : "Se connecter →"}</button>
           <button onClick={() => { setObStep("email"); setOtpInput(""); setOnboardingError(""); }}
-            style={{ width:"100%", background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#999", textDecoration:"underline", marginTop:12 }}>
+            style={{ ...obLien, marginTop:8 }}>
             ← Changer d'e-mail
           </button>
           {obFooter}
@@ -1620,24 +1650,27 @@ export default function App() {
       {obStep === "new_client" && (
         <div style={obCard}>
           {obLogo}
-          <div style={{ fontWeight:800, fontSize:18, color:"#0f2d3d", marginBottom:4 }}>Pharmacie non reconnue</div>
-          <div style={{ fontSize:13, color:"#666", marginBottom:24 }}>
-            L'adresse <strong>{emailInput}</strong> n'est pas encore dans notre base clients.
+          <h1 style={obTitre}>Pharmacie non reconnue</h1>
+          <div style={{ ...obTexte, marginBottom:24 }}>
+            L'adresse <strong style={{ color:T.ink, fontWeight:600, overflowWrap:"anywhere" }}>{emailInput}</strong> n'est pas encore dans notre base clients.
           </div>
-          <div style={{ background:"#eff6ff", border:"2px solid #93c5fd", borderRadius:14, padding:"20px", marginBottom:24, textAlign:"center" }}>
-            <div style={{ fontSize:32, marginBottom:10 }}>📋</div>
-            <div style={{ fontWeight:700, fontSize:15, color:"#1e40af", marginBottom:8 }}>Devenez client Elixir Pharma</div>
-            <div style={{ fontSize:13, color:"#3b82f6", marginBottom:18 }}>Remplissez notre formulaire de demande d'accès — notre équipe vous contactera sous 24h ouvrées.</div>
+          <div style={{ background:T.mint, borderRadius:R.m, padding:"22px 20px", marginBottom:16, textAlign:"center" }}>
+            <div style={{ width:52, height:52, borderRadius:R.pill, background:T.paper, color:T.teal, display:"flex", alignItems:"center", justifyContent:"center", margin:"0 auto 12px" }}>
+              <Icone nom="document" taille={26} />
+            </div>
+            <div style={{ fontWeight:640, fontSize:16, letterSpacing:"-0.01em", color:T.teal, marginBottom:8 }}>Devenez client Elixir Pharma</div>
+            <div style={{ fontSize:13, lineHeight:1.5, color:T.inkSoft, marginBottom:18 }}>Remplissez notre formulaire de demande d'accès — notre équipe vous contactera sous 24h ouvrées.</div>
             <a
               href="https://form.asana.com/?k=9APiLAEcOh9v6OrT8il4mg&d=1208646355437005"
               target="_blank"
               rel="noopener noreferrer"
-              style={{ display:"inline-block", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", color:"white", borderRadius:12, padding:"13px 28px", fontWeight:800, fontSize:14, textDecoration:"none" }}
+              className="ex-btn-petrole"
+              style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", height:48, color:T.paper, borderRadius:R.pill, padding:"0 26px", fontWeight:700, fontSize:15, textDecoration:"none" }}
             >
               Accéder au formulaire →
             </a>
           </div>
-          <button onClick={() => { setObStep("email"); setOnboardingError(""); }} style={{ width:"100%", background:"none", border:"none", cursor:"pointer", fontSize:12, color:"#999", textDecoration:"underline" }}>← Retour</button>
+          <button onClick={() => { setObStep("email"); setOnboardingError(""); }} style={obLien}>← Retour</button>
           {obFooter}
         </div>
       )}
