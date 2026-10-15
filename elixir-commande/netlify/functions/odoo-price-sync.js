@@ -3,8 +3,11 @@ import { verifyAdmin, isCronAuthorized } from "./auth.js";
 // step=load           → charge toutes les règles de #5 + l'arbre des catégories
 // step=apply&offset=0 → calcule le prix par produit et l'écrit (upsert groupé)
 //
-// Ordre d'évaluation (comme Odoo) : règle PRODUIT > règle CATÉGORIE (avec
-// hiérarchie) > barème GLOBAL par palier de prix. Prix unité (min_quantity ≤ 1).
+// Prix unité (min_quantity ≤ 1) = le PLUS BAS des prix donnés par les règles applicables : produit,
+// modèle, catégories (toute la hiérarchie) et barème GLOBAL — c'est ce que l'Odoo d'Elixir facture
+// (vérifié le 15/10/2026 sur les ventes réelles et le rapport de liste de prix d'Odoo : ex. Daktarin
+// règle produit 5,04 € mais facturé 1,78 € au barème global). Avant, la règle la plus spécifique
+// l'emportait et le site affichait parfois un prix plus haut que la facture.
 import { authenticate, odooCall } from "./odoo.js";
 import { getCors } from "./cors.js";
 
@@ -31,6 +34,39 @@ function applyRule(r, lp) {
   return null;
 }
 
+const enVigueur = (r, jour) => (!r.ds || r.ds <= jour) && (!r.de || r.de >= jour);
+
+// Index des règles en vigueur : prix unité (mq ≤ 1) par cible, paliers de quantité (règles produit mq ≥ 2) à part
+export function indexRegles(rules, jour = new Date().toISOString().slice(0, 10)) {
+  const ix = { byPid: {}, byTid: {}, byCid: {}, tiersByPid: {}, tiersByTid: {} };
+  for (const r of rules) {
+    if (!enVigueur(r, jour)) continue;
+    if (r.mq > 1) {
+      if (!Number.isInteger(r.mq) || r.mq < 2) continue; // ex. « 5,92 » : saisie erronée
+      if (r.pid > 0) (ix.tiersByPid[r.pid] ||= []).push(r);
+      else if (r.tid > 0) (ix.tiersByTid[r.tid] ||= []).push(r);
+      continue;
+    }
+    if (r.ao.includes("3")) continue; // barème global : globalPrice()
+    if (r.pid > 0) (ix.byPid[r.pid] ||= []).push(r);
+    else if (r.tid > 0) (ix.byTid[r.tid] ||= []).push(r);
+    else if (r.cid > 0) (ix.byCid[r.cid] ||= []).push(r);
+  }
+  return ix;
+}
+
+// Prix unité facturé par Odoo : minimum des règles applicables et du barème global
+export function prixUnitaire(p, ix, parentMap) {
+  const lp = parseFloat(p.list_price) || 0;
+  if (lp <= 0) return null;
+  const regles = [...(ix.byPid[p.odoo_pid] || []), ...(ix.byTid[p.odoo_tmpl_id] || [])];
+  let c = parseInt(p.categ_id) || 0, garde = 0;
+  while (c > 0 && garde++ < 20) { regles.push(...(ix.byCid[c] || [])); c = parentMap[c] || 0; }
+  const prix = regles.map(r => applyRule(r, lp)).filter(x => x != null && x > 0);
+  prix.push(globalPrice(lp));
+  return Math.min(...prix);
+}
+
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -51,7 +87,7 @@ export const handler = async (event) => {
       while (true) {
         const items = await odooCall(uid, "product.pricelist.item", "search_read",
           [["pricelist_id", "=", PRICELIST_ID]],
-          { fields: ["applied_on", "compute_price", "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity", "product_id", "product_tmpl_id", "categ_id"], limit: 500, offset });
+          { fields: ["applied_on", "compute_price", "fixed_price", "percent_price", "price_discount", "price_surcharge", "min_quantity", "product_id", "product_tmpl_id", "categ_id", "date_start", "date_end"], limit: 500, offset });
         if (!Array.isArray(items) || items.length === 0) break;
         items.forEach(it => rules.push({
           ao: it.applied_on || "",
@@ -64,6 +100,8 @@ export const handler = async (event) => {
           pid: parseInt(it.product_id) || 0,
           tid: parseInt(it.product_tmpl_id) || 0,
           cid: parseInt(it.categ_id) || 0,
+          ds: it.date_start ? String(it.date_start).slice(0, 10) : "",
+          de: it.date_end ? String(it.date_end).slice(0, 10) : "",
         }));
         if (items.length < 500) break;
         offset += 500;
@@ -105,33 +143,8 @@ export const handler = async (event) => {
       const parRows = await parRes.json();
       const parentMap = parRows?.[0]?.value ? JSON.parse(parRows[0].value) : {};
 
-      // Index par cible (prix UNITÉ = règles mq ≤ 1). Les paliers de quantité
-      // (règles produit avec mq ≥ 2) sont indexés à part → colonne price_tiers.
-      const byPid = {}, byTid = {}, byCid = {};
-      const tiersByPid = {}, tiersByTid = {};
-      let globals = [];
-      rules.forEach(r => {
-        if (r.mq > 1) {
-          if (!Number.isInteger(r.mq) || r.mq < 2) return; // ex. « 5,92 » : saisie erronée
-          if (r.pid > 0) (tiersByPid[r.pid] ||= []).push(r);
-          else if (r.tid > 0) (tiersByTid[r.tid] ||= []).push(r);
-          return;
-        }
-        if (r.ao.includes("3")) globals.push(r);
-        else if (r.pid > 0) byPid[r.pid] = r;
-        else if (r.tid > 0) byTid[r.tid] = r;
-        else if (r.cid > 0) byCid[r.cid] = r;
-      });
-
-      // Remonte la hiérarchie de catégories pour trouver une règle applicable
-      const categoryRule = (cid) => {
-        let c = parseInt(cid) || 0, guard = 0;
-        while (c > 0 && guard++ < 20) {
-          if (byCid[c]) return byCid[c];
-          c = parentMap[c] || 0;
-        }
-        return null;
-      };
+      const ix = indexRegles(rules);
+      const { tiersByPid, tiersByTid } = ix;
 
       const prodRes = await fetch(
         `${SUPABASE_URL}/rest/v1/odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price,discounted_price&order=cip.asc`,
@@ -148,13 +161,8 @@ export const handler = async (event) => {
         const lp = parseFloat(p.list_price) || 0;
         if (lp <= 0) continue;
 
-        // Priorité : produit > template > catégorie (hiérarchie) > barème global
-        let price = null;
-        const pr = (p.odoo_pid && byPid[p.odoo_pid])
-          || (p.odoo_tmpl_id && byTid[p.odoo_tmpl_id])
-          || categoryRule(p.categ_id);
-        if (pr) price = applyRule(pr, lp);
-        if (price == null) price = globalPrice(lp);
+        // Minimum des règles applicables (produit, modèle, catégories, barème global)
+        const price = prixUnitaire(p, ix, parentMap);
 
         // Garde-fous : prix valable et < prix catalogue, sinon pas de remise.
         // discount_pct est NOT NULL en base : on efface avec 0, jamais null
