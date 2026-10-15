@@ -1012,7 +1012,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
   // LOGIN
   if (!authed) return (
-    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"inherit"}}>
       <div style={{background:"white",borderRadius:20,padding:"40px 44px",maxWidth:420,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.12)"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
           <div>
@@ -1053,7 +1053,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   ];
 
   return (
-    <div style={{position:"fixed",inset:0,zIndex:1000,background:"#f1f5f9",display:"flex",flexDirection:"column",fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+    <div className="ex-admin" style={{position:"fixed",inset:0,zIndex:1000,background:"#f1f5f9",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
 
       {/* ── Top bar ── */}
       <div style={{background:"#0f2d3d",color:"white",padding:"0 24px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,boxShadow:"0 2px 8px rgba(0,0,0,0.25)"}}>
@@ -1881,7 +1881,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 }
 
 const OV={position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16,backdropFilter:"blur(4px)"};
-const MO={background:"white",borderRadius:20,padding:"36px 40px",maxWidth:480,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.3)",fontFamily:"'DM Sans','Segoe UI',sans-serif"};
+const MO={background:"white",borderRadius:20,padding:"36px 40px",maxWidth:480,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.3)",fontFamily:"inherit"};
 const CB={background:"#f0f2f5",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"};
 const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
 const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};

@@ -1109,7 +1109,6 @@ export default function App() {
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
     const lines = [
       `BON DE COMMANDE — ELIXIR PHARMA`,
-      `Publication 6 — Février 2026`,
       `Date : ${date}`,
       `Pharmacie : ${pharmacyName}`,
       ``,
@@ -1496,7 +1495,7 @@ export default function App() {
   };
 
   // ── ONBOARDING SCREEN ──────────────────────────────────────────────
-  const obBg = { minHeight:"100vh", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 60%, #16637a 100%)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"'DM Sans','Segoe UI',sans-serif", padding:24 };
+  const obBg = { minHeight:"100vh", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 60%, #16637a 100%)", display:"flex", alignItems:"center", justifyContent:"center", fontFamily:"inherit", padding:24 };
   const obCard = { background:"white", borderRadius:20, padding:"40px 44px", maxWidth:480, width:"100%", boxShadow:"0 24px 64px rgba(0,0,0,0.35)" };
   const obInput = { width:"100%", border:"1.5px solid #e2e8f0", borderRadius:10, padding:"10px 14px", fontSize:14, outline:"none", boxSizing:"border-box" };
   const obBtn = { width:"100%", background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", color:"white", border:"none", borderRadius:12, padding:"14px", fontWeight:800, fontSize:15, cursor:"pointer" };
@@ -1506,7 +1505,7 @@ export default function App() {
       <div style={{ background:"#0f2d3d", borderRadius:10, padding:"6px 14px", fontWeight:800, fontSize:20, letterSpacing:2, color:"white" }}>ELIXIR</div>
       <div>
         <div style={{ fontWeight:700, fontSize:13, color:"#0f2d3d", letterSpacing:1 }}>PHARMA</div>
-        <div style={{ fontSize:11, color:"#aaa" }}>Bon de commande – Catalogue Février 2026</div>
+        <div style={{ fontSize:11, color:"#aaa" }}>Bon de commande</div>
       </div>
     </div>
   );
@@ -1633,7 +1632,7 @@ export default function App() {
   );
 
   return (
-    <div style={{ fontFamily: "'DM Sans', 'Segoe UI', sans-serif", minHeight: "100vh", background: "#0c0d0e", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
+    <div className="ex-app" style={{ fontFamily: "inherit", minHeight: "100vh", background: "#0c0d0e", color: "#111", display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
 
       {/* ── SIDEBAR (navigation colonne gauche) ── */}
       {!isDesktop && sidebarOpen && (
@@ -1684,7 +1683,7 @@ export default function App() {
       {/* ── PROMO POPUP ── */}
       {promoPopupOpen && promoSections.some(p => p.active) && (
         <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16, backdropFilter:"blur(4px)" }}>
-          <div style={{ background:"white", borderRadius:20, padding:"36px 40px", maxWidth:480, width:"100%", boxShadow:"0 24px 64px rgba(0,0,0,0.4)", fontFamily:"'DM Sans','Segoe UI',sans-serif" }}>
+          <div style={{ background:"white", borderRadius:20, padding:"36px 40px", maxWidth:480, width:"100%", boxShadow:"0 24px 64px rgba(0,0,0,0.4)", fontFamily:"inherit" }}>
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
               <div>
                 <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d" }}>🎉 Offres du moment</div>
@@ -1717,7 +1716,7 @@ export default function App() {
       )}
 
       {/* ── TOP BAR (sombre) ── */}
-      <header ref={refEntete} style={{
+      <header ref={refEntete} className="ex-on-dark" style={{
         background: "#0c0d0e", color: "#f0f0f0", position: "sticky", top: 0, zIndex: 90,
         borderBottom: "1px solid #1e1e1e"
       }}>
@@ -1735,7 +1734,7 @@ export default function App() {
                   {CATALOG_WITH_ADMIN[activeTab]?.label || "Catalogue"}
                 </div>
                 <div style={{ fontSize: 11, color: "#888" }}>
-                  Bon de commande – Février 2026
+                  Bon de commande
                   {stockUpdatedAt && (
                     <span style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
                   )}
@@ -2986,24 +2985,6 @@ export default function App() {
           <span style={{ fontSize: 10, fontWeight: 800, background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "0 4px" }}>{cartCount}</span>
         </button>
       )}
-
-      <style>{`
-        /* DM Sans loaded via <link> in index.html for better performance */
-        * { box-sizing: border-box; }
-        input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
-        @media (max-width: 767px) {
-          table { font-size: 11px !important; }
-          table td, table th { padding: 6px 6px !important; }
-          .tab-label { display: none; }
-        }
-        @media print {
-          header button, aside button { display: none !important; }
-          aside { display: block !important; width: 100% !important; min-width: 100% !important; }
-        }
-        ::-webkit-scrollbar { width: 6px; height: 6px; }
-        ::-webkit-scrollbar-track { background: #f1f5f9; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e0; border-radius: 3px; }
-      `}</style>
 
       {/* Admin Panel */}
       {showAdmin && (

@@ -45,7 +45,11 @@ const DOSSIERS = ["netlify/functions"];
 // Écarts autorisés explicitement par un lot (docs/refonte-charte.md) : remplacement exact appliqué au texte
 // de la référence avant comparaison ; tout autre écart reste signalé. Une entrée par changement validé :
 // { zone: "<début du nom de la zone>", avant: "…", apres: "…", lot: "E2", motif: "…" }
-const ECARTS_AUTORISES = [];
+const ECARTS_AUTORISES = [
+  { zone: "copie du bon de commande", lot: "1", motif: "décision de la cliente (§ 6) : aucune mention de publication du catalogue, texte copié compris",
+    avant: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n      `Publication 6 — Février 2026`,\n",
+    apres: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n" },
+];
 
 // ── lecture ──
 const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

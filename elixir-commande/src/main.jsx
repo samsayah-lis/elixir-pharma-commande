@@ -1,3 +1,4 @@
+import './styles/tokens.css'   // jetons de la charte, Inter locale, focus, règles globales (en premier)
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'

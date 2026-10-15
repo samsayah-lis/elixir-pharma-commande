@@ -760,3 +760,11 @@ Contrôle à 375, 768, 1023, 1024 et 1440 px.
   - Si le module ne se charge pas, l'aperçu ne démarre pas.
   - Contrôle sur un build de production : `grep -c "aucune commande ne part" dist/assets/*.js` donne 0.
 - Taille du bundle après le lot 0 : 1 094 523 octets (référence 1 094 491).
+- Après le lot 1 : JS 1 093 558 octets (le `<style>` d'App est passé dans `src/styles/tokens.css`), CSS 4 323 octets ; Inter : 7 fichiers dans `dist/assets`, seul le latin (48 Ko) est chargé en pratique. `src/theme.js` et `src/icons.jsx` ne pèsent rien tant qu'aucun lot ne les importe.
+
+## 8. Fondations posées (lot 1)
+
+- `src/styles/tokens.css` : jetons du § 2.2, Inter locale, focus (`!important`), `.ex-on-dark` (anneau or clair : posé sur l'en-tête), `.num`, `@keyframes fadeIn` (en `translate`, pour ne pas décaler le bloc d'AdminAdd), règles déplacées du `<style>` d'App. Racines repérées par `ex-app` (client) et `ex-admin` (admin) : l'admin est rendu dans l'arbre d'App, une règle « client seulement » doit donc exclure `.ex-admin`.
+- `src/theme.js` : `T` (variables CSS), `R` (rayons), `alpha(hex, a)`, `tone(nom)` → `{bg, fg, border}`, `ui.*` (card, panel, h2, label, input, btn(kind, size) avec kind = primaire | or | ligne | doux | danger | lien et size = s | m | l, pill, badge(ton, plein), th, td, qtyBtn(moins | plus), qtyInput, overlay, modal), `fmtEur` / `fmtPct` (affichage seulement, pas encore branchés).
+- `src/icons.jsx` : `<Icone nom taille epaisseur plein titre/>` (recherche, panier, favori, imprimer, commandes, deconnexion, menu, fermer, actualiser, alerte, coche, cadenas, camion, document, cadeau, cible, lien, copier, horloge, plus, moins) et `<CroixElixir/>` (`CROIX_ELIXIR`).
+- Aucune mention de publication du catalogue (titre d'onglet « Elixir Pharma — Commande », description, en-tête, identification, texte copié) : écart de `handleCopy` inscrit dans `ECARTS_AUTORISES`.

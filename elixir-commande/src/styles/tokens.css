@@ -1,0 +1,80 @@
+/* ─────────────────────────────────────────────────────────────
+   Elixir Pharma — jetons de la charte et CSS global du site de commande
+   (refonte charte, lot 1 : docs/refonte-charte.md § 2.2). Importé en tête de src/main.jsx.
+   Mêmes couleurs que la vitrine elixirpharma.fr (site/src/styles/base.css) ; valeurs précalculées,
+   sans color-mix() (absent avant Safari 16.2 : des postes anciens passent encore commande).
+   Les styles inline y renvoient par src/theme.js (T.ink = "var(--ink)"…).
+   ───────────────────────────────────────────────────────────── */
+/* Inter servie en local (axe de graisse seul : 48 Ko en latin), comme la vitrine et les mailings Elixir :
+   plus aucune police externe (Google Fonts retiré d'index.html) */
+@import "@fontsource-variable/inter/wght.css";
+
+:root {
+  /* marque — copie de site/src/styles/base.css */
+  --cream: #f4efe4; --paper: #fbf8f2; --ink: #201917; --ink-soft: #4b4440;
+  --teal: #285557; --teal-2: #3c7782; --petrol: #0f2d3d; --deep: #0a1d22;
+  --mint: #d3e6df; --mint-2: #a9cdc2; --or: #b5904a; --or-clair: #d7bb7f;
+  /* applicatif */
+  --surface: #fff; --surface-2: #f1ece2; --sand: #ebe6dc;
+  --line: rgba(32,25,23,.14); --line-soft: rgba(32,25,23,.08); --line-field: #949190;
+  --ink-mute: #6f6863; --ink-faint: #b9b5b0;     /* ink-mute jamais sur --sand (4,40:1) ; ink-faint : décoratif seulement */
+  --petrol-field: #2b4553;                        /* champ sur pétrole (paper 12 %) */
+  --ok: #065f46; --ok-bg: #dce9e5; --danger: #b91c1c; --danger-bg: #f7e4e4;
+  --warn: #92400e; --warn-bg: #f4e7dd; --tier-bg: #f0e9da; --orange-acting: #9a3412;
+  --scrim: rgba(10,29,34,.55);
+  --shadow-1: 0 4px 14px -6px rgba(15,45,61,.25);
+  --shadow-2: 0 12px 40px -12px rgba(15,45,61,.28);
+  --shadow-3: 0 30px 60px -30px rgba(10,29,34,.5);
+  --r-xs: 6px; --r-s: 10px; --r-m: 16px; --r-l: 28px; --r-pill: 999px;
+  --sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --ease: cubic-bezier(.22,1,.36,1);
+  color-scheme: light;
+}
+/* Pile des z-index (inline, inchangée — on la documente, on ne la renumérote pas) :
+   50 barre collante U-Labs · 80 barre A–Z · 90 en-tête collant · 140 voile du menu mobile · 150 barre latérale ·
+   300 voile du panier · 301 panier · 400 Mes commandes, visionneuse photo · 1000 admin · 2000 Offres du moment ·
+   9999 message flash, erreur admin · 10000 choix de la pharmacie (saisie Elixir) */
+
+/* ── Base ── */
+* { box-sizing: border-box; }
+/* pas de font-size sur body : des éléments héritent aujourd'hui des 16 px par défaut */
+body { margin: 0; font-family: var(--sans); background: var(--cream); color: var(--ink); -webkit-font-smoothing: antialiased; }
+/* font-family seulement (surtout pas « font: inherit », qui changerait la taille des boutons sans fontSize, admin compris) */
+button, input, select, textarea { font-family: inherit; }
+/* jamais d'italique : aucune police italique n'est chargée (le navigateur en fabriquerait une penchée) */
+i, em { font-style: normal; }
+
+/* ── Focus, sélection, champs ── */
+/* !important : l'emporte sur les 26 outline:"none" posés en inline (App, AdminDisplay, ShortExpiry…) */
+:focus-visible { outline: 3px solid var(--focus, var(--teal-2)) !important; outline-offset: 2px; }
+.ex-on-dark { --focus: var(--or-clair); }
+::selection { background: var(--or); color: var(--ink); }
+::placeholder { color: var(--ink-mute); opacity: 1; }
+.ex-on-dark ::placeholder { color: rgba(251,248,242,.7); }   /* paper 70 % : 7,36:1 sur pétrole */
+input[type=number] { -moz-appearance: textfield; appearance: textfield; }
+input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.num { font-variant-numeric: tabular-nums; }
+
+/* ── Mouvement ── */
+/* référencé par le message flash (App) et l'admin (AdminAdd) mais jamais défini jusqu'ici. « translate » (et non
+   transform) : il s'ajoute au transform: translateX(-50%) du message flash sans décaler le bloc de l'admin */
+@keyframes fadeIn { from { opacity: 0; translate: 0 -6px; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* ── Règles déplacées telles quelles du <style> d'App (rendu jusqu'ici dans le return principal seulement :
+   elles touchent désormais aussi l'écran d'identification, voir docs/refonte-charte.md § 0) ── */
+@media (max-width: 767px) {
+  table { font-size: 11px !important; }
+  table td, table th { padding: 6px 6px !important; }
+  .tab-label { display: none; }
+}
+@media print {
+  header button, aside button { display: none !important; }
+  aside { display: block !important; width: 100% !important; min-width: 100% !important; }
+}
+/* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface-2); }
+::-webkit-scrollbar-thumb { background: var(--ink-faint); border-radius: 3px; }
