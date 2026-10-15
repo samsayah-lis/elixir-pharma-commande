@@ -181,6 +181,8 @@ const COND_COLORS = {
 };
 
 const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
+// Menus classés par ordre alphabétique (voir filteredProducts) : barre A–Z en haut
+const ALPHA_SECTIONS = ["otc", "nr"];
 
 const fmtPct = (pct) => {
   if (pct == null || pct === "" || pct === "–") return "–";
@@ -208,14 +210,33 @@ function CipCell({ cip }) {
   );
 }
 
+// Lien direct vers un menu (admin) : https://…/?menu=<clé>, à coller dans un e-mail ou un catalogue
+function LienMenu({ menu }) {
+  const [copie, setCopie] = useState(false);
+  const lien = `${window.location.origin}/?menu=${encodeURIComponent(menu)}`;
+  const copier = () => { navigator.clipboard?.writeText(lien).then(() => { setCopie(true); setTimeout(() => setCopie(false), 1600); }).catch(() => window.prompt("Lien du menu :", lien)); };
+  return (
+    <button onClick={copier} title={`Copier le lien de ce menu :\n${lien}`} style={{
+      marginTop: 8, background: copie ? "#dcfce7" : "#eef2ff", border: "none", borderRadius: 6, padding: "3px 10px",
+      cursor: "pointer", fontSize: 11, fontWeight: 700, color: copie ? "#166534" : "#4f46e5",
+    }}>{copie ? "✓ Lien copié" : "🔗 Lien du menu"}</button>
+  );
+}
+
 export default function App() {
   // Lien direct vers un produit : ?cip=... (ou ?produit=) → ouvre la Saisie de commande pré-remplie
   const [initialProductQuery] = useState(() => {
     try { const p = new URLSearchParams(window.location.search); return p.get("cip") || p.get("produit") || ""; } catch { return ""; }
   });
+  // Adresse propre à chaque menu : ?menu=<clé> (ex. ?menu=otc, ?menu=promo_1792040000000). Un menu promo
+  // ou personnalisé n'existe qu'une fois la config chargée : il est retenu ici puis ouvert à ce moment-là.
+  const menuDemande = useRef((() => { try { return new URLSearchParams(window.location.search).get("menu") || ""; } catch { return ""; } })());
+  const navParClic = useRef(false);   // changement de menu par l'utilisateur → nouvelle entrée d'historique (bouton Retour)
+  const menuViaLien = useRef(!!menuDemande.current);   // arrivée par un lien de menu : pas de fenêtre « Offres du moment »
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
+      if (p.get("menu")) return p.get("menu");
       const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
       if (outil && ["fauteuil", "transfert", "saisie", "peremption", "groupees", "justificatif"].includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
@@ -535,6 +556,16 @@ export default function App() {
   }, [activeTab, fetchGroupOrders]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
+  // Hauteur de l'en-tête noir collant : la barre A–Z se colle juste dessous
+  const [hauteurEntete, setHauteurEntete] = useState(64);
+  const obsEntete = useRef(null);
+  const refEntete = useCallback((el) => {
+    obsEntete.current?.disconnect();
+    if (!el) return;
+    const maj = () => setHauteurEntete(el.offsetHeight || 64);
+    maj();
+    if (window.ResizeObserver) { obsEntete.current = new ResizeObserver(maj); obsEntete.current.observe(el); }
+  }, []);
   // isDesktop ≥ 1024 → sidebar fixe persistante ; sinon (mobile + tablette) → tiroir
   const [isDesktop, setIsDesktop] = React.useState(() => window.innerWidth >= 1024);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
@@ -975,6 +1006,46 @@ export default function App() {
     }
   }, [activeTab, CATALOG_WITH_ADMIN, gpAllowed]);
 
+  // Menu demandé par l'adresse (?menu=) : ouvert dès que la config (menus promo, sections perso) est chargée
+  useEffect(() => {
+    const m = menuDemande.current;
+    if (!m || !configLoaded) return;
+    menuDemande.current = "";
+    if (CATALOG_WITH_ADMIN[m] && activeTab !== m) setActiveTab(m);
+  }, [configLoaded, CATALOG_WITH_ADMIN]);
+
+  // Adresse ↔ menu : l'adresse affiche toujours le menu ouvert (lien partageable, rechargement sur le même menu) ;
+  // Retour / Avancer du navigateur changent de menu.
+  const catalogueRef = useRef(CATALOG_WITH_ADMIN); catalogueRef.current = CATALOG_WITH_ADMIN;
+  const gpDirtyRef = useRef(gpDirty); gpDirtyRef.current = gpDirty;
+  const activeTabRef = useRef(activeTab); activeTabRef.current = activeTab;
+  useEffect(() => {
+    if (!activeTab) return;
+    let u; try { u = new URL(window.location.href); } catch { return; }
+    const clic = navParClic.current; navParClic.current = false;
+    if (u.searchParams.get("menu") === activeTab) return;
+    u.searchParams.delete("outil"); u.searchParams.delete("tab");
+    if (activeTab !== "saisie") { u.searchParams.delete("cip"); u.searchParams.delete("produit"); }
+    u.searchParams.set("menu", activeTab);
+    const url = u.pathname + u.search + u.hash;
+    try { if (clic) window.history.pushState(null, "", url); else window.history.replaceState(null, "", url); } catch {}
+  }, [activeTab]);
+  useEffect(() => {
+    const onPop = () => {
+      const m = new URLSearchParams(window.location.search).get("menu");
+      const prev = activeTabRef.current;
+      if (!m || !catalogueRef.current[m] || m === prev) return;
+      if (gpDirtyRef.current && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) {
+        try { const u = new URL(window.location.href); u.searchParams.set("menu", prev); window.history.pushState(null, "", u.pathname + u.search + u.hash); } catch {}
+        return;
+      }
+      setGpDirty(false);
+      setActiveTab(m);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
   const cat = CATALOG_WITH_ADMIN[activeTab];
   // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
   const activeCampMeta = getCampaign(activeTab);
@@ -1019,6 +1090,21 @@ export default function App() {
   const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
   const gridWithPhoto = isGridSection ? filteredProducts : [];
   const gridWithoutPhoto = isGridSection ? [] : filteredProducts;
+
+  // Barre A–Z des menus classés par ordre alphabétique : un clic amène au premier produit de la lettre
+  const lettreDe = (nom) => { const c = String(nom || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; };
+  const avecAlphabet = ALPHA_SECTIONS.includes(activeTab) && gridWithPhoto.length > 0;
+  const premierParLettre = {};
+  if (avecAlphabet) for (const p of gridWithPhoto) { const l = lettreDe(p.name); if (!premierParLettre[l]) premierParLettre[l] = p; }
+  const allerLettre = (l) => {
+    const el = document.getElementById(`lettre-${l}`);
+    if (!el) return;
+    const barre = document.getElementById("barre-alphabet");
+    const y = el.getBoundingClientRect().top + window.scrollY - hauteurEntete - (barre?.offsetHeight || 0) - 10;
+    window.scrollTo({ top: Math.max(0, y), behavior: Math.abs(y - window.scrollY) > 4000 ? "auto" : "smooth" }); // longue liste : saut direct
+    // la carte visée clignote un instant (dans une grille, sa rangée contient aussi d'autres lettres)
+    try { el.animate([{ outline: `3px solid ${cat?.accent || "#ef4444"}`, outlineOffset: "2px" }, { outline: "3px solid transparent", outlineOffset: "2px" }], { duration: 1600, easing: "ease-out" }); } catch {}
+  };
 
   const handlePrint = () => {
     window.print();
@@ -1115,7 +1201,7 @@ export default function App() {
     // Show promo popup if active promos exist
     try {
       const promos = JSON.parse(localStorage.getItem("admin_promos") || "[]");
-      if (promos.some(p => p.active)) setPromoPopupOpen(true);
+      if (promos.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);
     } catch {}
   };
 
@@ -1141,7 +1227,7 @@ export default function App() {
       localStorage.setItem("session_cip", cip);
       setPharmacyName(name); setPharmacyEmail(email); setPharmacyCip(cip);
       setOnboardingDone(true);
-      if (promoSections.some(p => p.active)) setPromoPopupOpen(true);
+      if (promoSections.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);
     } catch (err) {
       setOnboardingError("Erreur de connexion. Veuillez réessayer.");
     } finally { setOtpBusy(false); }
@@ -1586,7 +1672,7 @@ export default function App() {
               if (!c) return null;
               const active = activeTab === key;
               return (
-                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
                   display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left",
                   background: active ? "#f5f6f7" : "transparent", border: "none",
                   borderLeft: active ? "2px solid #111" : "2px solid transparent",
@@ -1615,7 +1701,7 @@ export default function App() {
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {promoSections.filter(p => p.active).map(ps => (
-                <button key={ps.id} onClick={() => { setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
+                <button key={ps.id} onClick={() => { navParClic.current = true; setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
                   display:"flex", alignItems:"center", gap:14, background:`linear-gradient(135deg, ${ps.color}15, ${ps.accentColor || ps.color}25)`,
                   border:`2px solid ${ps.color}40`, borderRadius:14, padding:"14px 18px", cursor:"pointer", textAlign:"left", width:"100%"
                 }}>
@@ -1638,7 +1724,7 @@ export default function App() {
       )}
 
       {/* ── TOP BAR (sombre) ── */}
-      <header style={{
+      <header ref={refEntete} style={{
         background: "#0c0d0e", color: "#f0f0f0", position: "sticky", top: 0, zIndex: 90,
         borderBottom: "1px solid #1e1e1e"
       }}>
@@ -1923,6 +2009,7 @@ export default function App() {
                   <span>{catEffective.icon}</span> {catEffective.label}
                 </div>
                 <div style={{ color: "#666", fontSize: 13, marginTop: 4 }}>{catEffective.subtitle}</div>
+                {hasAdminToken && <LienMenu menu={activeTab} />}
               </div>
               <div style={{ background: "#f5f6f7", borderRadius: 10, padding: "8px 16px", textAlign: "right" }}>
                 {activeTab === "ulabs" ? (<>
@@ -2084,8 +2171,26 @@ export default function App() {
 
           {/* Products grid (photos) + table */}
           <>
+{avecAlphabet && (
+                <div id="barre-alphabet" style={{ position: "sticky", top: hauteurEntete, zIndex: 80, background: "#0c0d0e", padding: "6px 0 10px", marginBottom: 4 }}>
+                  <div style={isMobile
+                    ? { display: "flex", overflowX: "auto", gap: 4, background: "white", borderRadius: 12, padding: "6px 8px", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }
+                    : { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(30px, 1fr))", gap: 4, background: "white", borderRadius: 12, padding: "6px 8px", boxShadow: "0 2px 10px rgba(0,0,0,0.25)" }}>
+                    {["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map(l => {
+                      const dispo = !!premierParLettre[l];
+                      return (
+                        <button key={l} onClick={() => allerLettre(l)} disabled={!dispo} aria-label={l === "#" ? "Produits commençant par un chiffre" : `Produits commençant par ${l}`} style={{
+                          flex: isMobile ? "0 0 auto" : undefined, minWidth: 28, height: 28, borderRadius: 7, border: "none", fontFamily: "inherit",
+                          background: dispo ? cat.accent + "18" : "transparent", color: dispo ? cat.color : "#c8ccd2",
+                          fontWeight: 800, fontSize: 13, cursor: dispo ? "pointer" : "default",
+                        }}>{l}</button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 {gridWithPhoto.length > 0 && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 24 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2, minmax(0, 1fr))" : "repeat(auto-fill, minmax(220px, 1fr))", gap: isMobile ? 10 : 14, marginBottom: 24, alignItems: "stretch" }}>
                   {gridWithPhoto.map((p, mapIdx) => {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
@@ -2125,7 +2230,7 @@ export default function App() {
                           return (parseInt(quantities[`ulabs-${gi}`]) || 0) > 0;
                         }).length;
                         return (
-                          <div style={{ marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: 12, overflow: "hidden", border: `1px solid ${gInfo.accent}40` }}>
+                          <div style={{ gridColumn: "1 / -1", marginTop: mapIdx > 0 ? 20 : 0, marginBottom: 4, borderRadius: 12, overflow: "hidden", border: `1px solid ${gInfo.accent}40` }}>
                             {/* Titre groupe */}
                             <div style={{ padding: "12px 18px", background: `linear-gradient(135deg, ${gInfo.color||"#0d4f3c"} 0%, ${gInfo.accent||"#059669"}55 100%)`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                               <div>
@@ -2158,26 +2263,26 @@ export default function App() {
                           </div>
                         );
                       })()}
-                      <div style={{
+                      <div id={avecAlphabet && premierParLettre[lettreDe(p.name)] === p ? `lettre-${lettreDe(p.name)}` : undefined} style={{
                         background: "white", borderRadius: 14,
                         boxShadow: qty > 0 ? `0 0 0 2px ${cat.accent}, 0 2px 12px rgba(0,0,0,0.08)` : "0 1px 6px rgba(0,0,0,0.06)",
                         border: `1px solid ${qty > 0 ? cat.accent : "#eef0f3"}`,
-                        display: "flex", alignItems: "center", gap: 0,
+                        display: "flex", flexDirection: "column", gap: 0, minWidth: 0,
                         overflow: "hidden", transition: "box-shadow 0.2s, border 0.2s"
                       }}>
                         {/* Photo */}
-                        <div style={{ flexShrink: 0, width: isMobile ? 72 : 110, height: isMobile ? 72 : 110, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderRight: "1px solid #f0f2f5" }}>
+                        <div style={{ width: "100%", height: isMobile ? 120 : 160, background: "#f8fafc", position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: "1px solid #f0f2f5", boxSizing: "border-box" }}>
                           {p.image_url
-                            ? <img src={p.image_url} alt={p.name} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 8 }}/>
-                            : null
+                            ? <img src={p.image_url} alt={p.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10, boxSizing: "border-box" }}/>
+                            : <span style={{ fontSize: 34, opacity: 0.2 }}>{cat.icon}</span>
                           }
                           {isRupture && (
                             <div style={{ position: "absolute", top: 4, left: 4, background: "#dc2626", color: "white", fontSize: 9, fontWeight: 800, borderRadius: 4, padding: "2px 5px" }}>⚠️ RUPTURE</div>
                           )}
                         </div>
                         {/* Info centrale */}
-                        <div style={{ flex: 1, padding: "14px 16px", minWidth: 0 }}>
-                          <div style={{ fontWeight: 700, fontSize: 14, color: "#1a2a3a", lineHeight: 1.4, marginBottom: 4 }}>{p.name}</div>
+                        <div style={{ flex: 1, padding: isMobile ? "10px 10px 4px" : "12px 14px 6px", minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: isMobile ? 12.5 : 13.5, color: "#1a2a3a", lineHeight: 1.35, marginBottom: 4, overflowWrap: "anywhere" }}>{p.name}</div>
                           {p.cip && <div style={{ fontSize: 11, color: "#aaa", marginBottom: 4 }}>EAN : <CipCell cip={p.cip}/></div>}
                           {p.note && <span style={{ fontSize: 10, color: "#e07b39", background: "#fef3ec", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>{p.note}</span>}
                           {activeTab && (() => {
@@ -2203,7 +2308,7 @@ export default function App() {
                           )}
                         </div>
                         {/* Prix + remise + qté */}
-                        <div style={{ flexShrink: 0, padding: "14px 20px", textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6, borderLeft: "1px solid #f0f2f5", minWidth: 160 }}>
+                        <div style={{ padding: isMobile ? "8px 8px 10px" : "10px 14px 14px", textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", gap: 6, borderTop: "1px solid #f0f2f5" }}>
                           {(p.pv && p.pct || remisePct > 0) && (
                             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                               <span style={{ fontSize: 12, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.pv)}</span>
@@ -2455,7 +2560,6 @@ export default function App() {
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "center", color: "#666" }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, color: "#1a1a1a" }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", color: cat.accent, fontWeight: 700 }}>{p.carton != null ? fmt(p.carton) : "–"}</td>
                         </>}
                         {activeTab === "covid" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
