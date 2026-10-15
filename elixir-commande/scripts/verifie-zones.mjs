@@ -23,7 +23,8 @@ const ZONES = [
   { fichier: "src/App.jsx", nom: "panier persistant et contingentement (cartKeys … quotaDay)",
     de: /^\/\/ Panier persisté :/, puis: /^const quotaDay = /, fin: "bloc" },
   { fichier: "src/App.jsx", nom: "quantités et ajout au panier (getStepMin, setQty, setItemQty, addItemToCart)",
-    de: /^  const getStepMin = \(catKey, p\) => \{$/, puis: /^  const addItemToCart = \(item\) => \{$/, fin: "bloc" },
+    // repère : signature d'origine ou celle du lot E2 (option ouvrirPanier)
+    de: /^  const getStepMin = \(catKey, p\) => \{$/, puis: /^  const addItemToCart = \(item(, \{ ouvrirPanier = true \} = \{\})?\) => \{$/, fin: "bloc" },
   { fichier: "src/App.jsx", nom: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu",
     de: /^  const cartItems = useMemo\(\(\) => \{$/, puis: /^    window\.addEventListener\("popstate", onPop\);$/, fin: /^  \}, \[\]\);$/ },
   { fichier: "src/App.jsx", nom: "copie du bon de commande (handleCopy)",
@@ -49,6 +50,12 @@ const ECARTS_AUTORISES = [
   { zone: "copie du bon de commande", lot: "1", motif: "décision de la cliente (§ 6) : aucune mention de publication du catalogue, texte copié compris",
     avant: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n      `Publication 6 — Février 2026`,\n",
     apres: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n" },
+  { zone: "quantités et ajout au panier", lot: "E2", motif: "décision de la cliente (§ 6) : un ajout depuis la Saisie de commande n'ouvre plus le panier (option, ouverture conservée par défaut pour les autres appels)",
+    avant: "  const addItemToCart = (item) => {\n",
+    apres: "  const addItemToCart = (item, { ouvrirPanier = true } = {}) => {\n" },
+  { zone: "quantités et ajout au panier", lot: "E2", motif: "même décision : l'ouverture du panier ne se fait plus que si ouvrirPanier",
+    avant: "    setCartOpen(true);\n  };",
+    apres: "    if (ouvrirPanier) setCartOpen(true);   // lot E2 : la Saisie de commande n'ouvre plus le panier\n  };" },
 ];
 
 // ── lecture ──

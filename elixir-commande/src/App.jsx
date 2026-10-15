@@ -334,7 +334,9 @@ export default function App() {
     });
   };
   const [flashMsg, setFlashMsg] = useState("");
-  const flash = (msg) => { setFlashMsg(msg); setTimeout(() => setFlashMsg(""), 3000); };
+  // un nouveau message reste affiché sa durée entière (lot E2 : ajouts enchaînés depuis la Saisie, alerte de contingentement)
+  const flashTimer = useRef(null);
+  const flash = (msg, duree = 3000) => { setFlashMsg(msg); clearTimeout(flashTimer.current); flashTimer.current = setTimeout(() => setFlashMsg(""), duree); };
 
   // ── Suggestions de récommande (ML) ───────────────────────────────────
   const [reorderSuggestions, setReorderSuggestions] = useState([]);
@@ -839,7 +841,7 @@ export default function App() {
 
   // Ajoute un produit au panier depuis la Saisie de commande / Péremption courte.
   // S'il est dans le catalogue curaté → quantities (logique campagnes/UG) ; sinon → specialItems.
-  const addItemToCart = (item) => {
+  const addItemToCart = (item, { ouvrirPanier = true } = {}) => {
     // article regroupant plusieurs références (même code fournisseur) : ligne hors catalogue, une seule
     let added = false;
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
@@ -864,7 +866,7 @@ export default function App() {
       });
     }
     flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
-    setCartOpen(true);
+    if (ouvrirPanier) setCartOpen(true);   // lot E2 : la Saisie de commande n'ouvre plus le panier
   };
 
   const cartItems = useMemo(() => {
@@ -1065,6 +1067,19 @@ export default function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // ── Saisie de commande (lot E2) : l'ajout n'ouvre plus le panier, un message le confirme ──
+  // Le contingentement, que rechargeait l'ouverture du panier, est rechargé ici à chaque ajout : un dépassement
+  // est signalé aussitôt (le panier l'affiche toujours et l'envoi le contrôle encore avec les chiffres du moment).
+  const ajouterDepuisSaisie = (item) => {
+    addItemToCart(item, { ouvrirPanier: false });
+    const apres = [...cartItems, { cip: item.cip, qty: item.qty }];   // panier avec cet ajout (même CIP additionné)
+    if (needsJustif(item, justifProducts, qtyByCip(apres))) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · justificatif à joindre dans le panier`);
+    loadQuota().then(q => {
+      const o = quotaOver(q, apres).over.find(x => x.cip === item.cip);
+      if (o) flash(`⚠ Contingentement dépassé : ${o.name || item.name} (${o.qty} au panier, reste ${o.remaining} pour cette période)`, 6000);
+    });
+  };
 
   const cat = CATALOG_WITH_ADMIN[activeTab];
   // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
@@ -2016,7 +2031,7 @@ export default function App() {
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
-              onAddToCart={addItemToCart}
+              onAddToCart={ajouterDepuisSaisie}
               initialQuery={initialProductQuery}
             />
           )}

@@ -808,3 +808,23 @@ Seuls changements de logique de la refonte, validés par la cliente (§ 6) : E1,
   - liste mobile : pas de champ, seulement − / + au pas du colis ;
   - Saisie de commande : pas d'arrondi au colis (produits Odoo au pas de 1), seulement le plafond `maxCommande` des produits sur justificatif, appliqué à la frappe.
 - **Tester.** Stratège à 1440 px : taper 4 puis 8 dans ADVILMED (colis 24) → le champ affiche 48 et le panier ne bouge pas ; Tab → 48 au panier. Taper 1, 2, 0 dans BETADINE (colis 60) puis Entrée → 120, focus dans le champ. Taper 30 dans DACUDOSES (colis 24) puis Tab → 24 ; taper 7 → 0. Taper 100 dans BETADINE SCRUB (colis 60) puis cliquer + → 120 puis 180. Taper 5 sans valider puis recharger la page → rien au panier.
+
+### E2 — La Saisie de commande n'ouvre plus le panier
+
+- **Avant.** `addItemToCart` faisait `setCartOpen(true)` : chaque ajout depuis la Saisie ouvrait le panier, dont le voile masquait la Saisie (il fallait le refermer avant l'ajout suivant). Cette ouverture rechargeait aussi le contingentement (`quota-status`, effet sur `cartOpen`) : l'encart « Contingenté » et le bandeau « Contingentement dépassé » apparaissaient tout de suite dans le panier.
+- **Après.**
+  - La Saisie appelle `ajouterDepuisSaisie` (src/App.jsx, juste après la zone protégée « panier calculé… »), qui appelle `addItemToCart(item, { ouvrirPanier: false })`. Le panier reste fermé.
+  - Le message existant « ✓ N× Produit ajouté au panier » confirme l'ajout ; le compteur or de l'en-tête et le panier flottant se mettent à jour.
+  - Produit sur justificatif labo : « … ajouté au panier · justificatif à joindre dans le panier » (calcul `needsJustif` sur le panier avec cet ajout).
+  - **Contingentement, aucune alerte perdue :**
+    - `quota-status` est rechargé après chaque ajout, soit autant d'appels qu'avant (un par ajout, puisque le panier s'ouvrait à chaque fois) ;
+    - si le produit ajouté dépasse son reste, le message « ⚠ Contingentement dépassé : Produit (N au panier, reste R pour cette période) » s'affiche 6 s ;
+    - le panier recharge toujours le contingentement à son ouverture et affiche l'encart et le bandeau ;
+    - « Envoyer la commande » reste désactivé, et le contrôle avec les chiffres du moment juste avant l'envoi est inchangé.
+  - Les autres appels d'`addItemToCart` ouvrent toujours le panier (option `ouvrirPanier`, vraie par défaut) : fauteuils, commande labo sur justificatif (pièces à joindre dans le panier), péremption courte, « + Panier » de la recherche globale pour un produit sur justificatif.
+  - `flash` : une seule minuterie. Un nouveau message reste affiché sa durée entière : avant, la minuterie du message précédent pouvait effacer le suivant, par exemple l'alerte de contingentement arrivée juste après « ajouté ». La durée est un paramètre facultatif (3 s par défaut).
+- **Zones protégées.** `addItemToCart` change de deux lignes : la signature, et l'ouverture devenue conditionnelle. `scripts/verifie-zones.mjs` les inscrit dans `ECARTS_AUTORISES` (lot E2). Le repère de la zone accepte l'ancienne et la nouvelle signature. Le reste de la zone est identique à master.
+- **Tester.**
+  1. Saisie : chercher « doliprane », mettre 3 et cliquer « Ajouter ». Attendu : panier fermé, message, compteur à jour, journal du banc avec `search-track` puis `quota-status`.
+  2. Contingentement : poser `dev-fixtures/post/quota-status.json` avec un reste de 2 pour le CIP ajouté (CODOLIPRANE 3400927562396 sur le banc). Ajouter 1 : pas d'alerte. Ajouter 2 de plus : « ⚠ Contingentement dépassé … (3 au panier, reste 2 …) ». Ouvrir le panier : « Maximum 2 », « Ramener à 2 », bandeau, « Envoyer » désactivé. **Retirer la fixture ensuite.**
+  3. Justificatif : chercher « ninlaro » et ajouter 1. Attendu : message « · justificatif à joindre dans le panier », panier fermé.
