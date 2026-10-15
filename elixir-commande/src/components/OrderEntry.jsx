@@ -140,7 +140,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
           aria-label="Rechercher un produit par code CIP, EAN ou nom" className="ex-saisie-recherche"
           style={{ width: "100%", height: 48, padding: `0 ${query ? 52 : 20}px 0 50px`, fontSize: 15, color: T.ink, background: T.surface,
             border: `1px solid ${T.lineField}`, borderRadius: R.pill, boxShadow: T.shadow1, boxSizing: "border-box", fontFamily: "inherit" }} />
-        {query && <button className="ex-btn-discret" onClick={() => setQuery("")} aria-label="Effacer la recherche" title="Effacer la recherche"
+        {query && <button className="ex-btn-discret ex-cible" onClick={() => setQuery("")} aria-label="Effacer la recherche" title="Effacer la recherche"
           style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, padding: 0, border: "none",
             borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icone nom="fermer" taille={16} /></button>}
       </div>
@@ -269,7 +269,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 // ── Atomes de la Saisie (lot 5) : fond, couleur et taille portés par les classes (survol, mobile) ──
 // filtre : sable + encre, actif encre + paper (ex-filtre selon aria-pressed)
 const filtreStyle = { ...ui.pill(false), background: undefined, color: undefined };
-// « − » / « + » : 30 px, 36 px sur mobile (ex-saisie-pas) ; fond par ex-qte-moins / ex-qte-plus
+// « − » / « + » : 30 px, 40 px sur mobile (ex-saisie-pas, lot 9) ; fond par ex-qte-moins / ex-qte-plus
 const pasStyle = { ...ui.qtyBtn("plus"), background: undefined, color: undefined, width: undefined, height: undefined };
 // « Ajouter » : pastille pétrole (ex-btn-petrole, survol sarcelle), largeur réservée (ex-saisie-ajouter)
 const ajouterStyle = { ...ui.btn("primaire", "s"), background: undefined, color: undefined, height: undefined, gap: 6, padding: "0 14px", fontVariantNumeric: "tabular-nums" };

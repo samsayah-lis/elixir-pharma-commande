@@ -208,10 +208,11 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
       )}
 
       {/* Table : carte blanche, en-tête neutre (eyebrow --ink-mute), lignes .ex-tr (zébrure, survol) ; défilement
-          horizontal dans le cadre sur petit écran (le tableau ne déborde plus de la page) */}
+          horizontal dans le cadre sur tablette ; sous 768 px, une carte par produit (classe ex-peremption, lot 9 :
+          disposition seulement, mêmes cellules, mêmes gestionnaires) */}
       {!loading && sorted.length > 0 && (
         <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: R.m, overflowX: "auto", boxShadow: T.shadow1 }}>
-          <table className="num" style={{ width: "100%", borderCollapse: "collapse", color: T.ink }}>
+          <table className="num ex-peremption" style={{ width: "100%", borderCollapse: "collapse", color: T.ink }}>
             <thead>
               <tr>
                 {["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix de base", isAdmin ? "Remise admin" : "Remise", "Prix remisé", "Qté"].map(h => (
@@ -298,13 +299,13 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
                           aria-label={`Diminuer la quantité de ${p.name}`} style={pas}><Icone nom="moins" taille={12} epaisseur={2.6} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""}
                           onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: parseInt(e.target.value) || 0 }))}
-                          placeholder="0" aria-label={`Quantité ${p.name}`}
+                          placeholder="0" aria-label={`Quantité ${p.name}`} className="ex-qte-champ"
                           style={{ ...ui.qtyInput(qty > 0), width: 44 }} />
                         <button className="ex-qte-plus" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
                           aria-label={`Augmenter la quantité de ${p.name}`} style={pas}><Icone nom="plus" taille={12} epaisseur={2.6} /></button>
                       </div>
                       {qty > 0 && (
-                        <button className="ex-btn-petrole" onClick={() => handleAdd(p)}
+                        <button className="ex-btn-petrole ex-peremption-ajouter" onClick={() => handleAdd(p)}
                           style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, height: 26, padding: "0 12px", fontSize: 12, marginTop: 6 }}>
                           Ajouter
                         </button>

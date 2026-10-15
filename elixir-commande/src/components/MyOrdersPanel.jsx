@@ -31,7 +31,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
             <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
             <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
           </div>
-          <button className="ex-btn-discret" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
+          <button className="ex-btn-discret ex-cible" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
 
         {/* Contenu */}
@@ -99,10 +99,10 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                     {!order.processed && !(order.justif || []).some(j => j.suivi?.datePrevue || ["refusee", "annulee"].includes(j.suivi?.etape)) && <div style={{ color:T.inkSoft, marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>}
                   </div>
                 )}
-                {/* Recommander (pastille à filet, comme la maquette de la vitrine) */}
+                {/* Recommander (pastille à filet, comme la maquette de la vitrine ; 44 px sous 768 px, ex-tactile, lot 9) */}
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginTop:10, flexWrap:"wrap" }}>
                   <span className="num" style={{ fontSize:12, color:T.inkMute }}>{items.length > 5 ? `+ ${items.length - 5} autre${items.length - 5 > 1 ? "s" : ""}…` : ""}</span>
-                  <button className="ex-btn-ligne" onClick={() => onReorder(items)}
+                  <button className="ex-btn-ligne ex-tactile" onClick={() => onReorder(items)}
                     style={{ ...ui.btn("ligne", "m"), background:undefined, color:T.petrol, boxShadow:`inset 0 0 0 1.5px ${T.lineField}`, marginLeft:"auto" }}>
                     <Icone nom="recommander" taille={16} epaisseur={2.4} />Recommander cette commande
                   </button>

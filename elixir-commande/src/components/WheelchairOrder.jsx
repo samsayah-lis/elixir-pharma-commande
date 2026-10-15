@@ -145,9 +145,10 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
             const rs = refsFor(line, s, data), st = totalStock(rs);
             const active = selectedIdx === i;
             const etat = !rs.length ? "" : st > 0 ? (Number.isFinite(st) ? `En stock : ${st}` : "En stock") : "Rupture";
-            // pastille de taille : pétrole si choisie ; point de stock (ok / rupture) doublé du libellé lu (aria-label)
+            // pastille de taille : pétrole si choisie ; point de stock (ok / rupture) doublé du libellé lu (aria-label) ;
+            // 44 px sous 768 px (ex-tactile, lot 9)
             return (
-              <button key={s} onClick={() => setManualIdx(i)} title={etat} aria-pressed={active} aria-label={etat ? `${sizeLabel(s)} — ${etat}` : undefined} style={{
+              <button key={s} className="ex-tactile" onClick={() => setManualIdx(i)} title={etat} aria-pressed={active} aria-label={etat ? `${sizeLabel(s)} — ${etat}` : undefined} style={{
                 border: `1px solid ${active ? T.petrol : T.lineField}`, background: active ? T.petrol : T.surface, color: active ? T.paper : T.ink,
                 borderRadius: R.pill, padding: "0 14px", height: 34, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, fontVariantNumeric: "tabular-nums" }}>
                 {sizeLabel(s)}
@@ -211,11 +212,12 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <button className="ex-qte-moins" onClick={() => setQty(q => Math.max(1, q - 1))} aria-label={`Diminuer la quantité de ${product.name}`} style={pas}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
                 <input type="number" min="1" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))} aria-label={`Quantité ${product.name}`}
-                  style={{ ...ui.qtyInput(true), width: 52, height: 32, fontSize: 14 }} />
+                  className="ex-qte-champ" style={{ ...ui.qtyInput(true), width: 52, height: 32, fontSize: 14 }} />
                 <button className="ex-qte-plus" onClick={() => setQty(q => q + 1)} aria-label={`Augmenter la quantité de ${product.name}`} style={pas}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
               </div>
-              {/* « Ajouter au panier » en pastille pétrole ; indisponible : sable + encre adoucie, curseur interdit */}
-              <button className={canAdd ? "ex-btn-petrole" : undefined} onClick={add} disabled={!canAdd} style={{
+              {/* « Ajouter au panier » en pastille pétrole ; indisponible : sable + encre adoucie, curseur interdit ;
+                  44 px sous 768 px (ex-tactile, lot 9) */}
+              <button className={canAdd ? "ex-btn-petrole ex-tactile" : "ex-tactile"} onClick={add} disabled={!canAdd} style={{
                 ...ui.btn("primaire", "m"), background: canAdd ? undefined : T.sand, color: canAdd ? undefined : T.inkSoft,
                 cursor: canAdd ? "pointer" : "not-allowed", fontVariantNumeric: "tabular-nums" }}>
                 {stock <= 0 ? "Indisponible" : plan.missing > 0 ? `Stock disponible : ${stock}` : `Ajouter au panier · ${fmt((tiered ? tiered.pn : unitPrice) * qty)}`}
@@ -336,7 +338,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
   );
 }
 
-// boutons « − » / « + » de 32 px : fond et survol par les classes ex-qte-moins / ex-qte-plus
+// boutons « − » / « + » de 32 px (40 sous 768 px, lot 9) : fond, survol et taille mobile par les classes ex-qte-moins / ex-qte-plus
 const pas = { width: 32, height: 32, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
   display: "flex", alignItems: "center", justifyContent: "center" };
 // en-tête des tables de référence : eyebrow --ink-mute 11 px

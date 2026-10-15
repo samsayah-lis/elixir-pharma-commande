@@ -19,6 +19,7 @@ const fmt = (n) => n != null ? fmtEur(Number(n)) : "–";
 const card = ui.card;
 const h2 = ui.h2;
 // boutons pastille : pétrole (action), à filet (secondaire) ; fond et survol par les classes ex-btn-petrole / ex-btn-ligne
+// (lot 9 : actions d'une ligne de produit en 44 px sous 768 px par la classe ex-tactile, quantité en 40 px par ex-qte-champ)
 const btnPetrole = { ...ui.btn("primaire", "m"), background: undefined, color: undefined };
 const btnLigne = { ...ui.btn("ligne", "m"), background: undefined, boxShadow: `inset 0 0 0 1.5px ${T.lineField}` };
 const btnInactif = { background: T.sand, color: T.inkSoft, boxShadow: "none", cursor: "not-allowed" };
@@ -145,7 +146,7 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
     } catch (e) { setEnvoi({ busy: false, erreur: `Vérification impossible (${e.message}) : réessayez`, ok: null }); }
   };
   const champQte = (cip, p, choisi) => (
-    <input type="number" inputMode="numeric" min="1" max={maxDe(p)} value={brouillon[cip] ?? choisi} disabled={verrou} aria-label={`Quantité ${p.nom}`} style={qteInput}
+    <input type="number" inputMode="numeric" min="1" max={maxDe(p)} value={brouillon[cip] ?? choisi} disabled={verrou} aria-label={`Quantité ${p.nom}`} className="ex-qte-champ" style={qteInput}
       onChange={e => { const v = e.target.value; setBrouillon(b => ({ ...b, [cip]: v })); const n = parseInt(v); if (n >= 1) majLigne(cip, Math.min(maxDe(p), n)); }}
       onBlur={() => { const n = parseInt(brouillon[cip]); if (brouillon[cip] !== undefined) majLigne(cip, Math.max(1, Math.min(maxDe(p), n >= 1 ? n : choisi))); setBrouillon(b => { const { [cip]: _, ...r } = b; return r; }); }} />
   );
@@ -226,11 +227,11 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ ...ui.badge("ok"), padding: "2px 8px 2px 6px" }}><Icone nom="coche" taille={12} epaisseur={2.4} />En stock chez Elixir</span>
                         {ajoute === p.cip
-                          ? <button onClick={() => ajouterPanier(p, 1)} style={{ ...ui.btn("primaire", "m"), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={14} epaisseur={2.4} />Ajouté</button>
-                          : <button className="ex-btn-petrole" onClick={() => ajouterPanier(p, 1)} aria-label={`Ajouter ${p.nom} au panier`} style={btnPetrole}><Icone nom="plus" taille={14} epaisseur={2.4} />Panier</button>}
+                          ? <button className="ex-tactile" onClick={() => ajouterPanier(p, 1)} style={{ ...ui.btn("primaire", "m"), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={14} epaisseur={2.4} />Ajouté</button>
+                          : <button className="ex-btn-petrole ex-tactile" onClick={() => ajouterPanier(p, 1)} aria-label={`Ajouter ${p.nom} au panier`} style={btnPetrole}><Icone nom="plus" taille={14} epaisseur={2.4} />Panier</button>}
                       </div>
                     ) : (
-                      <button className={verrou ? undefined : "ex-btn-petrole"} onClick={() => majLigne(p.cip, 1)} disabled={verrou} style={{ ...btnPetrole, ...(verrou ? btnInactif : {}) }}>Ajouter à ma demande</button>
+                      <button className={verrou ? "ex-tactile" : "ex-btn-petrole ex-tactile"} onClick={() => majLigne(p.cip, 1)} disabled={verrou} style={{ ...btnPetrole, ...(verrou ? btnInactif : {}) }}>Ajouter à ma demande</button>
                     )}
                   </div>
                 );

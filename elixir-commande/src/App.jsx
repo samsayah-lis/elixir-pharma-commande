@@ -244,7 +244,8 @@ function CipCell({ cip }) {
   return (
     <span style={{ display:"inline-flex", alignItems:"center", gap:5, verticalAlign:"middle" }}>
       <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkMute, letterSpacing: "-0.01em" }}>{cip}</span>
-      <button className={copied ? undefined : "ex-btn-discret"} onClick={copy} title="Copier CIP" aria-label={copied ? "CIP copié" : `Copier le CIP ${cip}`} style={{
+      {/* 18 px dessiné ; zone de toucher de 44 px sur écran tactile (ex-cible, lot 9) */}
+      <button className={copied ? "ex-cible" : "ex-btn-discret ex-cible"} onClick={copy} title="Copier CIP" aria-label={copied ? "CIP copié" : `Copier le CIP ${cip}`} style={{
         width: 18, height: 18, padding: 0, border: "none", borderRadius: R.xs, cursor: "pointer", flexShrink: 0,
         display: "inline-flex", alignItems: "center", justifyContent: "center",
         ...(copied ? { background: T.okBg, color: T.ok } : {}),
@@ -1735,13 +1736,15 @@ export default function App() {
     </div>
   );
 
-  // Recherche globale de l'en-tête : pastille sur pétrole (même champ sur ordinateur et, sous la barre, sur mobile)
+  // Recherche globale de l'en-tête : pastille sur pétrole (même champ sur ordinateur et, sous la barre, sur mobile).
+  // Lot 9 : 16 px de police sous 768 px (règle des champs de tokens.css : Safari iOS ne zoome plus à la saisie) ;
+  // les petits boutons ronds de l'en-tête ont une zone de toucher de 44 px sur écran tactile (classe ex-cible)
   const rechercheGlobale = (mobile) => (
     <div style={mobile ? { position: "relative" } : { position: "relative", flex: "1 1 300px", minWidth: 150, maxWidth: 420, marginLeft: "auto" }}>
       <Icone nom="recherche" taille={16} style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", color: T.paperMute, pointerEvents: "none" }} />
       <input value={globalSearch} onChange={e => setGlobalSearch(e.target.value)} placeholder="Rechercher CIP ou nom…" aria-label="Rechercher un produit par CIP ou nom"
         style={{ width: "100%", height: mobile ? 40 : 36, background: T.petrolField, border: "none", borderRadius: R.pill, color: T.paper, padding: "0 36px 0 38px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" }} />
-      {globalSearch && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setGlobalSearch("")} aria-label="Effacer la recherche" style={{ ...btnEntete, width: 28, height: 28, position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)" }}><Icone nom="fermer" taille={14} /></button>}
+      {globalSearch && <button className="ex-icone-entete ex-icone-pastille ex-cible" onClick={() => setGlobalSearch("")} aria-label="Effacer la recherche" style={{ ...btnEntete, width: 28, height: 28, position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)" }}><Icone nom="fermer" taille={14} /></button>}
     </div>
   );
   // panier flottant affiché (panier fermé et non vide) : main réserve sa place en bas
@@ -1773,7 +1776,7 @@ export default function App() {
             <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "0.28em", lineHeight: 1 }}>ELIXIR</span>
           </div>
           {!isDesktop && (
-            <button className="ex-icone-entete" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={btnEntete}><Icone nom="fermer" /></button>
+            <button className="ex-icone-entete ex-cible" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={btnEntete}><Icone nom="fermer" /></button>
           )}
         </div>
         <nav aria-label="Menus" style={{ padding: "8px 0 16px" }}>
@@ -1787,15 +1790,18 @@ export default function App() {
               const c = CATALOG_WITH_ADMIN[key];
               if (!c) return null;
               const active = activeTab === key;
+              // tiroir (mobile, tablette, lot 9) : entrées de 44 px au doigt, libellé long sur deux lignes au plus (plus de
+              // « Commande labo sur justif… ») ; barre fixe d'ordinateur inchangée (une ligne, points de suspension)
               return (
                 <button key={key} className="ex-menu" aria-current={active ? "page" : undefined} title={c.label} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
                   display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 20px)", margin: "1px 10px", textAlign: "left",
-                  background: active ? T.mint : undefined, border: "none", borderRadius: R.pill,
-                  color: active ? T.teal : T.inkSoft, padding: "8px 12px", cursor: "pointer",
-                  fontSize: 13, fontWeight: active ? 600 : 500, fontFamily: "inherit", lineHeight: 1.3,
+                  background: active ? T.mint : undefined, border: "none", borderRadius: isDesktop ? R.pill : 22,
+                  color: active ? T.teal : T.inkSoft, padding: isDesktop ? "8px 12px" : "10px 12px", minHeight: isDesktop ? undefined : 44, cursor: "pointer",
+                  fontSize: isDesktop ? 13 : 14, fontWeight: active ? 600 : 500, fontFamily: "inherit", lineHeight: 1.3,
                 }}>
                   <span aria-hidden="true" style={{ fontSize: 15, width: 20, display: "inline-flex", justifyContent: "center", flexShrink: 0 }}>{iconeMenu(key, c)}</span>
-                  <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.label}</span>
+                  <span style={isDesktop ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+                    : { minWidth: 0, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflowWrap: "anywhere" }}>{c.label}</span>
                 </button>
               );
             })}
@@ -1814,7 +1820,7 @@ export default function App() {
                 <h2 id="offres-titre" style={ui.titreModal}><Icone nom="cadeau" taille={22} style={{ color:T.teal }} />Offres du moment</h2>
                 <div style={{ fontSize:13, color:T.inkSoft, marginTop:6 }}>Des promotions exclusives sont disponibles cette semaine !</div>
               </div>
-              <button className="ex-btn-discret" onClick={() => setPromoPopupOpen(false)} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
+              <button className="ex-btn-discret ex-cible" onClick={() => setPromoPopupOpen(false)} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {promoSections.filter(p => p.active).map(ps => {
@@ -1853,7 +1859,7 @@ export default function App() {
           {/* titre : jamais plus de 30 % de la barre (libellé long → points de suspension) ; la recherche prend le reste */}
           <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "0 0 auto", maxWidth: isDesktop ? "30%" : undefined }}>
             {!isDesktop && (
-              <button className="ex-icone-entete" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" aria-expanded={sidebarOpen} style={btnEntete}><Icone nom="menu" /></button>
+              <button className="ex-icone-entete ex-cible" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" aria-expanded={sidebarOpen} style={btnEntete}><Icone nom="menu" /></button>
             )}
             {!isDesktop && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
@@ -1880,19 +1886,23 @@ export default function App() {
             )}
           </div>
           {!isMobile && rechercheGlobale(false)}
-          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: 0, marginLeft: isMobile ? "auto" : undefined }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 2, height: 36, background: T.petrolField, borderRadius: R.pill, padding: "0 4px 0 12px" }}>
+          {/* mobile (lot 9) : le groupe de droite peut céder de la place — le nom de la pharmacie se raccourcit (jusqu'à
+              140 px, au lieu de 80 qui n'affichaient que « PHARMACIE … ») plutôt que de pousser la page en largeur
+              quand le compteur du panier grandit ; les boutons, eux, gardent leur taille */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: isMobile ? 1 : 0, minWidth: 0, marginLeft: isMobile ? "auto" : undefined }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, height: 36, minWidth: 0, background: T.petrolField, borderRadius: R.pill, padding: "0 4px 0 12px" }}>
               {/* or orangé clair (saisie Elixir pour une pharmacie) : 8,5:1 sur pétrole */}
-              <span title={pharmacyName} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 80 : "clamp(110px, 10vw, 150px)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor ? "🛠 " : ""}{pharmacyName}</span>
+              <span title={pharmacyName} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 140 : "clamp(110px, 10vw, 150px)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor ? "🛠 " : ""}{pharmacyName}</span>
               {!actingFor && hasAdminToken && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" aria-label="Commander pour une pharmacie" style={{ ...btnEntete, width: 28, height: 28, fontSize: 13 }}>🛠</button>}
-              {!actingFor && <button className="ex-icone-entete ex-icone-pastille" onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
+              {/* zone de toucher élargie (ex-cible) seulement sans le bouton 🛠 voisin (2 px d'écart : elle le chevaucherait) */}
+              {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
             {pharmacyCip && pharmacyCip !== "0" && (
-              <button className="ex-icone-entete" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
+              <button className="ex-icone-entete ex-cible" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
             )}
             {/* panier rempli : pastille or + encre avec le compteur (seul rôle de l'or dans l'en-tête) */}
-            <button className={cartCount > 0 ? undefined : "ex-icone-entete"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
+            <button className={cartCount > 0 ? "ex-cible" : "ex-icone-entete ex-cible"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
               aria-label={cartCount > 0 ? `Panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}` : "Panier (vide)"} title="Panier"
               style={cartCount > 0
                 ? { ...btnEntete, width: "auto", gap: 6, padding: "0 13px 0 10px", background: T.or, color: T.ink, fontSize: 13, fontWeight: 700 }
@@ -1915,8 +1925,9 @@ export default function App() {
         {/* Main content */}
         <main style={{ flex: 1, padding: isMobile ? `12px 10px ${panierFlottant ? 96 : 12}px` : `20px 24px ${panierFlottant ? 96 : 20}px`, minWidth: 0 }}>
 
-          {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement */}
-          <div role="status" aria-live="polite" style={{ position:"fixed", top:20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
+          {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement.
+              Mobile (lot 9) : sous l'en-tête collant, pour ne plus cacher le compteur du panier qui vient de changer */}
+          <div role="status" aria-live="polite" style={{ position:"fixed", top: isMobile ? hauteurEntete + 8 : 20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
             width:"max-content", maxWidth:"calc(100vw - 32px)", pointerEvents:"none" }}>
             {flashMsg && (
               <div style={{
@@ -1952,7 +1963,7 @@ export default function App() {
                   <Icone nom="ampoule" taille={18} style={{ color:T.teal }} />
                   Suggestions de recommande — {reorderSuggestions.length} produit(s) à recommander
                 </h2>
-                <button className="ex-btn-discret" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions" title="Masquer"
+                <button className="ex-btn-discret ex-cible" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions" title="Masquer"
                   style={ui.rond(30)}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
               </div>
               <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
@@ -2033,8 +2044,9 @@ export default function App() {
                         )}
                       </div>
 
-                      {/* Add to cart : pastille pétrole (survol sarcelle, classe ex-btn-petrole) ; gestionnaire inchangé */}
-                      <button className="ex-btn-petrole ex-resultat-action" aria-label={`Ajouter ${p.name} au panier`} onClick={() => {
+                      {/* Add to cart : pastille pétrole (survol sarcelle, classe ex-btn-petrole ; 44 px sous 768 px,
+                          ex-tactile) ; gestionnaire inchangé */}
+                      <button className="ex-btn-petrole ex-resultat-action ex-tactile" aria-label={`Ajouter ${p.name} au panier`} onClick={() => {
                         const pn = p.discounted_price || p.list_price;
                         if (!pn) return;
                         // Cherche dans le catalogue existant
@@ -2292,19 +2304,21 @@ export default function App() {
           {/* Products grid (photos) + table */}
           <>
 {avecAlphabet && (
-                <div id="barre-alphabet" style={{ position: "sticky", top: hauteurEntete, zIndex: 80, background: T.cream, padding: "6px 0 10px", marginBottom: 4 }}>
-                  {/* rail blanc en pastille ; ordinateur : 27 colonnes, une seule rangée dès 720 px de large */}
+                <div id="barre-alphabet" style={{ position: "sticky", top: hauteurEntete, zIndex: 80, background: T.cream, padding: isMobile ? "4px 0 8px" : "6px 0 10px", marginBottom: 4 }}>
+                  {/* rail blanc en pastille ; ordinateur : 27 colonnes, une seule rangée dès 720 px de large ;
+                      mobile (lot 9) : lettres de 36 px au doigt (28 sur ordinateur), marges resserrées pour que la
+                      bande collée ne prenne guère plus de hauteur */}
                   <div className={isMobile ? "ex-sans-barre" : undefined} style={isMobile
-                    ? { display: "flex", overflowX: "auto", scrollbarWidth: "none", gap: 4, background: T.surface, borderRadius: R.pill, padding: "5px 8px", boxShadow: T.shadow1, border: `1px solid ${T.lineSoft}` }
+                    ? { display: "flex", overflowX: "auto", scrollbarWidth: "none", gap: 4, background: T.surface, borderRadius: R.pill, padding: "4px 6px", boxShadow: T.shadow1, border: `1px solid ${T.lineSoft}` }
                     : { display: "grid", gridTemplateColumns: "repeat(27, minmax(0, 1fr))", gap: 3, justifyItems: "center", background: T.surface, borderRadius: R.pill, padding: "5px 8px", boxShadow: T.shadow1, border: `1px solid ${T.lineSoft}` }}>
                     {["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map(l => {
                       const dispo = !!premierParLettre[l];
                       return (
                         <button key={l} onClick={() => allerLettre(l)} disabled={!dispo} aria-label={l === "#" ? "Produits commençant par un chiffre" : `Produits commençant par ${l}`} style={{
-                          flex: isMobile ? "0 0 auto" : undefined, minWidth: isMobile ? 28 : undefined, width: isMobile ? undefined : "100%", maxWidth: isMobile ? undefined : 32,
-                          height: 28, padding: 0, borderRadius: R.pill, border: "none", fontFamily: "inherit",
+                          flex: isMobile ? "0 0 auto" : undefined, minWidth: isMobile ? 36 : undefined, width: isMobile ? undefined : "100%", maxWidth: isMobile ? undefined : 32,
+                          height: isMobile ? 36 : 28, padding: 0, borderRadius: R.pill, border: "none", fontFamily: "inherit",
                           background: dispo ? T.mint : "transparent", color: dispo ? T.inkSoft : T.inkFaint,
-                          fontWeight: 700, fontSize: 13, cursor: dispo ? "pointer" : "default",
+                          fontWeight: 700, fontSize: isMobile ? 14 : 13, cursor: dispo ? "pointer" : "default",
                         }}>{l}</button>
                       );
                     })}
@@ -2480,8 +2494,10 @@ export default function App() {
                               setQuantities(prev=>({...prev,[key]:v})); syncGroup(v);
                             };
                             return (<>
-                              {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité */}
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité ;
+                                  sous 768 px (lot 9) : 40 px au doigt (classes ex-qte-* / ex-qte-champ), écart de 4 px pour
+                                  tenir dans une carte de 172 px (deux colonnes à 375 px) */}
+                              <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 4 : 6, maxWidth: "100%" }}>
                                 <button className="ex-qte-moins" onClick={handleMinus} aria-label="Diminuer la quantité" style={qtyBtnStyle("moins", 32)}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
                                 <input
                                   type="number"
@@ -2492,6 +2508,7 @@ export default function App() {
                                   onBlur={e => handleBlur(e.target.value)}
                                   placeholder="0"
                                   aria-label={`Quantité ${p.name}`}
+                                  className="ex-qte-champ"
                                   style={{ ...ui.qtyInput(qty > 0), height: 32, fontSize: 14 }}/>
                                 <button className="ex-qte-plus" onClick={handlePlus} aria-label="Augmenter la quantité" style={qtyBtnStyle("plus", 32)}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
                               </div>
@@ -2507,7 +2524,7 @@ export default function App() {
                                 </div>
                               )}
                               {qty > 0 && (
-                                <button className="ex-btn-discret" onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
+                                <button className="ex-btn-discret ex-cible" onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
                                   style={{ width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
                                   title="Remettre à zéro" aria-label="Remettre à zéro"><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
                               )}
@@ -2817,8 +2834,14 @@ export default function App() {
               } catch(e) { console.error(e); }
               setUlabsConfirming(false);
             };
+            // Barre collante de confirmation (lot 9, habillage seulement : calculs, confirmOrder, onClick et disabled
+            // inchangés). Pétrole comme l'en-tête (plus de verts #0d4f3c / #059669), « Confirmer ma commande » en or + encre
+            // (l'envoi de la commande groupée, comme « Envoyer la commande »), confirmée en ok + blanc. Sur mobile, elle
+            // laisse à droite la place du panier flottant (60 px à 24 px du bord), qui la recouvrait.
+            const placePanier = isMobile && panierFlottant;
             return (
-              <div style={{ position: "sticky", bottom: 20, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 50, marginTop: 16 }}>
+              <div style={{ position: "sticky", bottom: isMobile ? 24 : 20, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 50, marginTop: 16,
+                paddingRight: placePanier ? 80 : 0 }}>
                 {/* conditions non remplies (lot 8) : encart danger annoncé (role="alert"), texte inchangé, ⚠️ remplacé par l'icône */}
                 {ulabsError && (
                   <div role="alert" style={{ ...ui.encart("danger"), boxShadow: T.shadow2, padding: "10px 18px", marginBottom: 8, maxWidth: 480, textAlign: "left", display: "flex", alignItems: "flex-start", gap: 8 }}>
@@ -2826,18 +2849,22 @@ export default function App() {
                     <div>{ulabsError.replace(/^⚠️\s*/, "").split("\n").map((line, i) => <div key={i} style={{ fontSize: i === 0 ? 13 : 12, fontWeight: i === 0 ? 700 : 500, lineHeight: 1.45 }}>{line}</div>)}</div>
                   </div>
                 )}
-                <div style={{ background: ulabsConfirmed ? "#059669" : "#0d4f3c", borderRadius: 16, padding: "16px 28px", boxShadow: "0 8px 32px rgba(0,0,0,0.25)", display: "flex", alignItems: "center", gap: 20, border: "1px solid #059669" }}>
-                  <div>
-                    <div style={{ color: "rgba(255,255,255,0.7)", fontSize: 11 }}>{myItems.length} référence(s) · {myItems.reduce((s,{qty})=>s+qty,0)} unités</div>
-                    <div style={{ color: "white", fontWeight: 800, fontSize: 18 }}>{fmt(myTotal)} HT <span style={{ fontSize: 11, color: "#34d399", fontWeight: 400 }}>remise −33% incluse</span></div>
+                <div className="ex-on-dark" style={{ background: T.petrol, color: T.paper, borderRadius: R.m, boxShadow: T.shadow3, display: "flex", alignItems: "center",
+                  gap: isMobile ? 12 : 20, padding: isMobile ? "10px 10px 10px 14px" : "14px 16px 14px 24px", width: isMobile ? "100%" : undefined, maxWidth: 560 }}>
+                  <div style={{ minWidth: 0, flex: isMobile ? "1 1 auto" : undefined }}>
+                    <div className="num" style={{ color: T.paperMute, fontSize: 11 }}>{myItems.length} référence(s) · {myItems.reduce((s,{qty})=>s+qty,0)} unités</div>
+                    <div className="num" style={{ fontWeight: 700, fontSize: isMobile ? 16 : 18, lineHeight: 1.3 }}>{fmt(myTotal)} HT <span style={{ fontSize: 11, color: T.orClair, fontWeight: 600, whiteSpace: "nowrap" }}>remise −33% incluse</span></div>
                   </div>
-                  <button onClick={confirmOrder} disabled={ulabsConfirming || ulabsConfirmed} style={{
-                    background: ulabsConfirmed ? "rgba(255,255,255,0.2)" : "#059669",
-                    color: "white", border: "none", borderRadius: 10, padding: "10px 22px",
-                    fontWeight: 800, fontSize: 14, cursor: ulabsConfirmed ? "default" : "pointer",
-                    opacity: ulabsConfirming ? 0.7 : 1
+                  <button className={ulabsConfirmed || ulabsConfirming ? undefined : "ex-btn-or"} onClick={confirmOrder} disabled={ulabsConfirming || ulabsConfirmed} style={{
+                    ...ui.btn("or", "l"), flexShrink: 0, gap: 8, fontSize: 14,
+                    ...(isMobile ? { height: "auto", minHeight: 44, padding: "6px 14px", whiteSpace: "normal", lineHeight: 1.2, maxWidth: 150, textAlign: "left" } : {}),
+                    ...(ulabsConfirmed ? { background: T.ok, color: "#fff", cursor: "default" }
+                      : ulabsConfirming ? { cursor: "progress" }
+                      : { background: undefined, color: undefined }),
                   }}>
-                    {ulabsConfirmed ? "✓ Commande confirmée !" : ulabsConfirming ? "Envoi…" : "✅ Confirmer ma commande"}
+                    {ulabsConfirmed ? <><Icone nom="coche" taille={18} epaisseur={2.4} />Commande confirmée !</>
+                      : ulabsConfirming ? <><Icone nom="horloge" taille={18} />Envoi…</>
+                      : <><Icone nom="envoyer" taille={18} />Confirmer ma commande</>}
                   </button>
                 </div>
               </div>
@@ -2904,7 +2931,7 @@ export default function App() {
                   <h2 style={{ margin: 0, display: "flex", alignItems: "center", gap: 10, fontSize: 20, fontWeight: 640, letterSpacing: "-0.02em", color: T.petrol }}>
                     <Icone nom="panier" taille={22} />Panier
                   </h2>
-                  <button className="ex-btn-ligne" onClick={() => setCartOpen(false)} aria-label="Fermer le panier" title="Fermer"
+                  <button className="ex-btn-ligne ex-cible" onClick={() => setCartOpen(false)} aria-label="Fermer le panier" title="Fermer"
                     style={{ ...btnEntete, color: T.ink }}><Icone nom="fermer" /></button>
                 </div>
                 {pharmacyName && (
@@ -2935,7 +2962,7 @@ export default function App() {
                           <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: R.pill, background: item.color, flexShrink: 0 }} />
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.cat.toUpperCase()}</span>
                         </div>
-                        <button className="ex-btn-discret" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name} du panier`}
+                        <button className="ex-btn-discret ex-cible" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name} du panier`}
                           style={{ ...pasPanier, width: isMobile ? 32 : 28, height: isMobile ? 32 : 28 }}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
                       </div>
                       {/* Nom du produit */}
@@ -2948,7 +2975,7 @@ export default function App() {
                           </span>
                         </div>
                       )}
-                      {/* Quantité (« − » sable, « + » pétrole, au pas du colis) + sous-total */}
+                      {/* Quantité (« − » sable, « + » pétrole, au pas du colis ; 40 px sous 768 px, classes ex-qte-*) + sous-total */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
                           <button className="ex-qte-moins" onClick={() => setItemQty(item, item.qty - item.step)} aria-label={`Diminuer la quantité de ${item.name}`}
@@ -3100,8 +3127,9 @@ export default function App() {
         </aside>
       </div>
 
-      {/* Floating cart button when closed */}
-      {!cartOpen && cartCount > 0 && (
+      {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son
+          zIndex (290) le laissait seul au-dessus du voile du menu (140) (lot 9) */}
+      {!cartOpen && cartCount > 0 && !(sidebarOpen && !isDesktop) && (
         <button className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 290,   // sous le voile du panier (300)
           color: T.paper, border: "none", borderRadius: R.pill, width: 60, height: 60,   // fond pétrole : classe (survol)
@@ -3168,7 +3196,7 @@ function PharmacyPicker({ onPick, onClose }) {
       <div onClick={e => e.stopPropagation()} style={{ ...ui.modal, padding: "24px 24px 22px", maxWidth: 620 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <h2 id="choix-pharmacie-titre" style={{ ...ui.titreModal, fontSize: 18 }}><Icone nom="crayon" taille={20} style={{ color: T.acting }} />Commander pour une pharmacie</h2>
-          <button className="ex-btn-discret" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
+          <button className="ex-btn-discret ex-cible" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
         <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>Clients Elixir dans Odoo, avec ou sans compte sur le site. Le panier sera envoyé au nom de la pharmacie choisie (CIP, PharmaML, contingentement), avec la mention « saisie par Elixir ».</div>
         <div style={{ display: "flex", gap: 8 }}>

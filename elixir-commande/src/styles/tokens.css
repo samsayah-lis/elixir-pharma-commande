@@ -66,9 +66,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 
 /* ── Règles déplacées telles quelles du <style> d'App (rendu jusqu'ici dans le return principal seulement :
    elles touchent désormais aussi l'écran d'identification, voir docs/refonte-charte.md § 0) ── */
+/* lot 9 : tableaux resserrés réservés au site client (.ex-app) ; l'admin, rendu dans l'arbre d'App (.ex-admin),
+   garde ses tailles et ses marges sur mobile */
 @media (max-width: 767px) {
-  table { font-size: 11px !important; }
-  table td, table th { padding: 6px 6px !important; }
+  .ex-app table:not(.ex-admin table) { font-size: 11px !important; }
+  .ex-app td:not(.ex-admin td), .ex-app th:not(.ex-admin th) { padding: 6px 6px !important; }
   .tab-label { display: none; }
 }
 @media print {
@@ -180,9 +182,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-saisie-recherche { font-size: 16px !important; }   /* Safari iOS ne zoome plus à la saisie */
   /* nom et prix en haut, contrôles sur toute la largeur dessous */
   .ex-saisie-ligne { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info prix" "actions actions"; align-items: start; gap: 12px; padding: 12px 14px; }
-  .ex-saisie-pas { width: 36px; height: 36px; }
-  .ex-saisie-qte { width: 56px; height: 36px; font-size: 16px !important; }
-  .ex-saisie-ajouter, .ex-saisie-alerte { height: 36px; }
+  /* lot 9 : cibles tactiles — « − » / « + » et quantité 40 px, « Ajouter » 44 px (action principale de la ligne) */
+  .ex-saisie-pas { width: 40px; height: 40px; }
+  .ex-saisie-qte { width: 56px; height: 40px; font-size: 16px !important; }
+  .ex-saisie-ajouter { height: 44px; }
+  .ex-saisie-alerte { height: 40px; }
   .ex-saisie-ajouter { flex: 1 1 auto; min-width: 0; }
   /* recherche globale : nom sur toute la largeur, puis prix et « + Panier » */
   .ex-resultat { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "info info" "prix action"; gap: 8px 12px; padding: 10px 12px; }
@@ -218,6 +222,74 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   border-top-color: var(--teal-2); flex-shrink: 0; animation: ex-roue .8s linear infinite; }
 @keyframes ex-roue { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ex-roue { animation: none; } }
+
+/* ── Passe mobile (lot 9) : cibles tactiles, champs sans zoom, listes en cartes sous 768 px ──
+   Règles du site client seulement : l'admin (.ex-admin, rendu dans l'arbre d'App) est exclu par :not(.ex-admin *).
+   Les tailles passent par min-width / min-height, qui l'emportent sur le width / height posés en inline sans
+   toucher au dessin sur ordinateur. */
+/* petit bouton à icône (en-tête, fermer, masquer, copier) : zone de toucher portée à 44 × 44 px par un pseudo-élément
+   centré, sans changer le dessin ni la mise en page ; pointeurs tactiles seulement (téléphone, tablette).
+   Longhands (pas « inset », absent avant Safari 14.1) ; min() : la zone n'est jamais plus petite que le bouton */
+@media (pointer: coarse) {
+  .ex-cible { position: relative; }
+  .ex-cible::after { content: ""; position: absolute;
+    top: min(0px, calc(50% - 22px)); bottom: min(0px, calc(50% - 22px)); left: min(0px, calc(50% - 22px)); right: min(0px, calc(50% - 22px)); }
+}
+@media (max-width: 767px) {
+  /* quantités : « − » / « + » de 40 px et champ de 40 px (grille, liste mobile, panier, Saisie, péremption, fauteuil) */
+  .ex-app .ex-qte-moins:not(.ex-admin *), .ex-app .ex-qte-plus:not(.ex-admin *) { min-width: 40px; min-height: 40px; }
+  .ex-app .ex-qte-champ:not(.ex-admin *) { min-width: 52px; min-height: 40px; }
+  /* filtres en pastilles : 36 px */
+  .ex-app .ex-filtre:not(.ex-admin *) { min-height: 36px; }
+  /* action principale d'une ligne ou d'une fenêtre : 44 px */
+  .ex-app .ex-tactile:not(.ex-admin *) { min-height: 44px; }
+  /* produits complémentaires du panier : « Ajouter » et « Masquer » côte à côte (6 px d'écart) : 36 px */
+  .ex-app .ex-suggestion-btn:not(.ex-admin *) { min-width: 36px; min-height: 36px; }
+  /* Safari iOS zoome sur tout champ en moins de 16 px (recherche de l'en-tête, quantités, fauteuil, justificatif…) */
+  .ex-app input:not(.ex-admin *), .ex-app select:not(.ex-admin *), .ex-app textarea:not(.ex-admin *) { font-size: 16px !important; }
+
+  /* Péremption courte : chaque produit devient une carte (le tableau de 9 colonnes défilait en largeur, la quantité
+     et « Ajouter » hors de l'écran) — nom ; CIP et stock ; péremption ; lots ; prix ; quantité et « Ajouter » */
+  .ex-app .ex-peremption:not(.ex-admin *) thead { display: none; }
+  .ex-app .ex-peremption:not(.ex-admin *), .ex-app .ex-peremption:not(.ex-admin *) tbody { display: block; }
+  .ex-app .ex-peremption:not(.ex-admin *) tr {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 6px 10px; padding: 14px;
+    grid-template-areas: "nom nom nom" "cip cip stock" "per per per" "lots lots lots" "base remise net" "qte qte qte";
+  }
+  .ex-app .ex-peremption:not(.ex-admin *) td { padding: 0 !important; max-width: none !important; text-align: left !important; min-width: 0; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(1) { grid-area: cip; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(2) { grid-area: nom; font-size: 14px !important; line-height: 1.35; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(3) { grid-area: stock; justify-self: end; font-size: 12px; color: var(--ink-soft); }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4) { grid-area: per; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4) > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5) { grid-area: lots; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5):empty { display: none; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5) > div { white-space: normal !important; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(6) { grid-area: base; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(7) { grid-area: remise; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(8) { grid-area: net; justify-self: end; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(9) { grid-area: qte; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(3)::before { content: "Stock : "; font-weight: 500; }
+  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4)::before { content: "Péremption"; display: block; font-size: 11px; font-weight: 700;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 2px; }
+  .ex-app .ex-peremption:not(.ex-admin *) .ex-peremption-ajouter { min-height: 40px; margin-top: 0 !important; padding: 0 18px !important; font-size: 13px !important; }
+
+  /* Commandes groupées, liste des opérations : une carte par opération (le tableau de 760 px défilait en largeur).
+     La ligne entière reste cliquable (même onClick) */
+  .ex-app .ex-ops:not(.ex-admin *) { display: block; min-width: 0 !important; }
+  .ex-app .ex-ops:not(.ex-admin *) colgroup, .ex-app .ex-ops:not(.ex-admin *) thead { display: none; }
+  .ex-app .ex-ops:not(.ex-admin *) tbody { display: block; }
+  .ex-app .ex-ops:not(.ex-admin *) tr {
+    display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px 12px; padding: 14px;
+    grid-template-areas: "nom nom" "periode periode" "statut action" "mine action";
+  }
+  .ex-app .ex-ops:not(.ex-admin *) td { padding: 0 !important; min-width: 0; }
+  .ex-app .ex-ops:not(.ex-admin *) td:nth-child(1) { grid-area: nom; font-size: 14px; }
+  .ex-app .ex-ops:not(.ex-admin *) td:nth-child(2) { grid-area: periode; font-size: 12px !important; }
+  .ex-app .ex-ops:not(.ex-admin *) td:nth-child(3) { grid-area: statut; }
+  .ex-app .ex-ops:not(.ex-admin *) td:nth-child(4) { grid-area: mine; }
+  .ex-app .ex-ops:not(.ex-admin *) td:nth-child(5) { grid-area: action; align-self: center; }
+}
 
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }

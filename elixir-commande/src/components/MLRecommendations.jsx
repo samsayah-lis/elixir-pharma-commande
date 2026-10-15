@@ -69,11 +69,12 @@ export function CrossSellBanner({ cartCips = [], onAdd }) {
               </div>
               {rec.pn != null && <div className="num" style={{ fontSize: 14, fontWeight: 700, color: T.ink }}>{fmtEur(rec.pn)}</div>}
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "auto" }}>
-                <button className="ex-btn-petrole" onClick={() => onAdd?.(rec.cip, 1)} aria-label={`Ajouter ${rec.name || rec.cip} au panier`}
+                {/* 36 px sous 768 px (ex-suggestion-btn, lot 9) */}
+                <button className="ex-btn-petrole ex-suggestion-btn" onClick={() => onAdd?.(rec.cip, 1)} aria-label={`Ajouter ${rec.name || rec.cip} au panier`}
                   style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, flex: 1, height: 30, padding: "0 10px", fontSize: 12, gap: 4 }}>
                   <Icone nom="plus" taille={14} epaisseur={2.4} />Ajouter
                 </button>
-                <button className="ex-btn-discret" onClick={() => setDismissed(p => new Set([...p, rec.cip]))} title="Masquer" aria-label={`Masquer ${rec.name || rec.cip}`}
+                <button className="ex-btn-discret ex-suggestion-btn" onClick={() => setDismissed(p => new Set([...p, rec.cip]))} title="Masquer" aria-label={`Masquer ${rec.name || rec.cip}`}
                   style={{ width: 28, height: 28, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
                   <Icone nom="fermer" taille={14} epaisseur={2.4} />
                 </button>
@@ -122,7 +123,7 @@ export function ReorderSuggestion({ pharmacyCip, onApply }) {
             <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 2 }}>Basé sur votre historique de commandes</div>
           </div>
         </div>
-        <button className="ex-btn-discret" onClick={() => setVisible(false)} aria-label="Masquer les suggestions" title="Masquer" style={ui.rond(32)}>
+        <button className="ex-btn-discret ex-cible" onClick={() => setVisible(false)} aria-label="Masquer les suggestions" title="Masquer" style={ui.rond(32)}>
           <Icone nom="fermer" taille={16} />
         </button>
       </div>

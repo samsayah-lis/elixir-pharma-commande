@@ -428,11 +428,12 @@ function OpsList({ ops, onOpen }) {
   const past = ops.filter(o => !(o.phase === "ouverte" || o.phase === "a_venir")).sort((a, b) => String(b.end_date || "").localeCompare(String(a.end_date || "")));
   const cell = { padding: "12px 14px", verticalAlign: "middle" };
   const th = { ...ui.th, padding: "8px 14px", background: "transparent" };
-  // une carte par groupe d'opérations ; lignes .ex-tr (zébrure et survol en CSS : plus de fond réécrit en JS)
+  // une carte par groupe d'opérations ; lignes .ex-tr (zébrure et survol en CSS : plus de fond réécrit en JS) ;
+  // sous 768 px, une carte par opération (classe ex-ops, lot 9 : disposition seulement, ligne toujours cliquable)
   const section = (title, list) => list.length > 0 && (
     <div style={{ ...card, padding: 0, overflowX: "auto" }}>
       <div className="num" style={{ ...h2, padding: "16px 14px 4px" }}>{title} ({list.length})</div>
-      <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontSize: 14, tableLayout: "fixed" }}>
+      <table className="ex-ops" style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontSize: 14, tableLayout: "fixed" }}>
         <colgroup><col style={{ width: "31%" }} /><col style={{ width: "19%" }} /><col style={{ width: "17%" }} /><col style={{ width: "18%" }} /><col style={{ width: "15%" }} /></colgroup>
         <thead><tr><th style={th}>Opération</th><th style={th}>Période</th><th style={th}>Statut</th><th style={th}>Ma commande</th><th style={th} /></tr></thead>
         <tbody>
