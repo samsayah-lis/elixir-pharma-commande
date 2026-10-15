@@ -228,7 +228,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const [promoForm, setPromoForm] = useState({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"", withPhotos:false });
   const [editingPromoId, setEditingPromoId] = useState(null);
   const [addingProductToPromo, setAddingProductToPromo] = useState(null); // promoId
-  const [promoProductForm, setPromoProductForm] = useState({ name:"", cip:"", pv:"", pct:"", pn:"", note:"" });
+  const PRODUIT_VIDE = { name:"", cip:"", pv:"", pct:"", pn:"", note:"", image_url:"" };
+  const [promoProductForm, setPromoProductForm] = useState(PRODUIT_VIDE);
+  const [editingPromoProduct, setEditingPromoProduct] = useState(null);   // { promoId, prodId } : modification d'un produit existant
   // Excel import
   const [search, setSearch]       = useState("");
   const [filterSection, setFilterSection] = useState("all");
@@ -532,13 +534,34 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const togglePromoActive = (id) => savePromos(promos.map(p => p.id===id ? {...p, active:!p.active} : p));
   const deletePromo = (id) => { if(!window.confirm("Supprimer cette section promo ?")) return; savePromos(promos.filter(p => p.id!==id)); };
   const addProductToPromo = (promoId) => {
-    const pn = parseFloat(promoProductForm.pn);
+    const pn = parseFloat(String(promoProductForm.pn).replace(",", "."));
     if (!promoProductForm.name.trim() || isNaN(pn)) return alert("Nom et prix net requis");
-    const prod = { id: Date.now(), name: promoProductForm.name.trim(), cip: promoProductForm.cip.trim()||null, pv: parseFloat(promoProductForm.pv)||null, pct: promoProductForm.pct||null, pn, note: promoProductForm.note.trim()||null };
-    savePromos(promos.map(p => p.id===promoId ? {...p, products:[...(p.products||[]), prod]} : p));
-    setPromoProductForm({ name:"", cip:"", pv:"", pct:"", pn:"", note:"" });
+    const img = String(promoProductForm.image_url || "").trim();
+    if (img && !/^https:\/\/\S+$/.test(img)) return alert("Photo : adresse https://… de l'image");
+    const champs = { name: promoProductForm.name.trim(), cip: String(promoProductForm.cip || "").trim() || null, pv: parseFloat(String(promoProductForm.pv).replace(",", ".")) || null,
+      pct: String(promoProductForm.pct || "").trim() || null, pn, note: String(promoProductForm.note || "").trim() || null, image_url: img || null };
+    if (editingPromoProduct?.promoId === promoId) {
+      // modification sur place (même position : les paniers en cours restent valables)
+      savePromos(promos.map(p => p.id===promoId ? {...p, products:(p.products||[]).map(pr => pr.id===editingPromoProduct.prodId ? { ...pr, ...champs } : pr)} : p));
+      flash("✅ Produit modifié");
+    } else {
+      savePromos(promos.map(p => p.id===promoId ? {...p, products:[...(p.products||[]), { id: Date.now(), ...champs }]} : p));
+      flash("✅ Produit ajouté à la promo !");
+    }
+    setPromoProductForm(PRODUIT_VIDE);
+    setEditingPromoProduct(null);
     setAddingProductToPromo(null);
-    flash("✅ Produit ajouté à la promo !");
+  };
+  const editerProduitPromo = (promoId, prod) => {
+    setPromoProductForm({ name: prod.name || "", cip: prod.cip || "", pv: prod.pv ?? "", pct: prod.pct || "", pn: prod.pn ?? "", note: prod.note || "", image_url: prod.image_url || "" });
+    setEditingPromoProduct({ promoId, prodId: prod.id });
+    setAddingProductToPromo(promoId);
+  };
+  const editerPromo = (ps) => {
+    const name = window.prompt("Nom du menu", ps.name); if (name === null) return;
+    const description = window.prompt("Sous-titre (facultatif)", ps.description || ""); if (description === null) return;
+    if (!name.trim()) return alert("Nom requis");
+    savePromos(promos.map(p => p.id===ps.id ? {...p, name: name.trim(), description: description.trim()} : p));
   };
   const removeProductFromPromo = (promoId, prodId) => savePromos(promos.map(p => p.id===promoId ? {...p, products:(p.products||[]).filter(pr=>pr.id!==prodId)} : p));
   const updatePromoField = (id, field, val) => savePromos(promos.map(p => p.id===id ? {...p, [field]:val} : p));
@@ -1180,7 +1203,10 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                       background:ps.active?"#fef3c7":"#dcfce7",border:"none",borderRadius:8,padding:"5px 10px",
                       cursor:"pointer",fontSize:11,fontWeight:800,color:ps.active?"#92400e":"#166534"
                     }}>{ps.active?"Masquer":"Afficher"}</button>
-                    <button onClick={()=>setAddingProductToPromo(addingProductToPromo===ps.id?null:ps.id)} style={{background:"#eff6ff",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#1e40af"}}>+ Produit</button>
+                    <button onClick={()=>updatePromoField(ps.id,"withPhotos",!ps.withPhotos)} title="Affichage des produits avec leurs photos (grille) ou en tableau"
+                      style={{background:ps.withPhotos?"#ede9fe":"#f3f4f6",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:ps.withPhotos?"#5b21b6":"#6b7280"}}>📷 {ps.withPhotos?"Photos":"Tableau"}</button>
+                    <button onClick={()=>editerPromo(ps)} title="Modifier le nom et le sous-titre" style={{background:"#f3f4f6",border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#374151"}}>✏️</button>
+                    <button onClick={()=>{ setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); setAddingProductToPromo(addingProductToPromo===ps.id?null:ps.id); }} style={{background:"#eff6ff",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#1e40af"}}>+ Produit</button>
                     <button onClick={()=>deletePromo(ps.id)} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:"#b91c1c"}}>🗑</button>
                   </div>
                 </div>
@@ -1188,7 +1214,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 {/* Add product form */}
                 {addingProductToPromo===ps.id&&(
                   <div style={{background:"#eff6ff",padding:"12px 16px",borderBottom:"1px solid #dbeafe"}}>
-                    <div style={{fontWeight:700,fontSize:12,color:"#1e40af",marginBottom:10}}>Ajouter un produit à {ps.name}</div>
+                    <div style={{fontWeight:700,fontSize:12,color:"#1e40af",marginBottom:10}}>{editingPromoProduct?.promoId===ps.id ? "Modifier le produit" : `Ajouter un produit à ${ps.name}`}</div>
                     <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:8}}>
                       <div>
                         <label style={{...LS,fontSize:10}}>Nom *</label>
@@ -1217,9 +1243,16 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         <input value={promoProductForm.note} onChange={e=>setPromoProductForm(f=>({...f,note:e.target.value}))} placeholder="Stock limité" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                     </div>
+                    <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:8}}>
+                      <div style={{flex:1}}>
+                        <label style={{...LS,fontSize:10}}>Photo (adresse https:// de l'image, facultatif)</label>
+                        <input value={promoProductForm.image_url} onChange={e=>setPromoProductForm(f=>({...f,image_url:e.target.value}))} placeholder="https://…/image.png" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
+                      </div>
+                      {/^https:\/\//.test(promoProductForm.image_url||"") && <img src={promoProductForm.image_url} alt="" style={{width:44,height:44,objectFit:"contain",borderRadius:6,background:"white",border:"1px solid #dbeafe"}}/>}
+                    </div>
                     <div style={{display:"flex",gap:8}}>
-                      <button onClick={()=>addProductToPromo(ps.id)} style={{...PB,flex:1,padding:"8px",fontSize:12}}>➕ Ajouter</button>
-                      <button onClick={()=>setAddingProductToPromo(null)} style={{background:"#e5e7eb",border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#374151"}}>Annuler</button>
+                      <button onClick={()=>addProductToPromo(ps.id)} style={{...PB,flex:1,padding:"8px",fontSize:12}}>{editingPromoProduct?.promoId===ps.id ? "💾 Enregistrer" : "➕ Ajouter"}</button>
+                      <button onClick={()=>{ setAddingProductToPromo(null); setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); }} style={{background:"#e5e7eb",border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#374151"}}>Annuler</button>
                     </div>
                   </div>
                 )}
@@ -1229,7 +1262,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   <div style={{padding:"8px 16px 12px"}}>
                     {ps.products.map(prod=>(
                       <div key={prod.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #f5f5f5"}}>
-                        <div>
+                        <div style={{display:"flex",alignItems:"center",gap:8}}>
+                          {prod.image_url && <img src={prod.image_url} alt="" style={{width:30,height:30,objectFit:"contain",borderRadius:4,background:"white",border:"1px solid #eee"}}/>}
                           <span style={{fontWeight:600,fontSize:12,color:"#0f2d3d"}}>{prod.name}</span>
                           {prod.cip&&<span style={{marginLeft:8}}><CipCopy cip={prod.cip}/></span>}
                           {prod.note&&<span style={{fontSize:10,color:"#e07b39",marginLeft:6,background:"#fef3ec",borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
@@ -1237,7 +1271,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           <span style={{fontSize:12,fontWeight:700,color:"#059669"}}>{prod.pn?.toFixed(2)} €</span>
                           {prod.pct&&<span style={{fontSize:11,color:"#7c3aed"}}>{prod.pct}</span>}
-                          <button onClick={()=>removeProductFromPromo(ps.id,prod.id)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:14,padding:"0 2px"}}>🗑</button>
+                          <button onClick={()=>editerProduitPromo(ps.id,prod)} title="Modifier" style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px"}}>✏️</button>
+                          <button onClick={()=>{ if (window.confirm(`Retirer « ${prod.name} » du menu ?`)) removeProductFromPromo(ps.id,prod.id); }} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:14,padding:"0 2px"}}>🗑</button>
                         </div>
                       </div>
                     ))}

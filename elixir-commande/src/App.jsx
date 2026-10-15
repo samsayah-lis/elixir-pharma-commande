@@ -647,6 +647,8 @@ export default function App() {
         accent: ps.accentColor || "#a855f7",
         columns: ["CIP", "Désignation", "Prix", "Remise", "Prix net"],
         products: (ps.products || []),
+        // grille avec visuels (image_url de chaque produit) ; sans aucune photo, le tableau habituel
+        withPhotos: !!ps.withPhotos && (ps.products || []).some(pr => pr.image_url),
         isPromo: true,
         promoId: ps.id,
       };
