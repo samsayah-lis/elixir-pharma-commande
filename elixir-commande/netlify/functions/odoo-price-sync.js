@@ -34,7 +34,11 @@ function applyRule(r, lp) {
   return null;
 }
 
-const enVigueur = (r, jour) => (!r.ds || r.ds <= jour) && (!r.de || r.de >= jour);
+const dateOdoo = (v) => { const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v ?? "")); return m ? m[1] : ""; };
+const enVigueur = (r, jour) => {
+  const ds = dateOdoo(r.ds), de = dateOdoo(r.de);
+  return (!ds || ds <= jour) && (!de || de >= jour);
+};
 
 // Index des règles en vigueur : prix unité (mq ≤ 1) par cible, paliers de quantité (règles produit mq ≥ 2) à part
 export function indexRegles(rules, jour = new Date().toISOString().slice(0, 10)) {
@@ -100,8 +104,9 @@ export const handler = async (event) => {
           pid: parseInt(it.product_id) || 0,
           tid: parseInt(it.product_tmpl_id) || 0,
           cid: parseInt(it.categ_id) || 0,
-          ds: it.date_start ? String(it.date_start).slice(0, 10) : "",
-          de: it.date_end ? String(it.date_end).slice(0, 10) : "",
+          // XML-RPC : une date vide n'arrive pas toujours comme false → ne garder qu'une vraie date AAAA-MM-JJ
+          ds: dateOdoo(it.date_start),
+          de: dateOdoo(it.date_end),
         }));
         if (items.length < 500) break;
         offset += 500;
