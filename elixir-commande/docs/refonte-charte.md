@@ -728,3 +728,35 @@ Contrôle à 375, 768, 1023, 1024 et 1440 px.
 - Libellé « Publication 6 — Février 2026 » : **aucune mention** de publication nulle part (titre d'onglet, description, en-tête, texte copié…).
 - Valeurs par défaut retenues pour les autres points du § 5 (à montrer à la cliente) : or réservé à « Envoyer la commande », aux promos et au compteur du panier ; bandeau « Commander pour une pharmacie » orange conservé ; justificatif/précommande en sarcelle ; icônes SVG pour les rayons connus, icônes de l'admin conservées ; aucune 3D dans l'app.
 - Règle commune avec la vitrine : les chiffres de conditions sont admis derrière connexion (app), jamais sur elixirpharma.fr.
+
+---
+
+## 7. Banc d'essai (lot 0)
+
+**Lancer**
+1. Une fois, ou pour rafraîchir : `npm run banc:capture`. Ce ne sont que des lectures GET publiques de la production (aucun POST, aucun jeton). Le résultat, anonymisé (ni nom, ni e-mail, ni CIP de pharmacie), va dans `dev-fixtures/`, hors git : ne jamais l'ajouter.
+2. `npm run dev`, ou la configuration `elixir-commande-banc` (port 8931). Le plugin Vite `scripts/banc/plugin.mjs` (`apply: "serve"`, absent de `vite build`) répond lui-même à `/.netlify/functions/*` : rien n'est relayé vers la production.
+3. Identification : toute adresse e-mail donne « PHARMACIE DU BANC D'ESSAI » (CIP 9999999, remplaçable par `dev-fixtures/pharmacie.json`).
+   - Mode code (celui de la production) : n'importe quel code à 6 chiffres ; `000000` affiche l'erreur.
+   - Une adresse contenant « inconnu » mène au formulaire de nouvelle pharmacie.
+   - `BANC_AUTH=legacy npm run dev` pour le mode historique (« Oui c'est moi »).
+4. Admin (`#admin`) : identifiants quelconques. Les lectures propres à l'admin ne sont pas capturées et répondent 404 : c'est attendu.
+
+**Ce que sert le banc**
+- GET : les données figées ; à défaut, des données calculées à partir d'elles : recherche Odoo locale (catalogue curaté + recherches capturées), « Mes commandes » et suggestions de la pharmacie du banc, ventes croisées prises dans la même section.
+- Autres méthodes : un succès fictif (`src/dev/reponses-fictives.js`, partagé avec l'essai à blanc). Une réponse sur mesure se pose dans `dev-fixtures/post/<fonction>[.<action>].json`, par exemple `quota-status.json` pour un contingentement dépassé.
+- Chaque envoi est journalisé dans `dev-fixtures/_envois/<jour>/` : jamais de jeton, base64 des ordonnances résumé (longueur + empreinte).
+- Variables : `BANC=0` (désactive), `BANC_AUTH`, `BANC_LATENCE=800` (états de chargement), `BANC_JOURNAL=<série>`.
+
+**Comparer les données envoyées (acceptation des lots)**
+- `BANC_JOURNAL=avant npm run dev`, puis le parcours ; on applique le lot ; `BANC_JOURNAL=apres npm run dev`, puis le même parcours.
+- `node scripts/banc/compare-envois.mjs avant apres` compare send-email, order-save, submit-order, group-order et lab-justif, identifiants et dates masqués.
+
+**Garde-fous**
+- `npm run lint` : `no-undef`, `react/jsx-no-undef`, `react-hooks/rules-of-hooks` en erreur (src et outillage).
+- `npm run zones` (`scripts/verifie-zones.mjs [--ref master]`) : zones protégées du § 4 retrouvées par leur contenu, fichiers intouchables, `netlify/functions/**`, clés de stockage. Un écart validé (lot E, mention de publication dans `handleCopy`…) s'inscrit dans `ECARTS_AUTORISES`, avec le lot et le motif.
+- Aperçus Netlify : `VITE_ESSAI_A_BLANC = "1"` dans les contextes `deploy-preview` et `branch-deploy`, dans elixir-commande/netlify.toml (vraisemblablement le fichier lu par Netlify, puisque la base est elixir-commande et que ses crons tournent) et, par précaution, dans celui de la racine.
+  - Bandeau « Aperçu : aucune commande ne part » ; tout appel non-GET aux fonctions reçoit une fausse réponse 200 ; connexion admin refusée.
+  - Si le module ne se charge pas, l'aperçu ne démarre pas.
+  - Contrôle sur un build de production : `grep -c "aucune commande ne part" dist/assets/*.js` donne 0.
+- Taille du bundle après le lot 0 : 1 094 523 octets (référence 1 094 491).

@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
+    "lint": "eslint src scripts eslint.config.js vite.config.js",
+    "banc:capture": "node scripts/banc/capture.mjs",
+    "zones": "node scripts/verifie-zones.mjs",
     "prebuild": "node scripts/gen-cips.js",
     "predev": "node scripts/gen-cips.js"
   },
@@ -23,6 +26,10 @@
   "devDependencies": {
     "@netlify/functions": "^5.1.2",
     "@vitejs/plugin-react": "^4.2.1",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
     "vite": "^5.1.0"
   }
 }

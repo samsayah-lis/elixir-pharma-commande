@@ -8,6 +8,15 @@
 [build.environment]
   NODE_VERSION = "18"
 
+# Aperçus (deploy previews, branch deploys) : mode « essai à blanc » (src/dev/essai-a-blanc.js).
+# Les fonctions d'un aperçu utilisent les variables de PRODUCTION : sans ce mode, une commande passée sur
+# un aperçu partirait réellement (e-mail, Supabase, relais PharmaML). Jamais en production.
+[context.deploy-preview.environment]
+  VITE_ESSAI_A_BLANC = "1"
+
+[context.branch-deploy.environment]
+  VITE_ESSAI_A_BLANC = "1"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

@@ -10,6 +10,7 @@ import { allocate } from "./wheelchair-logic.js";
 import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
 import MyOrdersPanel from "./components/MyOrdersPanel";
+import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
 
@@ -275,28 +276,6 @@ export default function App() {
   const [ulabsConfirmed, setUlabsConfirmed] = useState(false);
   const [ulabsError, setUlabsError] = useState(null);
   const [ulabsPalier, setUlabsPalier] = useState(null); // null | "engage" | "expert"
-  const [countdown, setCountdown] = useState("");
-  useEffect(() => {
-    const tick = () => {
-      // Fin dimanche 23:59:59
-      const now = new Date();
-      const end = new Date(now);
-      const day = now.getDay(); // 0=dim
-      const daysUntilSun = day === 0 ? 7 : 7 - day;
-      end.setDate(now.getDate() + daysUntilSun);
-      end.setHours(23, 59, 59, 0);
-      const diff = end - now;
-      if (diff <= 0) { setCountdown("Terminé"); return; }
-      const d = Math.floor(diff / 86400000);
-      const h = Math.floor((diff % 86400000) / 3600000);
-      const m = Math.floor((diff % 3600000) / 60000);
-      const s = Math.floor((diff % 60000) / 1000);
-      setCountdown(`${d}j ${String(h).padStart(2,"0")}h ${String(m).padStart(2,"0")}m ${String(s).padStart(2,"0")}s`);
-    };
-    tick();
-    const t = setInterval(tick, 1000);
-    return () => clearInterval(t);
-  }, []);
   const [quantities, setQuantities] = useState(() => readCart(actingFor)[0]);
   // Produits hors catalogue curaté (ajoutés depuis Saisie de commande / Péremption courte)
   const [specialItems, setSpecialItems] = useState(() => readCart(actingFor)[1]);
@@ -2100,7 +2079,7 @@ export default function App() {
                       <span style={{ fontSize: 16 }}>⏱️</span>
                       <div>
                         <div style={{ fontSize: 9, color: "#888", textTransform: "uppercase", letterSpacing: 1 }}>Fermeture dimanche 23h59</div>
-                        <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d", fontVariantNumeric: "tabular-nums" }}>{countdown}</div>
+                        <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d", fontVariantNumeric: "tabular-nums" }}><CompteARebours /></div>
                       </div>
                     </div>
                   </div>

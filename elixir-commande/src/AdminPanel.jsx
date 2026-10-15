@@ -268,7 +268,6 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const searchPharm = async (q) => {
     if (!q.trim()) return;
     setPharmSearching(true);
-    const url = `${process.env.REACT_APP_SUPABASE_URL || ""}`; // will use netlify fn instead
     const r = await adminFetch(`/.netlify/functions/pharmacy-search?q=${encodeURIComponent(q.trim())}`);
     const d = await r.json();
     setPharmResults(Array.isArray(d) ? d : []);
@@ -426,8 +425,6 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
       setPwdError("Erreur réseau : " + e.message);
     }
   };
-
-  const handleField = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   // ── Recherche dans le catalogue Odoo (odoo_catalog Supabase) ──────────
 

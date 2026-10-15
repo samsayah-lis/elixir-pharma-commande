@@ -3,3 +3,5 @@ dist/
 .env
 .netlify/
 *.log
+# Banc d'essai : données figées capturées en production (pharmacies, commandes) — jamais dans git
+dev-fixtures/
