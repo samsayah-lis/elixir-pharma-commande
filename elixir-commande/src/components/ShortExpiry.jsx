@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from "react";
+import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
+import { Icone } from "../icons.jsx";
+import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 
-const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
+// Affichage seulement (refonte charte, lot 7) : format français de src/theme.js ; le panier reçoit les prix calculés
+// par getDiscountedPrice, inchangés.
+const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
 
 // En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés)
 const adminAuthHeaders = () => {
@@ -8,7 +13,9 @@ const adminAuthHeaders = () => {
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
 
-export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
+// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises modifiables, synchro Odoo).
+// icone, couleur : icône et couleur du menu (App) ; absentes dans l'admin → horloge et orange d'origine (filet et pastille).
+export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, couleur = "#ea580c" }) {
   const [products, setProducts] = useState([]);
   const [discounts, setDiscounts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -106,12 +113,11 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
     return Math.round((new Date(dateStr) - new Date()) / 86400000);
   };
 
+  // péremption proche : ton warn ; un mois ou moins : danger (toujours avec la date et « N j restants » écrits)
   const expiryColor = (days) => {
-    if (days === null) return "#888";
-    if (days <= 30) return "#dc2626";
-    if (days <= 60) return "#ea580c";
-    if (days <= 90) return "#d97706";
-    return "#ca8a04";
+    if (days === null) return T.inkMute;
+    if (days <= 30) return T.danger;
+    return T.warn;
   };
 
   // ── Remise applicable : admin override > défaut (50% < 500€, 20% >= 500€) ──
@@ -139,35 +145,32 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
 
   return (
     <div>
-      {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #7c2d12, #ea580c)", borderRadius: 16, padding: "20px 24px", marginBottom: 20, color: "white" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Péremption courte</div>
-            <div style={{ fontSize: 13, opacity: 0.8 }}>
-              Produits en stock avec péremption entre J+30 et 4 mois
-              {!loading && <span> · {products.length} référence{products.length > 1 ? "s" : ""}</span>}
-            </div>
-          </div>
-          {isAdmin && (
-            <button onClick={triggerExpirySync} disabled={syncing}
-              style={{ background: "rgba(255,255,255,0.15)", border: "1px solid rgba(255,255,255,0.3)", color: "white", borderRadius: 10, padding: "8px 16px", fontSize: 12, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.5 : 1, whiteSpace: "nowrap" }}>
-            {syncing && syncProgress ? `⏳ ${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "⏳ Démarrage..." : "🔄 Actualiser depuis Odoo"}
+      {/* En-tête de vue commun (lot 7) au lieu du bandeau en dégradé orange : l'orange ne reste que dans le filet et la pastille */}
+      <EnteteVue
+        icone={icone || <Icone nom="horloge" taille={24} />}
+        couleur={couleur}
+        titre="Péremption courte"
+        sousTitre="Produits en stock avec péremption entre J+30 et 4 mois"
+        actions={isAdmin && (
+          <button className={syncing ? undefined : "ex-btn-ligne"} onClick={triggerExpirySync} disabled={syncing}
+            style={{ ...btnLigne, marginTop: 10, ...(syncing ? { cursor: "default", opacity: 0.6 } : {}) }}>
+            <Icone nom={syncing ? "horloge" : "actualiser"} taille={14} />
+            {syncing && syncProgress ? `${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "Démarrage…" : "Actualiser depuis Odoo"}
           </button>
-          )}
-        </div>
-      </div>
+        )}
+        aside={!loading && <CompteurVue valeur={products.length.toLocaleString("fr-FR")} libelle={products.length > 1 ? "références" : "référence"} />}
+      />
 
-      {/* Search + Sort */}
-      <div style={{ display: "flex", gap: 10, marginBottom: 16 }}>
-        <div style={{ flex: 1, position: "relative" }}>
-          <span style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", fontSize: 14, opacity: 0.4 }}>🔍</span>
+      {/* Recherche en pastille blanche + tri (comme la recherche de section du catalogue) */}
+      <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+        <div style={{ flex: "1 1 240px", position: "relative" }}>
+          <Icone nom="recherche" taille={16} style={{ position: "absolute", left: 14, top: "50%", transform: "translateY(-50%)", color: T.inkMute, pointerEvents: "none" }} />
           <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Filtrer par nom ou CIP..."
-            style={{ width: "100%", padding: "10px 14px 10px 38px", fontSize: 13, border: "1.5px solid #e2e8f0", borderRadius: 10, outline: "none", boxSizing: "border-box" }} />
+            placeholder="Filtrer par nom ou CIP…" aria-label="Filtrer par nom ou CIP" className="ex-saisie-recherche"
+            style={{ width: "100%", height: 40, padding: "0 16px 0 40px", fontSize: 14, color: T.ink, background: T.surface, border: `1px solid ${T.lineField}`, borderRadius: R.pill, outline: "none", boxSizing: "border-box" }} />
         </div>
-        <select value={sortBy} onChange={e => setSortBy(e.target.value)}
-          style={{ padding: "8px 14px", border: "1.5px solid #e2e8f0", borderRadius: 10, fontSize: 13, background: "white", cursor: "pointer" }}>
+        <select value={sortBy} onChange={e => setSortBy(e.target.value)} aria-label="Trier les produits"
+          style={{ height: 40, padding: "0 14px", border: `1px solid ${T.lineField}`, borderRadius: R.pill, fontSize: 13, color: T.ink, background: T.surface, cursor: "pointer" }}>
           <option value="expiry">Trier : péremption proche</option>
           <option value="name">Trier : A → Z</option>
           <option value="stock">Trier : stock décroissant</option>
@@ -175,46 +178,50 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
       </div>
 
       {/* Loading */}
-      {loading && <div style={{ textAlign: "center", padding: 40, color: "#888" }}>Chargement des produits à péremption courte...</div>}
+      {loading && <div role="status" style={{ textAlign: "center", padding: 40, color: T.inkMute, fontSize: 14 }}>Chargement des produits à péremption courte…</div>}
 
       {/* Error */}
       {!loading && error && (
-        <div style={{ background: "#fee2e2", border: "1px solid #fca5a5", borderRadius: 14, padding: "16px 20px", marginBottom: 16 }}>
-          <div style={{ fontWeight: 700, fontSize: 13, color: "#991b1b" }}>{error}</div>
-          <button onClick={fetchData} style={{ marginTop: 8, background: "#dc2626", color: "white", border: "none", borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Réessayer</button>
+        <div role="alert" style={{ ...ui.encart("danger"), padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ fontWeight: 700, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={16} style={{ marginTop: 1 }} />{error}</div>
+          <button className="ex-btn-danger-ligne" onClick={fetchData} style={{ ...ui.btn("ligne", "s"), background: undefined, color: undefined, boxShadow: undefined, marginTop: 10 }}>Réessayer</button>
         </div>
       )}
 
       {/* Empty */}
       {!loading && !error && products.length === 0 && (
-        <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
-          <div style={{ fontWeight: 700, fontSize: 16, color: "#0f2d3d", marginBottom: 8 }}>
-            {syncing ? "Synchronisation des péremptions en cours..." : "Aucune donnée de péremption"}
+        <div style={{ ...ui.card, textAlign: "center", padding: "48px 20px" }}>
+          <span aria-hidden="true" style={{ width: 56, height: 56, borderRadius: R.pill, background: T.mint, color: T.teal, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 14 }}>
+            <Icone nom="horloge" taille={26} />
+          </span>
+          <div style={{ fontWeight: 640, fontSize: 16, color: T.ink, marginBottom: 8 }}>
+            {syncing ? "Synchronisation des péremptions en cours…" : "Aucune donnée de péremption"}
           </div>
-          <div style={{ fontSize: 13, color: "#888", marginBottom: 20 }}>
+          <div style={{ fontSize: 13, color: T.inkSoft, marginBottom: 20 }}>
             Les dates de péremption doivent être synchronisées depuis Odoo.
           </div>
-          <button onClick={triggerExpirySync} disabled={syncing}
-            style={{ background: "linear-gradient(135deg, #7c2d12, #ea580c)", color: "white", border: "none", borderRadius: 12, padding: "14px 28px", fontSize: 15, fontWeight: 700, cursor: syncing ? "default" : "pointer", opacity: syncing ? 0.6 : 1 }}>
-            {syncing ? "⏳ Synchronisation en cours..." : "🔄 Synchroniser les péremptions Odoo"}
+          <button className={syncing ? undefined : "ex-btn-petrole"} onClick={triggerExpirySync} disabled={syncing}
+            style={{ ...ui.btn("primaire", "l"), background: syncing ? T.sand : undefined, color: syncing ? T.inkSoft : undefined, cursor: syncing ? "default" : "pointer" }}>
+            <Icone nom={syncing ? "horloge" : "actualiser"} taille={18} />
+            {syncing ? "Synchronisation en cours…" : "Synchroniser les péremptions Odoo"}
           </button>
         </div>
       )}
 
-      {/* Table */}
+      {/* Table : carte blanche, en-tête neutre (eyebrow --ink-mute), lignes .ex-tr (zébrure, survol) ; défilement
+          horizontal dans le cadre sur petit écran (le tableau ne déborde plus de la page) */}
       {!loading && sorted.length > 0 && (
-        <div style={{ background: "white", borderRadius: 14, overflow: "hidden", boxShadow: "0 2px 12px rgba(0,0,0,0.06)" }}>
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+        <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: R.m, overflowX: "auto", boxShadow: T.shadow1 }}>
+          <table className="num" style={{ width: "100%", borderCollapse: "collapse", color: T.ink }}>
             <thead>
-              <tr style={{ background: "#7c2d12" }}>
+              <tr>
                 {["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix de base", isAdmin ? "Remise admin" : "Remise", "Prix remisé", "Qté"].map(h => (
-                  <th key={h} style={{ color: "white", padding: "10px 12px", textAlign: "left", fontSize: 11, fontWeight: 700, letterSpacing: 0.5, whiteSpace: "nowrap" }}>{h.toUpperCase()}</th>
+                  <th key={h} style={{ ...ui.th, padding: "10px 10px", textAlign: ["Stock", "Qté"].includes(h) ? "center" : ["Prix de base", "Prix remisé"].includes(h) ? "right" : "left" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {sorted.map((p, i) => {
+              {sorted.map((p) => {
                 const days = daysUntil(p.earliest_expiry);
                 const disc = getDiscount(p);
                 const discPrice = getDiscountedPrice(p);
@@ -222,85 +229,84 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
                 const qty = quantities[p.cip] || 0;
 
                 return (
-                  <tr key={p.cip} style={{ background: i % 2 === 0 ? "white" : "#fafbfc", borderBottom: "1px solid #f0f2f5" }}>
-                    <td style={{ padding: "10px 12px", fontSize: 11, fontFamily: "monospace", color: "#888" }}>{p.cip}</td>
-                    <td style={{ padding: "10px 12px", fontWeight: 600, fontSize: 13, color: "#0f2d3d", maxWidth: 280 }}>{p.name}</td>
-                    <td style={{ padding: "10px 12px", textAlign: "center" }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: p.available > 10 ? "#059669" : p.available > 0 ? "#d97706" : "#dc2626" }}>
+                  <tr key={p.cip} className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
+                    <td style={{ padding: "10px 10px", fontSize: 12, fontFamily: T.mono, color: T.inkMute }}>{p.cip}</td>
+                    <td style={{ padding: "10px 10px", fontWeight: 600, fontSize: 13, color: T.ink, maxWidth: 260 }}>{p.name}</td>
+                    <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                      <span style={{ fontWeight: 700, fontSize: 14, color: p.available > 10 ? T.ok : p.available > 0 ? T.warn : T.danger }}>
                         {p.available}
                       </span>
                     </td>
-                    <td style={{ padding: "10px 12px" }}>
+                    <td style={{ padding: "10px 10px" }}>
                       {p.earliest_expiry && (
                         <div>
                           <div style={{ fontWeight: 700, fontSize: 13, color: expiryColor(days) }}>
                             {new Date(p.earliest_expiry).toLocaleDateString("fr-FR")}
                           </div>
-                          <div style={{ fontSize: 10, color: expiryColor(days), fontWeight: 600 }}>
-                            {days != null && (days <= 0 ? "EXPIRÉ" : `${days}j restants`)}
+                          <div style={{ fontSize: 11, color: expiryColor(days), fontWeight: 600 }}>
+                            {days != null && (days <= 0 ? "EXPIRÉ" : `${days} j restants`)}
                           </div>
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "10px 12px", fontSize: 11, color: "#666" }}>
+                    <td style={{ padding: "10px 10px", fontSize: 11, color: T.inkSoft }}>
                       {(p.lots || []).slice(0, 3).map((l, j) => (
                         <div key={j} style={{ whiteSpace: "nowrap" }}>
                           {l.lot_name} ({l.qty}) {l.expiry ? `· ${new Date(l.expiry).toLocaleDateString("fr-FR")}` : ""}
                         </div>
                       ))}
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right", fontSize: 13, color: "#aaa", textDecoration: "line-through", fontWeight: 400 }}>
+                    <td style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, color: T.inkMute, textDecoration: "line-through", fontWeight: 400, whiteSpace: "nowrap" }}>
                       {fmt(p.list_price)}
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                    <td style={{ padding: "10px 10px", textAlign: "left" }}>
                       {isAdmin ? (
                         editingDiscount === p.cip ? (
                           <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                             <input type="number" min="0" max="99" step="1" value={discountInput}
                               onChange={e => setDiscountInput(e.target.value)}
                               onKeyDown={e => e.key === "Enter" && saveDiscount(p.cip, p.name)}
-                              autoFocus
-                              style={{ width: 48, textAlign: "center", border: "1.5px solid #ea580c", borderRadius: 6, padding: "3px", fontSize: 13, outline: "none" }} />
+                              autoFocus aria-label={`Remise sur ${p.name} (%)`}
+                              style={{ ...ui.qtyInput(true), width: 48 }} />
                             <span style={{ fontSize: 12 }}>%</span>
-                            <button onClick={() => saveDiscount(p.cip, p.name)} disabled={savingDiscount}
-                              style={{ background: "#059669", color: "white", border: "none", borderRadius: 4, padding: "3px 6px", fontSize: 10, cursor: "pointer", fontWeight: 700 }}>✓</button>
-                            <button onClick={() => { setEditingDiscount(null); setDiscountInput(""); }}
-                              style={{ background: "none", border: "none", cursor: "pointer", color: "#ccc", fontSize: 12 }}>✕</button>
+                            <button onClick={() => saveDiscount(p.cip, p.name)} disabled={savingDiscount} aria-label="Enregistrer la remise" title="Enregistrer"
+                              style={{ ...ui.rond(26), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={13} epaisseur={2.6} /></button>
+                            <button className="ex-btn-discret" onClick={() => { setEditingDiscount(null); setDiscountInput(""); }} aria-label="Annuler" title="Annuler"
+                              style={ui.rond(26)}><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
                           </div>
                         ) : (
-                          <button onClick={() => { setEditingDiscount(p.cip); setDiscountInput(String(disc)); }}
+                          // remise modifiable (admin) : ton info si une remise propre au produit est posée, sinon remise par défaut en or + encre
+                          <button onClick={() => { setEditingDiscount(p.cip); setDiscountInput(String(disc)); }} title="Modifier la remise"
                             style={{
-                              background: hasAdminOverride ? "#dbeafe" : "#d1fae5",
-                              border: hasAdminOverride ? "1px solid #93c5fd" : "1px solid #6ee7b7",
-                              borderRadius: 6, padding: "3px 10px", fontSize: 12, fontWeight: 700,
-                              color: hasAdminOverride ? "#1e40af" : "#065f46", cursor: "pointer",
+                              ...ui.badge(hasAdminOverride ? "info" : "promo"), fontSize: 12, padding: "3px 10px", border: `1px solid ${hasAdminOverride ? tone("info").border : "transparent"}`,
+                              cursor: "pointer", fontFamily: "inherit",
                             }}>
-                            -{disc}% {hasAdminOverride ? "✏️" : ""}
+                            {fmtPct(disc)}{hasAdminOverride && <Icone nom="crayon" taille={12} />}
                           </button>
                         )
                       ) : (
-                        <span style={{ background: "#d1fae5", color: "#065f46", borderRadius: 4, padding: "2px 8px", fontSize: 12, fontWeight: 700 }}>-{disc}%</span>
+                        <span style={{ ...ui.badge("promo"), fontSize: 12 }}>{fmtPct(disc)}</span>
                       )}
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "right" }}>
-                      <span style={{ fontWeight: 800, fontSize: 15, color: "#059669" }}>
+                    <td style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>
                         {fmt(discPrice)}
                       </span>
                     </td>
-                    <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                    <td style={{ padding: "10px 10px", textAlign: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
-                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
-                          style={{ background: "#f0f2f5", border: "none", borderRadius: 5, width: 24, height: 24, cursor: "pointer", fontWeight: 700, fontSize: 14 }}>−</button>
+                        <button className="ex-qte-moins" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
+                          aria-label={`Diminuer la quantité de ${p.name}`} style={pas}><Icone nom="moins" taille={12} epaisseur={2.6} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""}
                           onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: parseInt(e.target.value) || 0 }))}
-                          placeholder="0"
-                          style={{ width: 42, textAlign: "center", border: `1.5px solid ${qty > 0 ? "#ea580c" : "#ddd"}`, borderRadius: 5, padding: "3px", fontSize: 13, fontWeight: qty > 0 ? 700 : 400, outline: "none" }} />
-                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
-                          style={{ background: "#7c2d12", border: "none", borderRadius: 5, width: 24, height: 24, cursor: "pointer", fontWeight: 700, fontSize: 14, color: "white" }}>+</button>
+                          placeholder="0" aria-label={`Quantité ${p.name}`}
+                          style={{ ...ui.qtyInput(qty > 0), width: 44 }} />
+                        <button className="ex-qte-plus" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
+                          aria-label={`Augmenter la quantité de ${p.name}`} style={pas}><Icone nom="plus" taille={12} epaisseur={2.6} /></button>
                       </div>
                       {qty > 0 && (
-                        <button onClick={() => handleAdd(p)}
-                          style={{ marginTop: 4, background: "#ea580c", color: "white", border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
+                        <button className="ex-btn-petrole" onClick={() => handleAdd(p)}
+                          style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, height: 26, padding: "0 12px", fontSize: 12, marginTop: 6 }}>
                           Ajouter
                         </button>
                       )}
@@ -315,3 +321,10 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip }) {
     </div>
   );
 }
+
+// ── Atomes (refonte charte, lot 7) ──
+// bouton secondaire à filet (synchro admin) : survol par la classe ex-btn-ligne
+const btnLigne = { ...ui.btn("ligne", "s"), background: undefined, boxShadow: `inset 0 0 0 1.5px ${T.lineField}`, fontSize: 12 };
+// « − » / « + » de 24 px du tableau : fond et survol par les classes ex-qte-moins / ex-qte-plus
+const pas = { width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
+  display: "flex", alignItems: "center", justifyContent: "center" };

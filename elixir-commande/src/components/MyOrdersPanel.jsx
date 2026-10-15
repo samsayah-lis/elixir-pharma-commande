@@ -1,33 +1,51 @@
 import React from "react";
 import { JUSTIF_STATUTS } from "../lab-justif-client.js";
+import { T, R, ui, fmtEur } from "../theme.js";
+import { Icone } from "../icons.jsx";
+
+// ── Mes commandes (refonte charte, lot 7 : docs/refonte-charte.md § 3) ──
+// Fenêtre paper de rayon 28 sur voile --scrim (sans flou) ; une carte blanche par commande, comme la maquette de la
+// vitrine (site/src/styles/digital.css, .commandes) : statut écrit (« Traitée » menthe + sarcelle, « En attente »,
+// « Commande labo » sarcelle), montants au format français (affichage seulement), « Recommander » en pastille à filet.
+// Regroupement des lignes multi-CIP, suivi des justificatifs et onReorder inchangés.
+const STATUT = {
+  traitee: { ton: "info", icone: "coche", libelle: "Traitée" },
+  attente: { ton: "warn", icone: "horloge", libelle: "En attente" },
+  labo:    { ton: "labo", icone: "document", libelle: "Commande labo" },
+};
+const dateLongue = (d) => new Date(d).toLocaleDateString("fr-FR", { day:"numeric", month:"long" });
+const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
 export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder }) {
   return (
-    <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.4)", zIndex:400, backdropFilter:"blur(2px)", display:"flex", justifyContent:"center", alignItems:"center", padding:20 }}
+    <div role="dialog" aria-modal="true" aria-labelledby="mes-commandes-titre" style={{ ...ui.overlay, zIndex:400, padding:16 }}
       onClick={onClose}>
       <div onClick={e => e.stopPropagation()} style={{
-        background:"white", borderRadius:20, width:"100%", maxWidth:700, maxHeight:"85vh", overflow:"hidden",
-        display:"flex", flexDirection:"column", boxShadow:"0 24px 64px rgba(0,0,0,0.25)"
+        background:T.paper, color:T.ink, borderRadius:R.l, width:"100%", maxWidth:720, maxHeight:"85vh", overflow:"hidden",
+        display:"flex", flexDirection:"column", boxShadow:T.shadow3,
       }}>
-        {/* Header */}
-        <div style={{ padding:"20px 24px", borderBottom:"1px solid #f0f2f5", display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <div>
-            <div style={{ fontWeight:800, fontSize:18, color:"#0f2d3d" }}>📋 Mes commandes</div>
-            <div style={{ fontSize:12, color:"#888", marginTop:2 }}>{pharmacyName} · {orders.length} commande(s)</div>
+        {/* En-tête */}
+        <div style={{ padding:"20px 20px 16px 24px", borderBottom:`1px solid ${T.line}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
+          <div style={{ minWidth:0 }}>
+            <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
+            <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName} · {pluriel(orders.length, "commande")}</div>
           </div>
-          <button onClick={onClose}
-            style={{ background:"#f0f2f5", border:"none", borderRadius:8, width:32, height:32, cursor:"pointer", fontSize:16 }}>✕</button>
+          <button className="ex-btn-discret" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
 
-        {/* Content */}
-        <div style={{ flex:1, overflowY:"auto", padding:"16px 24px" }}>
-          {loading && <div style={{ textAlign:"center", padding:40, color:"#888" }}>Chargement...</div>}
+        {/* Contenu */}
+        <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px", background:T.cream }}>
+          {loading && <div role="status" style={{ textAlign:"center", padding:40, color:T.inkMute, fontSize:14 }}>Chargement…</div>}
           {!loading && orders.length === 0 && (
-            <div style={{ textAlign:"center", padding:40, color:"#aaa" }}>
-              <div style={{ fontSize:48, marginBottom:12 }}>📦</div>
-              <div style={{ fontSize:15, fontWeight:600 }}>Aucune commande trouvée</div>
+            <div style={{ textAlign:"center", padding:"40px 20px" }}>
+              <span aria-hidden="true" style={{ width:56, height:56, borderRadius:R.pill, background:T.mint, color:T.teal, display:"inline-flex", alignItems:"center", justifyContent:"center", marginBottom:12 }}>
+                <Icone nom="commandes" taille={26} />
+              </span>
+              <div style={{ fontSize:15, fontWeight:600, color:T.ink }}>Aucune commande trouvée</div>
             </div>
           )}
+          {/* colonne minmax(0, 1fr) : les noms de produits (une ligne, points de suspension) ne font pas déborder la carte sur mobile */}
+          <ul style={{ listStyle:"none", margin:0, padding:0, display:"grid", gridTemplateColumns:"minmax(0, 1fr)", gap:10 }}>
           {orders.map(order => {
             const date = new Date(order.date);
             // lignes d'un même article livré sous plusieurs CIP (même code fournisseur) : une seule ligne
@@ -37,61 +55,64 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
               else acc.push({ ...it });
               return acc;
             }, []);
+            const statut = STATUT[order.processed ? "traitee" : order.source === "justificatif" ? "labo" : "attente"];
             return (
-              <div key={order.id} style={{ background:"#fafbfc", borderRadius:14, padding:"16px 20px", marginBottom:12, border:"1px solid #e8ecf0" }}>
-                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                  <div>
-                    <div style={{ fontWeight:700, fontSize:14, color:"#0f2d3d" }}>
+              <li key={order.id} style={{ background:T.surface, borderRadius:R.m, padding:"14px 16px 14px 18px", border:`1px solid ${T.line}`, boxShadow:T.shadow1 }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:10 }}>
+                  <div style={{ minWidth:0 }}>
+                    <div className="num" style={{ fontWeight:700, fontSize:14, color:T.ink }}>
                       {date.toLocaleDateString("fr-FR", { day:"2-digit", month:"long", year:"numeric" })}
-                      <span style={{ fontSize:11, color:"#888", marginLeft:8 }}>{date.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" })}</span>
+                      <span style={{ fontSize:12, fontWeight:500, color:T.inkMute, marginLeft:8 }}>{date.toLocaleTimeString("fr-FR", { hour:"2-digit", minute:"2-digit" })}</span>
                     </div>
-                    <div style={{ fontSize:11, color:"#888", marginTop:2 }}>{items.length} ligne(s) · {items.length} réf.{order.source === "justificatif" ? " · 📑 sur commande laboratoire" : ""}</div>
+                    <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:3, display:"flex", alignItems:"center", gap:6, flexWrap:"wrap" }}>
+                      {pluriel(items.length, "ligne")} · {items.length} réf.
+                      {order.source === "justificatif" && <span style={{ display:"inline-flex", alignItems:"center", gap:4, color:T.teal }}>· <Icone nom="document" taille={12} />sur commande laboratoire</span>}
+                    </div>
                   </div>
-                  <div style={{ textAlign:"right" }}>
-                    <div style={{ fontWeight:800, fontSize:16, color:"#059669" }}>{order.totalHt ? parseFloat(order.totalHt).toFixed(2).replace(".",",") + " €" : "—"}</div>
-                    <span style={{
-                      fontSize:9, fontWeight:700, borderRadius:6, padding:"2px 8px",
-                      background: order.processed ? "#d1fae5" : "#fef3c7",
-                      color: order.processed ? "#065f46" : "#92400e",
-                    }}>{order.processed ? "✓ TRAITÉE" : order.source === "justificatif" ? "📑 COMMANDE LABO" : "EN ATTENTE"}</span>
+                  <div style={{ textAlign:"right", flexShrink:0 }}>
+                    <div className="num" style={{ fontWeight:700, fontSize:16, color:T.ink }}>{order.totalHt ? fmtEur(parseFloat(order.totalHt)) : "—"}</div>
+                    <span style={{ ...ui.badge(statut.ton), marginTop:4, padding:"2px 8px 2px 6px" }}>
+                      <Icone nom={statut.icone} taille={12} epaisseur={2.4} />{statut.libelle}
+                    </span>
                   </div>
                 </div>
-                {/* Items */}
-                <div style={{ borderTop:"1px solid #e8ecf0", paddingTop:8 }}>
+                {/* Lignes */}
+                <div style={{ borderTop:`1px solid ${T.lineSoft}`, paddingTop:8 }}>
                   {items.slice(0, 5).map((it, j) => (
-                    <div key={j} style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:"#555" }}>
-                      <span style={{ flex:1, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{it.name}</span>
+                    <div key={j} className="num" style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:T.inkSoft }}>
+                      <span style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600 }}>×{it.qty}</span>
-                      <span style={{ flexShrink:0, marginLeft:12, fontWeight:600, minWidth:60, textAlign:"right" }}>{it.pn ? parseFloat(it.pn * it.qty).toFixed(2) + " €" : ""}</span>
+                      <span style={{ flexShrink:0, marginLeft:12, fontWeight:600, minWidth:72, textAlign:"right" }}>{it.pn ? fmtEur(parseFloat(it.pn * it.qty)) : ""}</span>
                     </div>
                   ))}
-                  {items.length > 5 && <div style={{ fontSize:11, color:"#aaa", paddingTop:4 }}>+ {items.length - 5} autre(s)...</div>}
                 </div>
                 {/* Sur justificatif labo : transmission au laboratoire */}
                 {order.source === "justificatif" && (!order.processed || (order.justif || []).some(j => j.suivi && !["recue", "transmise"].includes(j.suivi.etape))) && (
-                  <div style={{ marginTop:8, fontSize:11, color:"#5b21b6", background:"#f5f3ff", border:"1px solid #ddd6fe", borderRadius:8, padding:"6px 10px", lineHeight:1.45 }}>
+                  <div style={{ ...ui.encart("labo"), marginTop:8, fontSize:12, padding:"8px 12px" }}>
                     {(order.justif || []).length
                       ? order.justif.map((j, k) => j.suivi && j.suivi.etape !== "recue"
                         ? <div key={k}>
-                            <b style={{ color: ["refusee", "annulee"].includes(j.suivi.etape) ? "#991b1b" : "#5b21b6" }}>📑 {j.suivi.libelle}</b>{j.suivi.date ? ` le ${new Date(j.suivi.date).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.
-                            {j.suivi.datePrevue && !["expediee", "refusee", "annulee"].includes(j.suivi.etape) ? ` Livraison prévue le ${new Date(j.suivi.datePrevue).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}.` : ""}
-                            {j.suivi.commentaire ? <div style={{ color:"#334155" }}>💬 {j.suivi.commentaire}</div> : null}
+                            <b style={{ display:"inline-flex", alignItems:"center", gap:4, color: ["refusee", "annulee"].includes(j.suivi.etape) ? T.danger : T.teal }}><Icone nom="document" taille={12} />{j.suivi.libelle}</b>{j.suivi.date ? ` le ${dateLongue(j.suivi.date)}` : ""}.
+                            {j.suivi.datePrevue && !["expediee", "refusee", "annulee"].includes(j.suivi.etape) ? ` Livraison prévue le ${dateLongue(j.suivi.datePrevue)}.` : ""}
+                            {j.suivi.commentaire ? <div style={{ display:"flex", alignItems:"flex-start", gap:4, color:T.inkSoft }}><Icone nom="bulle" taille={12} style={{ marginTop:2 }} />{j.suivi.commentaire}</div> : null}
                           </div>
-                        : <div key={k}>📑 {JUSTIF_STATUTS[j.statut] || "Enregistrée"}{j.statut === "envoye" && j.envoyeLe ? ` le ${new Date(j.envoyeLe).toLocaleDateString("fr-FR", { day:"numeric", month:"long" })}` : ""}.</div>)
-                      : <div>📑 Commande enregistrée : Elixir la prend en charge auprès du laboratoire.</div>}
-                    {!order.processed && !(order.justif || []).some(j => j.suivi?.datePrevue || ["refusee", "annulee"].includes(j.suivi?.etape)) && <div style={{ color:"#7c3aed", marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>}
+                        : <div key={k} style={{ display:"flex", alignItems:"flex-start", gap:4 }}><Icone nom="document" taille={12} style={{ marginTop:2 }} /><span>{JUSTIF_STATUTS[j.statut] || "Enregistrée"}{j.statut === "envoye" && j.envoyeLe ? ` le ${dateLongue(j.envoyeLe)}` : ""}.</span></div>)
+                      : <div style={{ display:"flex", alignItems:"flex-start", gap:4 }}><Icone nom="document" taille={12} style={{ marginTop:2 }} /><span>Commande enregistrée : Elixir la prend en charge auprès du laboratoire.</span></div>}
+                    {!order.processed && !(order.justif || []).some(j => j.suivi?.datePrevue || ["refusee", "annulee"].includes(j.suivi?.etape)) && <div style={{ color:T.inkSoft, marginTop:2 }}>Livraison dès réception de la marchandise du laboratoire.</div>}
                   </div>
                 )}
-                {/* Recommander */}
-                <button onClick={() => onReorder(items)}
-                  style={{
-                    marginTop:10, width:"100%", background:"#eff6ff", border:"1px solid #bfdbfe",
-                    borderRadius:8, padding:"8px", fontSize:12, fontWeight:700, color:"#1e40af",
-                    cursor:"pointer"
-                  }}>🔄 Recommander cette commande</button>
-              </div>
+                {/* Recommander (pastille à filet, comme la maquette de la vitrine) */}
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginTop:10, flexWrap:"wrap" }}>
+                  <span className="num" style={{ fontSize:12, color:T.inkMute }}>{items.length > 5 ? `+ ${items.length - 5} autre${items.length - 5 > 1 ? "s" : ""}…` : ""}</span>
+                  <button className="ex-btn-ligne" onClick={() => onReorder(items)}
+                    style={{ ...ui.btn("ligne", "m"), background:undefined, color:T.petrol, boxShadow:`inset 0 0 0 1.5px ${T.lineField}`, marginLeft:"auto" }}>
+                    <Icone nom="recommander" taille={16} epaisseur={2.4} />Recommander cette commande
+                  </button>
+                </div>
+              </li>
             );
           })}
+          </ul>
         </div>
       </div>
     </div>

@@ -4,18 +4,26 @@ import { loadGroups } from "../product-groups.js";
 import { TierBadge, applyTiers } from "../tiers.jsx";
 import ProductMedia, { Lightbox } from "./ProductMedia.jsx";
 import { MEDIA } from "../wheelchair-media.js";
+import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
+import { Icone } from "../icons.jsx";
+import EnteteVue from "./ui/EnteteVue.jsx";
+import BadgeStatut from "./ui/BadgeStatut.jsx";
 
-const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
-const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
+// Affichage seulement (refonte charte, lot 7) : format français de src/theme.js. Le panier reçoit les prix bruts.
+const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
+const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 
-const card = { background: "white", borderRadius: 14, padding: "18px 22px", border: "1px solid #e8ecf0" };
-const h2 = { fontSize: 13, fontWeight: 800, color: "#0f2d3d", letterSpacing: 0.3, textTransform: "uppercase", margin: "0 0 12px" };
-const input = { width: 120, border: "1.5px solid #d6dde3", borderRadius: 8, padding: "8px 10px", fontSize: 16, fontWeight: 700, outline: "none", fontFamily: "inherit" };
-const label = { fontSize: 12, fontWeight: 700, color: "#334155", display: "block", marginBottom: 4 };
+// ── Refonte charte, lot 7 : atomes communs (theme.js) au lieu des copies locales ; guide de mesure passé sur les jetons ──
+const card = ui.card;
+const h2 = ui.h2;
+const input = { ...ui.input, width: 120, minHeight: 44, fontSize: 16, fontWeight: 700 };
+const label = ui.label;
+const TON_OK = tone("ok"), TON_WARN = tone("warn");
 
 // Parcours guidé : largeur d'assise → fauteuil de la gamme (stock + prix Odoo).
 // lineKey : « fauteuil » (fauteuil roulant, 4 tailles) ou « transfert » (fauteuil de transfert, 2 tailles).
-export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
+// icone, couleur : icône et couleur du menu (App), comme l'en-tête du catalogue
+export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", icone, couleur }) {
   const line = LINES[lineKey] || LINES.fauteuil;
   const sizes = line.sizes;
   const [method, setMethod] = useState("mesure");
@@ -62,26 +70,28 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
   };
   const reset = () => { setMeasure(""); setWeight(""); setHeight(""); setManualIdx(null); setQty(1); };
 
+  // choix de la méthode : sélecteur segmenté en pastille (sable, segment actif pétrole), état annoncé par aria-pressed
   const seg = (key, text) => (
-    <button onClick={() => { setMethod(key); setManualIdx(null); }} style={{
-      flex: 1, border: "none", borderRadius: 8, padding: "9px 12px", cursor: "pointer", fontWeight: 700, fontSize: 13,
-      background: method === key ? "#0f2d3d" : "transparent", color: method === key ? "white" : "#475569" }}>{text}</button>
+    <button onClick={() => { setMethod(key); setManualIdx(null); }} aria-pressed={method === key} style={{
+      flex: 1, border: "none", borderRadius: R.pill, padding: "9px 14px", minHeight: 40, cursor: "pointer", fontWeight: 600, fontSize: 13, lineHeight: 1.25,
+      background: method === key ? T.petrol : "transparent", color: method === key ? T.paper : T.ink, transition: "background-color .15s var(--ease), color .15s var(--ease)" }}>{text}</button>
   );
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {/* En-tête */}
-      <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
-        <div style={{ fontSize: 20, fontWeight: 800 }}>{line.icon} {line.title}</div>
-        <div style={{ fontSize: 13, opacity: 0.85, marginTop: 4 }}>
-          Déterminez la largeur d'assise ({sizes.length} tailles : {sizes.map(x => String(x).replace(".", ",")).join(" · ")} cm), le bon fauteuil {line.model} s'affiche avec son stock et son prix.
-        </div>
-      </div>
+      {/* En-tête de vue commun (lot 7) au lieu du bandeau en dégradé : la couleur du menu n'est plus qu'un filet et une pastille */}
+      <EnteteVue
+        icone={icone || line.icon}
+        couleur={couleur}
+        titre={line.title}
+        sousTitre={`Déterminez la largeur d'assise (${sizes.length} tailles : ${sizes.map(x => String(x).replace(".", ",")).join(" · ")} cm), le bon fauteuil ${line.model} s'affiche avec son stock et son prix.`}
+        style={{ marginBottom: 0 }}
+      />
 
       {/* 1 · Informations */}
       <div style={card}>
         <h2 style={h2}>1 · Informations disponibles</h2>
-        <div style={{ display: "flex", background: "#f0f2f5", borderRadius: 10, padding: 4, gap: 4, marginBottom: 14, maxWidth: 520 }}>
+        <div style={{ display: "flex", background: T.sand, borderRadius: R.pill, padding: 4, gap: 4, marginBottom: 14, maxWidth: 520 }}>
           {seg("mesure", "Mesure disponible (recommandé)")}
           {seg("poids", "Pas de mesure → poids")}
         </div>
@@ -89,7 +99,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
           <div>
             <label style={label}>Largeur mesurée aux hanches / cuisses, patient assis (cm)</label>
             <input type="number" step="0.5" min="20" max="80" value={measure} onChange={e => { setMeasure(e.target.value); setManualIdx(null); }} placeholder="ex. 42" style={input} />
-            <div style={{ fontSize: 11, color: "#64748b", marginTop: 6 }}>Largeur d'assise = mesure + 2,5 à 5 cm de jeu. Voir « Comment prendre la mesure » ci-dessous.</div>
+            <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 6 }}>Largeur d'assise = mesure + 2,5 à 5 cm de jeu. Voir « Comment prendre la mesure » ci-dessous.</div>
           </div>
         ) : (
           <div style={{ display: "flex", gap: 24, flexWrap: "wrap" }}>
@@ -98,7 +108,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
               <input type="number" step="0.5" min="20" max="250" value={weight} onChange={e => { setWeight(e.target.value); setManualIdx(null); }} placeholder="ex. 68" style={input} />
             </div>
             <div>
-              <label style={label}>Taille (cm) <span style={{ fontWeight: 400, color: "#94a3b8" }}>— optionnel, affine via l'IMC</span></label>
+              <label style={label}>Taille (cm) <span style={{ fontWeight: 400, color: T.inkMute }}>— optionnel, affine via l'IMC</span></label>
               <input type="number" step="1" min="100" max="230" value={height} onChange={e => { setHeight(e.target.value); setManualIdx(null); }} placeholder="ex. 170" style={input} />
             </div>
           </div>
@@ -106,43 +116,46 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
       </div>
 
       {/* 2 · Résultat */}
-      <div style={{ ...card, background: result ? (result.outOfRange ? "#fff7ed" : "#ecfdf5") : "white",
-                    border: `1px solid ${result ? (result.outOfRange ? "#fdba74" : "#6ee7b7") : "#e8ecf0"}` }}>
+      {/* résultat : ton ok (recommandation) ou warn (hors gamme), toujours écrit */}
+      <div style={{ ...card, background: result ? (result.outOfRange ? TON_WARN.bg : TON_OK.bg) : T.surface,
+                    border: `1px solid ${result ? (result.outOfRange ? TON_WARN.border : TON_OK.border) : T.line}` }}>
         <h2 style={h2}>2 · Largeur d'assise recommandée</h2>
         {!result ? (
-          <div style={{ color: "#64748b", fontSize: 13 }}>Renseignez {method === "mesure" ? "la mesure" : "le poids"} pour obtenir la recommandation.</div>
+          <div style={{ color: T.inkSoft, fontSize: 13 }}>Renseignez {method === "mesure" ? "la mesure" : "le poids"} pour obtenir la recommandation.</div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
-            <div style={{ fontSize: result.outOfRange ? 20 : 36, fontWeight: 900, color: result.outOfRange ? "#9a3412" : "#065f46", lineHeight: 1.1 }}>{result.label}</div>
-            <div style={{ flex: 1, minWidth: 240, fontSize: 13, color: "#1e293b" }}>
+            <div className="num" style={{ fontSize: result.outOfRange ? 20 : 34, fontWeight: 700, letterSpacing: "-0.02em", color: result.outOfRange ? T.warn : T.ok, lineHeight: 1.1 }}>{result.label}</div>
+            <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: T.ink }}>
               {result.reason}
               {result.outOfRange && (
-                <div style={{ marginTop: 6, fontWeight: 700, color: "#9a3412" }}>
+                <div style={{ marginTop: 6, fontWeight: 700, color: T.warn, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} /><span>
                   {result.outOfRange === "bariatrique" ? "Au-delà de 100 kg : matériel bariatrique nécessaire. Orienter vers un prestataire de matériel médical pour un essayage."
                     : result.outOfRange === "gamme" ? (lineKey === "transfert" ? "Assise trop étroite pour ce fauteuil de transfert : voir le menu « Fauteuil roulant » (jusqu'à 48 cm)." : "Taille non proposée dans cette gamme : orienter vers un prestataire de matériel médical.")
                     : "Au-delà de 45,5 cm mesurés : modèle large ou sur mesure. Orienter vers un prestataire de matériel médical pour un essayage."}
-                </div>
+                </span></div>
               )}
             </div>
           </div>
         )}
         {/* Choix manuel / vue des tailles de la gamme avec stock */}
         <div style={{ marginTop: 14, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <span style={{ fontSize: 11, color: "#64748b", marginRight: 4 }}>Tailles disponibles :</span>
+          <span style={{ fontSize: 12, color: T.inkSoft, marginRight: 4 }}>Tailles disponibles :</span>
           {sizes.map((s, i) => {
             const rs = refsFor(line, s, data), st = totalStock(rs);
             const active = selectedIdx === i;
+            const etat = !rs.length ? "" : st > 0 ? (Number.isFinite(st) ? `En stock : ${st}` : "En stock") : "Rupture";
+            // pastille de taille : pétrole si choisie ; point de stock (ok / rupture) doublé du libellé lu (aria-label)
             return (
-              <button key={s} onClick={() => setManualIdx(i)} title={!rs.length ? "" : st > 0 ? (Number.isFinite(st) ? `En stock : ${st}` : "En stock") : "Rupture"} style={{
-                border: `1.5px solid ${active ? "#0f2d3d" : "#d6dde3"}`, background: active ? "#0f2d3d" : "white", color: active ? "white" : "#0f2d3d",
-                borderRadius: 8, padding: "6px 12px", fontWeight: 800, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 6 }}>
+              <button key={s} onClick={() => setManualIdx(i)} title={etat} aria-pressed={active} aria-label={etat ? `${sizeLabel(s)} — ${etat}` : undefined} style={{
+                border: `1px solid ${active ? T.petrol : T.lineField}`, background: active ? T.petrol : T.surface, color: active ? T.paper : T.ink,
+                borderRadius: R.pill, padding: "0 14px", height: 34, fontWeight: 700, fontSize: 13, cursor: "pointer", display: "flex", alignItems: "center", gap: 7, fontVariantNumeric: "tabular-nums" }}>
                 {sizeLabel(s)}
-                <span style={{ width: 8, height: 8, borderRadius: 4, background: !rs.length ? "#cbd5e1" : st > 0 ? "#10b981" : "#ef4444" }} />
+                <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: 4, background: !rs.length ? T.inkFaint : st > 0 ? (active ? T.mint2 : T.ok) : (active ? "#f2a7a7" : T.danger) }} />
               </button>
             );
           })}
           {manualIdx != null && result && result.lineIdx != null && manualIdx !== result.lineIdx && (
-            <button onClick={() => setManualIdx(null)} style={{ border: "none", background: "none", color: "#2563eb", fontSize: 12, cursor: "pointer", textDecoration: "underline" }}>
+            <button onClick={() => setManualIdx(null)} style={{ border: "none", background: "none", color: T.teal, fontSize: 12, fontWeight: 600, cursor: "pointer", textDecoration: "underline", textUnderlineOffset: 3, padding: "6px 2px" }}>
               revenir à la recommandation ({result.label})
             </button>
           )}
@@ -153,58 +166,57 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
       <div style={card}>
         <h2 style={h2}>3 · Fauteuil correspondant</h2>
         {loading ? (
-          <div style={{ color: "#64748b", fontSize: 13 }}>Chargement du stock et des prix…</div>
+          <div role="status" style={{ color: T.inkMute, fontSize: 13 }}>Chargement du stock et des prix…</div>
         ) : selectedIdx == null ? (
-          <div style={{ color: "#64748b", fontSize: 13 }}>Le produit s'affichera dès qu'une taille est déterminée (ou choisie ci-dessus).</div>
+          <div style={{ color: T.inkSoft, fontSize: 13 }}>Le produit s'affichera dès qu'une taille est déterminée (ou choisie ci-dessus).</div>
         ) : !product ? (
-          <div style={{ color: "#b91c1c", fontSize: 13 }}>Aucune référence trouvée pour cette taille (code fournisseur {codeAt(selectedIdx)}) — utilisez la Saisie de commande.</div>
+          <div style={{ ...ui.encart("danger"), display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} /><span>Aucune référence trouvée pour cette taille (code fournisseur {codeAt(selectedIdx)}) — utilisez la Saisie de commande.</span></div>
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {mainPhoto && (
               <button onClick={() => setZoom({ photos: media.photos, index: 0 })} aria-label="Agrandir la photo du fauteuil"
-                style={{ flexShrink: 0, width: 96, height: 66, borderRadius: 10, overflow: "hidden", border: "1px solid #e2e8f0", padding: 0, background: "white", cursor: "zoom-in" }}>
+                style={{ flexShrink: 0, width: 96, height: 66, borderRadius: R.s, overflow: "hidden", border: `1px solid ${T.line}`, padding: 0, background: T.surface, cursor: "zoom-in" }}>
                 <img src={mainPhoto.src} alt="" referrerPolicy="no-referrer" loading="lazy" onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }}
                   style={{ width: "100%", height: "100%", objectFit: "contain" }} />
               </button>
             )}
             <div style={{ flexShrink: 0 }}>
-              {stock > 0
-                ? <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
-                : <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>RUPTURE</div>}
+              <BadgeStatut statut={stock > 0 ? "stock" : "rupture"} />
             </div>
             <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontWeight: 800, fontSize: 15, color: "#0f2d3d" }}>{product.name}</div>
-              <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
-                CIP : <span style={{ fontFamily: "monospace" }}>{product.cip}</span> · largeur d'assise {sizeLabel(sizeAt(selectedIdx))}
-                {Number.isFinite(stock) && stock > 0 && <> · <b style={{ color: "#065f46" }}>stock {stock}</b></>}
+              <div style={{ fontWeight: 600, fontSize: 15, color: T.ink }}>{product.name}</div>
+              <div className="num" style={{ fontSize: 12, color: T.inkMute, marginTop: 2 }}>
+                CIP : <span style={{ fontFamily: T.mono }}>{product.cip}</span> · largeur d'assise {sizeLabel(sizeAt(selectedIdx))}
+                {Number.isFinite(stock) && stock > 0 && <> · <b style={{ color: T.ok }}>stock {stock}</b></>}
               </div>
               {manualIdx != null && result && result.lineIdx != null && manualIdx !== result.lineIdx && (
-                <div style={{ fontSize: 11, color: "#9a3412", marginTop: 4 }}>⚠️ Taille choisie manuellement, différente de la recommandation ({result.label}).</div>
+                <div style={{ fontSize: 12, color: T.warn, marginTop: 4, display: "flex", alignItems: "flex-start", gap: 5 }}><Icone nom="alerte" taille={13} style={{ marginTop: 2 }} />Taille choisie manuellement, différente de la recommandation ({result.label}).</div>
               )}
             </div>
-            <div style={{ textAlign: "right", minWidth: 120 }}>
+            <div className="num" style={{ textAlign: "right", minWidth: 120 }}>
               {product.discounted_price && product.discount_pct > 0 ? (<>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                  <span style={{ fontSize: 11, color: "#aaa", textDecoration: "line-through" }}>{fmt(product.list_price)}</span>
-                  <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(product.discount_pct)}</span>
+                  <span style={{ fontSize: 12, color: T.inkMute, textDecoration: "line-through" }}>{fmt(product.list_price)}</span>
+                  <span style={ui.badge("promo")}>{fmtPct(product.discount_pct)}</span>
                 </div>
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#059669" }}>{fmt(product.discounted_price)}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: T.ink }}>{fmt(product.discounted_price)}</div>
               </>) : (
-                <div style={{ fontSize: 20, fontWeight: 800, color: "#0f2d3d" }}>{fmt(product.list_price)}</div>
+                <div style={{ fontSize: 20, fontWeight: 700, color: T.ink }}>{fmt(product.list_price)}</div>
               )}
-              <div style={{ fontSize: 10, color: "#bbb" }}>Prix HT</div>
+              <div style={{ fontSize: 11, color: T.inkMute }}>Prix HT</div>
               <TierBadge tiers={product.price_tiers} pn={unitPrice} />
             </div>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                <button onClick={() => setQty(q => Math.max(1, q - 1))} style={{ background: "#f0f2f5", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16 }}>−</button>
-                <input type="number" min="1" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))}
-                  style={{ width: 48, textAlign: "center", border: "1.5px solid #ddd", borderRadius: 6, padding: 4, fontSize: 14, fontWeight: 700, outline: "none" }} />
-                <button onClick={() => setQty(q => q + 1)} style={{ background: "#0f2d3d", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16, color: "white" }}>+</button>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <button className="ex-qte-moins" onClick={() => setQty(q => Math.max(1, q - 1))} aria-label={`Diminuer la quantité de ${product.name}`} style={pas}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
+                <input type="number" min="1" value={qty} onChange={e => setQty(Math.max(1, parseInt(e.target.value) || 1))} aria-label={`Quantité ${product.name}`}
+                  style={{ ...ui.qtyInput(true), width: 52, height: 32, fontSize: 14 }} />
+                <button className="ex-qte-plus" onClick={() => setQty(q => q + 1)} aria-label={`Augmenter la quantité de ${product.name}`} style={pas}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
               </div>
-              <button onClick={add} disabled={!canAdd} style={{
-                background: canAdd ? "#10b981" : "#cbd5e1", color: "white", border: "none", borderRadius: 8, padding: "7px 16px",
-                fontSize: 12, fontWeight: 800, cursor: canAdd ? "pointer" : "not-allowed", whiteSpace: "nowrap" }}>
+              {/* « Ajouter au panier » en pastille pétrole ; indisponible : sable + encre adoucie, curseur interdit */}
+              <button className={canAdd ? "ex-btn-petrole" : undefined} onClick={add} disabled={!canAdd} style={{
+                ...ui.btn("primaire", "m"), background: canAdd ? undefined : T.sand, color: canAdd ? undefined : T.inkSoft,
+                cursor: canAdd ? "pointer" : "not-allowed", fontVariantNumeric: "tabular-nums" }}>
                 {stock <= 0 ? "Indisponible" : plan.missing > 0 ? `Stock disponible : ${stock}` : `Ajouter au panier · ${fmt((tiered ? tiered.pn : unitPrice) * qty)}`}
               </button>
             </div>
@@ -217,10 +229,11 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
       {zoom && <Lightbox photos={zoom.photos} index={zoom.index} onClose={() => setZoom(null)} onIndex={(index) => setZoom(z => ({ ...z, index }))} />}
 
       {/* Tuto — infographie de prise de mesure (reprise du guide de référence) */}
+      {/* Guide de mesure : palette privée passée sur les jetons (encre, sarcelle, menthe, ton warn) */}
       <details open={method === "mesure"} style={card}>
-        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}>📏 Comment prendre la mesure — guide illustré</summary>
-        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14, color: "#16242A", fontSize: 14 }}>
-          <div style={{ fontSize: 13, color: "#5B6E72" }}>Une mesure fiable des hanches, prise en position assise, donne le résultat le plus précis. Voici comment la prendre correctement.</div>
+        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}><Icone nom="regle" taille={16} style={{ color: T.teal, marginRight: 8 }} />Comment prendre la mesure — guide illustré</summary>
+        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 14, color: T.ink, fontSize: 14 }}>
+          <div style={{ fontSize: 13, color: T.inkSoft }}>Une mesure fiable des hanches, prise en position assise, donne le résultat le plus précis. Voici comment la prendre correctement.</div>
 
           {[
             ["1", "Matériel", <p style={{ margin: 0 }}>Un simple mètre ruban souple (mètre de couturière) suffit — aucun équipement spécialisé n'est nécessaire.</p>],
@@ -236,7 +249,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
                 <p style={{ margin: "0 0 10px" }}>Faire passer le mètre à l'horizontale, au point le plus large entre les deux hanches (ou le haut des cuisses si celles-ci dépassent davantage).</p>
                 <figure style={{ margin: 0 }}>
                   <svg viewBox="0 0 300 260" role="img" aria-label="Schéma d'une personne assise de face : la largeur se mesure à l'horizontale, au point le plus large entre les deux hanches."
-                       style={{ width: "100%", maxWidth: 340, display: "block", margin: "0 auto", color: "#16242A" }}>
+                       style={{ width: "100%", maxWidth: 340, display: "block", margin: "0 auto", color: T.ink }}>
                     <rect x="90" y="30" width="120" height="8" rx="3" fill="none" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
                     <line x1="95" y1="38" x2="95" y2="230" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
                     <line x1="205" y1="38" x2="205" y2="230" stroke="currentColor" strokeWidth="1.5" opacity="0.5" />
@@ -247,13 +260,13 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
                     <path d="M174,150 L182,225" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
                     <defs>
                       <marker id="wcArrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                        <path d="M0,0 L10,5 L0,10 z" fill="#0B4F49" />
+                        <path d="M0,0 L10,5 L0,10 z" style={{ fill: T.teal }} />
                       </marker>
                     </defs>
-                    <line x1="118" y1="145" x2="182" y2="145" stroke="#0B4F49" strokeWidth="2" strokeDasharray="4 3" markerStart="url(#wcArrow)" markerEnd="url(#wcArrow)" />
-                    <text x="150" y="132" textAnchor="middle" fontSize="12.5" fontFamily="ui-monospace, SFMono-Regular, Menlo, monospace" fontWeight="600" fill="#0B4F49">largeur mesurée ici</text>
+                    <line x1="118" y1="145" x2="182" y2="145" strokeWidth="2" strokeDasharray="4 3" markerStart="url(#wcArrow)" markerEnd="url(#wcArrow)" style={{ stroke: T.teal }} />
+                    <text x="150" y="132" textAnchor="middle" fontSize="12.5" fontWeight="600" style={{ fill: T.teal, fontFamily: "inherit", paintOrder: "stroke", stroke: T.paper, strokeWidth: 4, strokeLinejoin: "round" }}>largeur mesurée ici</text>
                   </svg>
-                  <figcaption style={{ textAlign: "center", fontSize: 13, color: "#5B6E72", marginTop: 10 }}>Vue de face, patient assis : la mesure se prend au point le plus large des hanches ou des cuisses.</figcaption>
+                  <figcaption style={{ textAlign: "center", fontSize: 13, color: T.inkSoft, marginTop: 10 }}>Vue de face, patient assis : la mesure se prend au point le plus large des hanches ou des cuisses.</figcaption>
                 </figure>
               </div>
             )],
@@ -263,44 +276,44 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
                   "Laisser le mètre à plat contre le corps sans comprimer les tissus mous.",
                   "Prendre la mesure deux fois ; en cas d'écart, garder la moyenne.",
                   "Noter la valeur immédiatement et la reporter dans le champ « Mesure » ci-dessus, puis ajouter 2,5 à 5 cm de jeu (le calcul le fait pour vous)."
-                ].map(t => <li key={t} style={{ position: "relative", paddingLeft: 26, marginBottom: 6 }}><span style={{ position: "absolute", left: 0, top: 0, color: "#0F6E66", fontWeight: 700, fontFamily: "ui-monospace, monospace" }}>✓</span>{t}</li>)}
+                ].map(t => <li key={t} style={{ position: "relative", paddingLeft: 26, marginBottom: 6 }}><Icone nom="coche" taille={16} epaisseur={2.4} style={{ position: "absolute", left: 0, top: 3, color: T.teal }} />{t}</li>)}
               </ul>
             )],
           ].map(([n, title, body]) => (
-            <section key={n} style={{ background: "white", border: "1px solid #D7E0DD", borderRadius: 14, padding: "18px 20px", boxShadow: "0 1px 2px rgba(20,40,38,0.06), 0 6px 20px rgba(20,40,38,0.05)" }}>
-              <h3 style={{ margin: "0 0 12px", fontSize: 17, fontWeight: 700, color: "#16242A", display: "flex", alignItems: "baseline", gap: 10 }}>
-                <span style={{ fontFamily: "ui-monospace, monospace", fontSize: 13, fontWeight: 600, color: "#0F6E66", background: "#DCEEEC", borderRadius: 999, padding: "2px 10px" }}>{n}</span>{title}
+            <section key={n} style={{ background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.m, padding: "18px 20px" }}>
+              <h3 style={{ margin: "0 0 12px", fontSize: 16, fontWeight: 640, color: T.ink, display: "flex", alignItems: "center", gap: 10 }}>
+                <span className="num" style={{ fontSize: 13, fontWeight: 700, color: T.teal, background: T.mint, borderRadius: R.pill, minWidth: 26, height: 26, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{n}</span>{title}
               </h3>
               {body}
             </section>
           ))}
 
-          <div style={{ background: "#FBEEE4", border: "1px solid #E3B98B", color: "#8A4A1E", borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ fontSize: 13.5, fontWeight: 600, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.04em" }}>Erreurs fréquentes</div>
+          <div style={{ ...ui.encart("warn"), padding: "14px 16px" }}>
+            <div style={{ fontSize: 13, fontWeight: 700, margin: "0 0 8px", textTransform: "uppercase", letterSpacing: "0.06em", display: "flex", alignItems: "center", gap: 6 }}><Icone nom="alerte" taille={14} />Erreurs fréquentes</div>
             <ul style={{ margin: 0, paddingLeft: 18, fontSize: 13.5, lineHeight: 1.5 }}>
               <li>Mesurer la personne debout au lieu d'assise.</li>
               <li>Mesurer par-dessus un manteau épais ou plusieurs couches de vêtements.</li>
               <li>Serrer le mètre comme un tour de taille — cela sous-estime la largeur réelle.</li>
             </ul>
           </div>
-          <div style={{ fontSize: 12.5, color: "#5B6E72", textAlign: "center" }}>Sans possibilité de mesurer directement, l'estimation par le poids (et la taille, en option) reste disponible ci-dessus — la mesure directe est toujours préférable.</div>
+          <div style={{ fontSize: 12.5, color: T.inkSoft, textAlign: "center" }}>Sans possibilité de mesurer directement, l'estimation par le poids (et la taille, en option) reste disponible ci-dessus — la mesure directe est toujours préférable.</div>
         </div>
       </details>
 
       {/* Tables de référence */}
       <details style={card}>
-        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}>📋 Tables de référence</summary>
+        <summary style={{ ...h2, cursor: "pointer", margin: 0 }}><Icone nom="document" taille={16} style={{ color: T.teal, marginRight: 8 }} />Tables de référence</summary>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 20, marginTop: 12 }}>
           {[["Mesure (hanches/cuisses)", MEASURE_BANDS, method === "mesure"], ["Poids (sans mesure)", WEIGHT_BANDS, method === "poids"]].map(([title, bands, isActive]) => (
             <table key={title} style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-              <thead><tr><th style={{ textAlign: "left", fontSize: 11, color: "#64748b", padding: "0 6px 6px", borderBottom: "1px solid #e8ecf0" }}>{title}</th><th style={{ textAlign: "right", fontSize: 11, color: "#64748b", padding: "0 6px 6px", borderBottom: "1px solid #e8ecf0" }}>Largeur</th></tr></thead>
+              <thead><tr><th style={{ ...thRef, textAlign: "left" }}>{title}</th><th style={{ ...thRef, textAlign: "right" }}>Largeur</th></tr></thead>
               <tbody>
                 {bands.map(b => {
                   const hit = isActive && result && result.band === b;
                   return (
-                    <tr key={b.label} style={{ background: hit ? "#ecfdf5" : "transparent", fontWeight: hit ? 800 : 400, color: b.idx == null ? "#9a3412" : "#1e293b" }}>
-                      <td style={{ padding: "7px 6px", borderBottom: "1px solid #f1f5f9" }}>{b.label}</td>
-                      <td style={{ padding: "7px 6px", borderBottom: "1px solid #f1f5f9", textAlign: "right", fontFamily: "monospace", fontWeight: 700 }}>{b.idx == null ? "hors gamme" : (fitToLine({ idx: b.idx, reason: "" }, line).label || "hors gamme")}</td>
+                    <tr key={b.label} style={{ background: hit ? TON_OK.bg : "transparent", fontWeight: hit ? 700 : 400, color: b.idx == null ? T.warn : T.ink }}>
+                      <td style={{ padding: "7px 6px", borderBottom: `1px solid ${T.lineSoft}` }}>{b.label}</td>
+                      <td className="num" style={{ padding: "7px 6px", borderBottom: `1px solid ${T.lineSoft}`, textAlign: "right", fontWeight: 700 }}>{b.idx == null ? "hors gamme" : (fitToLine({ idx: b.idx, reason: "" }, line).label || "hors gamme")}</td>
                     </tr>
                   );
                 })}
@@ -308,14 +321,22 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil" }) {
             </table>
           ))}
         </div>
-        <div style={{ fontSize: 11, color: "#64748b", marginTop: 10 }}>
+        <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 10 }}>
           Ajustement IMC (si la taille est connue) : IMC &lt; 18,5 et poids en haut de tranche → taille inférieure ; IMC &gt; 30 et poids en bas de tranche → taille supérieure.
         </div>
       </details>
 
       <div style={{ textAlign: "right" }}>
-        <button onClick={reset} style={{ background: "none", border: "1px solid #d6dde3", borderRadius: 8, padding: "6px 12px", fontSize: 12, color: "#475569", cursor: "pointer" }}>Réinitialiser</button>
+        <button className="ex-btn-ligne" onClick={reset} style={{ ...ui.btn("ligne", "s"), background: undefined, color: T.inkSoft, boxShadow: `inset 0 0 0 1px ${T.lineField}`, fontWeight: 600 }}>
+          <Icone nom="actualiser" taille={14} />Réinitialiser
+        </button>
       </div>
     </div>
   );
 }
+
+// boutons « − » / « + » de 32 px : fond et survol par les classes ex-qte-moins / ex-qte-plus
+const pas = { width: 32, height: 32, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
+  display: "flex", alignItems: "center", justifyContent: "center" };
+// en-tête des tables de référence : eyebrow --ink-mute 11 px
+const thRef = { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute, padding: "0 6px 6px", borderBottom: `1px solid ${T.line}` };

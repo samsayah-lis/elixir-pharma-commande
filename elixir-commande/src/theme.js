@@ -111,6 +111,16 @@ export const ui = {
   }),
   overlay: { position: "fixed", inset: 0, background: T.scrim, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 },
   modal: { background: T.paper, color: T.ink, borderRadius: R.l, padding: "28px 32px", maxWidth: 480, width: "100%", boxShadow: T.shadow3 },
+  // titre de fenêtre (20/640 pétrole), à relier par aria-labelledby
+  titreModal: { margin: 0, fontSize: 20, fontWeight: 640, letterSpacing: "-0.02em", lineHeight: 1.2, color: T.petrol, display: "flex", alignItems: "center", gap: 10 },
+  // encart de statut (message, avertissement, erreur…) : ton de tone(), texte 13 px ; à compléter d'une icône ou d'un libellé
+  encart: (nom = "neutral") => {
+    const t = tone(nom);
+    return { background: t.bg, color: t.fg, border: `1px solid ${t.border}`, borderRadius: R.s, padding: "10px 14px", fontSize: 13, lineHeight: 1.45 };
+  },
+  // bouton rond à icône (fermer, masquer, retirer) : fond et survol par la classe ex-btn-discret
+  rond: (taille = 36) => ({ width: taille, height: taille, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
+    display: "inline-flex", alignItems: "center", justifyContent: "center" }),
 };
 
 // ── Formats d'affichage (français) ──

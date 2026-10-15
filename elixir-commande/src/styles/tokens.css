@@ -203,6 +203,12 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-lien-danger { text-decoration-thickness: 1px; }
 .ex-lien-danger:hover { text-decoration-thickness: 2px; }
 
+/* ── Mes commandes, outils et fenêtres (lot 7) ── */
+/* visionneuse photo (fond --deep à 90 %) : boutons pétrole translucides, sarcelle au survol ; anneau or clair (ex-on-dark) */
+.ex-btn-visionneuse { background: rgba(15,45,61,.82); transition: background-color .15s var(--ease); }
+@media (hover: hover) { .ex-btn-visionneuse:hover { background: var(--teal); } }
+/* la classe ex-saisie-recherche (16 px sous 768 px, Safari iOS ne zoome plus) sert aussi au filtre de la Péremption courte */
+
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }

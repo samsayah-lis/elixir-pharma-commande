@@ -109,37 +109,44 @@ export function ReorderSuggestion({ pharmacyCip, onApply }) {
 
   if (!visible || (suggestions.length === 0 && !loading)) return null;
 
+  // Refonte charte (lot 7) : carte paper à filet (plus de dégradé bleu), quantités en encre et chiffres alignés,
+  // « Pré-remplir mon panier » en pastille pétrole ; suggestions, onApply et masquage inchangés
   return (
-    <div style={{ background: "linear-gradient(135deg, #eff6ff, #dbeafe)", border: "1px solid #93c5fd", borderRadius: 16, padding: "18px 22px", marginBottom: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-        <div>
-          <div style={{ fontWeight: 800, fontSize: 16, color: "#1e40af" }}>Réapprovisionnement suggéré</div>
-          <div style={{ fontSize: 12, color: "#3b82f6", marginTop: 2 }}>Basé sur votre historique de commandes</div>
+    <section aria-labelledby="reappro-titre" style={{ background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.m, padding: "16px 20px", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
+          <Icone nom="recommander" taille={20} style={{ color: T.teal, marginTop: 1 }} />
+          <div>
+            <h2 id="reappro-titre" style={{ margin: 0, fontWeight: 640, fontSize: 16, color: T.petrol }}>Réapprovisionnement suggéré</h2>
+            <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 2 }}>Basé sur votre historique de commandes</div>
+          </div>
         </div>
-        <button onClick={() => setVisible(false)} style={{ background: "rgba(255,255,255,0.5)", border: "none", borderRadius: 8, width: 28, height: 28, cursor: "pointer", fontSize: 14, color: "#93c5fd" }}>✕</button>
+        <button className="ex-btn-discret" onClick={() => setVisible(false)} aria-label="Masquer les suggestions" title="Masquer" style={ui.rond(32)}>
+          <Icone nom="fermer" taille={16} />
+        </button>
       </div>
-      {loading ? <div style={{ fontSize: 12, color: "#93c5fd" }}>Analyse de votre historique...</div> : (<>
+      {loading ? <div role="status" style={{ fontSize: 12, color: T.inkMute }}>Analyse de votre historique…</div> : (<>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
           {suggestions.slice(0, 6).map(s => (
-            <div key={s.cip} style={{ display: "flex", alignItems: "center", gap: 12, background: "white", borderRadius: 10, padding: "8px 14px", border: "1px solid #dbeafe" }}>
+            <div key={s.cip} style={{ display: "flex", alignItems: "center", gap: 12, background: T.surface, borderRadius: R.s, padding: "8px 14px", border: `1px solid ${T.line}` }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, color: "#1a2a3a", lineHeight: 1.3 }}>{s.name || s.cip}</div>
-                <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
-                  Dernière commande il y a {s.days_since_last}j · Habituellement tous les {s.avg_interval_days}j
+                <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.3 }}>{s.name || s.cip}</div>
+                <div className="num" style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>
+                  Dernière commande il y a {s.days_since_last} j · Habituellement tous les {s.avg_interval_days} j
                 </div>
               </div>
-              <div style={{ textAlign: "right", flexShrink: 0 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, color: "#1e40af" }}>×{s.suggested_qty}</div>
-                <div style={{ fontSize: 10, color: "#93c5fd" }}>qté suggérée</div>
+              <div className="num" style={{ textAlign: "right", flexShrink: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, color: T.ink }}>×{s.suggested_qty}</div>
+                <div style={{ fontSize: 11, color: T.inkMute }}>qté suggérée</div>
               </div>
             </div>
           ))}
         </div>
-        <button onClick={() => { const cart = {}; suggestions.forEach(s => { cart[s.cip] = s.suggested_qty; }); onApply?.(cart); setVisible(false); }}
-          style={{ width: "100%", background: "linear-gradient(135deg, #1e40af, #3b82f6)", color: "white", border: "none", borderRadius: 10, padding: "12px", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
+        <button className="ex-btn-petrole" onClick={() => { const cart = {}; suggestions.forEach(s => { cart[s.cip] = s.suggested_qty; }); onApply?.(cart); setVisible(false); }}
+          style={{ ...ui.btn("primaire", "l"), background: undefined, color: undefined, width: "100%", height: 44, fontSize: 14 }}>
           Pré-remplir mon panier ({suggestions.length} référence{suggestions.length > 1 ? "s" : ""})
         </button>
       </>)}
-    </div>
+    </section>
   );
 }

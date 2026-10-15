@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, packCheck, packIssues, packLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
 import { analyzeFile } from "../gp-files.js";
+import { T, R, ui, tone } from "../theme.js";
+import { Icone } from "../icons.jsx";
+import EnteteVue from "./ui/EnteteVue.jsx";
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const pct = (n) => `${round2(n || 0).toLocaleString("fr-FR")} %`;
@@ -8,19 +11,28 @@ const dfr = (d, opts = { day: "numeric", month: "long" }) => d ? new Date(d.slic
 const dts = (t) => t ? new Date(t).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long" }) : "";
 const daysLeft = (d) => Math.round((Date.parse(d + "T12:00:00Z") - Date.parse(parisToday() + "T12:00:00Z")) / 86400e3);
 
-const card = { background: "white", borderRadius: 14, padding: "18px 22px", border: "1px solid #e8ecf0" };
-const h2 = { fontSize: 13, fontWeight: 800, color: "#0f2d3d", letterSpacing: 0.3, textTransform: "uppercase", margin: "0 0 12px" };
-const btn = (primary) => ({ border: "none", borderRadius: 10, padding: "10px 18px", fontWeight: 800, fontSize: 13, cursor: "pointer",
-  background: primary ? "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)" : "#eef2f5", color: primary ? "white" : "#0f2d3d" });
-const chip = (on) => ({ display: "inline-block", fontSize: 11, fontWeight: 700, borderRadius: 99, padding: "2px 8px", margin: "2px 4px 2px 0",
-  background: on ? "#dcfce7" : "#f1f5f9", color: on ? "#166534" : "#475569", border: on ? "1px solid #86efac" : "1px solid transparent" });
+// ── Refonte charte (lot 7) : atomes de theme.js au lieu des copies locales ; écran partagé avec l'admin (saisie d'une
+// participante : AdminGroupPurchases). Calculs (gp-pricing), enregistrement, focus de retour et protection avant de
+// quitter inchangés. Boutons : fond et survol par les classes ex-btn-petrole (action) / ex-btn-ligne (secondaire) ;
+// un bouton indisponible passe en sable (style inline, qui l'emporte sur la classe).
+const card = ui.card;
+const h2 = ui.h2;
+const btn = (primary) => ({ ...ui.btn(primary ? "primaire" : "ligne", "m"), height: 40, padding: "0 18px", background: undefined, color: primary ? undefined : T.ink,
+  ...(primary ? {} : { boxShadow: `inset 0 0 0 1.5px ${T.lineField}` }) });
+const btnClasse = (primary) => primary ? "ex-btn-petrole" : "ex-btn-ligne";
+const btnInactif = { background: T.sand, color: T.inkSoft, boxShadow: "none", cursor: "not-allowed" };
+// condition (remise, palier, UG) : pastille ok quand elle s'applique, neutre sinon
+const chip = (on) => { const t = tone(on ? "ok" : "neutral");
+  return { display: "inline-block", fontSize: 11, fontWeight: 700, lineHeight: 1.4, borderRadius: R.pill, padding: "2px 8px", margin: "2px 4px 2px 0",
+    background: t.bg, color: t.fg, border: `1px solid ${on ? t.border : "transparent"}`, fontVariantNumeric: "tabular-nums" }; };
 const PHASE = { ouverte: "Ouverte aux commandes", a_venir: "Pas encore ouverte", cloturee: "Clôturée", commandee: "Commandée au laboratoire", terminee: "Terminée" };
 const hasQty = (grid) => Object.values(grid || {}).some(s => Object.values(s || {}).some(q => Number(q) > 0));
 
 // Onglet « Commandes groupées » côté pharmacie.
 // admin = { call(body) → réponse gp-admin, opId, participantId, onSaved } : même écran utilisé par
 // l'admin pour saisir la commande d'une participante (Elixir pour son stock, ou une pharmacie).
-export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange, admin = null }) {
+// icone, couleur : icône et couleur du menu (App), pour l'en-tête de vue (pharmacie seulement)
+export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange, admin = null, icone, couleur }) {
   const [ops, setOps] = useState(null);
   const [selId, setSelId] = useState(null);
   const [view, setView] = useState(null);
@@ -192,68 +204,76 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
     if (req === reqRef.current) setBusy("");
   };
 
-  if (ops === null) return <div style={card}>Chargement des commandes groupées…</div>;
+  if (ops === null) return <div role="status" style={{ ...card, color: T.inkMute, fontSize: 14 }}>Chargement des commandes groupées…</div>;
   if (!ops.length) return (
     <div style={card}>
       <div style={h2}>Commandes groupées</div>
-      <div style={{ color: "#475569", fontSize: 14 }}>Aucune opération de commande groupée ne vous est proposée pour le moment.</div>
-      {msg && <Msg m={msg} />}
+      <div style={{ color: T.inkSoft, fontSize: 14 }}>Aucune opération de commande groupée ne vous est proposée pour le moment.</div>
+      {msg && <div style={{ marginTop: 12 }}><Msg m={msg} /></div>}
     </div>
   );
 
   const t = calc?.summary?.totals;
   const confirmed = view?.my_order?.status === "confirmee";
+  // aspect grisé de « Confirmer » : même règle que l'ancienne opacité (la condition disabled, elle, est inchangée)
+  const confirmerGrise = busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid));
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      {!admin && <div style={{ background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", borderRadius: 14, padding: "18px 24px", color: "white" }}>
-        <div style={{ fontSize: 20, fontWeight: 800 }}>🤝 Commandes groupées</div>
-        <div style={{ fontSize: 13, opacity: 0.8, marginTop: 4 }}>Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues.</div>
-      </div>}
+      {/* En-tête de vue commun (lot 7) au lieu du bandeau en dégradé (pharmacie seulement ; l'admin a son propre cadre) */}
+      {!admin && <EnteteVue
+        icone={icone || <Icone nom="groupe" taille={24} />}
+        couleur={couleur}
+        titre="Commandes groupées"
+        sousTitre="Achetez ensemble pour obtenir de meilleures conditions. Les produits hors stock sont des précommandes, livrées aux dates prévues."
+        style={{ marginBottom: 0 }}
+      />}
 
       {!selId && <OpsList ops={ops} onOpen={choose} />}
       {selId && !admin && (
         <div>
-          <button ref={backRef} style={{ ...btn(false), padding: "8px 14px" }} disabled={busy === "save" || busy === "import"} onClick={() => choose(null)}>← Toutes les opérations</button>
+          <button ref={backRef} className={busy === "save" || busy === "import" ? undefined : "ex-btn-ligne"} style={{ ...btn(false), ...(busy === "save" || busy === "import" ? btnInactif : {}) }} disabled={busy === "save" || busy === "import"} onClick={() => choose(null)}>
+            <Icone nom="retour" taille={16} />Toutes les opérations</button>
         </div>
       )}
 
-      {selId && busy === "load" && <div style={card}>Chargement…</div>}
+      {selId && busy === "load" && <div role="status" style={{ ...card, color: T.inkMute, fontSize: 14 }}>Chargement…</div>}
       {selId && op && calc && busy !== "load" && (<>
         <div style={{ ...card, display: "grid", gap: 10 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
             <div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{op.name}</div>
-              <div style={{ fontSize: 13, color: "#475569" }}>{op.supplier_name ? `${op.supplier_name} · ` : ""}{op.start_date ? `du ${dfr(op.start_date)} ` : ""}{op.end_date ? `au ${dfr(op.end_date, { day: "numeric", month: "long", year: "numeric" })}` : ""}</div>
+              <div style={{ fontSize: 20, fontWeight: 640, letterSpacing: "-0.02em", color: T.petrol }}>{op.name}</div>
+              <div className="num" style={{ fontSize: 13, color: T.inkSoft, marginTop: 2 }}>{op.supplier_name ? `${op.supplier_name} · ` : ""}{op.start_date ? `du ${dfr(op.start_date)} ` : ""}{op.end_date ? `au ${dfr(op.end_date, { day: "numeric", month: "long", year: "numeric" })}` : ""}</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontSize: 12, fontWeight: 800, color: editable ? "#166534" : "#92400e" }}>{PHASE[op.phase] || op.phase}{op.phase === "a_venir" && op.start_date ? ` (le ${dfr(op.start_date)})` : ""}</div>
-              {editable && op.end_date && <div style={{ fontSize: 12, color: "#475569" }}>{daysLeft(op.end_date) <= 0 ? "Clôture ce soir" : `Clôture dans ${daysLeft(op.end_date)} jour${daysLeft(op.end_date) > 1 ? "s" : ""}`}</div>}
-              {confirmed && <div style={{ fontSize: 12, color: "#166534" }}>✓ Commande confirmée le {dts(view.my_order.confirmed_at)}</div>}
+              <span style={{ ...ui.badge(editable ? "ok" : "warn"), fontSize: 12 }}>{PHASE[op.phase] || op.phase}{op.phase === "a_venir" && op.start_date ? ` (le ${dfr(op.start_date)})` : ""}</span>
+              {editable && op.end_date && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>{daysLeft(op.end_date) <= 0 ? "Clôture ce soir" : `Clôture dans ${daysLeft(op.end_date)} jour${daysLeft(op.end_date) > 1 ? "s" : ""}`}</div>}
+              {confirmed && <div style={{ fontSize: 12, fontWeight: 600, color: T.ok, marginTop: 4, display: "flex", alignItems: "center", gap: 4, justifyContent: "flex-end" }}><Icone nom="coche" taille={13} epaisseur={2.6} />Commande confirmée le {dts(view.my_order.confirmed_at)}</div>}
             </div>
           </div>
-          <div style={{ fontSize: 13, color: "#334155", display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
+          <div className="num" style={{ fontSize: 13, color: T.inkSoft, display: "flex", flexWrap: "wrap", gap: "4px 18px" }}>
             <span>Paliers calculés sur {op.tier_mode === "individuel" ? "votre quantité" : <b>le total du groupe ({view.participants_count} pharmacies)</b>}</span>
             {Number(op.rfa_pct) > 0 && <span>Remise de fin d'année : <b>{pct(op.rfa_pct)}</b> (déduite du prix)</span>}
             {op.coop_mode !== "aucune" && Number(op.coop_amount) > 0 && <span>Coopération commerciale : <b>{eur(op.coop_amount)}</b> {op.coop_mode === "total" ? "à répartir au prorata" : "par pharmacie"}{op.coop_label ? ` (${op.coop_label})` : ""}</span>}
             <span>Frais de traitement : <b>{pct(view.fee_pct)}</b></span>
           </div>
-          {op.conditions_text && <div style={{ fontSize: 12, color: "#475569", background: "#f8fafc", borderRadius: 8, padding: "8px 12px", whiteSpace: "pre-wrap" }}>{op.conditions_text}</div>}
+          {op.conditions_text && <div style={{ fontSize: 12, color: T.inkSoft, background: T.surface2, borderRadius: R.s, padding: "8px 12px", whiteSpace: "pre-wrap", lineHeight: 1.5 }}>{op.conditions_text}</div>}
           {calc.objective && <Objective o={calc.objective} />}
-          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: "#475569" }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).
+          {lines.some(l => (l.ug_tiers || []).length) && <div style={{ fontSize: 12, color: T.inkSoft }}>Saisissez les <b>unités facturées</b> : les unités gratuites sont ajoutées automatiquement (pour « 12 + 2 UG », saisissez 12 : vous recevrez 14).
             {op.tier_mode !== "individuel" && <> Vous gardez toujours au moins vos propres gratuités ; celles que le groupe gagne en plus sont partagées au prorata et votre part peut évoluer jusqu'à la clôture.</>}</div>}
-          {lines.some(l => packCheck(l, 1)) && <div style={{ fontSize: 12, color: "#475569" }}>📦 Certains produits se commandent par colis : la règle indiquée sous le produit s'applique à <b>chaque date de livraison</b>, sur les unités facturées que vous saisissez.</div>}
+          {lines.some(l => packCheck(l, 1)) && <div style={{ fontSize: 12, color: T.inkSoft, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="carton" taille={14} style={{ marginTop: 1, color: T.teal }} /><span>Certains produits se commandent par colis : la règle indiquée sous le produit s'applique à <b>chaque date de livraison</b>, sur les unités facturées que vous saisissez.</span></div>}
         </div>
 
+        {/* Grille de saisie : en-tête neutre (eyebrow --ink-mute), colonne produit collée à gauche, chiffres alignés */}
         <div style={{ ...card, padding: 0, overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, minWidth: 720 }}>
+          <table className="num" style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, minWidth: 720, color: T.ink }}>
             <thead>
-              <tr style={{ background: "#f8fafc", color: "#475569", fontSize: 11, textTransform: "uppercase", letterSpacing: 0.3 }}>
-                <th style={{ textAlign: "left", padding: "10px 14px", position: "sticky", left: 0, background: "#f8fafc", zIndex: 1 }}>Produit</th>
-                <th style={{ textAlign: "right", padding: "10px 8px" }}>Prix brut</th>
-                <th style={{ textAlign: "left", padding: "10px 8px" }}>Conditions</th>
-                {slots.map(s => <th key={s.id} style={{ textAlign: "center", padding: "10px 6px", minWidth: 86 }}>{s.label}{s.sub && <div style={{ fontWeight: 500, textTransform: "none" }}>{s.sub}</div>}</th>)}
-                <th style={{ textAlign: "right", padding: "10px 8px" }}>Prix net</th>
-                <th style={{ textAlign: "right", padding: "10px 14px" }}>Total net</th>
+              <tr>
+                <th style={{ ...thGrille, textAlign: "left", padding: "10px 14px", position: "sticky", left: 0, zIndex: 1 }}>Produit</th>
+                <th style={{ ...thGrille, textAlign: "right" }}>Prix brut</th>
+                <th style={{ ...thGrille, textAlign: "left" }}>Conditions</th>
+                {slots.map(s => <th key={s.id} style={{ ...thGrille, textAlign: "center", padding: "10px 6px", minWidth: 86 }}>{s.label}{s.sub && <div style={{ fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>{s.sub}</div>}</th>)}
+                <th style={{ ...thGrille, textAlign: "right" }}>Prix net</th>
+                <th style={{ ...thGrille, textAlign: "right", padding: "10px 14px" }}>Total net</th>
               </tr>
             </thead>
             <tbody>
@@ -266,15 +286,16 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
                 const inv = invoiceDiscount(l, p.basis);   // détail des 3 remises au palier actuel
                 const netPct = row ? row.totalDiscountPct : (1 - p.unitAfterRfa / (p.gross || 1)) * 100;
                 return (
-                  <tr key={l.id} style={{ borderTop: "1px solid #eef2f5", verticalAlign: "top" }}>
-                    <td style={{ padding: "10px 14px", position: "sticky", left: 0, background: "white", zIndex: 1, minWidth: 150, maxWidth: 220, boxShadow: "1px 0 0 #eef2f5" }}>
-                      <div style={{ fontWeight: 700, color: "#0f2d3d" }}>{l.name}</div>
-                      <div style={{ fontSize: 11, color: "#64748b" }}>CIP {l.cip} · {stock ? <span style={{ color: "#166534", fontWeight: 700 }}>En stock</span> : <span style={{ color: "#b45309", fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
-                      {packLabel(l) && <div style={{ fontSize: 11, color: "#0f2d3d", fontWeight: 700 }}>📦 {packLabel(l)}</div>}
-                      {l.notes && <div style={{ fontSize: 11, color: "#64748b" }}>{l.notes}</div>}
-                      {row?.free > 0 && <div style={{ fontSize: 12, color: "#15803d", fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues{op.tier_mode !== "individuel" && row.free > ugFor(l, row.qty).free ? " (dont part du groupe, provisoire)" : ""}</div>}
+                  <tr key={l.id} style={{ borderTop: `1px solid ${T.lineSoft}`, verticalAlign: "top" }}>
+                    <td style={{ padding: "10px 14px", position: "sticky", left: 0, background: T.surface, zIndex: 1, minWidth: 150, maxWidth: 220, boxShadow: `1px 0 0 ${T.lineSoft}` }}>
+                      <div style={{ fontWeight: 600, color: T.ink }}>{l.name}</div>
+                      {/* statut écrit : en stock (ok), précommande (sarcelle, décision de la cliente) */}
+                      <div style={{ fontSize: 11, color: T.inkMute }}>CIP {l.cip} · {stock ? <span style={{ color: T.ok, fontWeight: 700 }}>En stock</span> : <span style={{ color: T.teal, fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
+                      {packLabel(l) && <div style={{ fontSize: 11, color: T.inkSoft, fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}><Icone nom="carton" taille={12} />{packLabel(l)}</div>}
+                      {l.notes && <div style={{ fontSize: 11, color: T.inkSoft }}>{l.notes}</div>}
+                      {row?.free > 0 && <div style={{ fontSize: 12, color: T.ok, fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues{op.tier_mode !== "individuel" && row.free > ugFor(l, row.qty).free ? " (dont part du groupe, provisoire)" : ""}</div>}
                     </td>
-                    <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>{eur(l.price_gross)}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap", color: T.inkSoft }}>{eur(l.price_gross)}</td>
                     <td style={{ padding: "10px 8px", maxWidth: 240 }}>
                       {l.discount_mode === "unitaire" && Number(l.discount_pct) > 0 && <span style={chip(true)}>−{pct(l.discount_pct)}</span>}
                       {tiers.map((t, i) => <span key={i} style={chip(p.invoiceTier && Number(t.min_qty) === p.invoiceTier.min_qty)}>dès {t.min_qty} : −{pct(t.pct)}</span>)}
@@ -285,11 +306,11 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
                           ? (d.tiers || []).map((t, j) => <span key={`x${k}-${j}`} style={chip(part.tier && Number(t.min_qty) === part.tier.min_qty)}>{word} dès {t.min_qty} : −{pct(t.pct)}</span>)
                           : Number(d.pct) > 0 ? <span key={`x${k}`} style={chip(true)}>{word} −{pct(d.pct)}</span> : null;
                       })}
-                      {(l.extra_discounts || []).length > 0 && inv.pct > 0 && <div style={{ fontSize: 11, color: "#0f2d3d", fontWeight: 700 }}>Remise totale : −{pct(inv.pct)}</div>}
+                      {(l.extra_discounts || []).length > 0 && inv.pct > 0 && <div style={{ fontSize: 11, color: T.ink, fontWeight: 700 }}>Remise totale : −{pct(inv.pct)}</div>}
                       {(l.ug_tiers || []).map((t, i) => <span key={"u" + i} style={chip(p.ug.tier && Number(t.min_qty) === p.ug.tier.min_qty)}>{t.min_qty} + {t.free_qty} UG</span>)}
-                      {p.nextInvoiceTier && <div style={{ fontSize: 11, color: "#0369a1", marginTop: 2 }}>Encore {p.nextInvoiceTier.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → remise totale −{pct(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct)}</div>}
-                      {p.ug.next && <div style={{ fontSize: 11, color: "#15803d", marginTop: 2 }}>Encore {p.ug.next.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → +{p.ug.next.gain} UG{op.tier_mode !== "individuel" ? " pour le groupe" : ""}</div>}
-                      {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: "#94a3b8" }}>Groupe : {calc.group[l.id] || 0} u.</div>}
+                      {p.nextInvoiceTier && <div style={{ fontSize: 11, color: T.teal, fontWeight: 600, marginTop: 2 }}>Encore {p.nextInvoiceTier.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → remise totale −{pct(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct)}</div>}
+                      {p.ug.next && <div style={{ fontSize: 11, color: T.ok, fontWeight: 600, marginTop: 2 }}>Encore {p.ug.next.missing} u.{op.tier_mode !== "individuel" ? " (groupe)" : ""} → +{p.ug.next.gain} UG{op.tier_mode !== "individuel" ? " pour le groupe" : ""}</div>}
+                      {op.tier_mode !== "individuel" && <div style={{ fontSize: 11, color: T.inkMute }}>Groupe : {calc.group[l.id] || 0} u.</div>}
                     </td>
                     {slots.map(s => {
                       const v = grid[l.id]?.[s.id] || "";
@@ -302,22 +323,24 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
                           {show ? (<>
                             <input value={v} inputMode="numeric" disabled={!editable || busy === "import" || busy === "save"} onChange={e => setQty(l.id, s.id, e.target.value)} placeholder="0" aria-label={`${l.name} — ${s.label}`}
                               aria-invalid={pb ? true : undefined}
-                              style={{ width: 64, border: `1.5px solid ${pb ? "#dc2626" : allowed ? "#d6dde3" : "#f59e0b"}`, borderRadius: 8, padding: "7px 6px", fontSize: 14, fontWeight: 700, textAlign: "center", background: pb ? "#fef2f2" : editable ? "white" : "#f8fafc", fontFamily: "inherit" }} />
-                            {pb && <div style={{ fontSize: 10, color: "#b91c1c", fontWeight: 700 }}>{pb.text}
-                              {editable && <button type="button" disabled={!!busy} onClick={() => setQty(l.id, s.id, pb.suggestion)} title={`Passer à ${pb.suggestion}`}
-                                style={{ display: "block", margin: "2px auto 0", border: "1px solid #fca5a5", background: "white", color: "#b91c1c", borderRadius: 6, padding: "1px 6px", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }}>→ {pb.suggestion}</button>}</div>}
-                            {calc.freeSlots[l.id]?.[s.id] > 0 && <div style={{ fontSize: 11, color: "#15803d", fontWeight: 700 }}>+{calc.freeSlots[l.id][s.id]} UG</div>}
-                            {!allowed && <div style={{ fontSize: 10, color: "#b45309" }}>plus en stock</div>}
-                          </>) : <span style={{ color: "#cbd5e1" }}>—</span>}
+                              style={{ width: 64, height: 36, boxSizing: "border-box", border: pb ? `2px solid ${T.danger}` : Number(v) > 0 ? `2px solid ${allowed ? T.teal : T.warn}` : `1px solid ${allowed ? T.lineField : T.warn}`,
+                                borderRadius: R.s, padding: "0 6px", fontSize: 14, fontWeight: Number(v) > 0 ? 700 : 500, textAlign: "center", color: T.ink,
+                                background: pb ? T.dangerBg : editable ? T.surface : T.surface2, fontFamily: "inherit", fontVariantNumeric: "tabular-nums" }} />
+                            {pb && <div style={{ fontSize: 11, color: T.danger, fontWeight: 700, marginTop: 2 }}>{pb.text}
+                              {editable && <button type="button" className={busy ? undefined : "ex-btn-danger-ligne"} disabled={!!busy} onClick={() => setQty(l.id, s.id, pb.suggestion)} title={`Passer à ${pb.suggestion}`}
+                                style={{ display: "block", margin: "3px auto 0", border: "none", borderRadius: R.pill, padding: "2px 9px", fontSize: 11, fontWeight: 700, cursor: busy ? "not-allowed" : "pointer", fontFamily: "inherit", fontVariantNumeric: "tabular-nums" }}>→ {pb.suggestion}</button>}</div>}
+                            {calc.freeSlots[l.id]?.[s.id] > 0 && <div style={{ fontSize: 11, color: T.ok, fontWeight: 700 }}>+{calc.freeSlots[l.id][s.id]} UG</div>}
+                            {!allowed && <div style={{ fontSize: 11, color: T.warn }}>plus en stock</div>}
+                          </>) : <span style={{ color: T.inkFaint }}>—</span>}
                         </td>
                       );
                     })}
                     <td style={{ padding: "10px 8px", textAlign: "right", whiteSpace: "nowrap" }}>
                       <b>{eur(row ? row.unitNet : p.unitAfterRfa)}</b>
-                      {row?.free > 0 && <div style={{ fontSize: 11, color: "#15803d" }}>soit {eur(row.receivedUnitNet)} / u. reçue</div>}
-                      {netPct > 0.05 && <div style={{ fontSize: 11, color: "#166534" }}>−{pct(netPct)}</div>}
+                      {row?.free > 0 && <div style={{ fontSize: 11, color: T.ok }}>soit {eur(row.receivedUnitNet)} / u. reçue</div>}
+                      {netPct > 0.05 && <div style={{ fontSize: 11, color: T.ok, fontWeight: 600 }}>−{pct(netPct)}</div>}
                     </td>
-                    <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 700 }}>{row ? eur(row.totalNet) : "—"}</td>
+                    <td style={{ padding: "10px 14px", textAlign: "right", whiteSpace: "nowrap", fontWeight: 700, color: row ? T.ink : T.inkFaint }}>{row ? eur(row.totalNet) : "—"}</td>
                   </tr>
                 );
               })}
@@ -326,17 +349,17 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
         </div>
 
         {imp && (imp.unmatched.length > 0 || imp.warnings.length > 0) && (
-          <div style={{ ...card, borderColor: "#fcd34d", background: "#fffbeb", fontSize: 13 }}>
+          <div style={{ ...card, ...ui.encart("warn"), padding: "16px 20px", borderRadius: R.m, boxShadow: "none" }}>
             {imp.unmatched.length > 0 && (<>
               <b>Produits de votre fichier qui ne font pas partie de l'opération ({imp.unmatched.length})</b>
               <ul style={{ margin: "6px 0 0 18px", padding: 0 }}>{imp.unmatched.slice(0, 30).map((u, i) => <li key={i}>{u.name}{u.cip ? ` (${u.cip})` : ""} — {u.qty}</li>)}</ul>
             </>)}
-            {imp.warnings.map((w, i) => <div key={i} style={{ marginTop: 6 }}>⚠️ {w}</div>)}
+            {imp.warnings.map((w, i) => <div key={i} style={{ marginTop: 6, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} /><span>{w}</span></div>)}
           </div>
         )}
 
         <div style={{ ...card, display: "flex", gap: 24, flexWrap: "wrap", justifyContent: "space-between", alignItems: "flex-end" }}>
-          <table style={{ fontSize: 13, borderCollapse: "collapse", minWidth: 280 }}>
+          <table className="num" style={{ fontSize: 13, borderCollapse: "collapse", minWidth: 280, color: T.ink }}>
             <tbody>
               <Tot label={`Montant brut HT (${t.units} u. facturées)`} v={eur(t.gross)} />
               {t.invoiceDiscount > 0.004 && <Tot label="Remises sur facture" v={"− " + eur(t.invoiceDiscount)} />}
@@ -344,20 +367,21 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
               {t.coop > 0.004 && <Tot label="Coopération commerciale" v={"− " + eur(t.coop)} />}
               <Tot label={`Frais de traitement (${pct(t.feePct)})`} v={"+ " + eur(t.fee)} />
               <Tot label="Total HT" v={eur(t.totalHT)} strong />
-              {t.freeUnits > 0 && <tr><td colSpan={2} style={{ padding: "4px 0", color: "#15803d", fontSize: 12, fontWeight: 700 }}>+ {t.freeUnits} unités gratuites (valeur {eur(t.ugValue)}) : {t.receivedUnits} unités reçues</td></tr>}
+              {t.freeUnits > 0 && <tr><td colSpan={2} style={{ padding: "4px 0", color: T.ok, fontSize: 12, fontWeight: 700 }}>+ {t.freeUnits} unités gratuites (valeur {eur(t.ugValue)}) : {t.receivedUnits} unités reçues</td></tr>}
               {t.vat > 0 && <Tot label="TVA" v={eur(t.vat)} />}
               {t.vat > 0 && <Tot label="Total TTC" v={eur(t.totalTTC)} />}
             </tbody>
           </table>
           <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
-            {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 11, color: "#64748b", maxWidth: 360, textAlign: "right" }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture. La part des gratuités gagnées par le groupe est provisoire.</div>}
-            {dirty && editable && <div style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Modifications non confirmées</div>}
-            {editable && packProblems.length > 0 && <div role="alert" style={{ fontSize: 12, color: "#991b1b", fontWeight: 700, maxWidth: 420, textAlign: "right" }}>📦 {packProblems.length} quantité{packProblems.length > 1 ? "s" : ""} hors colisage (cases en rouge) : corrigez-{packProblems.length > 1 ? "les" : "la"} pour confirmer.</div>}
+            {op.tier_mode !== "individuel" && editable && <div style={{ fontSize: 12, color: T.inkSoft, maxWidth: 360, textAlign: "right", lineHeight: 1.45 }}>Prix estimés avec les quantités du groupe à cet instant : ils peuvent encore s'améliorer jusqu'à la clôture. La part des gratuités gagnées par le groupe est provisoire.</div>}
+            {dirty && editable && <div style={{ ...ui.badge("warn"), fontSize: 12 }}><Icone nom="crayon" taille={12} />Modifications non confirmées</div>}
+            {editable && packProblems.length > 0 && <div role="alert" style={{ fontSize: 12, color: T.danger, fontWeight: 700, maxWidth: 420, textAlign: "right", display: "flex", alignItems: "flex-start", justifyContent: "flex-end", gap: 6 }}><Icone nom="carton" taille={14} style={{ marginTop: 1, flexShrink: 0 }} />{packProblems.length} quantité{packProblems.length > 1 ? "s" : ""} hors colisage (cases en rouge) : corrigez-{packProblems.length > 1 ? "les" : "la"} pour confirmer.</div>}
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
-                {!admin && <button style={btn(false)} disabled={!!busy} onClick={() => fileRef.current?.click()}>{busy === "import" ? "Analyse…" : "📄 Importer mon bon de commande (LGO)"}</button>}
-                <button style={{ ...btn(true), opacity: busy || packProblems.length || (!dirty && !confirmed && !hasQty(grid)) ? 0.6 : 1 }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid)) || (!!admin && !dirty)} onClick={confirm}>
+                {!admin && <button className={busy ? undefined : btnClasse(false)} style={{ ...btn(false), ...(busy ? btnInactif : {}) }} disabled={!!busy} onClick={() => fileRef.current?.click()}>
+                  <Icone nom={busy === "import" ? "horloge" : "importer"} taille={16} />{busy === "import" ? "Analyse…" : "Importer mon bon de commande (LGO)"}</button>}
+                <button className={confirmerGrise ? undefined : btnClasse(true)} style={{ ...btn(true), ...(confirmerGrise ? btnInactif : {}), ...(busy === "save" ? { cursor: "wait" } : {}) }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid)) || (!!admin && !dirty)} onClick={confirm}>
                   {busy === "save" ? "Envoi…" : admin ? (confirmed ? "Enregistrer les modifications" : "Enregistrer la commande") : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}
                 </button>
               </div>
@@ -366,7 +390,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
         </div>
       </>)}
       {msg && <Msg m={msg} />}
-      {stale && <button style={{ ...btn(true), alignSelf: "flex-start" }} onClick={() => loadView(selId)}>↻ Recharger ma commande</button>}
+      {stale && <button className={btnClasse(true)} style={{ ...btn(true), alignSelf: "flex-start" }} onClick={() => loadView(selId)}><Icone nom="actualiser" taille={16} />Recharger ma commande</button>}
     </div>
   );
 }
@@ -376,18 +400,23 @@ const sdate = (d, year) => dfr(d, { day: "numeric", month: "short", ...(year ? {
 const period = (o) => o.start_date && o.end_date ? `du ${sdate(o.start_date, o.start_date.slice(0, 4) !== o.end_date.slice(0, 4))} au ${sdate(o.end_date, true)}`
   : o.end_date ? `jusqu'au ${sdate(o.end_date, true)}` : o.start_date ? `à partir du ${sdate(o.start_date, true)}` : "—";
 const RANK = { ouverte: 0, a_venir: 1, cloturee: 2, commandee: 3, terminee: 4 };
-const PHASE_COLOR = { ouverte: ["#dcfce7", "#166534"], a_venir: ["#e0f2fe", "#075985"], cloturee: ["#fef3c7", "#92400e"], commandee: ["#e0e7ff", "#3730a3"], terminee: ["#f1f5f9", "#475569"] };
-const badge = ([bg, fg]) => ({ display: "inline-block", background: bg, color: fg, borderRadius: 99, padding: "3px 10px", fontSize: 12, fontWeight: 800, whiteSpace: "nowrap" });
+// statut d'une opération → ton de theme.js (libellé toujours écrit)
+const PHASE_TON = { ouverte: "ok", a_venir: "info", cloturee: "warn", commandee: "labo", terminee: "neutral" };
+// retour à la ligne permis : colonnes étroites du tableau (largeurs fixes) sur petit écran, le badge ne déborde plus
+const badge = (ton) => ({ ...ui.badge(ton), fontSize: 12, padding: "3px 10px", whiteSpace: "normal", maxWidth: "100%", borderRadius: 12 });
+// en-tête de colonne : eyebrow --ink-mute 11 px sur --surface-2 (ui.th)
+const thGrille = { ...ui.th, padding: "10px 8px", whiteSpace: "normal", lineHeight: 1.25, verticalAlign: "bottom" };
 
 function OpsList({ ops, onOpen }) {
   const current = ops.filter(o => o.phase === "ouverte" || o.phase === "a_venir")
     .sort((a, b) => RANK[a.phase] - RANK[b.phase] || String(a.phase === "a_venir" ? a.start_date : a.end_date || "9").localeCompare(String(b.phase === "a_venir" ? b.start_date : b.end_date || "9")));
   const past = ops.filter(o => !(o.phase === "ouverte" || o.phase === "a_venir")).sort((a, b) => String(b.end_date || "").localeCompare(String(a.end_date || "")));
   const cell = { padding: "12px 14px", verticalAlign: "middle" };
-  const th = { textAlign: "left", padding: "8px 14px", fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.3, whiteSpace: "nowrap" };
+  const th = { ...ui.th, padding: "8px 14px", background: "transparent" };
+  // une carte par groupe d'opérations ; lignes .ex-tr (zébrure et survol en CSS : plus de fond réécrit en JS)
   const section = (title, list) => list.length > 0 && (
     <div style={{ ...card, padding: 0, overflowX: "auto" }}>
-      <div style={{ ...h2, padding: "14px 14px 0" }}>{title} ({list.length})</div>
+      <div className="num" style={{ ...h2, padding: "16px 14px 4px" }}>{title} ({list.length})</div>
       <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 760, fontSize: 14, tableLayout: "fixed" }}>
         <colgroup><col style={{ width: "31%" }} /><col style={{ width: "19%" }} /><col style={{ width: "17%" }} /><col style={{ width: "18%" }} /><col style={{ width: "15%" }} /></colgroup>
         <thead><tr><th style={th}>Opération</th><th style={th}>Période</th><th style={th}>Statut</th><th style={th}>Ma commande</th><th style={th} /></tr></thead>
@@ -398,31 +427,32 @@ function OpsList({ ops, onOpen }) {
             const slots = (o.delivery_slots || []).filter(x => x.date).sort((a, b) => a.date.localeCompare(b.date));
             const left = open && o.end_date ? daysLeft(o.end_date) : null;
             return (
-              <tr key={o.id} onClick={() => onOpen(o.id)}
-                style={{ borderTop: "1px solid #eef2f5", cursor: "pointer" }} onMouseEnter={e => (e.currentTarget.style.background = "#f8fafc")} onMouseLeave={e => (e.currentTarget.style.background = "")}>
+              <tr key={o.id} className="ex-tr" onClick={() => onOpen(o.id)}
+                style={{ borderTop: `1px solid ${T.lineSoft}`, cursor: "pointer" }}>
                 <td style={cell}>
-                  <div style={{ fontWeight: 800, color: "#0f2d3d" }}>{o.name}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{[o.supplier_name, o.products_count ? `${o.products_count} produit${o.products_count > 1 ? "s" : ""}` : "",
+                  <div style={{ fontWeight: 600, color: T.ink }}>{o.name}</div>
+                  <div className="num" style={{ fontSize: 12, color: T.inkSoft }}>{[o.supplier_name, o.products_count ? `${o.products_count} produit${o.products_count > 1 ? "s" : ""}` : "",
                     slots.length > 1 ? `${slots.length} livraisons à partir du ${sdate(slots[0].date)}` : slots.length === 1 ? `livraison le ${sdate(slots[0].date)}` : ""].filter(Boolean).join(" · ")}</div>
                 </td>
-                <td style={{ ...cell, color: "#334155" }}>{period(o)}</td>
+                <td className="num" style={{ ...cell, color: T.inkSoft }}>{period(o)}</td>
                 <td style={cell}>
-                  <span style={badge(PHASE_COLOR[o.phase] || PHASE_COLOR.terminee)}>{PHASE[o.phase] || o.phase}</span>
-                  {left != null && <div style={{ fontSize: 12, color: left <= 2 ? "#b45309" : "#64748b", fontWeight: left <= 2 ? 700 : 500, marginTop: 3 }}>{left < 0 ? "Clôturée" : left === 0 ? "Clôture ce soir" : `Clôture dans ${left} jour${left > 1 ? "s" : ""}`}</div>}
-                  {o.phase === "a_venir" && o.start_date && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>Ouverture le {sdate(o.start_date)}</div>}
+                  <span style={badge(PHASE_TON[o.phase] || "neutral")}>{PHASE[o.phase] || o.phase}</span>
+                  {left != null && <div className="num" style={{ fontSize: 12, color: left <= 2 ? T.warn : T.inkSoft, fontWeight: left <= 2 ? 700 : 500, marginTop: 3 }}>{left < 0 ? "Clôturée" : left === 0 ? "Clôture ce soir" : `Clôture dans ${left} jour${left > 1 ? "s" : ""}`}</div>}
+                  {o.phase === "a_venir" && o.start_date && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 3 }}>Ouverture le {sdate(o.start_date)}</div>}
                 </td>
                 <td style={cell}>
                   {mine ? (<>
-                    <span style={badge(["#dcfce7", "#166534"])}>✓ {open || o.phase === "a_venir" ? "Commandé" : "Participé"}{o.my_order.units ? ` · ${o.my_order.units} u.` : ""}</span>
-                    {o.my_order.confirmed_at && <div style={{ fontSize: 12, color: "#64748b", marginTop: 3 }}>le {dts(o.my_order.confirmed_at)}</div>}
-                  </>) : open ? <span style={badge(["#fff7ed", "#c2410c"])}>Pas encore commandé</span>
-                    : o.phase === "a_venir" ? <span style={{ fontSize: 13, color: "#94a3b8" }}>—</span>
-                    : <span style={badge(["#f1f5f9", "#64748b"])}>Non participé</span>}
+                    <span className="num" style={badge("ok")}><Icone nom="coche" taille={12} epaisseur={2.6} />{open || o.phase === "a_venir" ? "Commandé" : "Participé"}{o.my_order.units ? ` · ${o.my_order.units} u.` : ""}</span>
+                    {o.my_order.confirmed_at && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 3 }}>le {dts(o.my_order.confirmed_at)}</div>}
+                  </>) : open ? <span style={badge("warn")}>Pas encore commandé</span>
+                    : o.phase === "a_venir" ? <span style={{ fontSize: 13, color: T.inkFaint }}>—</span>
+                    : <span style={badge("neutral")}>Non participé</span>}
                 </td>
                 <td style={{ ...cell, textAlign: "right", whiteSpace: "nowrap" }}>
                   <button type="button" data-gp-open={o.id} onClick={e => { e.stopPropagation(); onOpen(o.id); }} aria-label={`${open ? (mine ? "Modifier ma commande" : "Commander") : "Voir"} : ${o.name}`}
-                    style={open ? { ...btn(!mine), padding: "7px 12px" } : { border: "none", background: "none", fontSize: 13, fontWeight: 700, color: "#0f2d3d", cursor: "pointer", padding: "7px 4px", fontFamily: "inherit" }}>
-                    {open ? (mine ? "Modifier" : "Commander") : "Voir"} →</button>
+                    className={open ? btnClasse(!mine) : undefined}
+                    style={open ? { ...btn(!mine), height: 34, padding: "0 14px", gap: 6 } : { border: "none", background: "none", fontSize: 13, fontWeight: 700, color: T.petrol, cursor: "pointer", padding: "7px 4px", fontFamily: "inherit", display: "inline-flex", alignItems: "center", gap: 6 }}>
+                    {open ? (mine ? "Modifier" : "Commander") : "Voir"}<Icone nom="fleche" taille={14} epaisseur={2.4} /></button>
                 </td>
               </tr>
             );
@@ -435,12 +465,14 @@ function OpsList({ ops, onOpen }) {
 }
 
 function Tot({ label, v, strong }) {
-  return <tr><td style={{ padding: "3px 16px 3px 0", color: strong ? "#0f2d3d" : "#475569", fontWeight: strong ? 800 : 500 }}>{label}</td><td style={{ textAlign: "right", fontWeight: strong ? 800 : 600, whiteSpace: "nowrap" }}>{v}</td></tr>;
+  return <tr><td style={{ padding: strong ? "6px 16px 3px 0" : "3px 16px 3px 0", color: strong ? T.ink : T.inkSoft, fontWeight: strong ? 700 : 500 }}>{label}</td><td style={{ textAlign: "right", padding: strong ? "6px 0 3px" : undefined, fontWeight: 700, fontSize: strong ? 16 : undefined, color: T.ink, whiteSpace: "nowrap" }}>{v}</td></tr>;
 }
 
+// message d'état : ok (vert), erreur (danger), information (menthe + sarcelle) ; toujours avec une icône
+const MSG = { ok: ["ok", "coche"], err: ["danger", "alerte"], info: ["info", "horloge"] };
 function Msg({ m }) {
-  const c = { ok: ["#dcfce7", "#166534"], err: ["#fee2e2", "#991b1b"], info: ["#e0f2fe", "#075985"] }[m.type] || ["#f1f5f9", "#334155"];
-  return <div role="status" style={{ background: c[0], color: c[1], borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600 }}>{m.text}</div>;
+  const [ton, icone] = MSG[m.type] || ["neutral", "alerte"];
+  return <div role="status" style={{ ...ui.encart(ton), fontWeight: 600, display: "flex", alignItems: "flex-start", gap: 8 }}><Icone nom={icone} taille={16} style={{ marginTop: 1 }} /><span>{m.text}</span></div>;
 }
 
 export function Objective({ o }) {
@@ -449,12 +481,13 @@ export function Objective({ o }) {
   const label = { unites: "Objectif du groupe", montant_brut: "Objectif du groupe (montant brut)", montant_net: "Objectif du groupe (montant remisé)" }[o.type];
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: "#334155", marginBottom: 4, gap: 8, flexWrap: "wrap" }}>
+      <div className="num" style={{ display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700, color: T.inkSoft, marginBottom: 6, gap: 8, flexWrap: "wrap" }}>
         <span>{label} : {f(o.target)}{unit}</span>
-        <span style={{ color: o.reached ? "#166534" : "#0369a1" }}>{o.reached ? "✓ Objectif atteint" : `${f(o.value)}${unit} · encore ${f(o.missing)}${unit}`}</span>
+        <span style={{ color: o.reached ? T.ok : T.teal, display: "inline-flex", alignItems: "center", gap: 4 }}>{o.reached ? <><Icone nom="coche" taille={13} epaisseur={2.6} />Objectif atteint</> : `${f(o.value)}${unit} · encore ${f(o.missing)}${unit}`}</span>
       </div>
-      <div style={{ height: 10, background: "#e2e8f0", borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ width: `${o.pct}%`, height: "100%", background: o.reached ? "#22c55e" : "linear-gradient(90deg, #2d9cbc, #0f2d3d)", transition: "width .3s" }} />
+      {/* piste sable, remplie en sarcelle puis or à l'objectif atteint (comme la progression U-Labs) */}
+      <div style={{ height: 10, background: T.sand, borderRadius: R.pill, overflow: "hidden" }}>
+        <div style={{ width: `${o.pct}%`, height: "100%", borderRadius: R.pill, background: o.reached ? T.or : T.teal2, transition: "width .3s var(--ease)" }} />
       </div>
     </div>
   );

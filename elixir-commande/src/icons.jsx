@@ -29,6 +29,20 @@ const TRACES = {
   envoyer: <><path d="M20.5 3.5 10 14" /><path d="M20.5 3.5 14 20.5l-4-6.5-6.5-4z" /></>,
   corbeille: <><path d="M4 7h16" /><path d="M9.5 7V4.5h5V7" /><path d="M6 7l1 13h10l1-13" /><path d="M10 11v5.5M14 11v5.5" /></>,
   ampoule: <><path d="M9.5 18h5M10.5 21h3" /><path d="M12 3a6 6 0 0 0-3.6 10.8c.7.5 1.1 1.3 1.1 2.1v.1h5v-.1c0-.8.4-1.6 1.1-2.1A6 6 0 0 0 12 3z" /></>,
+  // Mes commandes, outils et fenêtres (lot 7)
+  recommander: <><path d="M20 12a8 8 0 1 1-2.4-5.7" /><path d="M20 4v5h-5" /></>,   // comme la maquette de la vitrine
+  image: <><rect x="3.5" y="5" width="17" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m20.5 16-5-5-8.5 8" /></>,
+  agrandir: <><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /><path d="M11 8.5v5M8.5 11h5" /></>,
+  lecture: <path d="M8 5.5v13l10.5-6.5z" />,
+  precedent: <path d="m14.5 6-6 6 6 6" />,
+  suivant: <path d="m9.5 6 6 6-6 6" />,
+  fleche: <path d="M5 12h14M13 6l6 6-6 6" />,
+  retour: <path d="M19 12H5M11 6l-6 6 6 6" />,
+  regle: <><rect x="2.5" y="8" width="19" height="8" rx="1.5" /><path d="M6.5 8v3M10 8v4.5M13.5 8v3M17 8v4.5" /></>,
+  calendrier: <><rect x="3.5" y="5" width="17" height="15.5" rx="2" /><path d="M3.5 10h17M8 3v4M16 3v4" /></>,
+  bulle: <path d="M20 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.3A8 8 0 1 1 20 12z" />,
+  trombone: <path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6" />,
+  importer: <><path d="M12 15V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
   moins: <path d="M5 12h14" />,
   // ── rayons (barre latérale ; lot 2) ──

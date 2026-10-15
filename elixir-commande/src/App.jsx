@@ -13,7 +13,7 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
-import { T, R, tone, ui, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
+import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
@@ -1802,35 +1802,41 @@ export default function App() {
         </nav>
       </aside>
 
-      {/* ── PROMO POPUP ── */}
+      {/* ── PROMO POPUP « Offres du moment » (lot 7) : fenêtre paper de rayon 28 sur voile --scrim, sans flou ; la couleur
+          de chaque menu promo (saisie dans l'admin) n'est plus qu'un filet et une pastille d'icône, textes aux jetons ── */}
       {promoPopupOpen && promoSections.some(p => p.active) && (
-        <div style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.6)", zIndex:2000, display:"flex", alignItems:"center", justifyContent:"center", padding:16, backdropFilter:"blur(4px)" }}>
-          <div style={{ background:"white", borderRadius:20, padding:"36px 40px", maxWidth:480, width:"100%", boxShadow:"0 24px 64px rgba(0,0,0,0.4)", fontFamily:"inherit" }}>
-            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:20 }}>
+        <div role="dialog" aria-modal="true" aria-labelledby="offres-titre" style={{ ...ui.overlay, zIndex:2000 }}>
+          <div style={{ ...ui.modal, maxHeight:"calc(100vh - 32px)", overflowY:"auto", padding: isMobile ? "22px 18px" : "28px 32px" }}>
+            <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:20 }}>
               <div>
-                <div style={{ fontWeight:800, fontSize:20, color:"#0f2d3d" }}>🎉 Offres du moment</div>
-                <div style={{ fontSize:13, color:"#666", marginTop:4 }}>Des promotions exclusives sont disponibles cette semaine !</div>
+                <h2 id="offres-titre" style={ui.titreModal}><Icone nom="cadeau" taille={22} style={{ color:T.teal }} />Offres du moment</h2>
+                <div style={{ fontSize:13, color:T.inkSoft, marginTop:6 }}>Des promotions exclusives sont disponibles cette semaine !</div>
               </div>
-              <button onClick={() => setPromoPopupOpen(false)} style={{ background:"#f0f2f5", border:"none", borderRadius:8, width:32, height:32, cursor:"pointer", fontSize:16 }}>✕</button>
+              <button className="ex-btn-discret" onClick={() => setPromoPopupOpen(false)} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
-              {promoSections.filter(p => p.active).map(ps => (
-                <button key={ps.id} onClick={() => { navParClic.current = true; menuDemande.current = ""; setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
-                  display:"flex", alignItems:"center", gap:14, background:`linear-gradient(135deg, ${ps.color}15, ${ps.accentColor || ps.color}25)`,
-                  border:`2px solid ${ps.color}40`, borderRadius:14, padding:"14px 18px", cursor:"pointer", textAlign:"left", width:"100%"
+              {promoSections.filter(p => p.active).map(ps => {
+                // pastille d'icône : teinte à 14 % d'une couleur hex de l'admin, menthe sinon (comme EnteteVue)
+                const teinte = alpha(ps.color, 0.14);
+                return (
+                <button key={ps.id} className="ex-carte" onClick={() => { navParClic.current = true; menuDemande.current = ""; setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
+                  display:"flex", alignItems:"center", gap:14, background:T.surface, color:T.ink,
+                  borderLeft:`3px solid ${ps.color || T.line}`, borderRadius:R.m, padding:"14px 16px", cursor:"pointer", textAlign:"left", width:"100%", fontFamily:"inherit"
                 }}>
-                  <span style={{ fontSize:28 }}>{ps.icon || "🏷️"}</span>
-                  <div style={{ flex:1 }}>
-                    <div style={{ fontWeight:800, fontSize:15, color:"#0f2d3d" }}>{ps.name}</div>
-                    {ps.description && <div style={{ fontSize:12, color:"#666", marginTop:2 }}>{ps.description}</div>}
-                    {ps.endDate && <div style={{ fontSize:11, color:"#e07b39", marginTop:3, fontWeight:600 }}>⏰ Jusqu'au {ps.endDate}</div>}
-                    <div style={{ fontSize:11, color:ps.color, fontWeight:700, marginTop:4 }}>{(ps.products||[]).length} référence(s) → Voir les offres</div>
+                  <span aria-hidden="true" style={{ width:44, height:44, borderRadius:12, flexShrink:0, display:"flex", alignItems:"center", justifyContent:"center", fontSize:22,
+                    background: typeof teinte === "string" && teinte.startsWith("rgba(") ? teinte : T.mint, color:T.petrol }}>{ps.icon || <Icone nom="etiquette" taille={22} />}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:600, fontSize:15, color:T.ink }}>{ps.name}</div>
+                    {ps.description && <div style={{ fontSize:12, color:T.inkSoft, marginTop:2 }}>{ps.description}</div>}
+                    {ps.endDate && <div className="num" style={{ fontSize:12, color:T.warn, marginTop:4, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}><Icone nom="horloge" taille={13} />Jusqu'au {ps.endDate}</div>}
+                    <div className="num" style={{ fontSize:12, color:T.teal, fontWeight:700, marginTop:4 }}>{(ps.products||[]).length} référence(s) · Voir les offres</div>
                   </div>
-                  <span style={{ fontSize:18, color:ps.color }}>→</span>
+                  <Icone nom="suivant" taille={20} style={{ color:T.inkMute }} />
                 </button>
-              ))}
+                );
+              })}
             </div>
-            <button onClick={() => setPromoPopupOpen(false)} style={{ width:"100%", background:"#f0f2f5", border:"none", borderRadius:12, padding:"12px", fontWeight:700, fontSize:13, cursor:"pointer", marginTop:20, color:"#555" }}>
+            <button className="ex-btn-ligne" onClick={() => setPromoPopupOpen(false)} style={{ ...ui.btn("ligne", "l"), background:undefined, width:"100%", height:44, fontSize:14, marginTop:20, boxShadow:`inset 0 0 0 1.5px ${T.lineField}` }}>
               Continuer vers le catalogue
             </button>
           </div>
@@ -1920,33 +1926,38 @@ export default function App() {
             )}
           </div>
 
-          {/* Saisie par Elixir pour une pharmacie */}
+          {/* Saisie par Elixir pour une pharmacie : orange conservé (décision de la cliente : ne pas confondre avec une promo or),
+              ton « acting » de theme.js (6,88:1), boutons en pastilles */}
           {actingFor && (
-            <div role="status" style={{ background: "#fff7ed", border: "2px solid #fb923c", borderRadius: 12, padding: "10px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: "#7c2d12" }}>
-                <b>🛠 Commande saisie par Elixir pour {actingFor.name}</b>{actingFor.city ? ` (${actingFor.city})` : ""}
-                <div style={{ fontSize: 12 }}>{actingFor.cip ? `CIP ${actingFor.cip}` : "⚠️ pas de CIP dans Odoo : la commande sera enregistrée mais ne partira pas seule à PharmaML"}{actingFor.email ? ` · ${actingFor.email}` : " · sans compte sur le site"} — le panier est envoyé au nom de cette pharmacie.</div>
+            <div role="status" style={{ background: tone("acting").bg, border: `1.5px solid ${tone("acting").fg}`, borderRadius: R.m, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: T.acting, display: "flex", alignItems: "flex-start", gap: 10 }}>
+                <Icone nom="crayon" taille={18} style={{ marginTop: 1 }} />
+                <div style={{ minWidth: 0 }}>
+                  <b>Commande saisie par Elixir pour {actingFor.name}</b>{actingFor.city ? ` (${actingFor.city})` : ""}
+                  <div className="num" style={{ fontSize: 12, marginTop: 2 }}>{actingFor.cip ? `CIP ${actingFor.cip}` : <><Icone nom="alerte" taille={12} style={{ marginRight: 4 }} />pas de CIP dans Odoo : la commande sera enregistrée mais ne partira pas seule à PharmaML</>}{actingFor.email ? ` · ${actingFor.email}` : " · sans compte sur le site"} — le panier est envoyé au nom de cette pharmacie.</div>
+                </div>
               </div>
-              <button onClick={() => setShowPharmacyPicker(true)} style={{ background: "white", border: "1px solid #fdba74", color: "#9a3412", borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Changer de pharmacie</button>
-              <button onClick={stopActing} style={{ background: "#9a3412", border: "none", color: "white", borderRadius: 8, padding: "6px 12px", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Terminer</button>
+              <button onClick={() => setShowPharmacyPicker(true)} style={{ ...ui.btn("ligne", "s"), background: T.surface, color: T.acting, boxShadow: `inset 0 0 0 1px ${tone("acting").border}` }}>Changer de pharmacie</button>
+              <button onClick={stopActing} style={{ ...ui.btn("primaire", "s"), background: T.acting, color: "#fff" }}>Terminer</button>
             </div>
           )}
 
-          {/* Suggestions de récommande (ML) */}
+          {/* Suggestions de recommande (ML) — lot 7 : carte paper à filet (plus de dégradé violet), vignettes blanches */}
           {showReorder && reorderSuggestions.length > 0 && (
-            <div style={{ background:"linear-gradient(135deg, #faf5ff, #eff6ff)", borderRadius:14, padding:"16px 20px", marginBottom:20, border:"1px solid #ddd6fe" }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:10 }}>
-                <div style={{ fontWeight:700, fontSize:14, color:"#5b21b6" }}>
-                  🧠 Suggestions de récommande — {reorderSuggestions.length} produit(s) à recommander
-                </div>
-                <button onClick={() => setShowReorder(false)}
-                  style={{ background:"none", border:"none", cursor:"pointer", fontSize:14, color:"#aaa" }}>✕</button>
+            <section aria-labelledby="suggestions-titre" style={{ background:T.paper, borderRadius:R.m, padding:"14px 18px", marginBottom:20, border:`1px solid ${T.line}` }}>
+              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:10 }}>
+                <h2 id="suggestions-titre" className="num" style={{ margin:0, fontWeight:700, fontSize:14, color:T.ink, display:"flex", alignItems:"center", gap:8 }}>
+                  <Icone nom="ampoule" taille={18} style={{ color:T.teal }} />
+                  Suggestions de recommande — {reorderSuggestions.length} produit(s) à recommander
+                </h2>
+                <button className="ex-btn-discret" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions" title="Masquer"
+                  style={ui.rond(30)}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
               </div>
               <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
                 {reorderSuggestions.map(s => (
-                  <div key={s.cip} style={{
-                    background:"white", borderRadius:10, padding:"10px 14px", minWidth:180, flexShrink:0,
-                    border:"1px solid #e8ecf0", cursor:"pointer",
+                  <div key={s.cip} className="ex-carte" style={{
+                    background:T.surface, borderRadius:R.s, padding:"10px 14px", minWidth:180, flexShrink:0,
+                    cursor:"pointer",
                   }} onClick={() => {
                     // Cherche le produit dans le catalogue et ajoute 1
                     let added = false;
@@ -1960,16 +1971,16 @@ export default function App() {
                     });
                     if (added) flash(`✓ ${s.suggested_qty || 1}x ${s.name} ajouté`);
                   }}>
-                    <div style={{ fontWeight:600, fontSize:12, color:"#0f2d3d", marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
-                    <div style={{ fontSize:10, color:"#888", fontFamily:"monospace" }}>CIP {s.cip}</div>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
-                      <span style={{ fontSize:11, color:"#5b21b6", fontWeight:700 }}>×{s.suggested_qty}</span>
-                      <span style={{ fontSize:9, color:"#f59e0b", fontWeight:600 }}>il y a {s.days_since_last}j</span>
+                    <div style={{ fontWeight:600, fontSize:12, color:T.ink, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
+                    <div style={{ fontSize:11, color:T.inkMute, fontFamily:T.mono }}>CIP {s.cip}</div>
+                    <div className="num" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
+                      <span style={{ fontSize:12, color:T.ink, fontWeight:700 }}>×{s.suggested_qty}</span>
+                      <span style={{ fontSize:11, color:T.warn, fontWeight:600 }}>il y a {s.days_since_last} j</span>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           )}
 
           {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
@@ -2069,21 +2080,25 @@ export default function App() {
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (
             actingFor
-              ? <div style={{ background: "white", borderRadius: 14, padding: "18px 22px", fontSize: 14, color: "#334155" }}>En saisie pour une pharmacie, les commandes groupées se passent depuis l'admin : opération → « 🛒 Saisir une commande ».</div>
-              : <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty} />
+              ? <div style={{ ...ui.card, fontSize: 14, color: T.inkSoft }}>En saisie pour une pharmacie, les commandes groupées se passent depuis l'admin : opération → « 🛒 Saisir une commande ».</div>
+              : <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty}
+                  icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)} couleur={CATALOG_WITH_ADMIN[activeTab].accent} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "wheelchair" && (
-            <WheelchairOrder onAddToCart={addItemToCart} />
+            <WheelchairOrder onAddToCart={addItemToCart}
+              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)} couleur={CATALOG_WITH_ADMIN[activeTab].accent} />
           )}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "transferChair" && (
-            <WheelchairOrder key="transfert" lineKey="transfert" onAddToCart={addItemToCart} />
+            <WheelchairOrder key="transfert" lineKey="transfert" onAddToCart={addItemToCart}
+              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)} couleur={CATALOG_WITH_ADMIN[activeTab].accent} />
           )}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "labJustif" && (
             <LabJustifOrder key={actingFor ? `a${actingFor.odoo_id}` : `p${pharmacyCip}`}
               identite={actingFor ? `a${actingFor.odoo_id}` : `p${pharmacyCip}`}
               auth={actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken }}
-              onAddToCart={addItemToCart} onOrdered={fetchMyOrders} />
+              onAddToCart={addItemToCart} onOrdered={fetchMyOrders}
+              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)} couleur={CATALOG_WITH_ADMIN[activeTab].accent} />
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "shortExpiry" && (
@@ -2091,6 +2106,8 @@ export default function App() {
               isAdmin={showAdmin}
               pharmacyCip={pharmacyCip}
               onAddToCart={addItemToCart}
+              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
+              couleur={CATALOG_WITH_ADMIN[activeTab].accent}
             />
           )}
 
@@ -3114,30 +3131,32 @@ function PharmacyPicker({ onPick, onClose }) {
     setBusy(false);
   };
   return (
-    <div role="dialog" aria-modal="true" aria-label="Commander pour une pharmacie" onClick={onClose}
-      style={{ position: "fixed", inset: 0, zIndex: 10000, background: "rgba(15,23,42,0.55)", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "60px 16px", overflowY: "auto" }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: "white", borderRadius: 16, padding: "20px 22px", width: "100%", maxWidth: 620, boxShadow: "0 20px 60px rgba(0,0,0,0.3)", fontFamily: "inherit" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-          <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>🛠 Commander pour une pharmacie</div>
-          <button onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "#94a3b8" }}>✕</button>
+    // Refonte charte (lot 7) : fenêtre paper de rayon 28 sur voile --scrim ; recherche, choix et zIndex 10000 inchangés
+    <div role="dialog" aria-modal="true" aria-labelledby="choix-pharmacie-titre" onClick={onClose}
+      style={{ ...ui.overlay, zIndex: 10000, alignItems: "flex-start", padding: "60px 16px", overflowY: "auto" }}>
+      <div onClick={e => e.stopPropagation()} style={{ ...ui.modal, padding: "24px 24px 22px", maxWidth: 620 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
+          <h2 id="choix-pharmacie-titre" style={{ ...ui.titreModal, fontSize: 18 }}><Icone nom="crayon" taille={20} style={{ color: T.acting }} />Commander pour une pharmacie</h2>
+          <button className="ex-btn-discret" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
-        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 12 }}>Clients Elixir dans Odoo, avec ou sans compte sur le site. Le panier sera envoyé au nom de la pharmacie choisie (CIP, PharmaML, contingentement), avec la mention « saisie par Elixir ».</div>
+        <div style={{ fontSize: 12, color: T.inkSoft, marginBottom: 14, lineHeight: 1.5 }}>Clients Elixir dans Odoo, avec ou sans compte sur le site. Le panier sera envoyé au nom de la pharmacie choisie (CIP, PharmaML, contingentement), avec la mention « saisie par Elixir ».</div>
         <div style={{ display: "flex", gap: 8 }}>
           <input autoFocus value={q} onChange={e => setQ(e.target.value)} onKeyDown={e => e.key === "Enter" && search()} placeholder="Nom, ville, CIP ou e-mail" aria-label="Rechercher une pharmacie"
-            style={{ flex: 1, border: "1.5px solid #d6dde3", borderRadius: 10, padding: "10px 12px", fontSize: 14, fontFamily: "inherit" }} />
-          <button onClick={search} disabled={busy || q.trim().length < 2} style={{ background: "#0f2d3d", color: "white", border: "none", borderRadius: 10, padding: "10px 16px", fontWeight: 700, cursor: "pointer", opacity: busy || q.trim().length < 2 ? 0.6 : 1 }}>{busy ? "…" : "Rechercher"}</button>
+            style={{ ...ui.input, flex: 1, height: 44, borderRadius: R.pill, padding: "0 16px" }} />
+          <button className={busy || q.trim().length < 2 ? undefined : "ex-btn-petrole"} onClick={search} disabled={busy || q.trim().length < 2}
+            style={{ ...ui.btn("primaire", "m"), height: 44, background: busy || q.trim().length < 2 ? T.sand : undefined, color: busy || q.trim().length < 2 ? T.inkSoft : undefined, cursor: busy || q.trim().length < 2 ? "not-allowed" : "pointer" }}>{busy ? "…" : "Rechercher"}</button>
         </div>
-        {err && <div style={{ marginTop: 10, color: "#991b1b", background: "#fee2e2", borderRadius: 8, padding: "8px 12px", fontSize: 13 }}>{err}</div>}
-        {res && !res.length && <div style={{ marginTop: 12, color: "#64748b", fontSize: 13 }}>Aucune pharmacie cliente d'Elixir ne correspond.</div>}
+        {err && <div role="alert" style={{ ...ui.encart("danger"), marginTop: 12, display: "flex", alignItems: "flex-start", gap: 6 }}><Icone nom="alerte" taille={14} style={{ marginTop: 2 }} /><span>{err}</span></div>}
+        {res && !res.length && <div style={{ marginTop: 12, color: T.inkSoft, fontSize: 13 }}>Aucune pharmacie cliente d'Elixir ne correspond.</div>}
         {res && res.length > 0 && (
-          <div style={{ marginTop: 12, maxHeight: 380, overflowY: "auto", border: "1px solid #eef2f5", borderRadius: 10 }}>
+          <div style={{ marginTop: 12, maxHeight: 380, overflowY: "auto", border: `1px solid ${T.line}`, borderRadius: R.m, background: T.surface }}>
             {res.map(p => (
-              <button key={p.odoo_id} onClick={() => onPick(p)} style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", background: "white", border: "none", borderBottom: "1px solid #f1f5f9", padding: "10px 12px", cursor: "pointer", fontFamily: "inherit" }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700, color: "#0f2d3d", fontSize: 14 }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: "#64748b" }}>{[p.zip && p.city ? `${p.zip} ${p.city}` : p.city, p.cip ? `CIP ${p.cip}` : "sans CIP", p.phone].filter(Boolean).join(" · ")}</div>
+              <button key={p.odoo_id} className="ex-tr" onClick={() => onPick(p)} style={{ display: "flex", width: "100%", textAlign: "left", gap: 10, alignItems: "center", border: "none", borderBottom: `1px solid ${T.lineSoft}`, padding: "10px 14px", cursor: "pointer", fontFamily: "inherit", color: T.ink }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, color: T.ink, fontSize: 14 }}>{p.name}</div>
+                  <div className="num" style={{ fontSize: 12, color: T.inkSoft }}>{[p.zip && p.city ? `${p.zip} ${p.city}` : p.city, p.cip ? `CIP ${p.cip}` : "sans CIP", p.phone].filter(Boolean).join(" · ")}</div>
                 </div>
-                <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 99, padding: "2px 8px", background: p.has_account ? "#dcfce7" : "#f1f5f9", color: p.has_account ? "#166534" : "#64748b", whiteSpace: "nowrap" }}>{p.has_account ? "compte site" : "sans compte"}</span>
+                <span style={ui.badge(p.has_account ? "ok" : "neutral")}>{p.has_account ? "compte site" : "sans compte"}</span>
               </button>
             ))}
           </div>
