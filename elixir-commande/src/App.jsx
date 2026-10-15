@@ -181,6 +181,8 @@ const COND_COLORS = {
 };
 
 const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "ulabs"];
+// Outils accessibles par les liens historiques ?outil= / ?cip= (même s'ils sont masqués dans le menu)
+const OUTILS_LIEN = ["fauteuil", "transfert", "saisie", "peremption", "groupees", "justificatif"];
 // Menus classés par ordre alphabétique (voir filteredProducts) : barre A–Z en haut
 const ALPHA_SECTIONS = ["otc", "nr"];
 
@@ -232,13 +234,13 @@ export default function App() {
   // ou personnalisé n'existe qu'une fois la config chargée : il est retenu ici puis ouvert à ce moment-là.
   const menuDemande = useRef((() => { try { return new URLSearchParams(window.location.search).get("menu") || ""; } catch { return ""; } })());
   const navParClic = useRef(false);   // changement de menu par l'utilisateur → nouvelle entrée d'historique (bouton Retour)
-  const menuViaLien = useRef(!!menuDemande.current);   // arrivée par un lien de menu : pas de fenêtre « Offres du moment »
+  const menuViaLien = useRef(menuDemande.current.startsWith("promo_"));   // arrivée par le lien d'un menu promo : pas de fenêtre « Offres du moment »
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);
       if (p.get("menu")) return p.get("menu");
       const outil = p.get("outil") || p.get("tab");            // ?outil=fauteuil → parcours fauteuil roulant
-      if (outil && ["fauteuil", "transfert", "saisie", "peremption", "groupees", "justificatif"].includes(outil)) return outil;
+      if (outil && OUTILS_LIEN.includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
     } catch {}
     return getDisplayConfig().defaultTab || "expert";
@@ -996,27 +998,31 @@ export default function App() {
     }
   }, [catalogSig, productsLoading]);
 
+  // Menu ouvrable : présent au catalogue ET visible (pas masqué par l'admin dans « Affichage global »).
+  // Exceptions : l'admin connecté voit tout ; les outils historiques des liens ?outil= / ?cip= restent ouvrables.
+  const menuOuvrable = (m) => !!CATALOG_WITH_ADMIN?.[m] && (hasAdminToken || OUTILS_LIEN.includes(m) || getOrderedTabs(CATALOG_WITH_ADMIN).includes(m));
+  const menuOuvrableRef = useRef(menuOuvrable); menuOuvrableRef.current = menuOuvrable;
   // Garde-fou : si l'onglet actif n'existe plus (ex. defaultTab supprimé côté admin),
   // rebasculer sur le premier onglet valide au lieu de crasher au render.
   useEffect(() => {
     if (activeTab === "groupees" && gpAllowed === null) return; // accès en cours de vérification
-    if (activeTab && CATALOG_WITH_ADMIN && !CATALOG_WITH_ADMIN[activeTab]) {
+    if (activeTab && CATALOG_WITH_ADMIN && !menuOuvrable(activeTab)) {
       const first = getOrderedTabs(CATALOG_WITH_ADMIN)[0];
-      if (first) setActiveTab(first);
+      if (first && first !== activeTab) setActiveTab(first);
     }
-  }, [activeTab, CATALOG_WITH_ADMIN, gpAllowed]);
+  }, [activeTab, CATALOG_WITH_ADMIN, gpAllowed, configLoaded]);
 
-  // Menu demandé par l'adresse (?menu=) : ouvert dès que la config (menus promo, sections perso) est chargée
+  // Menu demandé par l'adresse (?menu=) : ouvert dès qu'il existe et est visible — menus promo et sections
+  // perso après la config, « Commandes groupées » après la connexion, campagnes après leur chargement.
+  // Oublié dès que l'utilisateur choisit lui-même un menu.
   useEffect(() => {
     const m = menuDemande.current;
-    if (!m || !configLoaded) return;
-    menuDemande.current = "";
-    if (CATALOG_WITH_ADMIN[m] && activeTab !== m) setActiveTab(m);
-  }, [configLoaded, CATALOG_WITH_ADMIN]);
+    if (!m) return;
+    if (menuOuvrable(m)) { menuDemande.current = ""; if (activeTab !== m) setActiveTab(m); }
+  }, [configLoaded, CATALOG_WITH_ADMIN, gpAllowed]);
 
   // Adresse ↔ menu : l'adresse affiche toujours le menu ouvert (lien partageable, rechargement sur le même menu) ;
   // Retour / Avancer du navigateur changent de menu.
-  const catalogueRef = useRef(CATALOG_WITH_ADMIN); catalogueRef.current = CATALOG_WITH_ADMIN;
   const gpDirtyRef = useRef(gpDirty); gpDirtyRef.current = gpDirty;
   const activeTabRef = useRef(activeTab); activeTabRef.current = activeTab;
   useEffect(() => {
@@ -1034,12 +1040,18 @@ export default function App() {
     const onPop = () => {
       const m = new URLSearchParams(window.location.search).get("menu");
       const prev = activeTabRef.current;
-      if (!m || !catalogueRef.current[m] || m === prev) return;
+      if (m === prev) return;
+      if (!m || !menuOuvrableRef.current(m)) {   // menu masqué ou disparu : l'adresse reste sur le menu affiché
+        try { const u = new URL(window.location.href); u.searchParams.set("menu", prev); window.history.replaceState(null, "", u.pathname + u.search + u.hash); } catch {}
+        return;
+      }
       if (gpDirtyRef.current && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) {
         try { const u = new URL(window.location.href); u.searchParams.set("menu", prev); window.history.pushState(null, "", u.pathname + u.search + u.hash); } catch {}
         return;
       }
       setGpDirty(false);
+      menuDemande.current = "";
+      setSearch(""); setSidebarOpen(false);
       setActiveTab(m);
     };
     window.addEventListener("popstate", onPop);
@@ -1672,7 +1684,7 @@ export default function App() {
               if (!c) return null;
               const active = activeTab === key;
               return (
-                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                <button key={key} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
                   display: "flex", alignItems: "center", gap: 11, width: "100%", textAlign: "left",
                   background: active ? "#f5f6f7" : "transparent", border: "none",
                   borderLeft: active ? "2px solid #111" : "2px solid transparent",
@@ -1701,7 +1713,7 @@ export default function App() {
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {promoSections.filter(p => p.active).map(ps => (
-                <button key={ps.id} onClick={() => { navParClic.current = true; setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
+                <button key={ps.id} onClick={() => { navParClic.current = true; menuDemande.current = ""; setActiveTab(`promo_${ps.id}`); setPromoPopupOpen(false); }} style={{
                   display:"flex", alignItems:"center", gap:14, background:`linear-gradient(135deg, ${ps.color}15, ${ps.accentColor || ps.color}25)`,
                   border:`2px solid ${ps.color}40`, borderRadius:14, padding:"14px 18px", cursor:"pointer", textAlign:"left", width:"100%"
                 }}>
