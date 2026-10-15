@@ -220,6 +220,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                         <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
                           style={{ background: "#f0f2f5", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16 }}>−</button>
                         <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, parseInt(e.target.value) || 0) }))}
+                          onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing && qty > 0) { e.preventDefault(); handleAdd(p); } }}   // lot E3 : Entrée = Ajouter
                           placeholder="0" style={{ width: 48, textAlign: "center", border: "1.5px solid #ddd", borderRadius: 6, padding: "4px", fontSize: 14, fontWeight: qty > 0 ? 700 : 400, outline: "none" }} />
                         <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
                           style={{ background: "#0f2d3d", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16, color: "white" }}>+</button>

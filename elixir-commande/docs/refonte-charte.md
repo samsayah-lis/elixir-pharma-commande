@@ -620,6 +620,8 @@ Contrôle à 375, 768, 1023, 1024 et 1440 px.
 
 ### Lot E — Ergonomie (comportements à valider un par un, un commit chacun)
 
+**État (15/10/2026) :** E1, E2 et E3 validés par la cliente et faits, un commit chacun ; détail, avant / après et tests au § 11. E4 à E8 : non faits.
+
 - **E1.** Tableaux à colis : arrondi seulement à la sortie du champ. `onChange` garde la valeur brute (src/App.jsx:2616) ; `onBlur` reste inchangé (src/App.jsx:2617). Taper 12 avec un colis de 6 devient possible.
 - **E2.** Ne plus ouvrir le panier après chaque ajout (src/App.jsx:861). À la place : message « Ajouté · Voir le panier » et compteur mis à jour.
   - Conséquence : le contingentement n'est plus rechargé à chaque ajout (src/App.jsx:960). Il l'est toujours avant l'envoi (src/App.jsx:1348).
@@ -828,3 +830,28 @@ Seuls changements de logique de la refonte, validés par la cliente (§ 6) : E1,
   1. Saisie : chercher « doliprane », mettre 3 et cliquer « Ajouter ». Attendu : panier fermé, message, compteur à jour, journal du banc avec `search-track` puis `quota-status`.
   2. Contingentement : poser `dev-fixtures/post/quota-status.json` avec un reste de 2 pour le CIP ajouté (CODOLIPRANE 3400927562396 sur le banc). Ajouter 1 : pas d'alerte. Ajouter 2 de plus : « ⚠ Contingentement dépassé … (3 au panier, reste 2 …) ». Ouvrir le panier : « Maximum 2 », « Ramener à 2 », bandeau, « Envoyer » désactivé. **Retirer la fixture ensuite.**
   3. Justificatif : chercher « ninlaro » et ajouter 1. Attendu : message « · justificatif à joindre dans le panier », panier fermé.
+
+### E3 — Entrée ajoute au panier dans la Saisie
+
+- **Avant.** Entrée était sans effet dans le champ de quantité de la Saisie : il fallait cliquer sur « Ajouter ».
+- **Après.** Entrée dans ce champ vaut « Ajouter », quand la quantité est supérieure à 0 (src/components/OrderEntry.jsx, `onKeyDown`). C'est le même `handleAdd` : même ajout, même `search-track`, quantité remise à 0. Le focus reste dans le champ. Avec E2, le panier ne s'ouvre pas : on enchaîne au clavier.
+  - Ignoré pendant une composition de saisie (IME).
+  - Sans effet à 0.
+  - Le plafond `maxCommande` reste appliqué à la frappe.
+- **Hors périmètre** (plan, E3, non validés) : Entrée dans la recherche vers la première quantité, flèches entre les résultats, retour du focus dans la recherche après un ajout.
+- **Tester.** Saisie à 1440 px puis à 375 px : chercher « doliprane », cliquer dans la quantité, taper 3, Entrée. Attendu : message, compteur +3, panier fermé, champ vidé avec le focus. Entrée sur un champ vide : rien.
+
+### Vérifications du lot E (banc, 15/10/2026)
+
+- `npm run lint`, `npm run build`, `node scripts/verifie-zones.mjs` (aucun écart, avec les deux écarts E2 inscrits), `node scripts/test-gp-pricing.mjs` (71 OK) et `node scripts/test-quota.mjs` (17 OK) passent après chaque commit.
+- **Données envoyées identiques.** Même panier avant et après le lot : ADVILMED 48, BETADINE 120, CODOLIPRANE 3 (Saisie).
+  - Avant le lot, il était saisi aux boutons et au clic, puisque la frappe était impossible. Après, il est tapé au clavier, avec Entrée dans la Saisie.
+  - `node scripts/banc/compare-envois.mjs avant-lotE apres-lotE` : send-email, order-save et submit-order identiques, identifiants et dates masqués.
+- **Journal des autres POST.**
+  - `search-track` : identiques.
+  - `quota-status` : 2 appels avant (ouverture du panier à l'ajout, puis avant l'envoi), 3 après (ajout, ouverture du panier, avant l'envoi). Lecture seule, corps identiques.
+- **Signalé, hors lot, non corrigé.** Un ajout depuis la Saisie d'un produit du catalogue à colis ou à palier n'est pas arrondi : `addItemToCart` ajoute la quantité telle quelle. Constaté sur le banc : 3 DAFALGAN 1000 gélules ajoutées depuis la Saisie donnent `stratege-4 = 3`, pour un colis de 160.
+  - Ce comportement est antérieur à la refonte, et le lot E ne le change pas.
+  - Si l'on passe ensuite par le champ du tableau (focus puis sortie), `setQty` arrondit à 0, avant comme après.
+  - Règle à faire trancher par la cliente : arrondir au colis à l'ajout, refuser, ou laisser.
+- Bundle après le lot E : JS 1 108 586 octets (lot 3 : 1 107 832), CSS inchangé (5 425 octets).
