@@ -1,13 +1,25 @@
 import React, { useState, useEffect, useRef } from "react";
 
-const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " €" : "–";
-const fmtPct = (n) => n > 0 ? `-${n % 1 === 0 ? n : n.toFixed(1)}%` : "";
-
 import { applyTiers, TierBadge } from "../tiers.jsx";
 import { loadGroups, collapseGroups } from "../product-groups.js";
-import { T } from "../theme.js";
+import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
+import { Icone } from "../icons.jsx";
+import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
+import BadgeStatut from "./ui/BadgeStatut.jsx";
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {} }) {
+// Affichage seulement (refonte charte, lot 5) : format français de src/theme.js — « 1 234,50 € », « −14,7 % ».
+// Rien de ce qui part (panier, search-track, restock-alert) ne passe par ces deux fonctions.
+const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
+const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
+
+// ── Refonte charte, lot 5 (docs/refonte-charte.md § 3) ──
+// En-tête de vue commun (EnteteVue), recherche en pastille de 48 px, résultats en lignes blanches de rayon 16
+// (comme la maquette de la vitrine), statut toujours écrit (BadgeStatut : jamais la couleur seule), « Ajouter » en
+// pastille pétrole dont la place est réservée (la ligne ne saute plus quand il apparaît). Disposition par classes
+// (src/styles/tokens.css, « Saisie de commande ») : sous 768 px, la ligne passe en pile par @media — le composant
+// ne reçoit pas isMobile. Atomes en bas de fichier.
+
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   const [searching, setSearching] = useState(false);
@@ -97,62 +109,72 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 
   const hasProducts = catalogInfo && catalogInfo.total > 0;
 
+  const majCatalogue = catalogInfo?.updated_at
+    ? new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : null;
+
   return (
     <div>
-      {/* Header */}
-      <div style={{ background: "linear-gradient(135deg, #0f2d3d, #1a4a5e)", borderRadius: 16, padding: "20px 24px", marginBottom: 20, color: "white" }}>
-        <div style={{ fontWeight: 800, fontSize: 20, marginBottom: 4 }}>Saisie de commande</div>
-        <div style={{ fontSize: 13, opacity: 0.7 }}>
-          Recherchez par code CIP ou nom de produit
-          {catalogInfo?.updated_at && <span> · Màj : {new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}</span>}
-        </div>
-      </div>
+      {/* En-tête de vue (lot 5) au lieu du bandeau en dégradé ; à droite, l'étendue du catalogue Odoo synchronisé
+          (comptes déjà lus par odoo-catalog?count=1, rien de nouveau n'est demandé) */}
+      <EnteteVue
+        icone={icone || <Icone nom="crayon" taille={24} />}
+        couleur={couleur}
+        titre="Saisie de commande"
+        sousTitre={<>Recherchez par code CIP ou nom de produit{majCatalogue && <span className="num"> · Màj : {majCatalogue}</span>}</>}
+        aside={hasProducts && <CompteurVue valeur={Number(catalogInfo.total).toLocaleString("fr-FR")} libelle="références"
+          detail={catalogInfo.in_stock != null ? `${Number(catalogInfo.in_stock).toLocaleString("fr-FR")} en stock` : null} />}
+      />
 
-      {/* Search bar */}
+      {/* Recherche en pastille de 48 px : anneau de focus global (tokens.css), plus de bordure recolorée en JS ;
+          autoFocus et pré-remplissage ?cip= / ?produit= (initialQuery) inchangés */}
       <div style={{ position: "relative", marginBottom: 12 }}>
-        <span style={{ position: "absolute", left: 16, top: "50%", transform: "translateY(-50%)", fontSize: 18, opacity: 0.4 }}>🔍</span>
+        <Icone nom="recherche" taille={20} style={{ position: "absolute", left: 18, top: "50%", transform: "translateY(-50%)", color: T.inkMute, pointerEvents: "none" }} />
         <input value={query} onChange={e => setQuery(e.target.value)}
-          placeholder="Saisissez un code CIP (ex: 3400930...) ou un nom de produit..." autoFocus
-          style={{ width: "100%", padding: "14px 16px 14px 44px", fontSize: 15, border: "2px solid #e2e8f0", borderRadius: 14, outline: "none", boxSizing: "border-box", fontFamily: "inherit", background: "white" }}
-          onFocus={e => e.target.style.borderColor = "#2d9cbc"} onBlur={e => e.target.style.borderColor = "#e2e8f0"} />
-        {query && <button onClick={() => setQuery("")} style={{ position: "absolute", right: 14, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "#bbb" }}>✕</button>}
+          placeholder="Saisissez un code CIP (ex : 3400930…) ou un nom de produit…" autoFocus
+          aria-label="Rechercher un produit par code CIP, EAN ou nom" className="ex-saisie-recherche"
+          style={{ width: "100%", height: 48, padding: `0 ${query ? 52 : 20}px 0 50px`, fontSize: 15, color: T.ink, background: T.surface,
+            border: `1px solid ${T.lineField}`, borderRadius: R.pill, boxShadow: T.shadow1, boxSizing: "border-box", fontFamily: "inherit" }} />
+        {query && <button className="ex-btn-discret" onClick={() => setQuery("")} aria-label="Effacer la recherche" title="Effacer la recherche"
+          style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, padding: 0, border: "none",
+            borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icone nom="fermer" taille={16} /></button>}
       </div>
 
-      {/* Filters */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
-        <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none", fontSize: 13 }}>
-          <input type="checkbox" checked={stockOnly} onChange={e => setStockOnly(e.target.checked)}
-            style={{ width: 16, height: 16, accentColor: "#10b981", cursor: "pointer" }} />
-          <span style={{ fontWeight: stockOnly ? 700 : 400, color: stockOnly ? T.ok : T.inkSoft }}>N'afficher que les produits en stock</span>
-        </label>
+      {/* Filtre en pastille (comme les filtres du catalogue : aria-pressed, classe ex-filtre) et nombre de résultats */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px 16px", flexWrap: "wrap", marginBottom: 14 }}>
+        <button className="ex-filtre" aria-pressed={stockOnly} onClick={() => setStockOnly(!stockOnly)} style={filtreStyle}>
+          <Icone nom="coche" taille={14} />En stock seulement
+        </button>
+        {query.length >= 2 && (
+          <div className="num" role="status" style={{ fontSize: 13, color: T.inkMute }}>
+            {searching ? "Recherche…" : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
+          </div>
+        )}
       </div>
 
       {/* Empty catalog */}
       {!hasProducts && (
-        <div style={{ textAlign: "center", padding: "60px 20px", background: "white", borderRadius: 14 }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📦</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: "#0f2d3d", marginBottom: 8 }}>Catalogue non synchronisé</div>
-          <div style={{ fontSize: 13, color: "#888" }}>Un administrateur doit lancer la synchronisation depuis le panneau admin.</div>
+        <div style={{ ...ui.card, textAlign: "center", padding: "48px 20px" }}>
+          <span aria-hidden="true" style={pastilleVide}><Icone nom="carton" taille={26} /></span>
+          <div style={{ fontSize: 16, fontWeight: 640, color: T.petrol, marginBottom: 6 }}>Catalogue non synchronisé</div>
+          <div style={{ fontSize: 13, color: T.inkSoft }}>Un administrateur doit lancer la synchronisation depuis le panneau admin.</div>
         </div>
       )}
 
       {/* Empty search */}
       {hasProducts && query.length < 2 && (
-        <div style={{ textAlign: "center", padding: "60px 20px", color: T.inkMute }}>
-          <div style={{ fontSize: 48, marginBottom: 16 }}>📋</div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>Saisissez au moins 2 caractères</div>
+        <div style={{ textAlign: "center", padding: "48px 20px", color: T.inkMute }}>
+          <span aria-hidden="true" style={pastilleVide}><Icone nom="recherche" taille={26} /></span>
+          <div style={{ fontSize: 15, fontWeight: 600, color: T.ink }}>Saisissez au moins 2 caractères</div>
           <div style={{ fontSize: 13, marginTop: 4 }}>Code CIP, EAN, ou début de nom</div>
         </div>
       )}
 
-      {/* Results */}
+      {/* Results : lignes blanches de rayon 16 (classe ex-saisie-ligne) ; en rupture, ligne à plat sur paper ;
+          quantité saisie, anneau sarcelle (data-choisi) */}
       {query.length >= 2 && (
         <div>
-          <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>
-            {searching ? "Recherche..." : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
-          </div>
           {!searching && results.length === 0 && (
-            <div style={{ textAlign: "center", padding: 40, color: T.inkMute, background: "white", borderRadius: 14 }}>
+            <div style={{ ...ui.card, textAlign: "center", padding: "32px 20px", color: T.inkSoft, fontSize: 14 }}>
               Aucun produit trouvé pour « {query} »{stockOnly ? " (filtre en stock actif)" : ""}
             </div>
           )}
@@ -168,77 +190,57 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               const orderable = p.in_stock || !!jr;
 
               return (
-                <div key={p.cip} style={{
-                  background: "white", borderRadius: 14, padding: "14px 18px",
-                  border: p.in_stock ? "1px solid #e8ecf0" : jr ? "1px solid #ddd6fe" : "1px solid #fed7d7",
-                  display: "flex", alignItems: "center", gap: 16, opacity: orderable ? 1 : 0.85,
-                }}>
-                  {/* Stock badge */}
-                  <div style={{ flexShrink: 0, textAlign: "center", minWidth: 60 }}>
-                    {p.in_stock ? (
-                      <div style={{ background: "#d1fae5", color: "#065f46", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>EN STOCK</div>
-                    ) : jr ? (
-                      <div title={`Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande`} style={{ background: "#ede9fe", color: "#5b21b6", borderRadius: 8, padding: "6px 8px", fontSize: 10, fontWeight: 800, lineHeight: 1.2 }}>📑 SUR<br />COMMANDE</div>
-                    ) : (
-                      <div style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 8, padding: "6px 10px", fontSize: 11, fontWeight: 700 }}>RUPTURE</div>
-                    )}
-                  </div>
-
-                  {/* Info */}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14, color: "#0f2d3d", lineHeight: 1.3 }}>{p.name}</div>
-                    <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>
-                      CIP : <span style={{ fontFamily: "monospace" }}>{p.cip}</span>
+                <div key={p.cip} className="ex-saisie-ligne" data-rupture={orderable ? undefined : ""} data-choisi={qty > 0 ? "" : undefined}>
+                  {/* Produit : nom, statut écrit, CIP ; sur justificatif, conditions du laboratoire */}
+                  <div className="ex-saisie-info">
+                    <div style={{ fontWeight: 600, fontSize: 14, color: T.ink, lineHeight: 1.35, overflowWrap: "anywhere" }}>{p.name}</div>
+                    <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 10px", marginTop: 5 }}>
+                      <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
+                        title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
+                      <span style={{ fontSize: 12, color: T.inkMute }}>CIP <span style={{ fontFamily: T.mono, letterSpacing: "-0.01em" }}>{p.cip}</span></span>
                     </div>
                     {jr && (
-                      <div style={{ fontSize: 11, color: "#6d28d9", marginTop: 3, lineHeight: 1.35 }}>
+                      <div style={{ fontSize: 12, color: T.teal, marginTop: 6, lineHeight: 1.45 }}>
                         Commandé au laboratoire {jr.labNom} avec votre commande comme justificatif{jr.delai ? ` (${jr.delai})` : ""}.
                         {jr.maxCommande ? ` ${jr.maxCommande} au plus par commande.` : ""}
                       </div>
                     )}
                   </div>
 
-                  {/* Prix — avec remise si disponible */}
-                  <div style={{ flexShrink: 0, textAlign: "right", minWidth: 110 }}>
-                    {hasDiscount ? (<>
+                  {/* Prix HT : barré --ink-mute et remise en badge or + encre, prix net encre 700, palier dessous */}
+                  <div className="ex-saisie-prix">
+                    {hasDiscount && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
-                        <span style={{ fontSize: 11, color: "#aaa", textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: "white", background: "#10b981", borderRadius: 4, padding: "1px 5px" }}>{fmtPct(p.discount_pct)}</span>
+                        <span className="num" style={{ fontSize: 12, color: T.inkMute, textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
+                        <span className="num" style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{fmtPct(p.discount_pct)}</span>
                       </div>
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#059669" }}>{fmt(p.discounted_price)}</div>
-                    </>) : (
-                      <div style={{ fontSize: 18, fontWeight: 800, color: "#0f2d3d" }}>{fmt(p.list_price)}</div>
                     )}
-                    <div style={{ fontSize: 10, color: "#bbb" }}>Prix HT</div>
-                    <TierBadge tiers={p.price_tiers} pn={displayPrice} />
+                    <div className="num" style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(displayPrice)}</div>
+                    <div style={{ fontSize: 11, color: T.inkMute }}>Prix HT</div>
+                    <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />
                   </div>
 
-                  {/* Actions */}
-                  <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6, minWidth: 120 }}>
+                  {/* Actions : « − » sable, « + » pétrole, quantité (Entrée = Ajouter, lot E3) ; « Ajouter » toujours
+                      en place, invisible à 0 (ni focus ni lecture d'écran) : la ligne ne bouge plus quand il apparaît */}
+                  <div className="ex-saisie-actions">
                     {orderable ? (<>
-                      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
-                          style={{ background: "#f0f2f5", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16 }}>−</button>
+                      <div className="ex-saisie-stepper" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <button className="ex-qte-moins ex-saisie-pas" aria-label="Diminuer la quantité" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
+                          style={pasStyle}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, parseInt(e.target.value) || 0) }))}
                           onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing && qty > 0) { e.preventDefault(); handleAdd(p); } }}   // lot E3 : Entrée = Ajouter
-                          placeholder="0" style={{ width: 48, textAlign: "center", border: "1.5px solid #ddd", borderRadius: 6, padding: "4px", fontSize: 14, fontWeight: qty > 0 ? 700 : 400, outline: "none" }} />
-                        <button onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
-                          style={{ background: "#0f2d3d", border: "none", borderRadius: 6, width: 28, height: 28, cursor: "pointer", fontWeight: 700, fontSize: 16, color: "white" }}>+</button>
+                          placeholder="0" aria-label={`Quantité ${p.name}`} className="ex-saisie-qte" style={{ ...ui.qtyInput(qty > 0), width: undefined, height: undefined, fontSize: 14 }} />
+                        <button className="ex-qte-plus ex-saisie-pas" aria-label="Augmenter la quantité" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
+                          style={pasStyle}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
                       </div>
-                      {qty > 0 && (
-                        <button onClick={() => handleAdd(p)}
-                          style={{ background: "#10b981", color: "white", border: "none", borderRadius: 8, padding: "5px 14px", fontSize: 11, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap" }}>
-                          Ajouter {fmt(tiered.pn * qty)}{tiered.tier ? " ★" : ""}
-                        </button>
-                      )}
+                      <button className="ex-btn-petrole ex-saisie-ajouter" onClick={() => handleAdd(p)}
+                        style={{ ...ajouterStyle, visibility: qty > 0 ? "visible" : "hidden" }}>
+                        <Icone nom="panier" taille={15} />Ajouter {fmt(tiered.pn * qty)}{tiered.tier ? " ★" : ""}
+                      </button>
                     </>) : (
-                      <button onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
-                        style={{
-                          background: isAlert ? "#fef3c7" : "#eff6ff", border: isAlert ? "1px solid #fbbf24" : "1px solid #93c5fd",
-                          color: isAlert ? "#92400e" : "#1e40af", borderRadius: 8, padding: "6px 12px", fontSize: 11, fontWeight: 700,
-                          cursor: "pointer", opacity: alertSaving[p.cip] ? 0.5 : 1,
-                        }}>
-                        {isAlert ? "✓ Alerte activée" : "🔔 M'avertir du retour"}
+                      <button className={isAlert ? "ex-saisie-alerte" : "ex-btn-ligne ex-saisie-alerte"} onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
+                        style={{ ...alerteStyle, ...(isAlert ? alerteActive : {}), opacity: alertSaving[p.cip] ? 0.5 : 1 }}>
+                        <Icone nom={isAlert ? "coche" : "cloche"} taille={15} />{isAlert ? "Alerte activée" : "M’avertir du retour"}
                       </button>
                     )}
                   </div>
@@ -251,3 +253,17 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     </div>
   );
 }
+
+// ── Atomes de la Saisie (lot 5) : fond, couleur et taille portés par les classes (survol, mobile) ──
+// filtre : sable + encre, actif encre + paper (ex-filtre selon aria-pressed)
+const filtreStyle = { ...ui.pill(false), background: undefined, color: undefined };
+// « − » / « + » : 30 px, 36 px sur mobile (ex-saisie-pas) ; fond par ex-qte-moins / ex-qte-plus
+const pasStyle = { ...ui.qtyBtn("plus"), background: undefined, color: undefined, width: undefined, height: undefined };
+// « Ajouter » : pastille pétrole (ex-btn-petrole, survol sarcelle), largeur réservée (ex-saisie-ajouter)
+const ajouterStyle = { ...ui.btn("primaire", "s"), background: undefined, color: undefined, height: undefined, gap: 6, padding: "0 14px", fontVariantNumeric: "tabular-nums" };
+// alerte de retour en stock : bouton à filet, puis ton info (menthe + sarcelle) une fois activée
+const alerteStyle = { ...ui.btn("ligne", "s"), background: undefined, height: undefined, gap: 6, padding: "0 14px", boxShadow: `inset 0 0 0 1.5px ${T.lineField}` };
+const alerteActive = { background: tone("info").bg, color: tone("info").fg, boxShadow: `inset 0 0 0 1px ${tone("info").border}` };
+// pastille ronde des états vides (icône au trait sur menthe)
+const pastilleVide = { width: 56, height: 56, borderRadius: R.pill, background: T.mint, color: T.teal, display: "inline-flex",
+  alignItems: "center", justifyContent: "center", marginBottom: 14 };

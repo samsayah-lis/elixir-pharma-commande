@@ -24,6 +24,7 @@ const TRACES = {
   lien: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   copier: <><rect x="8.5" y="8.5" width="12" height="12" rx="2" /><path d="M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3" /></>,
   horloge: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></>,
+  cloche: <><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15z" /><path d="M10 21a2.2 2.2 0 0 0 4 0" /></>,   // alerte de retour en stock (lot 5)
   plus: <path d="M12 5v14M5 12h14" />,
   moins: <path d="M5 12h14" />,
   // ── rayons (barre latérale ; lot 2) ──

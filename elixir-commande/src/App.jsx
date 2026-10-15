@@ -13,9 +13,10 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
-import { T, R, tone, ui, fmtPct as fmtPctFr } from "./theme.js";
+import { T, R, tone, ui, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
+import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -1964,44 +1965,46 @@ export default function App() {
                 <Icone nom="recherche" taille={18} style={{ color: T.teal }} /> Résultats pour « {globalSearch} »
                 {globalSearching && <span style={{ fontSize:12, color:T.teal, fontWeight:500 }}>Recherche…</span>}
                 {!globalSearching && <span className="num" style={{ ...ui.badge("neutral"), fontSize:12, fontWeight:500, padding:"2px 10px" }}>
-                  {globalResults.length} produit(s) · stock Odoo temps réel
+                  {globalResults.length} produit{globalResults.length > 1 ? "s" : ""} · stock Odoo temps réel
                 </span>}
               </div>
               {!globalSearching && globalResults.length === 0 ? (
-                <div style={{ background:"white", borderRadius:14, padding:"32px", textAlign:"center", color:"#aaa", fontSize:14 }}>
+                <div style={{ ...ui.card, textAlign:"center", padding:"32px 20px", color:T.inkSoft, fontSize:14 }}>
                   Aucun produit trouvé pour « {globalSearch} »
                 </div>
               ) : (
-                <div style={{ background:"white", borderRadius:14, overflow:"hidden", boxShadow:"0 2px 8px rgba(0,0,0,0.06)" }}>
-                  {globalResults.map((p, i) => (
-                    <div key={p.cip || i} style={{
-                      display:"flex", alignItems:"center", gap:12, padding:"10px 16px",
-                      borderBottom:"1px solid #f0f2f5", background: i%2===0?"white":"#fafbfc",
-                    }}>
-                      {/* Stock badge */}
-                      <span style={{ fontSize:9, fontWeight:700, borderRadius:4, padding:"2px 6px", flexShrink:0,
-                        background: p.in_stock ? "#d1fae5" : "#fee2e2", color: p.in_stock ? "#065f46" : "#991b1b"
-                      }}>{p.in_stock ? "EN STOCK" : "RUPTURE"}</span>
-
-                      {/* Info */}
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontWeight:600, fontSize:13, color:"#0f2d3d", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
-                        <div style={{ fontSize:10, color:"#888", fontFamily:"monospace" }}>CIP {p.cip} {p.available > 0 ? `· ${p.available} dispo` : ""}</div>
+                /* Résultats (lot 5) : carte blanche, lignes .ex-tr (zébrure, survol, rupture) disposées par .ex-resultat
+                   (sous 768 px : nom sur toute la largeur, puis prix et « + Panier ») ; statut toujours écrit */
+                <div style={{ background:T.surface, border:`1px solid ${T.line}`, borderRadius:R.m, overflow:"hidden", boxShadow:T.shadow1 }}>
+                  {globalResults.map((p, i) => {
+                    const jr = !p.in_stock ? justifProducts[p.cip] : null;   // sur commande labo (justificatif) : commandable
+                    return (
+                    <div key={p.cip || i} className="ex-tr ex-resultat" data-rupture={p.in_stock || jr ? undefined : ""}>
+                      {/* Info : nom, statut, CIP */}
+                      <div className="ex-resultat-info">
+                        <div className="ex-resultat-nom" title={p.name} style={{ fontWeight:600, fontSize:13, color:T.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
+                        <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:"3px 10px", marginTop:4 }}>
+                          <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
+                            title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
+                          <span style={{ fontSize:12, color:T.inkMute }}>CIP <span style={{ fontFamily:T.mono, letterSpacing:"-0.01em" }}>{p.cip}</span>{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
+                        </div>
                       </div>
 
-                      {/* Prix */}
-                      <div style={{ textAlign:"right", flexShrink:0, minWidth:80 }}>
+                      {/* Prix HT : barré --ink-mute, remise en badge or + encre, prix net encre 700 (affichage français) */}
+                      <div className="ex-resultat-prix">
                         {p.discounted_price && p.discount_pct > 0 ? (<>
-                          <div style={{ fontSize:10, color:"#aaa", textDecoration:"line-through" }}>{parseFloat(p.list_price).toFixed(2)} €</div>
-                          <div style={{ fontSize:14, fontWeight:700, color:"#059669" }}>{parseFloat(p.discounted_price).toFixed(2)} €</div>
-                          <div style={{ fontSize:9, color:"#10b981", fontWeight:600 }}>-{p.discount_pct}%</div>
+                          <div style={{ fontSize:11, lineHeight:1.6 }}>
+                            <span className="num" style={{ color:T.inkMute, textDecoration:"line-through" }}>{fmtEur(parseFloat(p.list_price))}</span>{" "}
+                            <span className="num" style={{ ...ui.badge("promo"), padding:"0 6px" }}>{fmtPctFr(p.discount_pct)}</span>
+                          </div>
+                          <div className="num" style={{ fontSize:15, fontWeight:700, color:T.ink }}>{fmtEur(parseFloat(p.discounted_price))}</div>
                         </>) : (
-                          <div style={{ fontSize:14, fontWeight:700, color:"#0f2d3d" }}>{p.list_price ? parseFloat(p.list_price).toFixed(2)+" €" : "—"}</div>
+                          <div className="num" style={{ fontSize:15, fontWeight:700, color:T.ink }}>{p.list_price ? fmtEur(parseFloat(p.list_price)) : "—"}</div>
                         )}
                       </div>
 
-                      {/* Add to cart */}
-                      <button onClick={() => {
+                      {/* Add to cart : pastille pétrole (survol sarcelle, classe ex-btn-petrole) ; gestionnaire inchangé */}
+                      <button className="ex-btn-petrole ex-resultat-action" aria-label={`Ajouter ${p.name} au panier`} onClick={() => {
                         const pn = p.discounted_price || p.list_price;
                         if (!pn) return;
                         // Cherche dans le catalogue existant
@@ -2024,12 +2027,12 @@ export default function App() {
                           flash(`⚠ ${p.name} n'est pas dans le catalogue. Utilisez la Saisie de commande.`);
                           trackSearch(globalSearch.trim(), globalResults.length, p.cip, false);
                         }
-                      }} style={{
-                        background:"#0f2d3d", color:"white", border:"none", borderRadius:8,
-                        padding:"6px 12px", fontSize:11, fontWeight:700, cursor:"pointer", whiteSpace:"nowrap", flexShrink:0,
-                      }}>+ Panier</button>
+                      }} style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, gap: 4, padding: "0 14px", flexShrink: 0 }}>
+                        <Icone nom="plus" taille={14} epaisseur={2.6} />Panier
+                      </button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -2044,6 +2047,8 @@ export default function App() {
               pharmacyEmail={pharmacyEmail}
               onAddToCart={ajouterDepuisSaisie}
               initialQuery={initialProductQuery}
+              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
+              couleur={CATALOG_WITH_ADMIN[activeTab].accent}
             />
           )}
 
