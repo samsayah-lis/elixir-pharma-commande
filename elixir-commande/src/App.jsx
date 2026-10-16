@@ -223,6 +223,12 @@ const GRID_SECTIONS = ["otc", "molnlycke", "obeso", "covid", "blanche", "nr", "u
 const OUTILS_LIEN = ["fauteuil", "transfert", "saisie", "peremption", "groupees", "justificatif"];
 // Menus classés par ordre alphabétique (voir filteredProducts) : barre A–Z en haut
 const ALPHA_SECTIONS = ["otc", "nr"];
+// Tri et filtre par laboratoire (colonne labo d'elixir_products : fabricant Medipim ou saisie de l'admin ;
+// docs/labo-otc.md). Centrale OTC seulement en V1. Laboratoires comparés sans casse, accents ni espaces doubles
+const LABO_SECTIONS = ["otc"];
+const cleLabo = (l) => String(l || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+// &tri=labo / &labo=… de l'adresse, lus seulement avec le ?menu= d'un de ces menus (ailleurs : ignorés)
+const paramLabo = (nom) => { try { const p = new URLSearchParams(window.location.search); return LABO_SECTIONS.includes(p.get("menu")) ? p.get(nom) || "" : ""; } catch { return ""; } };
 
 // Remise affichée (catalogue seulement, jamais envoyée) : format français de src/theme.js (refonte charte, lot 4) —
 // « −9,7 % » (vrai signe moins, virgule, espace insécable) au lieu de « -9.70 % » ; vide ou 0 → « – »
@@ -347,6 +353,9 @@ export default function App() {
   const [showFavOnly, setShowFavOnly] = useState(false);
   const [filterStock, setFilterStock] = useState("all"); // "all" | "instock" | "rupture"
   const [filterRemise, setFilterRemise] = useState(false);
+  // Centrale OTC : tri par laboratoire et laboratoire choisi (affichage seulement), repris de l'adresse &tri=labo&labo=…
+  const [triLabo, setTriLabo] = useState(() => paramLabo("tri") === "labo");
+  const [filtreLabo, setFiltreLabo] = useState(() => paramLabo("labo"));
   const toggleFav = (cip) => {
     setFavorites(prev => {
       const next = new Set(prev);
@@ -671,6 +680,7 @@ export default function App() {
           source: p.source,
           image_url: p.image_url || null,
           price_tiers: p.price_tiers || null,
+          labo: p.labo || null,
           _dbId: p.cip,
         }));
       merged[k] = { ...meta, products: sectionProducts };
@@ -1142,7 +1152,28 @@ export default function App() {
     icon:     activeCampMeta.icon     || cat.icon,
   } : cat;
 
-
+  // ── Laboratoires du menu (Centrale OTC) : options du filtre, ordre des groupes du tri par laboratoire ──
+  // cleDe : produit → clé de son laboratoire ; labosMenu : { cle, nom, n } triés par nom (nom = l'orthographe la plus
+  // fréquente du menu) ; nomDe : clé → nom. Vide sans colonne labo (avant la migration SQL) ou sans laboratoire
+  // renseigné : les commandes de tri et de filtre ne s'affichent pas.
+  const laboActif = LABO_SECTIONS.includes(activeTab);
+  const [cleDe, labosMenu, nomDe] = useMemo(() => {
+    const cles = new Map(), parCle = new Map();
+    if (laboActif) for (const p of cat?.products || []) {
+      const k = cleLabo(p.labo);
+      cles.set(p, k);
+      if (!k) continue;
+      const e = parCle.get(k) || { cle: k, noms: {}, n: 0 };
+      const nom = p.labo.replace(/\s+/g, " ").trim();
+      e.n++; e.noms[nom] = (e.noms[nom] || 0) + 1;
+      parCle.set(k, e);
+    }
+    const liste = [...parCle.values()].map(e => ({ cle: e.cle, n: e.n, nom: Object.keys(e.noms).sort((a, b) => e.noms[b] - e.noms[a])[0] }))
+      .sort((a, b) => a.nom.localeCompare(b.nom, "fr", { sensitivity: "base" }));
+    return [cles, liste, new Map(liste.map(l => [l.cle, l.nom]))];
+  }, [laboActif, cat?.products]);
+  const laboChoisi = labosMenu.find(l => l.cle === cleLabo(filtreLabo)) || null;
+  const modeLabo = triLabo && labosMenu.length > 0;   // tri par laboratoire (sinon A–Z)
 
   const filteredProducts = useMemo(() => {
     let filtered = (cat?.products || []).filter(p =>
@@ -1153,7 +1184,15 @@ export default function App() {
     if (filterStock === "instock" && !cat?.sansStock) filtered = filtered.filter(p => !p.cip || !stockData[p.cip] || stockData[p.cip]?.dispo > 0);
     if (filterStock === "rupture" && !cat?.sansStock) filtered = filtered.filter(p => p.cip && stockData[p.cip]?.dispo === 0);
     if (filterRemise) filtered = filtered.filter(p => p.pct > 0 || p.remise_eur > 0);
+    if (laboChoisi) filtered = filtered.filter(p => cleDe.get(p) === laboChoisi.cle);
     if (activeTab === "otc" || activeTab === "nr") {
+      // tri par laboratoire : groupes dans l'ordre des noms, produits par nom dans chaque groupe, « non renseigné » à la fin.
+      // Mêmes objets que cat.products (realIdx = cat.products.indexOf(p) : clés du panier inchangées)
+      if (modeLabo) {
+        const rangs = new Map(labosMenu.map((l, i) => [l.cle, i]));
+        const rang = (p) => rangs.get(cleDe.get(p)) ?? labosMenu.length;
+        return [...filtered].sort((a, b) => rang(a) - rang(b) || a.name.localeCompare(b.name, "fr"));
+      }
       return [...filtered].sort((a, b) => a.name.localeCompare(b.name, "fr"));
     }
     if (activeTab === "ulabs") {
@@ -1168,7 +1207,34 @@ export default function App() {
       });
     }
     return filtered;
-  }, [cat?.products, search, activeTab, showFavOnly, favorites, filterStock, filterRemise, stockData]);
+  }, [cat?.products, search, activeTab, showFavOnly, favorites, filterStock, filterRemise, stockData, laboChoisi, modeLabo, labosMenu, cleDe]);
+
+  // Laboratoire de l'adresse inconnu du menu une fois les produits chargés (lien périmé, faute de frappe) : oublié
+  useEffect(() => { if (filtreLabo && labosMenu.length && !laboChoisi) setFiltreLabo(""); }, [filtreLabo, labosMenu, laboChoisi]);
+  // Adresse : &tri=labo et &labo=<laboratoire> tant que la Centrale OTC est ouverte, retirés ailleurs. replaceState :
+  // Retour / Avancer changent toujours de menu (zone « adresse ↔ menu », déclarée plus haut, donc exécutée avant).
+  // (aucun laboratoire connu une fois les produits chargés, colonne labo absente comprise : paramètres retirés)
+  const laboConnu = laboActif && (labosMenu.length > 0 || productsLoading);
+  const laboAdresse = laboConnu ? (laboChoisi?.nom || filtreLabo) : "";
+  const triAdresse = laboConnu && triLabo;
+  useEffect(() => {
+    try {
+      const u = new URL(window.location.href);
+      if (laboAdresse) u.searchParams.set("labo", laboAdresse); else u.searchParams.delete("labo");
+      if (triAdresse) u.searchParams.set("tri", "labo"); else u.searchParams.delete("tri");
+      const url = u.pathname + u.search + u.hash;
+      if (url !== window.location.pathname + window.location.search + window.location.hash) window.history.replaceState(window.history.state, "", url);
+    } catch {}
+  }, [activeTab, laboAdresse, triAdresse]);
+  // Retour / Avancer vers la Centrale OTC : tri et laboratoire de cette entrée d'historique
+  useEffect(() => {
+    const onPop = () => {
+      try { if (!LABO_SECTIONS.includes(new URLSearchParams(window.location.search).get("menu"))) return; } catch { return; }
+      setFiltreLabo(paramLabo("labo")); setTriLabo(paramLabo("tri") === "labo");
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   // Split grille/tableau
   const isGridSection = GRID_SECTIONS.includes(activeTab) || !!(cat?.withPhotos);
@@ -1178,8 +1244,15 @@ export default function App() {
   // Barre A–Z des menus classés par ordre alphabétique : un clic amène au premier produit de la lettre
   const lettreDe = (nom) => { const c = String(nom || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim().charAt(0).toUpperCase(); return /[A-Z]/.test(c) ? c : "#"; };
   const avecAlphabet = ALPHA_SECTIONS.includes(activeTab) && gridWithPhoto.length > 0;
-  const premierParLettre = {};
-  if (avecAlphabet) for (const p of gridWithPhoto) { const l = lettreDe(p.name); if (!premierParLettre[l]) premierParLettre[l] = p; }
+  // tri par laboratoire : la barre A–Z suit l'initiale du laboratoire (« non renseigné » n'a pas de lettre) et la
+  // lettre-X est posée sur l'en-tête du premier groupe de cette lettre, plus sur une carte
+  const premierParLettre = {}, nParLabo = new Map();
+  if (avecAlphabet) for (const p of gridWithPhoto) {
+    const k = cleDe.get(p);
+    if (modeLabo) nParLabo.set(k, (nParLabo.get(k) || 0) + 1);
+    const l = modeLabo ? (k && lettreDe(nomDe.get(k))) : lettreDe(p.name);
+    if (l && !premierParLettre[l]) premierParLettre[l] = p;
+  }
   const allerLettre = (l) => {
     const el = document.getElementById(`lettre-${l}`);
     if (!el) return;
@@ -2331,6 +2404,31 @@ export default function App() {
                   <Icone nom="etiquette" taille={14} />Avec remise
                 </button>
               </div>
+              {/* Centrale OTC : tri (sélecteur segmenté, aria-pressed) et filtre par laboratoire (liste native : clavier,
+                  lecteurs d'écran, sélecteur du téléphone), au gabarit des filtres ; affichés dès qu'un laboratoire est connu */}
+              {labosMenu.length > 0 && (
+                <div style={{ display: "flex", gap: "8px 16px", marginTop: 10, flexWrap: "wrap", alignItems: "center" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span id="tri-labo" style={{ fontSize: 12, fontWeight: 600, color: T.inkSoft }}>Trier par</span>
+                    <div role="group" aria-labelledby="tri-labo" className="ex-segment">
+                      {[[false, "A–Z"], [true, "Laboratoire"]].map(([v, t]) => (
+                        <button key={t} aria-pressed={modeLabo === v} onClick={() => setTriLabo(v)}>{t}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+                    <label htmlFor="filtre-labo" style={{ fontSize: 12, fontWeight: 600, color: T.inkSoft }}>Laboratoire</label>
+                    <span style={{ position: "relative", display: "flex", minWidth: 0, color: laboChoisi ? T.paper : T.ink }}>
+                      <select id="filtre-labo" className="ex-filtre ex-liste" data-actif={laboChoisi ? "" : undefined} value={laboChoisi?.nom || ""}
+                        onChange={e => setFiltreLabo(e.target.value)} style={{ ...filtreStyle, maxWidth: "100%", padding: "0 32px 0 14px", appearance: "none", WebkitAppearance: "none", textOverflow: "ellipsis" }}>
+                        <option value="">Tous les laboratoires</option>
+                        {labosMenu.map(l => <option key={l.cle} value={l.nom}>{l.nom} ({l.n})</option>)}
+                      </select>
+                      <Icone nom="suivant" taille={14} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%) rotate(90deg)", pointerEvents: "none" }} />
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
           </EnteteVue>
 
@@ -2347,7 +2445,7 @@ export default function App() {
                     {["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"].map(l => {
                       const dispo = !!premierParLettre[l];
                       return (
-                        <button key={l} onClick={() => allerLettre(l)} disabled={!dispo} aria-label={l === "#" ? "Produits commençant par un chiffre" : `Produits commençant par ${l}`} style={{
+                        <button key={l} onClick={() => allerLettre(l)} disabled={!dispo} aria-label={`${modeLabo ? "Laboratoires" : "Produits"} commençant par ${l === "#" ? "un chiffre" : l}`} style={{
                           flex: isMobile ? "0 0 auto" : undefined, minWidth: isMobile ? 36 : undefined, width: isMobile ? undefined : "100%", maxWidth: isMobile ? undefined : 32,
                           height: isMobile ? 36 : 28, padding: 0, borderRadius: R.pill, border: "none", fontFamily: "inherit",
                           background: dispo ? T.mint : "transparent", color: dispo ? T.inkSoft : T.inkFaint,
@@ -2432,7 +2530,19 @@ export default function App() {
                           </div>
                         );
                       })()}
-                      <div id={avecAlphabet && premierParLettre[lettreDe(p.name)] === p ? `lettre-${lettreDe(p.name)}` : undefined}
+                      {/* tri par laboratoire : en-tête de groupe sur toute la largeur de la grille (cible de la barre A–Z) */}
+                      {modeLabo && (!prevP || cleDe.get(prevP) !== cleDe.get(p)) && (() => {
+                        const k = cleDe.get(p), lettre = k && lettreDe(nomDe.get(k)), n = nParLabo.get(k);
+                        return (
+                          <h2 id={k && premierParLettre[lettre] === p ? `lettre-${lettre}` : undefined} style={{ gridColumn: "1 / -1", margin: prevP ? "12px 0 0" : 0,
+                            padding: "0 2px 8px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "2px 10px",
+                            fontSize: 17, fontWeight: 640, letterSpacing: "-0.01em", color: T.petrol }}>
+                            {k ? nomDe.get(k) : "Laboratoire non renseigné"}
+                            <span className="num" style={{ fontSize: 12, fontWeight: 500, letterSpacing: 0, color: T.inkMute }}>{n} référence{n > 1 ? "s" : ""}</span>
+                          </h2>
+                        );
+                      })()}
+                      <div id={avecAlphabet && !modeLabo && premierParLettre[lettreDe(p.name)] === p ? `lettre-${lettreDe(p.name)}` : undefined}
                         className="ex-carte" data-choisi={qty > 0 ? "" : undefined} style={{
                         background: T.surface, borderRadius: R.m,
                         display: "flex", flexDirection: "column", gap: 0, minWidth: 0,
@@ -2808,10 +2918,11 @@ export default function App() {
                       filterStock === "instock" && !cat?.sansStock && "en stock",
                       filterStock === "rupture" && !cat?.sansStock && "ruptures",
                       filterRemise && "avec remise",
+                      laboChoisi && `laboratoire « ${laboChoisi.nom} »`,
                     ].filter(Boolean);
                     return actifs.length ? `Filtres actifs : ${actifs.join(" · ")}` : null;
                   })()}
-                  actions={<ActionEtat icone="fermer" onClick={() => { setSearch(""); setShowFavOnly(false); setFilterStock("all"); setFilterRemise(false); }}>Effacer les filtres</ActionEtat>} />
+                  actions={<ActionEtat icone="fermer" onClick={() => { setSearch(""); setShowFavOnly(false); setFilterStock("all"); setFilterRemise(false); setFiltreLabo(""); }}>Effacer les filtres</ActionEtat>} />
           )}
 
           {/* Bouton confirmation commande groupée U-Labs */}

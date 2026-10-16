@@ -142,8 +142,16 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 }
 /* filtres : sable + encre ; actif (aria-pressed) encre + paper, comme les liens actifs de la vitrine */
 .ex-filtre { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease), color .15s var(--ease); }
-.ex-filtre[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-@media (hover: hover) { .ex-filtre:not([aria-pressed="true"]):hover { background: #e2dccf; } }
+.ex-filtre[aria-pressed="true"], .ex-filtre[data-actif] { background: var(--ink); color: var(--paper); }
+@media (hover: hover) { .ex-filtre:not([aria-pressed="true"]):not([data-actif]):hover { background: #e2dccf; } }
+/* Centrale OTC (docs/labo-otc.md) : liste « Laboratoire » (options lisibles même quand la liste est active) et tri en
+   sélecteur segmenté de 32 px (piste sable, segment actif pétrole, comme le fauteuil) */
+.ex-liste option { background: var(--surface); color: var(--ink); }
+.ex-segment { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; background: var(--sand); }
+.ex-segment > button { height: 26px; padding: 0 12px; border: none; border-radius: 999px; background: transparent; color: var(--ink);
+  font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color .15s var(--ease), color .15s var(--ease); }
+.ex-segment > button[aria-pressed="true"] { background: var(--petrol); color: var(--paper); }
+@media (hover: hover) { .ex-segment > button:not([aria-pressed="true"]):hover { background: #e2dccf; } }
 /* boutons de quantité : « − » sable + encre, « + » pétrole + paper (survol sarcelle) */
 .ex-qte-moins { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease); }
 .ex-qte-plus { background: var(--petrol); color: var(--paper); transition: background-color .15s var(--ease); }
@@ -273,6 +281,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-app .ex-qte-champ:not(.ex-admin *) { min-width: 52px; min-height: 40px; }
   /* filtres en pastilles : 36 px */
   .ex-app .ex-filtre:not(.ex-admin *) { min-height: 36px; }
+  .ex-app .ex-segment > button:not(.ex-admin *) { min-height: 30px; }
   /* action principale d'une ligne ou d'une fenêtre : 44 px */
   .ex-app .ex-tactile:not(.ex-admin *) { min-height: 44px; }
   /* produits complémentaires du panier : « Ajouter » et « Masquer » côte à côte (6 px d'écart) : 36 px */

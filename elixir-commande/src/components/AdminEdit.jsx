@@ -1,5 +1,9 @@
 import React from "react";
 import { T, tone, adm } from "../theme.js";
+// Outil « laboratoires » de la Centrale OTC (admin seulement) : chargé à la demande, hors du bundle des pharmacies
+// (budget du bundle, docs/refonte-charte.md § 20) ; chargement impossible (nouvelle version en ligne) : message
+const AdminLabos = React.lazy(() => import("./AdminLabos.jsx").catch(() => ({ default: () => (
+  <div style={{ fontSize: 12, color: T.warn, marginBottom: 14 }}>Outil laboratoires indisponible : rechargez la page.</div>) })));
 
 // atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
 const LS=adm.label, IS=adm.input, PB=adm.btn;
@@ -54,10 +58,14 @@ export default function AdminEdit({
       name: String(p.name ?? ""), section: String(p._section ?? p.section ?? ""),
       cip: String(p.cip ?? ""), pv: String(p.pv ?? ""), pct: String(pct || ""),
       remise_eur: String(p.remise_eur ?? remise_eur), pn: String(p.pn ?? ""),
-      palier: String(p.colis ?? ""), note: String(p.note ?? ""), _lastEdited: "",
+      palier: String(p.colis ?? ""), note: String(p.note ?? ""), labo: String(p.labo ?? ""), _lastEdited: "",
     });
     setEditingKey(p._key);
   };
+  // Colonne labo présente dans Supabase (products-get la renvoie alors sur chaque produit, même vide) : sans elle,
+  // le champ Laboratoire est désactivé et rien n'est envoyé (docs/labo-otc.md)
+  const colonneLabo = products.some(p => Object.prototype.hasOwnProperty.call(p, "labo"));
+  const laboNet = (v) => String(v ?? "").replace(/\s+/g, " ").trim();
 
   const saveEdit = async (p) => {
     const pv=parseFloat(editForm.pv), pct=parseFloat(editForm.pct), pn=parseFloat(editForm.pn);
@@ -74,6 +82,9 @@ export default function AdminEdit({
       note: String(editForm.note ?? "").trim() || null,
       source: p.source || "catalog", active: true,
       ...(cipChanged ? { old_cip: p.cip } : {}),
+      // laboratoire : envoyé seulement s'il a changé (une modification ordinaire ne touche jamais la colonne labo)
+      // (formulaire ouvert ailleurs sans ce champ : editForm.labo absent, rien n'est envoyé)
+      ...(colonneLabo && editForm.labo !== undefined && laboNet(editForm.labo) !== laboNet(p.labo) ? { labo: laboNet(editForm.labo) || null } : {}),
     };
     try {
       const res = await adminFetch("/.netlify/functions/products-upsert", {
@@ -137,11 +148,24 @@ export default function AdminEdit({
     }
   };
 
+  // Laboratoire d'un produit dans Medipim (« Fabricant ») : remplit le champ, enregistré avec « Enregistrer »
+  const laboMedipim = async (cip) => {
+    try {
+      const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(cip)}&sansPhoto=1`);
+      const d = await r.json().catch(() => ({}));
+      if (r.ok && d.labo) {
+        setEditForm(f => ({ ...f, labo: d.labo }));
+        flash(`Medipim : ${d.labo}${d.labo_autres?.length ? ` (autres organisations : ${d.labo_autres.join(", ")})` : ""} — à enregistrer`);
+      } else flash(r.status === 429 ? "⏳ Medipim saturé : réessayez dans une minute" : r.ok || r.status === 404 ? "⚠ Laboratoire introuvable dans Medipim : à saisir à la main" : "⚠ Medipim indisponible");
+    } catch (e) { flash("⚠ " + e.message); }
+  };
+  const labosConnus = [...new Set(products.map(p => laboNet(p.labo)).filter(Boolean))].sort((a, b) => a.localeCompare(b, "fr"));
+
   const sections = [...new Set(products.map(p => p.section).filter(Boolean))].sort();
   const base = allProducts || products;
   const filtered = base.filter(p => {
     const ms = filterSection === "all" || p._section === filterSection || p.section === filterSection;
-    const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search);
+    const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search) || p.labo?.toLowerCase().includes(search.toLowerCase());
     return ms && mq;
   });
 
@@ -155,6 +179,11 @@ export default function AdminEdit({
                 {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
+            {(filterSection === "all" || filterSection === "otc") && (
+              <React.Suspense fallback={null}>
+                <AdminLabos products={products} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
+              </React.Suspense>
+            )}
             <div style={{fontSize:11,color:T.inkMute,marginBottom:12}}>
               {filtered.length} produit(s) dans Supabase
               {false&&(
@@ -184,7 +213,7 @@ export default function AdminEdit({
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
                       </div>
                       <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>
-                        {p._sectionLabel}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}
+                        {p._sectionLabel}{p.labo && <> · <span style={{color:T.teal,fontWeight:600}}>{p.labo}</span></>}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}
                         {" · "}
                         <span style={{color:hasOv?T.warn:T.inkSoft,fontWeight:600}}>
                           {fmt(ov?.pn??p.pn)} net
@@ -265,6 +294,21 @@ export default function AdminEdit({
                         <label style={{...LS,fontSize:11}}>Note</label>
                         <input value={editForm.note} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))}
                           placeholder="Stock limité, Promo..." style={{...IS,fontSize:12,padding:"7px 10px"}}/>
+                      </div>
+                      <div style={{marginBottom:12}}>
+                        <label htmlFor={`labo-${p._key}`} style={{...LS,fontSize:11}}>Laboratoire (tri et filtre du site)</label>
+                        <div style={{display:"flex",gap:8}}>
+                          <input id={`labo-${p._key}`} list="labos-connus" value={editForm.labo ?? ""} disabled={!colonneLabo}
+                            onChange={e=>setEditForm(f=>({...f,labo:e.target.value}))}
+                            placeholder={colonneLabo ? "Ex. Bayer — vide : non renseigné" : "Colonne labo à créer dans Supabase (docs/labo-otc.md)"}
+                            style={{...IS,fontSize:12,padding:"7px 10px",flex:1}}/>
+                          {colonneLabo && p.cip && (
+                            <button type="button" onClick={()=>laboMedipim(p.cip)} style={{fontSize:11,background:T.surface2,border:"1px solid var(--line)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:T.inkSoft,whiteSpace:"nowrap"}}>
+                              🔍 Medipim
+                            </button>
+                          )}
+                        </div>
+                        <datalist id="labos-connus">{labosConnus.map(l=><option key={l} value={l}/>)}</datalist>
                       </div>
                       {GRID_SECTIONS.includes(p._section) && (
                         <div style={{marginBottom:12}}>
