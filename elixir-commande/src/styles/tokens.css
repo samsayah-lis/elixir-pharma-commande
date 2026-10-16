@@ -76,6 +76,9 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 @media print {
   header button, aside button { display: none !important; }
   aside { display: block !important; width: 100% !important; min-width: 100% !important; }
+  /* revue (§ 20) : le panier et le tiroir de menu fermés sont masqués à l'écran (visibility, App) ; l'impression les
+     garde tels qu'avant. Sans transition : le retard de 0,3 s de « visibility » (fermeture) ne joue pas à l'impression */
+  aside { visibility: visible !important; transition: none !important; }
 }
 /* ── Coquille (lot 2) : survols impossibles en inline. Le fond actif reste posé en inline (il l'emporte) ── */
 .ex-menu { background: transparent; transition: background-color .15s var(--ease), color .15s var(--ease); }
@@ -89,6 +92,16 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-sans-barre::-webkit-scrollbar { display: none; }
 /* petits téléphones : la croix seule dans l'en-tête, le mot ELIXIR laisse la place à la pharmacie et au panier */
 @media (max-width: 479px) { .ex-mot-elixir { display: none; } }
+/* en-tête d'ordinateur (revue, § 20) : titre de vue au plus 30 % de la barre ; de 1 024 à 1 279 px (barre latérale
+   affichée), 22 % et « Bon de commande » masqué (reste « stocks 14:32 » et l'actualisation) : la recherche garde
+   ~240 px au lieu de 180. Nom de la pharmacie : jusqu'à 220 px dès 1 280 px (144 px tronquaient « PHARMACIE DU … ») */
+.ex-titre-vue { max-width: 30%; }
+@media (max-width: 1279px) {
+  .ex-titre-vue { max-width: 22%; }
+  .ex-titre-vue__bdc { display: none; }
+}
+.ex-nom-pharmacie { max-width: clamp(110px, 10vw, 150px); }
+@media (min-width: 1280px) { .ex-nom-pharmacie { max-width: clamp(110px, 14vw, 220px); } }
 /* ── Boutons pastille (lot 3, identification) : le fond est posé ici et non en inline, sinon pas de survol ── */
 .ex-btn-petrole { background: var(--petrol); color: var(--paper); transition: background-color .15s var(--ease); }
 .ex-btn-petrole:hover:not(:disabled) { background: var(--teal); }
@@ -119,6 +132,14 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-tr:hover { background: var(--surface-2); }
   .ex-tr[data-rupture]:hover { background: #f9e9e8; }
 }
+/* colonne Qté du tableau d'ordinateur (revue, § 20) : de 768 à 1 279 px, le tableau (Stratège : 990 px) défile en largeur
+   dans son cadre et la quantité était hors de l'écran ; elle reste collée au bord droit tant qu'elle le dépasserait.
+   Fond de la ligne (zébrure, survol, rupture : hérité de .ex-tr), filet à gauche pour la détacher des colonnes qui
+   passent dessous ; aucun effet quand le tableau tient en largeur */
+@media (min-width: 768px) and (max-width: 1279px) {
+  .ex-app .ex-col-qte:not(.ex-admin *) { position: sticky; right: 0; z-index: 1; box-shadow: inset 1px 0 0 var(--line); }
+  .ex-app td.ex-col-qte:not(.ex-admin *) { background-color: inherit; }
+}
 /* filtres : sable + encre ; actif (aria-pressed) encre + paper, comme les liens actifs de la vitrine */
 .ex-filtre { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease), color .15s var(--ease); }
 .ex-filtre[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
@@ -141,6 +162,17 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 /* petits boutons discrets (copier le CIP, lien du menu, remise à zéro) */
 .ex-btn-discret { background: var(--surface-2); color: var(--ink-soft); transition: background-color .15s var(--ease), color .15s var(--ease); }
 @media (hover: hover) { .ex-btn-discret:hover { background: var(--sand); color: var(--ink); } }
+/* icônes répétées des cartes (« − », « + » de la grille, copier le CIP : revue, § 20) dessinées en CSS — masque sur un
+   pseudo-élément ::before, à la couleur du texte du bouton : aucun nœud SVG (2 346 <svg> et 5 952 nœuds SVG en
+   Centrale OTC avant). Mêmes tracés et épaisseurs que src/icons.jsx ; taille par --ico (16 px par défaut).
+   ::after reste libre pour la zone de toucher (.ex-cible) */
+.ex-ico::before { content: ""; display: block; flex-shrink: 0; width: var(--ico, 16px); height: var(--ico, 16px); background-color: currentColor;
+  -webkit-mask: var(--ico-trace) center / contain no-repeat; mask: var(--ico-trace) center / contain no-repeat; }
+.ex-ico-plus { --ico-trace: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E"); }
+.ex-ico-moins { --ico-trace: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round'%3E%3Cpath d='M5 12h14'/%3E%3C/svg%3E"); }
+.ex-ico-copier { --ico-trace: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8.5' y='8.5' width='12' height='12' rx='2'/%3E%3Cpath d='M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3'/%3E%3C/svg%3E"); }
+/* contraste élevé (Windows) : les fonds sont remplacés, l'icône prend la couleur du texte des boutons */
+@media (forced-colors: active) { .ex-ico::before { forced-color-adjust: none; background-color: ButtonText; } }
 
 /* ── Saisie de commande et recherche globale (lot 5) : disposition des lignes de résultats par grille, mise en pile
    sous 768 px par @media (les composants ne reçoivent pas isMobile) ; tailles des contrôles ici et non en inline ── */
@@ -245,6 +277,10 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-app .ex-tactile:not(.ex-admin *) { min-height: 44px; }
   /* produits complémentaires du panier : « Ajouter » et « Masquer » côte à côte (6 px d'écart) : 36 px */
   .ex-app .ex-suggestion-btn:not(.ex-admin *) { min-width: 36px; min-height: 36px; }
+  /* Mes commandes (revue, § 20) : nom du produit sur deux lignes au plus (une ligne n'en montrait que ~150 px ; le
+     nom entier est aussi dans l'infobulle) */
+  .ex-app .ex-commande-nom:not(.ex-admin *) { white-space: normal !important; display: -webkit-box; -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical; overflow-wrap: anywhere; line-height: 1.35; }
   /* Safari iOS zoome sur tout champ en moins de 16 px (recherche de l'en-tête, quantités, fauteuil, justificatif…) */
   .ex-app input:not(.ex-admin *), .ex-app select:not(.ex-admin *), .ex-app textarea:not(.ex-admin *) { font-size: 16px !important; }
 

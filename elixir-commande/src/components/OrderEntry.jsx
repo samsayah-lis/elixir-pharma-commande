@@ -6,6 +6,7 @@ import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import BadgeStatut from "./ui/BadgeStatut.jsx";
+import CipCell from "./ui/CipCell.jsx";
 import EtatVide, { ActionEtat, Squelette } from "./ui/EtatVide.jsx";
 
 // Affichage seulement (refonte charte, lot 5) : format français de src/theme.js — « 1 234,50 € », « −14,7 % ».
@@ -147,8 +148,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 
       {/* Filtre en pastille (comme les filtres du catalogue : aria-pressed, classe ex-filtre) et nombre de résultats */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px 16px", flexWrap: "wrap", marginBottom: 14 }}>
+        {/* coche seulement quand le filtre est actif (revue, § 20) ; inactif, l'icône neutre du stock (carton) */}
         <button className="ex-filtre" aria-pressed={stockOnly} onClick={() => setStockOnly(!stockOnly)} style={filtreStyle}>
-          <Icone nom="coche" taille={14} />En stock seulement
+          <Icone nom={stockOnly ? "coche" : "carton"} taille={14} />En stock seulement
         </button>
         {query.length >= 2 && (
           <div className="num" role="status" style={{ fontSize: 13, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 8 }}>
@@ -209,7 +211,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 10px", marginTop: 5 }}>
                       <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
                         title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
-                      <span style={{ fontSize: 12, color: T.inkMute }}>CIP <span style={{ fontFamily: T.mono, letterSpacing: "-0.01em" }}>{p.cip}</span></span>
+                      {/* CIP avec bouton de copie (anti-copie § 19 : le CIP n'est plus sélectionnable ; revue § 20), hors de la
+                          tabulation pour garder l'enchaînement « − », quantité, « + » au clavier (lots 5 et E3) */}
+                      <span style={{ fontSize: 12, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 4 }}>CIP <CipCell cip={p.cip} tabulable={false} /></span>
                     </div>
                     {jr && (
                       <div style={{ fontSize: 12, color: T.teal, marginTop: 6, lineHeight: 1.45 }}>
@@ -237,12 +241,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                   <div className="ex-saisie-actions">
                     {orderable ? (<>
                       <div className="ex-saisie-stepper" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <button className="ex-qte-moins ex-saisie-pas" aria-label="Diminuer la quantité" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
+                        <button className="ex-qte-moins ex-saisie-pas" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
                           style={pasStyle}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, parseInt(e.target.value) || 0) }))}
                           onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing && qty > 0) { e.preventDefault(); handleAdd(p); } }}   // lot E3 : Entrée = Ajouter
                           placeholder="0" aria-label={`Quantité ${p.name}`} className="ex-saisie-qte" style={{ ...ui.qtyInput(qty > 0), width: undefined, height: undefined, fontSize: 14 }} />
-                        <button className="ex-qte-plus ex-saisie-pas" aria-label="Augmenter la quantité" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
+                        <button className="ex-qte-plus ex-saisie-pas" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
                           style={pasStyle}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
                       </div>
                       <button className="ex-btn-petrole ex-saisie-ajouter" onClick={() => handleAdd(p)}

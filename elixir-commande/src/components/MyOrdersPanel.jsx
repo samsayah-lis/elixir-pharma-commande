@@ -3,6 +3,7 @@ import { JUSTIF_STATUTS } from "../lab-justif-client.js";
 import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EtatVide, { Chargement } from "./ui/EtatVide.jsx";
+import FocusFenetre from "./ui/FocusFenetre.jsx";
 
 // ── Mes commandes (refonte charte, lot 7 : docs/refonte-charte.md § 3) ──
 // Fenêtre paper de rayon 28 sur voile --scrim (sans flou) ; une carte blanche par commande, comme la maquette de la
@@ -25,13 +26,14 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         background:T.paper, color:T.ink, borderRadius:R.l, width:"100%", maxWidth:720, maxHeight:"85vh", overflow:"hidden",
         display:"flex", flexDirection:"column", boxShadow:T.shadow3,
       }}>
+        <FocusFenetre />{/* revue (§ 20) : focus sur « Fermer » à l'ouverture, rendu au bouton « Mes commandes » à la fermeture */}
         {/* En-tête */}
         <div style={{ padding:"20px 20px 16px 24px", borderBottom:`1px solid ${T.line}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
           <div style={{ minWidth:0 }}>
             <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
             <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
           </div>
-          <button className="ex-btn-discret ex-cible" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
+          <button className="ex-btn-discret ex-cible" data-focus-initial onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
 
         {/* Contenu */}
@@ -42,7 +44,8 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
             <EtatVide icone="commandes" titre="Aucune commande trouvée"
               texte="Vos commandes envoyées depuis le site apparaîtront ici, prêtes à être recommandées." />
           )}
-          {/* colonne minmax(0, 1fr) : les noms de produits (une ligne, points de suspension) ne font pas déborder la carte sur mobile */}
+          {/* colonne minmax(0, 1fr) : les noms de produits (une ligne, points de suspension ; deux lignes sous 768 px, classe
+              ex-commande-nom, revue § 20) ne font pas déborder la carte sur mobile */}
           <ul style={{ listStyle:"none", margin:0, padding:0, display:"grid", gridTemplateColumns:"minmax(0, 1fr)", gap:10 }}>
           {orders.map(order => {
             const date = new Date(order.date);
@@ -78,7 +81,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                 <div style={{ borderTop:`1px solid ${T.lineSoft}`, paddingTop:8 }}>
                   {items.slice(0, 5).map((it, j) => (
                     <div key={j} className="num" style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:T.inkSoft }}>
-                      <span style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
+                      <span className="ex-commande-nom" title={it.name} style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600 }}>×{it.qty}</span>
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600, minWidth:72, textAlign:"right" }}>{it.pn ? fmtEur(parseFloat(it.pn * it.qty)) : ""}</span>
                     </div>

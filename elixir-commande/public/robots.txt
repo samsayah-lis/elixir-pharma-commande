@@ -1,4 +1,28 @@
-# Elixir Pharma — site de commande réservé aux pharmacies clientes : rien à explorer ni à indexer.
-# (anti-copie, lot A : docs/refonte-charte.md § 19 ; voir aussi la balise robots d'index.html et l'en-tête X-Robots-Tag)
-User-agent: *
+# Elixir Pharma — site de commande réservé aux pharmacies clientes : rien à indexer.
+# (anti-copie, lot A et revue : docs/refonte-charte.md § 19 et § 20 ; voir aussi la balise robots d'index.html et
+# l'en-tête X-Robots-Tag « noindex »)
+#
+# Robots d'IA connus : rien à explorer.
+User-agent: GPTBot
+User-agent: ChatGPT-User
+User-agent: OAI-SearchBot
+User-agent: ClaudeBot
+User-agent: Claude-Web
+User-agent: anthropic-ai
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: CCBot
+User-agent: PerplexityBot
+User-agent: Bytespider
+User-agent: meta-externalagent
+User-agent: Amazonbot
+User-agent: cohere-ai
+User-agent: Diffbot
+User-agent: Omgilibot
 Disallow: /
+
+# Moteurs de recherche : la page d'accueil (écran d'identification) reste lisible pour qu'ils y trouvent la consigne
+# « noindex » et retirent l'adresse de leurs résultats — un « Disallow: / » les empêcherait de la lire. Les fonctions
+# (données du catalogue) restent fermées.
+User-agent: *
+Disallow: /.netlify/

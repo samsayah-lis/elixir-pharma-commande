@@ -119,11 +119,12 @@ export function ReorderSuggestion({ pharmacyCip, onApply }) {
         <div style={{ display: "flex", alignItems: "flex-start", gap: 10, minWidth: 0 }}>
           <Icone nom="recommander" taille={20} style={{ color: T.teal, marginTop: 1 }} />
           <div>
-            <h2 id="reappro-titre" style={{ margin: 0, fontWeight: 640, fontSize: 16, color: T.petrol }}>Réapprovisionnement suggéré</h2>
+            {/* paragraphe (plus un h2) : le bloc est rendu avant le h1 de la vue ; il reste une région nommée (revue, § 20) */}
+            <p id="reappro-titre" style={{ margin: 0, fontWeight: 640, fontSize: 16, color: T.petrol }}>Réapprovisionnement suggéré</p>
             <div style={{ fontSize: 12, color: T.inkSoft, marginTop: 2 }}>Basé sur votre historique de commandes</div>
           </div>
         </div>
-        <button className="ex-btn-discret ex-cible" onClick={() => setVisible(false)} aria-label="Masquer les suggestions" title="Masquer" style={ui.rond(32)}>
+        <button className="ex-btn-discret ex-cible" onClick={() => setVisible(false)} aria-label="Masquer le réapprovisionnement suggéré" title="Masquer" style={ui.rond(32)}>
           <Icone nom="fermer" taille={16} />
         </button>
       </div>

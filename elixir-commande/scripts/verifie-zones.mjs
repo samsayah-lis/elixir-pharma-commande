@@ -170,5 +170,59 @@ else {
   for (const k of new Set([...cr.keys(), ...cc.keys()])) if ((cr.get(k) || 0) !== (cc.get(k) || 0)) ko(`${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0}`);
 }
 
+// 4. tableaux d'ordinateur : autant d'en-têtes que de cellules par ligne (revue, docs/refonte-charte.md § 20 : la
+// Sélection Master avait 7 cellules pour 6 en-têtes, prix net affiché sous « QTÉ »). Contrôle du texte d'App.jsx :
+// columns de SECTION_META (menus en tableau, hors GRID_SECTIONS et vues spéciales) et des menus promo, comparées au
+// nombre de <td du bloc {activeTab === "<clé>" && <>…</>} (ou {cat.isPromo && <>…</>}).
+console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
+{
+  const app = enCours("src/App.jsx") || "";
+  const lignes = app.split("\n");
+  const grille = ((app.match(/^const GRID_SECTIONS = \[([^\]]*)\]/m) || [])[1] || "").match(/"[^"]+"/g)?.map(x => x.slice(1, -1)) || [];
+  const compteCols = (liste) => (liste.match(/"[^"]*"/g) || []).length;
+  // bloc : de la ligne repère à la première ligne « </>} » de même indentation
+  const cellules = (repere) => {
+    const i = lignes.findIndex(l => repere.test(l));
+    if (i < 0) return null;
+    const n = indentation(lignes[i]);
+    const f = lignes.findIndex((l, j) => j > i && indentation(l) === n && /^\s*<\/>\}/.test(l));
+    return f < 0 ? null : (lignes.slice(i, f + 1).join("\n").match(/<td\b/g) || []).length;
+  };
+  const menus = [];
+  for (const l of lignes.slice(0, lignes.findIndex(l => /^\};/.test(l)) + 1)) {
+    const m = l.match(/^  (\w+):\s*\{.*\bcolumns: \[([^\]]*)\]/);
+    if (m && !/specialView/.test(l) && !grille.includes(m[1]) && compteCols(m[2])) menus.push({ nom: m[1], cols: compteCols(m[2]), repere: new RegExp(`^\\s*\\{activeTab === "${m[1]}" && <>$`) });
+  }
+  const promo = app.match(/merged\[`promo_\$\{ps\.id\}`\] = \{[\s\S]*?columns: \[([^\]]*)\]/);
+  if (promo) menus.push({ nom: "menus promo", cols: compteCols(promo[1]), repere: /^\s*\{cat\.isPromo && <>$/ });
+  if (!menus.length) { erreurs++; console.log("  ! aucun menu en tableau trouvé dans SECTION_META (contrôle à revoir)"); }
+  for (const m of menus) {
+    const n = cellules(m.repere);
+    if (n == null) ko(`${m.nom} : bloc de cellules introuvable (${m.cols} en-têtes)`);
+    else if (n !== m.cols) ko(`${m.nom} : ${m.cols} en-têtes pour ${n} cellules`);
+    else ok(`${m.nom} : ${n} colonnes`);
+  }
+  // sections perso (customSections) : en-têtes sans cellules produit, connu (§ 12) — aucune en production
+  if (/isCustom: true/.test(app)) console.log("  · sections perso de l'admin : en-têtes sans cellules produit (signalé au § 12, aucune en production)");
+}
+
+// 5. budget du bundle (revue, § 20) : JS + CSS de dist/assets en octets (Vite affiche des kB de caractères, les accents
+// pèsent plusieurs octets), polices exclues ; référence master 1 094 491 octets + 60 000 (docs/refonte-charte.md § 4.4)
+console.log("\nBudget du bundle (dist/assets, octets)");
+{
+  const BUDGET = 1_094_491 + 60_000;
+  const dossier = join(APP, "dist", "assets");
+  if (!existsSync(dossier)) console.log("  · dist/ absent : lancer npm run build pour contrôler le budget");
+  else {
+    const fichiers = readdirSync(dossier).filter(n => /^index-.*\.(js|css)$/.test(n));
+    const total = fichiers.reduce((s, n) => s + statSync(join(dossier, n)).size, 0);
+    const detail = fichiers.map(n => `${n} ${statSync(join(dossier, n)).size.toLocaleString("fr-FR")}`).join(" · ");
+    const plusRecent = fichiersDe("src").reduce((t, f) => Math.max(t, statSync(join(APP, f)).mtimeMs), 0);
+    if (plusRecent > statSync(join(APP, "dist", "index.html")).mtimeMs) console.log("  · dist/ antérieur aux sources : relancer npm run build avant de lire ce chiffre");
+    if (total <= BUDGET) ok(`${total.toLocaleString("fr-FR")} octets ≤ ${BUDGET.toLocaleString("fr-FR")} (marge ${(BUDGET - total).toLocaleString("fr-FR")}) — ${detail}`);
+    else ko(`${total.toLocaleString("fr-FR")} octets > budget ${BUDGET.toLocaleString("fr-FR")} — ${detail}`);
+  }
+}
+
 console.log(`\nRésultat : ${erreurs ? `${erreurs} erreur(s) de définition, ` : ""}${ecarts ? `${ecarts} écart(s)` : "aucun écart"}`);
 process.exit(erreurs ? 2 : ecarts ? 1 : 0);

@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { T, alpha } from "../theme.js";
+import { T, alpha, tone } from "../theme.js";
 
 export default function AdminSearchML({ adminFetch }) {
   const [searchML, setSearchML] = useState({ trending: [], zeroResults: [], funnel: null, stats: null, loading: false });
@@ -174,13 +174,14 @@ export default function AdminSearchML({ adminFetch }) {
           </button>
         </div>
         {mlCompute.result && !mlCompute.result.error && (
-          <div style={{background:"#f0fdf4",borderRadius:10,padding:"12px 16px",border:"1px solid #bbf7d0",display:"flex",gap:16,flexWrap:"wrap"}}>
+          // résultat du calcul : ton ok de la charte (était #f0fdf4 / #bbf7d0, revue § 20)
+          <div style={{background:tone("ok").bg,borderRadius:10,padding:"12px 16px",border:`1px solid ${tone("ok").border}`,display:"flex",gap:16,flexWrap:"wrap"}}>
             {[
               { label:"Cross-sell", value:mlCompute.result.associations?.computed || 0, color:T.ok },
               { label:"Paniers", value:mlCompute.result.associations?.baskets || 0, color:T.teal },
               { label:"Patterns", value:mlCompute.result.patterns?.computed || 0, color:T.warn },
               { label:"Ruptures", value:mlCompute.result.ruptures?.rupture || 0, color:T.danger },
-              { label:"Critiques (<7j)", value:mlCompute.result.ruptures?.critical || 0, color:"#f97316" },
+              { label:"Critiques (<7j)", value:mlCompute.result.ruptures?.critical || 0, color:T.acting },   // orange #9a3412 (6:1 ; #f97316 : 2,7:1)
               { label:"Pharmacies segm.", value:mlCompute.result.segments?.computed || 0, color:"#6d28d9" },
             ].map((kpi, i) => (
               <div key={i} style={{textAlign:"center"}}>

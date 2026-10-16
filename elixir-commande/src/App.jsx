@@ -18,6 +18,8 @@ import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, SqueletteCatalogue } from "./components/ui/EtatVide.jsx";
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
+import CipCell from "./components/ui/CipCell.jsx";
+import FocusFenetre from "./components/ui/FocusFenetre.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -31,7 +33,7 @@ class ErrorBoundary extends React.Component {
 const SECTION_META = {
   expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise €","Prix net"] },
   stratege: { label: "Sélection Stratège",     subtitle: "Cartons standard – Top 50 rotations nationales",              color: "#2d5a27", accent: "#4a9e42", icon: "📦", columns: ["CIP","Désignation","Colis","Prix","Remise %","Remise €","Prix net","Prix carton"] },
-  master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
+  master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","Palier","PV","Remise %","Remise €","PN"] },   // « Palier » : revue, § 20
   obeso:    { label: "Mounjaro / Wegovy",       subtitle: "Traitements de l'obésité",                                    color: "#4a1a7a", accent: "#8b5cf6", icon: "⚖️",  columns: ["CIP","Désignation","Qté","PV","Remise","PN"] },
   nr:       { label: "Autres NR",              subtitle: "Médicaments non remboursés",                                   color: "#1a3a5a", accent: "#3b82f6", icon: "🔵", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   molnlycke:{ label: "Offre Mölnlycke",        subtitle: "Matériel médical – pansements & soins",                        color: "#1a4a3a", accent: "#10b981", icon: "🩹", columns: ["CIP","Désignation","Colis","PV","Remise %","Remise €","PN","Prix carton"] },
@@ -225,34 +227,21 @@ const ALPHA_SECTIONS = ["otc", "nr"];
 // Remise affichée (catalogue seulement, jamais envoyée) : format français de src/theme.js (refonte charte, lot 4) —
 // « −9,7 % » (vrai signe moins, virgule, espace insécable) au lieu de « -9.70 % » ; vide ou 0 → « – »
 const fmtPct = (pct) => fmtPctFr(pct);
-// Remise en badge or + encre (refonte charte, lot 4) ; sans remise, un tiret discret
+// Remise en badge or + encre (refonte charte, lot 4) ; sans remise, un tiret --ink-mute (il signifie « aucune » : revue, § 20)
 function BadgeRemise({ pct }) {
   const t = fmtPct(pct);
-  return t === "–" ? <span style={{ color: T.inkFaint }}>–</span> : <span style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{t}</span>;
+  return t === "–" ? <span style={{ color: T.inkMute }}>–</span> : <span style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{t}</span>;
 }
-// Alignement des colonnes du tableau : textes à gauche, colis au centre, montants et remises à droite
-const alignCol = (col) => /^(CIP|CIP13|Désignation)$/.test(col) ? "left" : (col === "Colis" || col === "Qté") ? "center" : "right";
+// Alignement des colonnes du tableau : textes à gauche, colis et palier au centre, montants et remises à droite
+const alignCol = (col) => /^(CIP|CIP13|Désignation)$/.test(col) ? "left" : (col === "Colis" || col === "Qté" || col === "Palier") ? "center" : "right";
+// Date de fin d'un menu promo (« AAAA-MM-JJ », champ date de l'admin) en français : « 25 sept. 2026 » (revue, § 20).
+// Lue en date locale : new Date("2026-09-25") serait minuit UTC, donc la veille aux Antilles. Autre format : tel quel
+const dateFin = (d) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(d || "");
+  return m ? new Date(+m[1], +m[2] - 1, +m[3]).toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : d;
+};
 
-// ── Copy CIP button ──────────────────────────────────────────────────────────
-// CIP/EAN en chasse fixe 12 px --ink-mute (refonte charte, lot 4) ; bouton de copie discret, coche verte une fois copié
-function CipCell({ cip }) {
-  const [copied, setCopied] = React.useState(false);
-  if (!cip || cip === "–") return <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkFaint }}>–</span>;
-  const copy = () => {
-    navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); });
-  };
-  return (
-    <span style={{ display:"inline-flex", alignItems:"center", gap:5, verticalAlign:"middle" }}>
-      <span style={{ fontFamily: T.mono, fontSize: 12, color: T.inkMute, letterSpacing: "-0.01em" }}>{cip}</span>
-      {/* 18 px dessiné ; zone de toucher de 44 px sur écran tactile (ex-cible, lot 9) */}
-      <button className={copied ? "ex-cible" : "ex-btn-discret ex-cible"} onClick={copy} title="Copier CIP" aria-label={copied ? "CIP copié" : `Copier le CIP ${cip}`} style={{
-        width: 18, height: 18, padding: 0, border: "none", borderRadius: R.xs, cursor: "pointer", flexShrink: 0,
-        display: "inline-flex", alignItems: "center", justifyContent: "center",
-        ...(copied ? { background: T.okBg, color: T.ok } : {}),
-      }}><Icone nom={copied ? "coche" : "copier"} taille={12} epaisseur={2.2} /></button>
-    </span>
-  );
-}
+// Copie du CIP : composant partagé src/components/ui/CipCell.jsx (catalogue, Saisie, recherche globale ; revue, § 20)
 
 // Quantité d'un tableau à colis (lot E1) : la frappe reste libre (taper 12 avec un colis de 6 donne 12) ;
 // l'arrondi au colis (onValider → setQty) se fait à la sortie du champ ou sur Entrée, plus à chaque touche.
@@ -260,6 +249,10 @@ function CipCell({ cip }) {
 function ChampQteColis({ valeur, onValider, ...attributs }) {
   const [brouillon, setBrouillon] = useState(null);
   const valider = (v) => { setBrouillon(null); onValider(v); };
+  // Revue (§ 11) : une quantité changée de l'extérieur pendant la frappe (« − » / « + » touchés sans que le champ perde
+  // le focus, comme sur iPad ; panier) l'emporte sur le brouillon : champ et panier restent alignés. La frappe ne change
+  // pas « valeur » : l'arrondi en sortie de champ (E1) est inchangé.
+  useEffect(() => { setBrouillon(null); }, [valeur]);
   return (
     <input {...attributs} type="number" value={brouillon ?? (valeur || "")}
       onChange={e => setBrouillon(e.target.value)}
@@ -1763,7 +1756,10 @@ export default function App() {
         position: "fixed", top: 0, left: 0, bottom: 0, width: 248, background: T.paper,
         borderRight: `1px solid ${T.line}`, zIndex: 150, display: "flex", flexDirection: "column",
         transform: (isDesktop || sidebarOpen) ? "translateX(0)" : "translateX(-100%)",
-        transition: "transform 0.25s ease", overflowY: "auto"
+        // revue (§ 20) : tiroir fermé (mobile, tablette) masqué une fois sorti de l'écran — ses boutons ne prennent plus
+        // le focus à la tabulation (focus invisible) ; ouvert, visible tout de suite. Impression : tokens.css le rétablit
+        visibility: (isDesktop || sidebarOpen) ? "visible" : "hidden",
+        transition: `transform 0.25s ease, visibility 0s linear ${(isDesktop || sidebarOpen) ? "0s" : "0.25s"}`, overflowY: "auto"
       }}>
         {/* Marque : bloc pétrole à la hauteur de l'en-tête (sur ordinateur, ils forment une seule bande) */}
         <div className="ex-marque ex-on-dark" style={{
@@ -1790,8 +1786,8 @@ export default function App() {
               const c = CATALOG_WITH_ADMIN[key];
               if (!c) return null;
               const active = activeTab === key;
-              // tiroir (mobile, tablette, lot 9) : entrées de 44 px au doigt, libellé long sur deux lignes au plus (plus de
-              // « Commande labo sur justif… ») ; barre fixe d'ordinateur inchangée (une ligne, points de suspension)
+              // tiroir (mobile, tablette, lot 9) : entrées de 44 px au doigt ; libellé long sur deux lignes au plus (plus de
+              // « Commande labo sur justif… »), barre fixe d'ordinateur comprise depuis la revue (§ 20)
               return (
                 <button key={key} className="ex-menu" aria-current={active ? "page" : undefined} title={c.label} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
                   display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 20px)", margin: "1px 10px", textAlign: "left",
@@ -1800,8 +1796,7 @@ export default function App() {
                   fontSize: isDesktop ? 13 : 14, fontWeight: active ? 600 : 500, fontFamily: "inherit", lineHeight: 1.3,
                 }}>
                   <span aria-hidden="true" style={{ fontSize: 15, width: 20, display: "inline-flex", justifyContent: "center", flexShrink: 0 }}>{iconeMenu(key, c)}</span>
-                  <span style={isDesktop ? { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
-                    : { minWidth: 0, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflowWrap: "anywhere" }}>{c.label}</span>
+                  <span style={{ minWidth: 0, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflowWrap: "anywhere" }}>{c.label}</span>
                 </button>
               );
             })}
@@ -1815,12 +1810,13 @@ export default function App() {
       {promoPopupOpen && promoSections.some(p => p.active) && (
         <div role="dialog" aria-modal="true" aria-labelledby="offres-titre" style={{ ...ui.overlay, zIndex:2000 }}>
           <div style={{ ...ui.modal, maxHeight:"calc(100vh - 32px)", overflowY:"auto", padding: isMobile ? "22px 18px" : "28px 32px" }}>
+            <FocusFenetre />{/* revue (§ 20) : focus sur « Fermer » à l'ouverture, rendu à la fermeture */}
             <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", gap:12, marginBottom:20 }}>
               <div>
                 <h2 id="offres-titre" style={ui.titreModal}><Icone nom="cadeau" taille={22} style={{ color:T.teal }} />Offres du moment</h2>
                 <div style={{ fontSize:13, color:T.inkSoft, marginTop:6 }}>Des promotions exclusives sont disponibles cette semaine !</div>
               </div>
-              <button className="ex-btn-discret ex-cible" onClick={() => setPromoPopupOpen(false)} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
+              <button className="ex-btn-discret ex-cible" data-focus-initial onClick={() => setPromoPopupOpen(false)} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
               {promoSections.filter(p => p.active).map(ps => {
@@ -1836,7 +1832,7 @@ export default function App() {
                   <div style={{ flex:1, minWidth:0 }}>
                     <div style={{ fontWeight:600, fontSize:15, color:T.ink }}>{ps.name}</div>
                     {ps.description && <div style={{ fontSize:12, color:T.inkSoft, marginTop:2 }}>{ps.description}</div>}
-                    {ps.endDate && <div className="num" style={{ fontSize:12, color:T.warn, marginTop:4, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}><Icone nom="horloge" taille={13} />Jusqu'au {ps.endDate}</div>}
+                    {ps.endDate && <div className="num" style={{ fontSize:12, color:T.warn, marginTop:4, fontWeight:600, display:"flex", alignItems:"center", gap:4 }}><Icone nom="horloge" taille={13} />Jusqu’au {dateFin(ps.endDate)}</div>}
                     <div className="num" style={{ fontSize:12, color:T.teal, fontWeight:700, marginTop:4 }}>{(ps.products||[]).length} référence(s) · Voir les offres</div>
                   </div>
                   <Icone nom="suivant" taille={20} style={{ color:T.inkMute }} />
@@ -1856,8 +1852,10 @@ export default function App() {
         background: T.petrol, color: T.paper, position: "sticky", top: 0, zIndex: 90,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 14, padding: isMobile ? "10px 12px" : "12px 22px", minHeight: isMobile ? undefined : 64 }}>
-          {/* titre : jamais plus de 30 % de la barre (libellé long → points de suspension) ; la recherche prend le reste */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "0 0 auto", maxWidth: isDesktop ? "30%" : undefined }}>
+          {/* titre : jamais plus de 30 % de la barre (libellé long → points de suspension) ; la recherche prend le reste.
+              Revue (§ 20) : 22 % entre 1 024 et 1 279 px, « Bon de commande » masqué (classe ex-titre-vue, tokens.css) —
+              la recherche garde ~240 px à 1 024 px (180 avant, texte d'aide tronqué) */}
+          <div className={isDesktop ? "ex-titre-vue" : undefined} style={{ display: "flex", alignItems: "center", gap: 10, minWidth: 0, flex: "0 0 auto" }}>
             {!isDesktop && (
               <button className="ex-icone-entete ex-cible" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" aria-expanded={sidebarOpen} style={btnEntete}><Icone nom="menu" /></button>
             )}
@@ -1869,13 +1867,13 @@ export default function App() {
             )}
             {isDesktop && (
               <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 640, letterSpacing: "-0.01em", color: T.paper, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <div title={CATALOG_WITH_ADMIN[activeTab]?.label || undefined} style={{ fontSize: 16, fontWeight: 640, letterSpacing: "-0.01em", color: T.paper, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {CATALOG_WITH_ADMIN[activeTab]?.label || "Catalogue"}
                 </div>
                 <div style={{ fontSize: 11, color: T.paperMute, display: "flex", alignItems: "center", whiteSpace: "nowrap" }}>
-                  Bon de commande
+                  <span className="ex-titre-vue__bdc">Bon de commande</span>
                   {stockUpdatedAt && (
-                    <span className="num" style={{ marginLeft: 6 }}>· stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
+                    <span className="num"><span className="ex-titre-vue__bdc" style={{ marginLeft: 6 }}>· </span>stocks {new Date(stockUpdatedAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}</span>
                   )}
                   <button onClick={handleRefresh} disabled={stockRefreshing || stockLoading} aria-label="Actualiser les stocks"
                     title={stockRefreshing ? "Actualisation Odoo en cours (~40s)…" : "Forcer la mise à jour depuis Odoo"}
@@ -1891,10 +1889,12 @@ export default function App() {
               quand le compteur du panier grandit ; les boutons, eux, gardent leur taille */}
           <div style={{ display: "flex", gap: 6, alignItems: "center", flexShrink: isMobile ? 1 : 0, minWidth: 0, marginLeft: isMobile ? "auto" : undefined }}>
             <div style={{ display: "flex", alignItems: "center", gap: 2, height: 36, minWidth: 0, background: T.petrolField, borderRadius: R.pill, padding: "0 4px 0 12px" }}>
-              {/* or orangé clair (saisie Elixir pour une pharmacie) : 8,5:1 sur pétrole */}
-              <span title={pharmacyName} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 140 : "clamp(110px, 10vw, 150px)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor ? "🛠 " : ""}{pharmacyName}</span>
-              {!actingFor && hasAdminToken && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" aria-label="Commander pour une pharmacie" style={{ ...btnEntete, width: 28, height: 28, fontSize: 13 }}>🛠</button>}
-              {/* zone de toucher élargie (ex-cible) seulement sans le bouton 🛠 voisin (2 px d'écart : elle le chevaucherait) */}
+              {/* or orangé clair (saisie Elixir pour une pharmacie) : 8,5:1 sur pétrole. Largeur du nom (revue, § 20) : 140 px sur
+                  mobile ; ailleurs classe ex-nom-pharmacie, clamp(110px, 10vw, 150px), jusqu'à 220 px dès 1 280 px.
+                  Crayon au trait au lieu de l'emoji 🛠 (comme le bandeau de saisie et l'admin, lots 7 et 10) */}
+              <span title={pharmacyName} className={isMobile ? undefined : "ex-nom-pharmacie"} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 140 : undefined, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor && <Icone nom="crayon" taille={12} epaisseur={2.4} style={{ marginRight: 4 }} />}{pharmacyName}</span>
+              {!actingFor && hasAdminToken && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" aria-label="Commander pour une pharmacie" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="crayon" taille={15} /></button>}
+              {/* zone de toucher élargie (ex-cible) seulement sans le bouton crayon voisin (2 px d'écart : elle le chevaucherait) */}
               {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
@@ -1926,8 +1926,9 @@ export default function App() {
         <main style={{ flex: 1, padding: isMobile ? `12px 10px ${panierFlottant ? 96 : 12}px` : `20px 24px ${panierFlottant ? 96 : 20}px`, minWidth: 0 }}>
 
           {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement.
-              Mobile (lot 9) : sous l'en-tête collant, pour ne plus cacher le compteur du panier qui vient de changer */}
-          <div role="status" aria-live="polite" style={{ position:"fixed", top: isMobile ? hauteurEntete + 8 : 20, left:"50%", transform:"translateX(-50%)", zIndex:9999,
+              Sous l'en-tête collant : sur mobile (lot 9), pour ne plus cacher le compteur du panier qui vient de changer ;
+              sur ordinateur aussi depuis la revue (§ 20), il ne couvre plus la recherche de l'en-tête */}
+          <div role="status" aria-live="polite" style={{ position:"fixed", top: hauteurEntete + 8, left:"50%", transform:"translateX(-50%)", zIndex:9999,
             width:"max-content", maxWidth:"calc(100vw - 32px)", pointerEvents:"none" }}>
             {flashMsg && (
               <div style={{
@@ -1943,7 +1944,9 @@ export default function App() {
               ton « acting » de theme.js (6,88:1), boutons en pastilles */}
           {actingFor && (
             <div role="status" style={{ background: tone("acting").bg, border: `1.5px solid ${tone("acting").fg}`, borderRadius: R.m, padding: "12px 16px", marginBottom: 16, display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: T.acting, display: "flex", alignItems: "flex-start", gap: 10 }}>
+              {/* outil interne Elixir (ni catalogue ni prix) : CIP et e-mail de la pharmacie servie restent sélectionnables
+                  malgré l'anti-copie (ex-selectionnable, revue § 20) */}
+              <div className="ex-selectionnable" style={{ flex: 1, minWidth: 220, fontSize: 13, color: T.acting, display: "flex", alignItems: "flex-start", gap: 10 }}>
                 <Icone nom="crayon" taille={18} style={{ marginTop: 1 }} />
                 <div style={{ minWidth: 0 }}>
                   <b>Commande saisie par Elixir pour {actingFor.name}</b>{actingFor.city ? ` (${actingFor.city})` : ""}
@@ -1959,11 +1962,12 @@ export default function App() {
           {showReorder && reorderSuggestions.length > 0 && (
             <section aria-labelledby="suggestions-titre" style={{ background:T.paper, borderRadius:R.m, padding:"14px 18px", marginBottom:20, border:`1px solid ${T.line}` }}>
               <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:10 }}>
-                <h2 id="suggestions-titre" className="num" style={{ margin:0, fontWeight:700, fontSize:14, color:T.ink, display:"flex", alignItems:"center", gap:8 }}>
+                {/* paragraphe (plus un h2) : le bloc est rendu avant le h1 de la vue ; il reste une région nommée (section) */}
+                <p id="suggestions-titre" className="num" style={{ margin:0, fontWeight:700, fontSize:14, color:T.ink, display:"flex", alignItems:"center", gap:8 }}>
                   <Icone nom="ampoule" taille={18} style={{ color:T.teal }} />
                   Suggestions de recommande — {reorderSuggestions.length} produit(s) à recommander
-                </h2>
-                <button className="ex-btn-discret ex-cible" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions" title="Masquer"
+                </p>
+                <button className="ex-btn-discret ex-cible" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions de recommande" title="Masquer"
                   style={ui.rond(30)}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
               </div>
               <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
@@ -2027,7 +2031,8 @@ export default function App() {
                         <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:"3px 10px", marginTop:4 }}>
                           <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
                             title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
-                          <span style={{ fontSize:12, color:T.inkMute }}>CIP <span style={{ fontFamily:T.mono, letterSpacing:"-0.01em" }}>{p.cip}</span>{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
+                          {/* CIP avec bouton de copie (CipCell : le CIP n'est plus sélectionnable, anti-copie § 19 ; revue § 20) */}
+                          <span style={{ fontSize:12, color:T.inkMute, display:"inline-flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={p.cip} />{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
                         </div>
                       </div>
 
@@ -2285,8 +2290,9 @@ export default function App() {
                 </button>
 
                 {!cat?.sansStock && <>
+                {/* coche seulement quand le filtre est actif (revue, § 20) ; inactif, l'icône neutre du stock (carton) */}
                 <button className="ex-filtre" aria-pressed={filterStock === "instock"} onClick={() => setFilterStock(filterStock === "instock" ? "all" : "instock")} style={filtreStyle}>
-                  <Icone nom="coche" taille={14} />En stock
+                  <Icone nom={filterStock === "instock" ? "coche" : "carton"} taille={14} />En stock
                 </button>
 
                 <button className="ex-filtre" aria-pressed={filterStock === "rupture"} onClick={() => setFilterStock(filterStock === "rupture" ? "all" : "rupture")} style={filtreStyle}>
@@ -2496,9 +2502,10 @@ export default function App() {
                             return (<>
                               {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité ;
                                   sous 768 px (lot 9) : 40 px au doigt (classes ex-qte-* / ex-qte-champ), écart de 4 px pour
-                                  tenir dans une carte de 172 px (deux colonnes à 375 px) */}
+                                  tenir dans une carte de 172 px (deux colonnes à 375 px). Revue (§ 20) : « − » / « + » dessinés
+                                  en CSS (ex-ico, aucun nœud SVG sur les 675 cartes OTC) et nommés avec le produit */}
                               <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 4 : 6, maxWidth: "100%" }}>
-                                <button className="ex-qte-moins" onClick={handleMinus} aria-label="Diminuer la quantité" style={qtyBtnStyle("moins", 32)}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
+                                <button className="ex-qte-moins ex-ico ex-ico-moins" onClick={handleMinus} aria-label={`Diminuer la quantité de ${p.name}`} style={qtyBtnStyle("moins", 32)} />
                                 <input
                                   type="number"
                                   min={stepMin || 0}
@@ -2510,7 +2517,7 @@ export default function App() {
                                   aria-label={`Quantité ${p.name}`}
                                   className="ex-qte-champ"
                                   style={{ ...ui.qtyInput(qty > 0), height: 32, fontSize: 14 }}/>
-                                <button className="ex-qte-plus" onClick={handlePlus} aria-label="Augmenter la quantité" style={qtyBtnStyle("plus", 32)}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
+                                <button className="ex-qte-plus ex-ico ex-ico-plus" onClick={handlePlus} aria-label={`Augmenter la quantité de ${p.name}`} style={qtyBtnStyle("plus", 32)} />
                               </div>
                               {(stepMin > 0 || m > 1) && (
                                 <div className="num" style={{ fontSize: 11, color: qty > 0 ? T.teal : T.inkMute, marginTop: 2 }}>
@@ -2526,7 +2533,7 @@ export default function App() {
                               {qty > 0 && (
                                 <button className="ex-btn-discret ex-cible" onClick={() => { setQuantities(prev=>({...prev,[key]:0})); syncGroup(0); }}
                                   style={{ width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}
-                                  title="Remettre à zéro" aria-label="Remettre à zéro"><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
+                                  title="Remettre à zéro" aria-label={`Remettre à zéro la quantité de ${p.name}`}><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
                               )}
                             </>);
                           })()}
@@ -2567,10 +2574,10 @@ export default function App() {
                         <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{fmt(p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                        <button className="ex-qte-moins" aria-label="Diminuer la quantité" onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
+                        <button className="ex-qte-moins" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
                           style={qtyBtnStyle("moins", 30)}><Icone nom="moins" taille={15} epaisseur={2.4} /></button>
                         <span className="num" style={{ width: 28, textAlign: "center", fontWeight: 700, fontSize: 15, color: qty > 0 ? T.ink : T.inkMute }}>{qty}</span>
-                        <button className="ex-qte-plus" aria-label="Augmenter la quantité" onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
+                        <button className="ex-qte-plus" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
                           style={qtyBtnStyle("plus", 30)}><Icone nom="plus" taille={15} epaisseur={2.4} /></button>
                       </div>
                     </div>
@@ -2590,7 +2597,8 @@ export default function App() {
                     {cat.columns.map(col => (
                       <th key={col} style={{ ...thStyle, textAlign: alignCol(col) }}>{col.toUpperCase()}</th>
                     ))}
-                    <th style={{ ...thStyle, textAlign: "center" }}>QTÉ</th>
+                    {/* Qté collée au bord droit quand le tableau défile en largeur (768-1 279 px : ex-col-qte, revue § 20) */}
+                    <th className="ex-col-qte" style={{ ...thStyle, textAlign: "center" }}>QTÉ</th>
                     <th style={{ ...thStyle, textAlign: "right" }}>SOUS-TOTAL</th>
                   </tr>
                 </thead>
@@ -2643,7 +2651,9 @@ export default function App() {
                         {activeTab === "master" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
-                          <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft, fontWeight: 600 }}>×{p.palier}</td>
+                          {/* palier (non transmis par products-get, § 3 : « – ») sous son propre en-tête depuis la revue (§ 20) :
+                              les 7 cellules de la ligne tombent sous leurs 7 en-têtes (le prix net était sous « QTÉ ») */}
+                          <td style={{ ...tdStyle, textAlign: "center", color: p.palier ? T.inkSoft : T.inkMute, fontWeight: 600 }}>{p.palier ? `×${p.palier}` : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pb)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
@@ -2712,14 +2722,15 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
                         </>}
 
-                        {/* Qty input : « − » sable, « + » pétrole (24 px), champ à filet --line-field puis 2 px sarcelle */}
-                        <td style={{ ...tdStyle, textAlign: "center" }}>
+                        {/* Qty input : « − » sable, « + » pétrole (24 px), champ à filet --line-field puis 2 px sarcelle ;
+                            colonne collée au bord droit quand le tableau défile en largeur (ex-col-qte, revue § 20) */}
+                        <td className="ex-col-qte" style={{ ...tdStyle, textAlign: "center" }}>
                           {(() => {
                             const { step, min: stepMin, multiple } = getStepMin(activeTab, p);
                             return (
                               <div style={{ display: "flex", alignItems: "center", gap: 2, justifyContent: "center", flexDirection: "column" }}>
                                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                                  <button className="ex-qte-moins" aria-label="Diminuer la quantité" onClick={() => setQty(key, (quantities[key] || 0) - step, step)} style={qtyBtnStyle("moins")}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
+                                  <button className="ex-qte-moins" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQty(key, (quantities[key] || 0) - step, step)} style={qtyBtnStyle("moins")}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
                                   <ChampQteColis
                                     min="0" step={step} valeur={quantities[key]}
                                     onValider={v => setQty(key, v, step)}
@@ -2727,7 +2738,7 @@ export default function App() {
                                     aria-label={`Quantité ${p.name}`}
                                     style={{ ...ui.qtyInput(qty > 0), height: 26 }}
                                   />
-                                  <button className="ex-qte-plus" aria-label="Augmenter la quantité" onClick={() => setQty(key, (quantities[key] || 0) + step, step)} style={qtyBtnStyle("plus")}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
+                                  <button className="ex-qte-plus" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQty(key, (quantities[key] || 0) + step, step)} style={qtyBtnStyle("plus")}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
                                 </div>
                                 {step > 1 && <span style={{ fontSize: 11, lineHeight: 1.1, color: T.inkMute }}>par {step}</span>}
                               </div>
@@ -2738,7 +2749,7 @@ export default function App() {
                         <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>
                           {qty > 0 && subtotal != null
                             ? <span style={{ color: T.ink }}>{fmt(subtotal)}</span>
-                            : <span style={{ color: T.inkFaint }}>–</span>
+                            : <span style={{ color: T.inkMute }}>–</span>   /* « rien » : --ink-mute (4,8:1), plus --ink-faint (revue) */
                           }
                         </td>
                       </tr>
@@ -2923,7 +2934,10 @@ export default function App() {
           display: "flex", flexDirection: "column",
           boxShadow: cartOpen ? "-16px 0 48px -20px rgba(10,29,34,.5)" : "none",   // fermé : pas d'ombre au bord de l'écran
           transform: cartOpen ? "translateX(0)" : "translateX(100%)",
-          transition: "transform .3s var(--ease)",
+          // revue (§ 20) : fermé, masqué une fois sorti de l'écran — ses boutons ne prennent plus le focus à la tabulation
+          // (focus invisible hors de l'écran) et son titre n'est plus lu ; ouvert, visible tout de suite. Impression : tokens.css
+          visibility: cartOpen ? "visible" : "hidden",
+          transition: `transform .3s var(--ease), visibility 0s linear ${cartOpen ? "0s" : ".3s"}`,
           pointerEvents: cartOpen ? "auto" : "none",
         }}>
               <div style={{ padding: isMobile ? "16px 16px 0" : "20px 20px 0", borderBottom: `1px solid ${T.line}` }}>
@@ -3190,10 +3204,12 @@ function PharmacyPicker({ onPick, onClose }) {
     setBusy(false);
   };
   return (
-    // Refonte charte (lot 7) : fenêtre paper de rayon 28 sur voile --scrim ; recherche, choix et zIndex 10000 inchangés
+    // Refonte charte (lot 7) : fenêtre paper de rayon 28 sur voile --scrim ; recherche, choix et zIndex 10000 inchangés.
+    // Outil interne Elixir rendu dans .ex-app (même ouvert depuis l'admin) : nom, ville, CIP, téléphone restent
+    // sélectionnables malgré l'anti-copie (ex-selectionnable, revue § 20)
     <div role="dialog" aria-modal="true" aria-labelledby="choix-pharmacie-titre" onClick={onClose}
       style={{ ...ui.overlay, zIndex: 10000, alignItems: "flex-start", padding: "60px 16px", overflowY: "auto" }}>
-      <div onClick={e => e.stopPropagation()} style={{ ...ui.modal, padding: "24px 24px 22px", maxWidth: 620 }}>
+      <div className="ex-selectionnable" onClick={e => e.stopPropagation()} style={{ ...ui.modal, padding: "24px 24px 22px", maxWidth: 620 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 8 }}>
           <h2 id="choix-pharmacie-titre" style={{ ...ui.titreModal, fontSize: 18 }}><Icone nom="crayon" taille={20} style={{ color: T.acting }} />Commander pour une pharmacie</h2>
           <button className="ex-btn-discret ex-cible" onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
