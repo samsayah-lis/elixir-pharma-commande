@@ -1,6 +1,5 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { applyTiers, TierBadge } from "./tiers.jsx";
-import AdminPanel from "./AdminPanel";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
@@ -16,10 +15,14 @@ import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharm
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
-import EtatVide, { ActionEtat, SqueletteCatalogue } from "./components/ui/EtatVide.jsx";
+import EtatVide, { ActionEtat, SqueletteCatalogue, Chargement } from "./components/ui/EtatVide.jsx";
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 import CipCell from "./components/ui/CipCell.jsx";
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
+// Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
+// des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
+// ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
+const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ default: AdminIndisponible })));
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 
@@ -3306,6 +3309,9 @@ export default function App() {
               Réinitialiser et recharger
             </button>} />
         </div>}>
+          <React.Suspense fallback={<div className="ex-admin" style={{position:"fixed",inset:0,zIndex:1000,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <Chargement texte="Chargement de l'admin…" />
+          </div>}>
           <AdminPanel
             sectionMeta={SECTION_META}
             onOrderForPharmacy={() => setShowPharmacyPicker(true)}
@@ -3315,9 +3321,24 @@ export default function App() {
               try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
             }}
           />
+          </React.Suspense>
         </ErrorBoundary>
       )}
       {showPharmacyPicker && <PharmacyPicker onPick={startActing} onClose={() => setShowPharmacyPicker(false)} />}
+    </div>
+  );
+}
+
+// ── Admin impossible à charger (import de AdminPanel en échec) : recharger, sans retirer le jeton admin ──
+function AdminIndisponible() {
+  return (
+    <div className="ex-admin" style={{position:"fixed",inset:0,zIndex:1000,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
+      <EtatVide erreur icone="alerte" titre="Admin indisponible" texte="L'admin n'a pas pu se charger (connexion, ou nouvelle version du site mise en ligne) : rechargez la page."
+        style={{ ...ui.modal, maxWidth: 500, border: `1px solid ${T.line}`, padding: "40px 32px" }}
+        actions={<button className="ex-btn-petrole" onClick={() => window.location.reload()}
+          style={{ ...ui.btn("primaire", "l"), background: undefined, color: undefined }}>
+          Recharger la page
+        </button>} />
     </div>
   );
 }

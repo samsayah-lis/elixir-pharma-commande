@@ -69,10 +69,12 @@ Demande de Zineb (16/10/2026) : « Pour le menu OTC Centrale d'achat, ajoute la 
 
 ## Points ouverts
 
-- **Budget du bundle** (`npm run zones`) dépassé de 5 827 octets.
-  - La branche ajoute 7 957 octets au bundle des pharmacies (JS 7 295, CSS 662) ; la marge était de 2 130 octets.
-  - L'outil de l'admin est chargé à la demande (`AdminLabos-*.js`, 5,5 Ko), donc hors du budget.
-  - À décider par la cliente :
-    - relever le budget ;
-    - ou regagner de la place par un lot à part (par exemple, charger l'admin et la bibliothèque xlsx à la demande : ils sont aujourd'hui dans le bundle des pharmacies).
+- **Budget du bundle** (`npm run zones`) : respecté en regagnant de la place, sans relever le budget.
+  - La fonctionnalité ajoutait 7 957 octets au bundle des pharmacies (JS 7 295, CSS 662), pour une marge de 2 130 : budget dépassé de 5 827 octets.
+  - L'admin (`AdminPanel` et ses outils, dont celui des laboratoires) est désormais chargé à la demande, à l'ouverture de `#admin` (`AdminPanel-*.js`, environ 280 Ko).
+  - Le bundle des pharmacies passe ainsi de 1 152 361 octets (master) à environ 878 000.
+  - Si l'admin ne se charge pas (connexion, ou nouvelle version mise en ligne pendant que la page était ouverte), il affiche « Admin indisponible » avec « Recharger la page », sans déconnecter.
+  - La bibliothèque xlsx reste dans le bundle des pharmacies, car l'import LGO des commandes groupées (`gp-files.js`) s'en sert.
+  - Ce changement tient dans un commit à part : on peut le retirer si la cliente préfère relever le budget.
+  - À décider ensuite : abaisser le budget à la nouvelle référence, pour qu'il garde son rôle de garde-fou.
 - **Clé Medipim.** Son repli est écrit en dur dans `netlify/functions/_medipim.js` (TODO dans medipim-lookup) : ne garder que les variables d'environnement, puis changer la clé.

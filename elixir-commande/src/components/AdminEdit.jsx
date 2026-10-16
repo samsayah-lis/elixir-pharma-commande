@@ -1,9 +1,8 @@
 import React from "react";
 import { T, tone, adm } from "../theme.js";
-// Outil « laboratoires » de la Centrale OTC (admin seulement) : chargé à la demande, hors du bundle des pharmacies
-// (budget du bundle, docs/refonte-charte.md § 20) ; chargement impossible (nouvelle version en ligne) : message
-const AdminLabos = React.lazy(() => import("./AdminLabos.jsx").catch(() => ({ default: () => (
-  <div style={{ fontSize: 12, color: T.warn, marginBottom: 14 }}>Outil laboratoires indisponible : rechargez la page.</div>) })));
+// Outil « laboratoires » de la Centrale OTC (docs/labo-otc.md) : dans le module de l'admin, lui-même chargé à la
+// demande (App.jsx), donc hors du bundle des pharmacies
+import AdminLabos from "./AdminLabos.jsx";
 
 // atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
 const LS=adm.label, IS=adm.input, PB=adm.btn;
@@ -182,9 +181,7 @@ export default function AdminEdit({
               </select>
             </div>
             {(filterSection === "all" || filterSection === "otc") && (
-              <React.Suspense fallback={null}>
-                <AdminLabos products={products} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
-              </React.Suspense>
+              <AdminLabos products={products} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
             )}
             <div style={{fontSize:11,color:T.inkMute,marginBottom:12}}>
               {filtered.length} produit(s) dans Supabase
