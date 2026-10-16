@@ -53,20 +53,9 @@ const DOSSIERS = ["netlify/functions"];
 // Écarts autorisés explicitement par un lot (docs/refonte-charte.md) : remplacement exact appliqué au texte
 // de la référence avant comparaison ; tout autre écart reste signalé. Une entrée par changement validé :
 // { zone: "<début du nom de la zone>", avant: "…", apres: "…", lot: "E2", motif: "…" }
-const ECARTS_AUTORISES = [
-  { zone: "copie du bon de commande", lot: "1", motif: "décision de la cliente (§ 6) : aucune mention de publication du catalogue, texte copié compris",
-    avant: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n      `Publication 6 — Février 2026`,\n",
-    apres: "      `BON DE COMMANDE — ELIXIR PHARMA`,\n" },
-  { zone: "quantités et ajout au panier", lot: "E2", motif: "décision de la cliente (§ 6) : un ajout depuis la Saisie de commande n'ouvre plus le panier (option, ouverture conservée par défaut pour les autres appels)",
-    avant: "  const addItemToCart = (item) => {\n",
-    apres: "  const addItemToCart = (item, { ouvrirPanier = true } = {}) => {\n" },
-  { zone: "quantités et ajout au panier", lot: "E2", motif: "même décision : l'ouverture du panier ne se fait plus que si ouvrirPanier",
-    avant: "    setCartOpen(true);\n  };",
-    apres: "    if (ouvrirPanier) setCartOpen(true);   // lot E2 : la Saisie de commande n'ouvre plus le panier\n  };" },
-  { zone: "identification de la pharmacie", lot: "8", motif: "coquille du message d'erreur affiché (docs/refonte-charte.md § 1.6) : « reessayer » → « réessayer », texte seulement",
-    avant: 'setOnboardingError("Erreur de connexion. Veuillez reessayer.");',
-    apres: 'setOnboardingError("Erreur de connexion. Veuillez réessayer.");' },
-];
+// Écarts validés par rapport à master. Vide depuis la mise en ligne de la refonte (16/10/2026) : master contient
+// désormais les lots 1, E2 et 8 ; y inscrire un nouvel écart volontaire, avec sa zone, son motif, son avant et son après.
+const ECARTS_AUTORISES = [];
 
 // ── lecture ──
 const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

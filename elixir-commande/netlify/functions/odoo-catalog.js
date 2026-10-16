@@ -2,7 +2,7 @@ import { getCors } from "./cors.js";
 // ── Catalogue Odoo — recherche côté serveur avec prix remisés ───────────
 // GET /odoo-catalog?q=EYLEA&limit=100          → recherche
 // GET /odoo-catalog?q=EYLEA&stock_only=1       → que les produits en stock
-// GET /odoo-catalog?count=1                    → stats catalogue
+// GET /odoo-catalog?count=1                    → stats catalogue (références, références en stock, boîtes en stock)
 // GET /odoo-catalog?expiry_months=4            → péremption courte
 // GET /odoo-catalog?refresh=1                  → trigger sync background
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -30,8 +30,17 @@ export const handler = async (event) => {
       const total = parseInt(totalRes.headers.get("content-range")?.split("/")?.[1] || "0");
       const inStock = parseInt(stockRes.headers.get("content-range")?.split("/")?.[1] || "0");
       const dateRows = await dateRes.json();
+      // Boîtes en stock : somme de « available » (quantité libre = stock − réservé, écrite par odoo-stock-sync)
+      // des références en stock, lue par pages de 1 000 lignes (plafond PostgREST) ; null si une page échoue.
+      const pages = Math.ceil(inStock / 1000);
+      const sommes = await Promise.all(Array.from({ length: pages }, (_, i) =>
+        fetch(`${SUPABASE_URL}/rest/v1/odoo_catalog?select=available&in_stock=eq.true&order=cip`, { headers: { ...SB, "Range": `${i * 1000}-${i * 1000 + 999}` } })
+          .then(r => (r.ok ? r.json() : null))
+          .then(rows => (Array.isArray(rows) ? rows.reduce((s, x) => s + (Number(x.available) || 0), 0) : null))
+          .catch(() => null)));
+      const boxes = sommes.includes(null) ? null : Math.round(sommes.reduce((a, b) => a + b, 0));
       return { statusCode: 200, headers: cors, body: JSON.stringify({
-        total, in_stock: inStock, updated_at: Array.isArray(dateRows) && dateRows[0] ? dateRows[0].updated_at : null,
+        total, in_stock: inStock, in_stock_boxes: boxes, updated_at: Array.isArray(dateRows) && dateRows[0] ? dateRows[0].updated_at : null,
       })};
     }
 

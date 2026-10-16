@@ -121,7 +121,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   return (
     <div>
       {/* En-tête de vue (lot 5) au lieu du bandeau en dégradé ; à droite, l'étendue du catalogue Odoo synchronisé
-          (comptes déjà lus par odoo-catalog?count=1, rien de nouveau n'est demandé) */}
+          (références et boîtes en stock lues par odoo-catalog?count=1 ; décision de Zineb, 16/10 : les boîtes plutôt que les références en stock) */}
       <EnteteVue
         icone={icone || <Icone nom="crayon" taille={24} />}
         couleur={couleur}
@@ -129,7 +129,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         sousTitre={<>Recherchez par code CIP ou nom de produit{majCatalogue && <span className="num"> · Màj : {majCatalogue}</span>}</>}
         aside={!infoLue ? <CompteurVue chargement libelle="références" />
           : hasProducts && <CompteurVue valeur={Number(catalogInfo.total).toLocaleString("fr-FR")} libelle="références"
-          detail={catalogInfo.in_stock != null ? `${Number(catalogInfo.in_stock).toLocaleString("fr-FR")} en stock` : null} />}
+          detail={catalogInfo.in_stock_boxes != null ? `${Number(catalogInfo.in_stock_boxes).toLocaleString("fr-FR")} boîtes en stock` : null} />}
       />
 
       {/* Recherche en pastille de 48 px : anneau de focus global (tokens.css), plus de bordure recolorée en JS ;
