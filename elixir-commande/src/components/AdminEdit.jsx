@@ -148,10 +148,12 @@ export default function AdminEdit({
     }
   };
 
-  // Laboratoire d'un produit dans Medipim (« Fabricant ») : remplit le champ, enregistré avec « Enregistrer »
-  const laboMedipim = async (cip) => {
+  // Laboratoire d'un produit dans Medipim (« Fabricant ») : remplit le champ, enregistré avec « Enregistrer ».
+  // Code à 7 chiffres (CIP7 / ACL7) : paramètre cip7, la recherche par code-barres exige 8 à 14 chiffres
+  const laboMedipim = async (p) => {
+    const cip = String(p.cip ?? "").trim(), cip7 = [p.cip7, cip].map(c => String(c ?? "").trim()).find(c => /^\d{7}$/.test(c));
     try {
-      const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(cip)}&sansPhoto=1`);
+      const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(cip)}${cip7 ? `&cip7=${cip7}` : ""}&sansPhoto=1`);
       const d = await r.json().catch(() => ({}));
       if (r.ok && d.labo) {
         setEditForm(f => ({ ...f, labo: d.labo }));
@@ -303,7 +305,7 @@ export default function AdminEdit({
                             placeholder={colonneLabo ? "Ex. Bayer — vide : non renseigné" : "Colonne labo à créer dans Supabase (docs/labo-otc.md)"}
                             style={{...IS,fontSize:12,padding:"7px 10px",flex:1}}/>
                           {colonneLabo && p.cip && (
-                            <button type="button" onClick={()=>laboMedipim(p.cip)} style={{fontSize:11,background:T.surface2,border:"1px solid var(--line)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:T.inkSoft,whiteSpace:"nowrap"}}>
+                            <button type="button" onClick={()=>laboMedipim(p)} style={{fontSize:11,background:T.surface2,border:"1px solid var(--line)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:T.inkSoft,whiteSpace:"nowrap"}}>
                               🔍 Medipim
                             </button>
                           )}

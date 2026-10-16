@@ -2531,14 +2531,16 @@ export default function App() {
                         );
                       })()}
                       {/* tri par laboratoire : en-tête de groupe sur toute la largeur de la grille (cible de la barre A–Z) */}
+                      {/* nom accessible « Bayer, 38 références » : sans aria-label, nom et compteur (éléments flex) sont lus accolés */}
                       {modeLabo && (!prevP || cleDe.get(prevP) !== cleDe.get(p)) && (() => {
                         const k = cleDe.get(p), lettre = k && lettreDe(nomDe.get(k)), n = nParLabo.get(k);
+                        const nom = k ? nomDe.get(k) : "Laboratoire non renseigné", refs = `${n} référence${n > 1 ? "s" : ""}`;
                         return (
-                          <h2 id={k && premierParLettre[lettre] === p ? `lettre-${lettre}` : undefined} style={{ gridColumn: "1 / -1", margin: prevP ? "12px 0 0" : 0,
+                          <h2 id={k && premierParLettre[lettre] === p ? `lettre-${lettre}` : undefined} aria-label={`${nom}, ${refs}`} style={{ gridColumn: "1 / -1", margin: prevP ? "12px 0 0" : 0,
                             padding: "0 2px 8px", borderBottom: `1px solid ${T.line}`, display: "flex", alignItems: "baseline", flexWrap: "wrap", gap: "2px 10px",
                             fontSize: 17, fontWeight: 640, letterSpacing: "-0.01em", color: T.petrol }}>
-                            {k ? nomDe.get(k) : "Laboratoire non renseigné"}
-                            <span className="num" style={{ fontSize: 12, fontWeight: 500, letterSpacing: 0, color: T.inkMute }}>{n} référence{n > 1 ? "s" : ""}</span>
+                            {nom}
+                            <span className="num" style={{ fontSize: 12, fontWeight: 500, letterSpacing: 0, color: T.inkMute }}>{refs}</span>
                           </h2>
                         );
                       })()}

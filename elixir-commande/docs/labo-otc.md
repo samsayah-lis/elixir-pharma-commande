@@ -9,7 +9,8 @@ Demande de Zineb (16/10/2026) : « Pour le menu OTC Centrale d'achat, ajoute la 
    - Si l'admin annonce encore « colonne absente » après la migration, exécuter `notify pgrst, 'reload schema';`.
 2. **Admin**, onglet « Modifier » (section « Toutes sections » ou « Centrale OTC / Para »), bloc « Laboratoires — Centrale OTC / Para » : cliquer « Renseigner les laboratoires manquants (Medipim) ».
    - Compter environ 10 s de recherche pour 670 produits, puis un enregistrement par produit trouvé.
-   - Un bilan s'affiche à la fin : enregistrés, déjà à jour, introuvables dans Medipim (avec leur liste), en erreur.
+   - Un bilan s'affiche à la fin : enregistrés, déjà à jour, sans laboratoire dans Medipim (avec leur liste : absent de Medipim, ou fiche sans fabricant), en erreur.
+   - Ensuite, saisir à la main les produits sans laboratoire (voir « Couverture »).
 3. **Site** : « Trier par » et « Laboratoire » apparaissent dans la Centrale OTC dès qu'un produit a un laboratoire.
 
 ## Données
@@ -17,7 +18,14 @@ Demande de Zineb (16/10/2026) : « Pour le menu OTC Centrale d'achat, ajoute la 
 - **Origine.** labo = « Fabricant » de Medipim (`organizations[]` de la fiche), avec la même règle que l'onglet SRA d'elixir-reappro :
   - les dépositaires logistiques (Alloga, CSP, Eurodep, Depolabo, Movianto, Arvato) sont écartés s'il existe une autre organisation ;
   - sinon, on prend l'id Medipim le plus petit.
-- **Couverture** (banc, 16/10/2026) : 657 produits OTC sur 670 ont un laboratoire, répartis en 90 laboratoires. Les 13 autres sont absents de Medipim (Mepilex, Mepitel, Freestyle, Contour…) : à saisir à la main.
+- **Répartiteurs** (Alliance Healthcare, OCP, CERP, Phoenix Pharma, Astera, Sogiphar) : jamais retenus, même seuls.
+  - Medipim rattache plusieurs produits d'Alliance Pharma au répartiteur « SAS Alliance Healthcare Group France ».
+  - Oxyplastine a une autre organisation : son laboratoire est « ALLIANCE PHARMA IRELAND LTD ».
+  - Jonctum Cica (3401396534945) et Kelo-Cote (5036631007939, 5036631008011, 5036631008226) n'ont que le répartiteur : pas de laboratoire, à saisir à la main (« Alliance Pharma »).
+  - « Alliance Pharma » est un laboratoire : il n'est pas écarté.
+- **Couverture** (banc, 16/10/2026) : 653 produits OTC sur 670 ont un laboratoire, répartis en 90 laboratoires. Les 17 autres sont à saisir à la main :
+  - 13 absents de Medipim (Mepilex, Mepitel, Freestyle, Contour…) ;
+  - les 4 produits d'Alliance Pharma rattachés au seul répartiteur (ci-dessus).
 - **Noms.** Ils sont repris tels que Medipim les écrit (« URIACH FRANCE », « Procter & Gamble »).
   - On peut les corriger dans l'admin : champ « Laboratoire » du formulaire de modification, avec la liste des laboratoires déjà connus et un bouton « 🔍 Medipim ».
   - La recherche de l'onglet trouve aussi un produit par son laboratoire.
@@ -48,7 +56,9 @@ Demande de Zineb (16/10/2026) : « Pour le menu OTC Centrale d'achat, ajoute la 
   - la fiche (GET) renvoie aussi `labo` et `labo_autres` ;
   - le mode lot, `POST { action: "labos", codes }` (150 codes au plus), renvoie `{ labos: { code: { labo, autres } }, introuvables, sans_labo }`.
     - Il fait une seule recherche Medipim par lot (environ 1 s pour 150 codes).
+    - Les CIP7 / ACL7 sont rapprochés par le champ `cipOrAcl7` des fiches (Medipim n'a pas de champ `cip7` ni `acl7`).
     - Medipim saturé ou en panne : 429 / 503 avec `Retry-After` ; plus de 8 s : 504.
+    - Page illisible (délai dépassé pendant la lecture, réponse non JSON ou sans résultats) : 504 ou 502, jamais une réponse 200 qui déclarerait les codes introuvables. L'admin relance alors le lot.
     - L'admin enchaîne les lots un par un, avec 1,5 s d'écart (clé partagée, 100 appels par minute).
 - **`products-upsert`** :
   - `labo` n'est écrit que s'il est envoyé (espaces nettoyés, 120 caractères au plus, vide = null) ;

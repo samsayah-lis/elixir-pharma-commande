@@ -54,14 +54,18 @@ async function parCip13(cip) {
 // Même règle que l'onglet SRA d'elixir-reappro : les dépositaires logistiques (Alloga, CSP, Eurodep…) ne sont
 // jamais le laboratoire s'il y a une autre organisation (Lamisilate : Alloga France → Karo Healthcare), puis id
 // Medipim croissant (l'ordre renvoyé dépend des autres produits de la réponse ; l'id ne dépend pas du lot).
+// Les répartiteurs (grossistes) ne le sont jamais, même seuls : Medipim rattache Kelo-Cote, Jonctum et Oxyplastine
+// (Alliance Pharma) à « SAS Alliance Healthcare Group France » ; seuls, pas de laboratoire (à saisir à la main), et
+// ils restent dans « autres ». « ALLIANCE PHARMA » (laboratoire) n'est pas concerné.
 const DEPOSITAIRES = /\b(ALLOGA|CSP|EURODEP|DEPOLABO|MOVIANTO|ARVATO)\b/i;
+const REPARTITEURS = /\b(ALLIANCE\s+HEALTHCARE|OCP|CERP|PHOENIX\s+PHARMA|ASTERA|SOGIPHAR)\b/i;
 const nomOrg = (o) => String((typeof o?.name === "string" ? o.name : (o?.name?.fr || o?.name?.en)) || "").replace(/\s+/g, " ").trim();
 function laboDe(p) {
   const id = (o) => { const n = Number(o?.id); return Number.isFinite(n) ? n : 1e12; };
-  const depot = (o) => (DEPOSITAIRES.test(nomOrg(o)) ? 1 : 0);
+  const rang = (o) => (REPARTITEURS.test(nomOrg(o)) ? 2 : DEPOSITAIRES.test(nomOrg(o)) ? 1 : 0);
   const orgs = (Array.isArray(p?.organizations) ? p.organizations : []).filter(nomOrg)
-    .sort((a, b) => depot(a) - depot(b) || id(a) - id(b) || nomOrg(a).localeCompare(nomOrg(b), "fr"));
-  if (!orgs.length) return null;
+    .sort((a, b) => rang(a) - rang(b) || id(a) - id(b) || nomOrg(a).localeCompare(nomOrg(b), "fr"));
+  if (!orgs.length || rang(orgs[0]) === 2) return null;
   const labo = nomOrg(orgs[0]);
   return { labo, autres: [...new Set(orgs.slice(1).map(nomOrg))].filter(n => n !== labo) };
 }
@@ -69,6 +73,9 @@ function laboDe(p) {
 // Lot de codes (CIP13, ACL13, EAN, CIP7/ACL7) → laboratoire de chacun. Une recherche Medipim, pages de 250
 // (4 au plus : un EAN peut désigner plusieurs fiches). Rapprochement sur le code sans zéros de tête (Medipim
 // renvoie « 3574660115390 » pour « 03574660115390 ») ; une fiche active l'emporte sur une fiche retirée.
+// Le CIP7/ACL7 d'une fiche est dans cipOrAcl7 (pas de champ cip7 ni acl7 : vérifié sur une fiche réelle).
+// Page illisible (délai de 8 s dépassé pendant la lecture, corps non JSON ou sans results) : erreur, jamais
+// « introuvables » (504 ou 502 : l'admin relance le lot).
 const LOT_MAX = 150, TAILLE_PAGE = 250, PAGES_MAX = 4;
 const cleCode = (c) => String(c ?? "").replace(/\D/g, "").replace(/^0+/, "");
 async function labosParLot(codes) {
@@ -87,9 +94,15 @@ async function labosParLot(codes) {
     });
     if (res.status === 429 || res.status >= 500) throw new Indisponible(res.status);
     if (!res.ok) throw new Error(`Recherche Medipim refusée (HTTP ${res.status})`);
-    const data = await res.json().catch(() => ({}));
-    for (const m of data.results || []) {
-      for (const k of new Set([m.cip13, m.acl13, m.cip7, m.acl7, ...(m.ean || [])].filter(Boolean).map(cleCode))) {
+    let data;
+    try { data = await res.json(); }
+    catch (e) {
+      if (e?.name === "TimeoutError" || e?.name === "AbortError") throw e;
+      throw new Error("Réponse Medipim illisible : lot non traité, réessayez");
+    }
+    if (!Array.isArray(data?.results)) throw new Error("Réponse Medipim inattendue : lot non traité, réessayez");
+    for (const m of data.results) {
+      for (const k of new Set([m.cip13, m.acl13, m.cipOrAcl7, m.cip7, m.acl7, ...(m.ean || [])].filter(Boolean).map(cleCode))) {
         const deja = index.get(k);
         if (!deja || (m.status === "active" && deja.status !== "active")) index.set(k, m);
       }

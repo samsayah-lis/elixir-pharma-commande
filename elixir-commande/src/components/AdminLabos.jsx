@@ -28,7 +28,9 @@ export default function AdminLabos({ products, adminFetch, flash, fetchProducts 
     if (!window.confirm(`Chercher dans Medipim le laboratoire de ${cibles.length} produit${cibles.length > 1 ? "s" : ""} de la Centrale OTC et l'enregistrer ?`
       + (remplacer ? "\n\nLes laboratoires déjà renseignés, y compris ceux saisis à la main, seront remplacés par celui de Medipim." : ""))) return;
     arret.current = false;
-    const trouves = [], introuvables = [];
+    // introuvables : sans laboratoire Medipim, fiche absente ou trouvée sans fabricant (sansFabricant : aucune
+    // organisation, ou un répartiteur seul, docs/labo-otc.md) ; dans les deux cas, à saisir à la main
+    const trouves = [], introuvables = [], sansFabricant = new Set();
     let erreur = null;
     for (let i = 0; i < cibles.length && !arret.current; i += LOT) {
       const lot = cibles.slice(i, i + LOT);
@@ -43,6 +45,7 @@ export default function AdminLabos({ products, adminFetch, flash, fetchProducts 
         }
       } catch (e) { erreur = `Medipim injoignable : ${e.message}`; break; }
       if (!r.ok) { erreur = j.error || `Medipim : erreur ${r.status}`; break; }
+      for (const c of Array.isArray(j.sans_labo) ? j.sans_labo : []) sansFabricant.add(c);
       for (const p of lot) { const l = j.labos?.[p.cip]?.labo; if (l) trouves.push([p, l]); else introuvables.push(p); }
       if (i + LOT < cibles.length) await pause(1500);
     }
@@ -66,9 +69,9 @@ export default function AdminLabos({ products, adminFetch, flash, fetchProducts 
     if (!erreur && aEcrire.length) { await ecrire(true); await Promise.all([ecrire(), ecrire(), ecrire()]); }
     const identiques = trouves.length - aEcrire.length;
     if (ok) await fetchProducts();
-    setEtat({ bilan: { ok, ko, identiques, introuvables, erreur, arrete: arret.current && !erreur,
+    setEtat({ bilan: { ok, ko, identiques, introuvables, sansFabricant, erreur, arrete: arret.current && !erreur,
       nonTraites: cibles.length - ok - ko - identiques - introuvables.length } });
-    flash(`${erreur ? "⚠ " : "✅ "}Laboratoires : ${ok} enregistré${ok > 1 ? "s" : ""}${introuvables.length ? `, ${introuvables.length} introuvable${introuvables.length > 1 ? "s" : ""} dans Medipim` : ""}${erreur ? " — " + erreur : ""}`);
+    flash(`${erreur ? "⚠ " : "✅ "}Laboratoires : ${ok} enregistré${ok > 1 ? "s" : ""}${introuvables.length ? `, ${introuvables.length} sans laboratoire dans Medipim` : ""}${erreur ? " — " + erreur : ""}`);
   };
 
   const b = etat?.bilan;
@@ -108,13 +111,14 @@ export default function AdminLabos({ products, adminFetch, flash, fetchProducts 
             {b.erreur && <div style={{ fontWeight: 700, marginBottom: 4 }}>{b.erreur}</div>}
             <span className="num">{b.ok} laboratoire{b.ok > 1 ? "s" : ""} enregistré{b.ok > 1 ? "s" : ""}
               {b.identiques ? ` · ${b.identiques} déjà à jour` : ""}{b.ko ? ` · ${b.ko} en erreur (relancer)` : ""}
-              {b.introuvables.length ? ` · ${b.introuvables.length} introuvable${b.introuvables.length > 1 ? "s" : ""} dans Medipim (à saisir à la main)` : ""}
+              {b.introuvables.length ? ` · ${b.introuvables.length} sans laboratoire dans Medipim (à saisir à la main)` : ""}
               {b.nonTraites > 0 ? ` · ${b.nonTraites} non traité${b.nonTraites > 1 ? "s" : ""}${b.arrete ? " (arrêté)" : ""}` : ""}.</span>
             {b.introuvables.length > 0 && (
               <details style={{ marginTop: 6 }}>
-                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Voir les produits introuvables</summary>
+                <summary style={{ cursor: "pointer", fontWeight: 600 }}>Voir les produits sans laboratoire</summary>
                 <ul style={{ margin: "6px 0 0", paddingLeft: 18, color: T.ink }}>
-                  {b.introuvables.map(p => <li key={p.cip}>{p.name} <span style={{ fontFamily: T.mono, color: T.inkMute }}>{p.cip}</span></li>)}
+                  {b.introuvables.map(p => <li key={p.cip}>{p.name} <span style={{ fontFamily: T.mono, color: T.inkMute }}>{p.cip}</span>
+                    <span style={{ color: T.inkMute }}>{b.sansFabricant.has(p.cip) ? " — fiche Medipim sans fabricant (ou répartiteur seul)" : " — absent de Medipim"}</span></li>)}
                 </ul>
               </details>
             )}
