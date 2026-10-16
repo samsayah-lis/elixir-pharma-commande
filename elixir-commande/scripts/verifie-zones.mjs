@@ -196,10 +196,11 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 }
 
 // 5. budget du bundle (revue, § 20) : JS + CSS de dist/assets en octets (Vite affiche des kB de caractères, les accents
-// pèsent plusieurs octets), polices exclues ; référence master 1 094 491 octets + 60 000 (docs/refonte-charte.md § 4.4)
+// pèsent plusieurs octets), polices exclues. Depuis que l'admin se charge à la demande (labo-otc, 16/10/2026), le
+// bundle des pharmacies pèse ~895 000 octets : budget resserré à 940 000 pour qu'il reste un garde-fou.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
-  const BUDGET = 1_094_491 + 60_000;
+  const BUDGET = 940_000;
   const dossier = join(APP, "dist", "assets");
   if (!existsSync(dossier)) console.log("  · dist/ absent : lancer npm run build pour contrôler le budget");
   else {
