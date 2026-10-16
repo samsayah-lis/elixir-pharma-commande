@@ -3,6 +3,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App.jsx'
 import { Icone, CroixElixir } from './icons.jsx'
+import { installeAntiCopie } from './anticopie.js'
 
 // Erreur de rendu à la racine (refonte charte, lot 8 : docs/refonte-charte.md § 3) : message en français et
 // « Recharger la page » ; le détail technique (message, pile, composant) va dans la console, plus à l'écran.
@@ -41,6 +42,9 @@ class ErrorBoundary extends React.Component {
     return this.props.children;
   }
 }
+
+// Anti-copie du site client (lot A : docs/refonte-charte.md § 19) : sans effet dans l'admin (#admin)
+installeAntiCopie()
 
 const demarre = () => ReactDOM.createRoot(document.getElementById('root')).render(
   <ErrorBoundary>

@@ -187,7 +187,7 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
 
       {envoi.ok && (
         <div role="status" style={{ ...ui.encart("ok"), padding: "16px 20px", borderRadius: R.m }}>
-          <div className="num" style={{ ...ligneIcone, fontSize: 15, fontWeight: 700 }}><Icone nom="coche" taille={18} epaisseur={2.4} style={{ marginTop: 1 }} />Demande {envoi.ok.deja ? "bien enregistrée" : "transmise à Elixir"} (commande n° {envoi.ok.orderId})</div>
+          <div className="num" style={{ ...ligneIcone, fontSize: 15, fontWeight: 700 }}><Icone nom="coche" taille={18} epaisseur={2.4} style={{ marginTop: 1 }} />Demande {envoi.ok.deja ? "bien enregistrée" : "transmise à Elixir"} (commande n° <span className="ex-selectionnable">{envoi.ok.orderId}</span>)</div>
           <div className="num" style={{ fontSize: 13, marginTop: 6 }}>{envoi.ok.lignes.map(i => `${i.qty} × ${i.name}`).join(" · ")}</div>
           {envoi.ok.demandes.map(d => (
             <div key={d.id} style={{ ...ligneIcone, fontSize: 12, marginTop: 4 }}><Icone nom="document" taille={13} style={{ marginTop: 2 }} />{JUSTIF_STATUTS[d.statut] || "Enregistrée"}</div>
@@ -305,7 +305,7 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
               <div key={d.id} style={{ padding: "10px 0", borderTop: `1px solid ${T.lineSoft}`, fontSize: 13, color: T.ink }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
                   <div className="num"><b style={{ fontWeight: 700 }}>{dateFr(d.date)}</b> · {d.labNom} · {d.lignes.map(l => `${l.qte} × ${l.produit}`).join(", ")}</div>
-                  <div className="num" style={{ fontSize: 12, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 4 }}>n° {d.orderId}{d.rx ? <> · <Icone nom="trombone" taille={12} />{d.rx} ordonnance(s)</> : ""}</div>
+                  <div className="num" style={{ fontSize: 12, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 4 }}>n° <span className="ex-selectionnable">{d.orderId}</span>{d.rx ? <> · <Icone nom="trombone" taille={12} />{d.rx} ordonnance(s)</> : ""}</div>
                 </div>
                 {d.suivi && d.suivi.etape !== "recue" ? <SuiviDemande suivi={d.suivi} /> : (
                   <div style={{ ...ligneIcone, fontSize: 12, color: d.statut === "envoye" ? T.ok : T.teal, marginTop: 4 }}>

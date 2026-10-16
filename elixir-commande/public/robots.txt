@@ -1,0 +1,4 @@
+# Elixir Pharma — site de commande réservé aux pharmacies clientes : rien à explorer ni à indexer.
+# (anti-copie, lot A : docs/refonte-charte.md § 19 ; voir aussi la balise robots d'index.html et l'en-tête X-Robots-Tag)
+User-agent: *
+Disallow: /

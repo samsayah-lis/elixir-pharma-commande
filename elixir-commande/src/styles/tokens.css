@@ -317,6 +317,21 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-admin-contenu { padding: 16px 12px !important; }
 }
 
+/* ── Anti-copie (lot A : docs/refonte-charte.md § 19 ; événements dans src/anticopie.js) ──
+   Contenu du site client non sélectionnable (catalogue, prix, conditions) et sans menu « Copier / Enregistrer » au
+   toucher long (iOS). Restent sélectionnables : les champs (recherche, quantités, formulaires : -webkit-user-select
+   explicite, sinon Safari iOS n'y laisse plus saisir), les zones .ex-selectionnable (n° de commande) et tout l'admin
+   (rendu dans l'arbre d'App : « text » sur .ex-admin, hérité par ses descendants). Liens : toucher long permis.
+   Photos du site client : ni glisser (Chrome, Safari ; Firefox par draggable={false}) ni « Enregistrer l'image ».
+   Sans effet sur l'impression ni sur les lecteurs d'écran (l'arbre d'accessibilité ne dépend pas de la sélection). */
+.ex-app { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.ex-app .ex-admin, .ex-app .ex-selectionnable,
+.ex-app input, .ex-app textarea, .ex-app select, .ex-app [contenteditable]:not([contenteditable="false"]) {
+  -webkit-user-select: text; user-select: text; -webkit-touch-callout: default;
+}
+.ex-app a[href] { -webkit-touch-callout: default; }
+.ex-app img:not(.ex-admin *) { -webkit-user-drag: none; -webkit-touch-callout: none; }
+
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }

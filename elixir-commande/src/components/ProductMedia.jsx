@@ -6,7 +6,8 @@ import { Icone } from "../icons.jsx";
 // agrandissement plein écran. La vidéo YouTube (youtube-nocookie) n'est chargée qu'au clic.
 // media = { photos: [{ src, full, thumb? }], video: { youtube, title } | null, highlights: [{ src, title, text }] }
 const ytThumb = (id) => `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
-const imgProps = { referrerPolicy: "no-referrer", loading: "lazy", decoding: "async" };
+// draggable : anti-copie (lot A, docs/refonte-charte.md § 19), la photo ne se glisse pas hors de la page
+const imgProps = { referrerPolicy: "no-referrer", loading: "lazy", decoding: "async", draggable: false };
 
 export function Lightbox({ photos, index, onClose, onIndex }) {
   const n = photos.length;
@@ -48,7 +49,7 @@ export function Lightbox({ photos, index, onClose, onIndex }) {
   return (
     <div ref={boxRef} role="dialog" aria-modal="true" aria-label="Photo agrandie" onClick={onClose} className="ex-on-dark"
       style={{ position: "fixed", inset: 0, zIndex: 400, background: "rgba(10,29,34,0.9)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <img key={url} src={url} alt="" referrerPolicy="no-referrer" onClick={(e) => e.stopPropagation()}
+      <img key={url} src={url} alt="" referrerPolicy="no-referrer" draggable={false} onClick={(e) => e.stopPropagation()}
         onError={() => setBad(b => ({ ...b, [url]: true }))}
         onTouchStart={(e) => { tx.current = e.touches[0].clientX; }}
         onTouchEnd={(e) => { if (n > 1 && tx.current != null) { const dx = e.changedTouches[0].clientX - tx.current; if (Math.abs(dx) > 40) go(dx < 0 ? 1 : -1); } tx.current = null; }}

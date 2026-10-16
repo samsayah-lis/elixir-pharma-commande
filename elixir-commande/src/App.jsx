@@ -2408,7 +2408,7 @@ export default function App() {
                         {/* Photo : puits blanc (photos Medipim sur fond blanc) ; sans photo, puits sable et icône du rayon */}
                         <div style={{ width: "100%", height: isMobile ? 120 : 160, background: p.image_url ? T.surface : T.surface2, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: `1px solid ${T.lineSoft}`, boxSizing: "border-box" }}>
                           {p.image_url
-                            ? <img src={p.image_url} alt={p.name} loading="lazy" style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10, boxSizing: "border-box" }}/>
+                            ? <img src={p.image_url} alt={p.name} loading="lazy" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10, boxSizing: "border-box" }}/>
                             : (() => { const ic = iconeMenu(activeTab, cat, 40); return <span aria-hidden="true" style={typeof ic === "string" ? { fontSize: 34, opacity: 0.2 } : { display: "flex", color: T.inkFaint }}>{ic}</span>; })()
                           }
                           {isRupture && (

@@ -60,7 +60,7 @@ export function CrossSellBanner({ cartCips = [], onAdd }) {
         <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 4 }}>
           {recs.map(rec => (
             <div key={rec.cip} style={{ background: T.surface, borderRadius: R.s, padding: "10px 12px", minWidth: 168, maxWidth: 200, border: `1px solid ${T.line}`, display: "flex", flexDirection: "column", gap: 6, flexShrink: 0 }}>
-              {rec.image_url && <img src={rec.image_url} alt="" style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6, background: T.surface }} />}
+              {rec.image_url && <img src={rec.image_url} alt="" draggable={false} style={{ width: "100%", height: 60, objectFit: "contain", borderRadius: 6, background: T.surface }} />}
               <div style={{ fontWeight: 600, fontSize: 12, color: T.ink, lineHeight: 1.3, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{rec.name || rec.cip}</div>
               <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, lineHeight: 1.4, color: TON_PERTINENCE.fg, background: TON_PERTINENCE.bg, borderRadius: R.pill, padding: "1px 8px" }}>

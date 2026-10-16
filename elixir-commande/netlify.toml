@@ -17,6 +17,14 @@
 [context.branch-deploy.environment]
   VITE_ESSAI_A_BLANC = "1"
 
+# Anti-copie (lot A : elixir-commande/docs/refonte-charte.md § 19) : site réservé aux pharmacies clientes, ni indexé,
+# ni archivé, ni utilisé pour entraîner une IA (doublé par la balise robots d'index.html et public/robots.txt).
+# Pas de CSP ici : celle de la vitrine bloquerait les photos Supabase, YouTube et les blob: des ordonnances.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive, noai, noimageai"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

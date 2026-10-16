@@ -18,6 +18,15 @@
 [functions]
   node_bundler = "esbuild"
 
+# Par précaution (comme l'essai à blanc) : même en-tête que dans elixir-commande/netlify.toml.
+# Anti-copie (lot A : elixir-commande/docs/refonte-charte.md § 19) : site réservé aux pharmacies clientes, ni indexé,
+# ni archivé, ni utilisé pour entraîner une IA (doublé par la balise robots d'index.html et public/robots.txt).
+# Pas de CSP ici : celle de la vitrine bloquerait les photos Supabase, YouTube et les blob: des ordonnances.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Robots-Tag = "noindex, nofollow, noarchive, noai, noimageai"
+
 # Cron toutes les 30min pour rafraîchir les stocks Odoo → Supabase
 [[crons]]
   schedule = "*/30 * * * *"
