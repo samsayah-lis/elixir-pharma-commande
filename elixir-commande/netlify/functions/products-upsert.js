@@ -65,13 +65,30 @@ export const handler = async (event) => {
     if (action === "create") row[k] = product[k] ?? (k === "active" ? true : k === "source" ? "admin" : null);
     else if (product[k] !== undefined) row[k] = product[k];
   }
+  // Laboratoire (Centrale OTC : fabricant Medipim ou saisie de l'admin, docs/labo-otc.md) : colonne labo, à créer par
+  // ALTER TABLE public.elixir_products ADD COLUMN IF NOT EXISTS labo TEXT; écrite SEULEMENT quand elle est envoyée
+  // (création comprise) : une modification sans laboratoire ne touche jamais la colonne, présente ou non.
+  if (product.labo !== undefined) {
+    const l = typeof product.labo === "string" ? product.labo.replace(/\s+/g, " ").trim().slice(0, 120) : "";
+    row.labo = l || null;
+  }
   row.history = JSON.stringify(history);
   row.updated_at = now;
   if (action === "create") row.created_at = now;
 
   // Mise à jour = PATCH de la ligne existante (un upsert partiel échoue : la ligne proposée à l'insertion
   // doit déjà respecter les NOT NULL, nom compris). Ligne absente → insertion, si le nom est fourni.
-  const erreur = async (r) => { const err = await r.text(); console.error("[products-upsert] Supabase error:", err); return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) }; };
+  const erreur = async (r) => {
+    const err = await r.text();
+    console.error("[products-upsert] Supabase error:", err);
+    // colonne labo pas encore créée (PostgREST : PGRST204 « Could not find the 'labo' column… » ; Postgres : 42703)
+    if ("labo" in row && /labo/i.test(err) && /PGRST204|42703|schema cache|does not exist/i.test(err)) {
+      return { statusCode: 409, headers: cors, body: JSON.stringify({ code: "labo_colonne_absente",
+        error: "Laboratoire non enregistré : la colonne « labo » n'existe pas encore dans Supabase (table elixir_products). "
+          + "À exécuter une fois dans l'éditeur SQL : ALTER TABLE public.elixir_products ADD COLUMN IF NOT EXISTS labo TEXT; — rien n'a été modifié." }) };
+    }
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
+  };
   if (action !== "create") {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(lookupCip)}`, {
       method: "PATCH", headers: { ...SB, "Prefer": "return=representation" }, body: JSON.stringify(row),
