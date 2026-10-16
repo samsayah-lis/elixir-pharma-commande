@@ -1062,3 +1062,15 @@ Trois relectures contradictoires de la branche (invariants, rendu, production) o
   - Stratège à 768 et 1 024 px : Qté visible au bord droit.
   - Pas de défilement horizontal de page. Aucune erreur en console.
 - Bundle : JS 1 134 197 octets, CSS 17 323 (lot A : 1 132 377 et 15 465), soit 1 151 520 octets en tout, pour une marge de 2 971 octets sur le budget. Toute retouche demandée ensuite devra regagner de la place, ou faire relever le budget par la cliente.
+
+---
+
+## Après la revue — décisions de Zineb (16/10/2026)
+
+- iPhone / iPad : saisie et collage dans les champs validés par la cliente sur son téléphone.
+- **Sélection Master** : colonnes « Palier » et « PV » supprimées (jamais fournies par le serveur) ; 5 colonnes produit, en-têtes et cellules alignés.
+- **Saisie de commande — règle de quantité du catalogue** (corrige un défaut antérieur à la refonte : 4 boîtes d'un colis de 160 partaient au prix carton) :
+  - une référence présente dans un catalogue à règle (colis Stratège / gamme blanche, palier Master, campagne) affiche « Se commande par N · rayon » ; les boutons − / + avancent au pas du colis ;
+  - à l'ajout (`ajouterDepuisSaisie`), même arrondi que les tableaux (`setQty`) : 150 → 160 avec le message « arrondi au colis de 160 » ; moins d'un demi-colis (4) → rien n'est ajouté, message « se commande par 160 : saisissez 160 ou plus » ;
+  - références sans règle et articles à plusieurs références (code fournisseur) : inchangés.
+  - Vérifié sur le banc (Dafalgan 1000 gélules, colis 160) : 4 → refus, 150 → 160 (stratege-4), + → 160 → 320.

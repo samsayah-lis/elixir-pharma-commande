@@ -21,7 +21,7 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 // (src/styles/tokens.css, « Saisie de commande ») : sous 768 px, la ligne passe en pile par @media — le composant
 // ne reçoit pas isMobile. Atomes en bas de fichier.
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, initialQuery, justifProducts = {}, icone, couleur }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
@@ -202,6 +202,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               // produit livré par le labo sur justificatif de commande : commandable même en rupture
               const jr = !p.in_stock ? justifProducts[p.cip] : null;
               const orderable = p.in_stock || !!jr;
+              // règle de quantité du catalogue (colis, palier, campagne) : boutons au pas du colis, arrondi à l'ajout (App)
+              const regle = p.supplier_code ? null : regleQuantite?.(p.cip);
+              const pas = regle?.multiple || 1;
 
               return (
                 <div key={p.cip} className="ex-saisie-ligne" data-rupture={orderable ? undefined : ""} data-choisi={qty > 0 ? "" : undefined}>
@@ -234,6 +237,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     <div className="num" style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(displayPrice)}</div>
                     <div style={{ fontSize: 11, color: T.inkMute }}>Prix HT</div>
                     <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />
+                    {regle && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>Se commande par {regle.multiple} · {regle.rayon}</div>}
                   </div>
 
                   {/* Actions : « − » sable, « + » pétrole, quantité (Entrée = Ajouter, lot E3) ; « Ajouter » toujours
@@ -241,12 +245,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                   <div className="ex-saisie-actions">
                     {orderable ? (<>
                       <div className="ex-saisie-stepper" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                        <button className="ex-qte-moins ex-saisie-pas" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
+                        <button className="ex-qte-moins ex-saisie-pas" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(prev => { const n = (parseInt(prev[p.cip]) || 0) - pas; return { ...prev, [p.cip]: regle && n < regle.min ? 0 : Math.max(0, n) }; })}
                           style={pasStyle}><Icone nom="moins" taille={16} epaisseur={2.4} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""} onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, parseInt(e.target.value) || 0) }))}
                           onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing && qty > 0) { e.preventDefault(); handleAdd(p); } }}   // lot E3 : Entrée = Ajouter
                           placeholder="0" aria-label={`Quantité ${p.name}`} className="ex-saisie-qte" style={{ ...ui.qtyInput(qty > 0), width: undefined, height: undefined, fontSize: 14 }} />
-                        <button className="ex-qte-plus ex-saisie-pas" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, (parseInt(prev[p.cip]) || 0) + 1) }))}
+                        <button className="ex-qte-plus ex-saisie-pas" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(prev => { const c = parseInt(prev[p.cip]) || 0; return { ...prev, [p.cip]: Math.min(jr?.maxCommande || Infinity, regle && c < regle.min ? regle.min : c + pas) }; })}
                           style={pasStyle}><Icone nom="plus" taille={16} epaisseur={2.4} /></button>
                       </div>
                       <button className="ex-btn-petrole ex-saisie-ajouter" onClick={() => handleAdd(p)}

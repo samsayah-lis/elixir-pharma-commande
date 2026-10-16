@@ -33,7 +33,7 @@ class ErrorBoundary extends React.Component {
 const SECTION_META = {
   expert:   { label: "Sélection Expert",      subtitle: "Médicaments chers – Abandon de marge fixe 30€/boîte",        color: "#1a3a4a", accent: "#2d7d9a", icon: "💊", columns: ["CIP13","Désignation","Prix Vente","Remise €","Prix net"] },
   stratege: { label: "Sélection Stratège",     subtitle: "Cartons standard – Top 50 rotations nationales",              color: "#2d5a27", accent: "#4a9e42", icon: "📦", columns: ["CIP","Désignation","Colis","Prix","Remise %","Remise €","Prix net","Prix carton"] },
-  master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","Palier","PV","Remise %","Remise €","PN"] },   // « Palier » : revue, § 20
+  master:   { label: "Sélection Master",       subtitle: "Parapharmacie – Top marques sélectionnées",                   color: "#7c3a00", accent: "#c2692d", icon: "🌿", columns: ["CIP","Désignation","Remise %","Remise €","PN"] },   // Palier et PV retirés (non fournis par le serveur) : décision de Zineb, 16/10/2026
   obeso:    { label: "Mounjaro / Wegovy",       subtitle: "Traitements de l'obésité",                                    color: "#4a1a7a", accent: "#8b5cf6", icon: "⚖️",  columns: ["CIP","Désignation","Qté","PV","Remise","PN"] },
   nr:       { label: "Autres NR",              subtitle: "Médicaments non remboursés",                                   color: "#1a3a5a", accent: "#3b82f6", icon: "🔵", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   molnlycke:{ label: "Offre Mölnlycke",        subtitle: "Matériel médical – pansements & soins",                        color: "#1a4a3a", accent: "#10b981", icon: "🩹", columns: ["CIP","Désignation","Colis","PV","Remise %","Remise €","PN","Prix carton"] },
@@ -1094,8 +1094,34 @@ export default function App() {
   // ── Saisie de commande (lot E2) : l'ajout n'ouvre plus le panier, un message le confirme ──
   // Le contingentement, que rechargeait l'ouverture du panier, est rechargé ici à chaque ajout : un dépassement
   // est signalé aussitôt (le panier l'affiche toujours et l'envoi le contrôle encore avec les chiffres du moment).
-  const ajouterDepuisSaisie = (item) => {
+  // Saisie de commande : une référence d'un catalogue à règle de quantité (colis Stratège / gamme blanche, palier Master,
+  // campagne) suit la même règle et le même arrondi que son tableau (setQty) — sinon 4 boîtes d'un colis de 160 partaient
+  // au prix carton. Même recherche que addItemToCart : premier catalogue qui contient le CIP.
+  const regleSaisie = (cip) => {
+    for (const [catKey, c] of Object.entries(CATALOG_WITH_ADMIN)) {
+      const p = (c.products || []).find(x => x.cip === cip);
+      if (!p) continue;
+      const r = getStepMin(catKey, p);
+      const multiple = r.multiple > 1 ? r.multiple : (r.step > 1 ? r.step : 1);
+      return multiple > 1 || r.min > 1 ? { step: r.step, min: r.min, multiple, rayon: c.label || SECTION_META[catKey]?.label || catKey } : null;
+    }
+    return null;
+  };
+  const arrondiSaisie = (qty, r) => {
+    const arrondi = Math.round(qty / r.multiple) * r.multiple;
+    return arrondi > 0 && r.min > 0 ? Math.max(r.min, arrondi) : arrondi;
+  };
+
+  const ajouterDepuisSaisie = (saisie) => {
+    let item = saisie;
+    const regle = item.supplier_code ? null : regleSaisie(item.cip);
+    if (regle) {
+      const q = arrondiSaisie(item.qty, regle);
+      if (q <= 0) { flash(`⚠ ${item.name} se commande par ${regle.multiple} (${regle.rayon}) : saisissez ${Math.max(regle.min, regle.multiple)} ou plus`, 6000); return; }
+      if (q !== item.qty) item = { ...item, qty: q };
+    }
     addItemToCart(item, { ouvrirPanier: false });
+    if (regle && item.qty !== saisie.qty) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · arrondi au colis de ${regle.multiple}`);
     const apres = [...cartItems, { cip: item.cip, qty: item.qty }];   // panier avec cet ajout (même CIP additionné)
     if (needsJustif(item, justifProducts, qtyByCip(apres))) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · justificatif à joindre dans le panier`);
     loadQuota().then(q => {
@@ -2093,6 +2119,7 @@ export default function App() {
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
               onAddToCart={ajouterDepuisSaisie}
+              regleQuantite={regleSaisie}
               initialQuery={initialProductQuery}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
               couleur={CATALOG_WITH_ADMIN[activeTab].accent}
@@ -2651,10 +2678,7 @@ export default function App() {
                         {activeTab === "master" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
-                          {/* palier (non transmis par products-get, § 3 : « – ») sous son propre en-tête depuis la revue (§ 20) :
-                              les 7 cellules de la ligne tombent sous leurs 7 en-têtes (le prix net était sous « QTÉ ») */}
-                          <td style={{ ...tdStyle, textAlign: "center", color: p.palier ? T.inkSoft : T.inkMute, fontWeight: 600 }}>{p.palier ? `×${p.palier}` : "–"}</td>
-                          <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pb)}</td>
+                          {/* colonnes Palier et PV retirées (jamais transmises par products-get) : 5 cellules sous 5 en-têtes */}
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
