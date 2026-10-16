@@ -1,22 +1,25 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { T, tone } from "../theme.js";
 
 // ── Admin : commandes sur justificatif labo ─────────────────────────────
 // Réglages par laboratoire (produits, destinataires, objet, règles, envoi automatique) et suivi
 // des demandes (commandes du site et commandes PharmaML repérées), avec envoi/relance/ignorer.
 const API = "/.netlify/functions/lab-justif";
+// statut → [libellé, fond, texte], aux tons de la charte (lot 10 : tone(), src/theme.js) ; le libellé reste toujours affiché
+const st = (lib, ton) => [lib, tone(ton).bg, tone(ton).fg];
 const STATUTS = {
-  en_attente: ["En attente (labo non activé)", "#fef3c7", "#92400e"],
-  a_envoyer: ["À envoyer", "#e0f2fe", "#075985"],
-  en_cours: ["Envoi en cours", "#e0f2fe", "#075985"],
-  a_verifier: ["À vérifier", "#ffedd5", "#9a3412"],
-  bloquee: ["Client bloqué", "#fee2e2", "#991b1b"],
-  erreur: ["Erreur", "#fee2e2", "#991b1b"],
-  envoye: ["Envoyée", "#d1fae5", "#065f46"],
-  ignoree: ["Ignorée", "#f1f5f9", "#475569"],
+  en_attente: st("En attente (labo non activé)", "warn"),
+  a_envoyer: st("À envoyer", "labo"),
+  en_cours: st("Envoi en cours", "labo"),
+  a_verifier: st("À vérifier", "acting"),
+  bloquee: st("Client bloqué", "danger"),
+  erreur: st("Erreur", "danger"),
+  envoye: st("Envoyée", "ok"),
+  ignoree: st("Ignorée", "neutral"),
 };
-const card = { background: "white", borderRadius: 14, padding: "16px 20px", border: "1px solid #e8ecf0" };
-const lbl = { fontSize: 11, fontWeight: 700, color: "#475569", display: "block", marginBottom: 3 };
-const inp = { width: "100%", boxSizing: "border-box", border: "1.5px solid #d6dde3", borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit" };
+const card = { background: T.surface, borderRadius: 14, padding: "16px 20px", border: "1px solid var(--line)" };
+const lbl = { fontSize: 11, fontWeight: 700, color: T.inkSoft, display: "block", marginBottom: 3 };
+const inp = { width: "100%", boxSizing: "border-box", border: `1px solid ${T.lineField}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", background: T.surface, color: T.ink };
 const btn = (bg, color = "white") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 
@@ -32,7 +35,8 @@ const ETAPES_SUIVI = [
 // étape proposée par défaut : la suivante dans le parcours normal
 const PARCOURS = ["recue", "transmise", "acceptee", "recue_elixir", "expediee"];
 const etapeSuivante = (e) => { const i = PARCOURS.indexOf(e); return i < 0 ? "acceptee" : PARCOURS[Math.min(i + 1, PARCOURS.length - 1)]; };
-const COULEUR_SUIVI = { recue: "#475569", transmise: "#075985", acceptee: "#6d28d9", recue_elixir: "#b45309", expediee: "#065f46", refusee: "#991b1b", annulee: "#64748b" };
+// couleur du libellé de suivi (texte seulement, toujours avec le libellé) : jetons de la charte, violet fonctionnel pour « acceptée »
+const COULEUR_SUIVI = { recue: T.inkSoft, transmise: T.teal, acceptee: "#6d28d9", recue_elixir: T.warn, expediee: T.ok, refusee: T.danger, annulee: T.inkMute };
 
 // commandes / syncStatus / onSync : liste et synchronisation PharmaML de l'onglet « Commandes » (AdminPanel)
 export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onSync }) {
@@ -101,13 +105,13 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
   // réponse d'une action (demande brute) : le suivi et l'état de la commande calculés par la liste sont conservés
   const majDemande = (d) => setDemandes(ds => ds.map(x => x.id === d.id ? { ...x, ...d } : x));
 
-  if (!cfg) return <div style={{ padding: 30, color: "#888" }}>Chargement…</div>;
+  if (!cfg) return <div style={{ padding: 30, color: T.inkMute }}>Chargement…</div>;
   const visibles = demandes.filter(d => filtre === "toutes" ? true : filtre === "envoye" ? d.statut === "envoye" : !["envoye", "ignoree"].includes(d.statut));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <div style={{ ...card, background: "linear-gradient(135deg,#0f2d3d,#1a4a5e)", color: "white" }}>
-        <div style={{ fontSize: 18, fontWeight: 800 }}>📑 Commandes sur justificatif labo</div>
+      <div className="ex-on-dark" style={{ ...card, background: T.petrol, color: T.paper, border: "none" }}>
+        <div style={{ fontSize: 18, fontWeight: 700 }}>📑 Commandes sur justificatif labo</div>
         <div style={{ fontSize: 12, opacity: 0.85, marginTop: 4, lineHeight: 1.5 }}>
           Pour les produits ci-dessous, chaque commande de pharmacie (site, et logiciel de la pharmacie via PharmaML si « repérage » est coché)
           crée un bon d'achat Odoo chez le fournisseur du labo, puis envoie au labo le bon et le justificatif (pharmacie, CIP, référence et date
@@ -118,13 +122,13 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
       {Object.values(cfg.labs).map(lab => (
         <div key={lab.key} style={card}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, color: "#0f2d3d" }}>{lab.nom}</div>
-            <span style={{ fontSize: 11, fontWeight: 800, borderRadius: 10, padding: "3px 9px", background: lab.actif ? "#d1fae5" : "#f1f5f9", color: lab.actif ? "#065f46" : "#475569" }}>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.petrol }}>{lab.nom}</div>
+            <span style={{ fontSize: 11, fontWeight: 700, borderRadius: 10, padding: "3px 9px", background: lab.actif ? T.okBg : T.surface2, color: lab.actif ? T.ok : T.inkSoft }}>
               {lab.actif ? `● Envoi automatique actif depuis le ${dt(lab.depuis)}` : "○ Envoi automatique arrêté"}
             </span>
             <div style={{ flex: 1 }} />
             <button onClick={() => basculer(lab.key)} disabled={!!busy || dirty} title={dirty ? "Enregistrez d'abord les réglages" : ""}
-              style={{ ...btn(lab.actif ? "#b91c1c" : "#059669"), opacity: busy || dirty ? 0.5 : 1 }}>{lab.actif ? "Arrêter l'envoi automatique" : "Activer l'envoi automatique"}</button>
+              style={{ ...btn(lab.actif ? T.danger : T.ok), opacity: busy || dirty ? 0.5 : 1 }}>{lab.actif ? "Arrêter l'envoi automatique" : "Activer l'envoi automatique"}</button>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(240px,1fr))", gap: 10 }}>
             <div><label style={lbl}>Destinataires (séparés par des virgules)</label><input style={inp} value={lab.a} onChange={e => majLab(lab.key, { a: e.target.value })} /></div>
@@ -135,7 +139,7 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
                 <input style={inp} value={lab.fournisseurNom} onChange={e => majLab(lab.key, { fournisseurNom: e.target.value })} />
               </div></div>
             <div><label style={lbl}>Objet du mail</label><input style={inp} value={lab.sujet} onChange={e => majLab(lab.key, { sujet: e.target.value })} />
-              <div style={{ fontSize: 10, color: "#64748b", marginTop: 2 }}>{"{bon} {produit} {pharmacie} {cip} {ville} {reference} {date}"}</div></div>
+              <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>{"{bon} {produit} {pharmacie} {cip} {ville} {reference} {date}"}</div></div>
           </div>
           <div style={{ marginTop: 10 }}><label style={lbl}>Texte d'introduction</label>
             <textarea style={{ ...inp, minHeight: 64 }} value={lab.intro} onChange={e => majLab(lab.key, { intro: e.target.value })} /></div>
@@ -153,86 +157,86 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
 
           <div style={{ marginTop: 12, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ color: "#64748b", textAlign: "left" }}>
+              <thead><tr style={{ color: T.inkMute, textAlign: "left" }}>
                 <th style={{ padding: 4 }}>CIP13</th><th>Produit</th><th>Nom dans l'objet</th><th>Max / commande</th><th>Max / jour</th><th>Repérage PharmaML</th><th />
               </tr></thead>
               <tbody>{lab.produits.map((p, i) => (
-                <tr key={p.cip} style={{ borderTop: "1px solid #f1f5f9" }}>
-                  <td style={{ padding: 4, fontFamily: "monospace" }}>{p.cip}{!p.odooId && <span style={{ color: "#b91c1c" }}> ⚠ sans fiche</span>}</td>
+                <tr key={p.cip} style={{ borderTop: "1px solid var(--line-soft)" }}>
+                  <td style={{ padding: 4, fontFamily: "monospace" }}>{p.cip}{!p.odooId && <span style={{ color: T.danger }}> ⚠ sans fiche</span>}</td>
                   <td>{p.nom}</td>
                   <td><input style={{ ...inp, padding: "3px 6px" }} value={p.court} onChange={e => majProd(lab.key, i, { court: e.target.value })} /></td>
                   <td><input style={{ ...inp, width: 60, padding: "3px 6px" }} value={p.maxCommande || ""} onChange={e => majProd(lab.key, i, { maxCommande: e.target.value.replace(/\D/g, "") })} /></td>
                   <td><input style={{ ...inp, width: 60, padding: "3px 6px" }} value={p.maxJour || ""} onChange={e => majProd(lab.key, i, { maxJour: e.target.value.replace(/\D/g, "") })} /></td>
                   <td style={{ textAlign: "center" }}><input type="checkbox" checked={p.detection !== false} onChange={e => majProd(lab.key, i, { detection: e.target.checked })} /></td>
                   <td><button onClick={() => window.confirm(`Retirer ${p.nom} ?`) && setCfg(c => ({ ...c, labs: { ...c.labs, [lab.key]: { ...c.labs[lab.key], produits: c.labs[lab.key].produits.filter((_, j) => j !== i) } } }))}
-                    style={{ background: "none", border: "none", color: "#94a3b8", cursor: "pointer" }}>✕</button></td>
+                    style={{ background: "none", border: "none", color: T.inkMute, cursor: "pointer" }}>✕</button></td>
                 </tr>))}</tbody>
             </table>
-            <button onClick={() => ajouterProduit(lab.key)} disabled={!!busy} style={{ ...btn("#f1f5f9", "#0f2d3d"), marginTop: 6 }}>＋ Ajouter un produit (CIP)</button>
+            <button onClick={() => ajouterProduit(lab.key)} disabled={!!busy} style={{ ...btn(T.surface2, T.petrol), marginTop: 6 }}>＋ Ajouter un produit (CIP)</button>
           </div>
 
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12, paddingTop: 10, borderTop: "1px dashed #e2e8f0" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginTop: 12, paddingTop: 10, borderTop: "1px dashed var(--line)" }}>
             <input placeholder="adresse interne pour le mail de test" value={testAdr} onChange={e => setTestAdr(e.target.value)} style={{ ...inp, width: 260 }} />
             <button disabled={!!busy || dirty} onClick={() => act("test", { action: "test_mail", lab: lab.key, adresse: testAdr }, (j) => flash?.(`✓ Mail de test envoyé à ${j.a}`))}
-              style={{ ...btn("#334155"), opacity: busy || dirty ? 0.5 : 1 }}>✉️ Mail de test</button>
-            <span style={{ fontSize: 11, color: "#64748b" }}>Exemple fictif, sans bon de commande, jamais envoyé au laboratoire.</span>
+              style={{ ...btn(T.inkSoft), opacity: busy || dirty ? 0.5 : 1 }}>✉️ Mail de test</button>
+            <span style={{ fontSize: 11, color: T.inkMute }}>Exemple fictif, sans bon de commande, jamais envoyé au laboratoire.</span>
           </div>
         </div>
       ))}
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button onClick={enregistrer} disabled={!dirty || !!busy} style={{ ...btn("#0f2d3d"), opacity: !dirty || busy ? 0.5 : 1 }}>{busy === "save" ? "Enregistrement…" : "💾 Enregistrer les réglages"}</button>
-        {dirty && <span style={{ fontSize: 12, color: "#b45309", fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
+        <button onClick={enregistrer} disabled={!dirty || !!busy} style={{ ...btn(T.petrol), opacity: !dirty || busy ? 0.5 : 1 }}>{busy === "save" ? "Enregistrement…" : "💾 Enregistrer les réglages"}</button>
+        {dirty && <span style={{ fontSize: 12, color: T.warn, fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
         <div style={{ flex: 1 }} />
-        <button onClick={() => act("portail", { action: "test_portail" }, (j) => flash?.(`✓ Portail PharmaML joignable (${j.commandesDuJour} commande(s) aujourd'hui)`))} disabled={!!busy} style={btn("#f1f5f9", "#0f2d3d")}>🔌 Tester le portail PharmaML</button>
-        <button onClick={() => act("run", { action: "run" }, (j) => { flash?.((j.journal || []).join(" · ")); plusTard(20000); })} disabled={!!busy} style={btn("#f1f5f9", "#0f2d3d")}>{busy === "run" ? "Lancement…" : "🔄 Contrôler maintenant"}</button>
+        <button onClick={() => act("portail", { action: "test_portail" }, (j) => flash?.(`✓ Portail PharmaML joignable (${j.commandesDuJour} commande(s) aujourd'hui)`))} disabled={!!busy} style={btn(T.surface2, T.petrol)}>🔌 Tester le portail PharmaML</button>
+        <button onClick={() => act("run", { action: "run" }, (j) => { flash?.((j.journal || []).join(" · ")); plusTard(20000); })} disabled={!!busy} style={btn(T.surface2, T.petrol)}>{busy === "run" ? "Lancement…" : "🔄 Contrôler maintenant"}</button>
       </div>
 
       <div style={card}>
         <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
-          <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Demandes</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.petrol }}>Demandes</div>
           {[["actives", "À traiter / en cours"], ["envoye", "Envoyées"], ["toutes", "Toutes"]].map(([k, t]) => (
-            <button key={k} onClick={() => setFiltre(k)} style={{ ...btn(filtre === k ? "#0f2d3d" : "#f1f5f9", filtre === k ? "white" : "#0f2d3d"), padding: "4px 10px" }}>{t}</button>
+            <button key={k} onClick={() => setFiltre(k)} style={{ ...btn(filtre === k ? T.petrol : T.surface2, filtre === k ? T.paper : T.petrol), padding: "4px 10px" }}>{t}</button>
           ))}
           <div style={{ flex: 1 }} />
-          <button onClick={chargerDemandes} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "4px 10px" }}>↻ Actualiser</button>
+          <button onClick={chargerDemandes} style={{ ...btn(T.surface2, T.petrol), padding: "4px 10px" }}>↻ Actualiser</button>
         </div>
-        {!visibles.length ? <div style={{ color: "#94a3b8", fontSize: 13, padding: 10 }}>Aucune demande.</div> : (
+        {!visibles.length ? <div style={{ color: T.inkMute, fontSize: 13, padding: 10 }}>Aucune demande.</div> : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead><tr style={{ color: "#64748b", textAlign: "left" }}>
+              <thead><tr style={{ color: T.inkMute, textAlign: "left" }}>
                 <th style={{ padding: 5 }}>Commande</th><th>Pharmacie</th><th>Produits</th><th>Labo</th><th>Statut</th><th>Bon</th><th>Suivi pharmacie</th><th>Actions</th>
               </tr></thead>
               <tbody>{visibles.map(d => {
-                const [t, bg, fg] = STATUTS[d.statut] || [d.statut, "#f1f5f9", "#475569"];
+                const [t, bg, fg] = STATUTS[d.statut] || st(d.statut, "neutral");
                 return (
-                  <tr key={d.id} style={{ borderTop: "1px solid #f1f5f9", verticalAlign: "top" }}>
-                    <td style={{ padding: 5 }}>{dt(d.dateCommande)}<div style={{ fontSize: 10, color: "#64748b" }}>{d.source === "site" ? "🌐 site" : "📡 PharmaML"} · {d.reference}</div></td>
-                    <td>{d.pharmacie?.nom}<div style={{ fontSize: 10, color: "#64748b" }}>CIP {d.pharmacie?.cip || "?"}{d.saisiPar ? " · saisie Elixir" : ""}</div></td>
+                  <tr key={d.id} style={{ borderTop: "1px solid var(--line-soft)", verticalAlign: "top" }}>
+                    <td style={{ padding: 5 }}>{dt(d.dateCommande)}<div style={{ fontSize: 11, color: T.inkMute }}>{d.source === "site" ? "🌐 site" : "📡 PharmaML"} · {d.reference}</div></td>
+                    <td>{d.pharmacie?.nom}<div style={{ fontSize: 11, color: T.inkMute }}>CIP {d.pharmacie?.cip || "?"}{d.saisiPar ? " · saisie Elixir" : ""}</div></td>
                     <td>{d.lignes.map((l, i) => <div key={i}>{l.qte} × {l.produit}</div>)}
-                      <div style={{ fontSize: 10, color: "#6d28d9" }}>{[d.attestation && "attestation", d.renouvellement && "renouvellement"].filter(Boolean).join(" · ")}</div>
-                      {(d.rx || []).map(x => <button key={x.id} onClick={() => voirOrdonnance(x.id)} style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 11, padding: 0, display: "block" }}>📎 {x.name}</button>)}
+                      <div style={{ fontSize: 11, color: "#6d28d9" }}>{[d.attestation && "attestation", d.renouvellement && "renouvellement"].filter(Boolean).join(" · ")}</div>
+                      {(d.rx || []).map(x => <button key={x.id} onClick={() => voirOrdonnance(x.id)} style={{ background: "none", border: "none", color: T.teal, cursor: "pointer", fontSize: 11, padding: 0, display: "block" }}>📎 {x.name}</button>)}
                     </td>
                     <td>{cfg.labs[d.lab]?.nom || d.lab}</td>
                     <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
-                      {d.envoyeLe && <div style={{ fontSize: 10, color: "#64748b" }}>{dt(d.envoyeLe)}</div>}
-                      {(d.motif || d.erreur) && <div style={{ fontSize: 10, color: "#9a3412", maxWidth: 260 }}>{d.erreur || d.motif}</div>}
+                      {d.envoyeLe && <div style={{ fontSize: 11, color: T.inkMute }}>{dt(d.envoyeLe)}</div>}
+                      {(d.motif || d.erreur) && <div style={{ fontSize: 11, color: "#9a3412", maxWidth: 260 }}>{d.erreur || d.motif}</div>}
                     </td>
                     <td style={{ fontFamily: "monospace" }}>{d.poNom || ""}</td>
                     <td style={{ minWidth: 170 }}>
-                      {d.suivi && <div style={{ fontSize: 11, fontWeight: 800, color: COULEUR_SUIVI[d.suivi.etape] || "#475569" }}>{d.suivi.libelle}{d.suivi.date ? <span style={{ fontWeight: 500, color: "#64748b" }}> · {dt(d.suivi.date)}</span> : null}</div>}
-                      {d.suivi?.datePrevue && <div style={{ fontSize: 10, color: "#6d28d9" }}>livraison prévue le {new Date(d.suivi.datePrevue).toLocaleDateString("fr-FR")}</div>}
-                      {d.suivi?.commentaire && <div style={{ fontSize: 10, color: "#334155", maxWidth: 220 }}>« {d.suivi.commentaire} »</div>}
-                      {d.commande && <div style={{ fontSize: 10, color: d.commande.processed ? "#065f46" : d.commande.commandeTraitee ? "#64748b" : "#92400e" }}>{d.commande.processed ? `✓ envoyée à PharmaML${d.commande.syncedAt ? ` le ${dt(d.commande.syncedAt)}` : ""}` : d.commande.commandeTraitee ? "commande close sans envoi PharmaML" : "pas encore synchronisée"}</div>}
-                      {d.commande && syncStatus[d.orderId] && syncStatus[d.orderId] !== "ok" && <div style={{ fontSize: 10, color: syncStatus[d.orderId] === "pending" ? "#075985" : "#b91c1c" }}>{syncStatus[d.orderId] === "pending" ? "synchronisation en cours…" : syncStatus[d.orderId]}</div>}
+                      {d.suivi && <div style={{ fontSize: 11, fontWeight: 700, color: COULEUR_SUIVI[d.suivi.etape] || T.inkSoft }}>{d.suivi.libelle}{d.suivi.date ? <span style={{ fontWeight: 500, color: T.inkMute }}> · {dt(d.suivi.date)}</span> : null}</div>}
+                      {d.suivi?.datePrevue && <div style={{ fontSize: 11, color: "#6d28d9" }}>livraison prévue le {new Date(d.suivi.datePrevue).toLocaleDateString("fr-FR")}</div>}
+                      {d.suivi?.commentaire && <div style={{ fontSize: 11, color: T.inkSoft, maxWidth: 220 }}>« {d.suivi.commentaire} »</div>}
+                      {d.commande && <div style={{ fontSize: 11, color: d.commande.processed ? T.ok : d.commande.commandeTraitee ? T.inkMute : T.warn }}>{d.commande.processed ? `✓ envoyée à PharmaML${d.commande.syncedAt ? ` le ${dt(d.commande.syncedAt)}` : ""}` : d.commande.commandeTraitee ? "commande close sans envoi PharmaML" : "pas encore synchronisée"}</div>}
+                      {d.commande && syncStatus[d.orderId] && syncStatus[d.orderId] !== "ok" && <div style={{ fontSize: 11, color: syncStatus[d.orderId] === "pending" ? T.teal : T.danger }}>{syncStatus[d.orderId] === "pending" ? "synchronisation en cours…" : syncStatus[d.orderId]}</div>}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {d.source === "site" && <><button disabled={!!busy} onClick={() => setSuiviEdit({ demande: d, etape: etapeSuivante(d.suivi?.etape), commentaire: "", datePrevue: d.suivi?.datePrevue || "", prevenir: !!d.email })}
                         style={{ ...btn("#6d28d9"), padding: "3px 8px" }}>Suivi…</button>{" "}</>}
                       {d.commande && !d.commande.processed && !d.commande.commandeTraitee && d.commande.lignes > 0 && onSync && <><button disabled={!!busy || syncStatus[d.orderId] === "pending"}
                         onClick={() => { if (window.confirm(`Synchroniser vers PharmaML, commande n° ${d.orderId} (${d.pharmacie?.nom}) :\n${d.lignes.map(l => `  ${l.qte} × ${l.produit}`).join("\n")}\n\nSeules ces lignes (${cfg.labs[d.lab]?.nom || d.lab}) partent. À faire quand la marchandise est reçue chez Elixir : elle part en préparation et la pharmacie la voit « expédiée ».`)) { onSync(d.orderId, d.lignes.map(l => String(l.cip))); plusTard(8000); } }}
-                        style={{ ...btn("#0f2d3d"), padding: "3px 8px" }}>🔄 Synchroniser</button>{" "}</>}
-                      <button onClick={() => act("preview", { action: "preview", id: d.id }, setPreview)} style={{ ...btn("#f1f5f9", "#0f2d3d"), padding: "3px 8px" }}>Mail</button>{" "}
+                        style={{ ...btn(T.petrol), padding: "3px 8px" }}>🔄 Synchroniser</button>{" "}</>}
+                      <button onClick={() => act("preview", { action: "preview", id: d.id }, setPreview)} style={{ ...btn(T.surface2, T.petrol), padding: "3px 8px" }}>Mail</button>{" "}
                       {d.statut !== "envoye" && d.statut !== "en_cours" && (<>
                         <button disabled={!!busy} onClick={() => {
                           const forcer = d.statut === "a_verifier" || d.statut === "bloquee";
@@ -242,9 +246,9 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
                             flash?.(j.lance ? "Envoi lancé : bon, PDF et mail sont faits en arrière-plan" : "Envoi programmé au prochain passage (10 min)");
                             plusTard(12000);
                           });
-                        }} style={{ ...btn("#059669"), padding: "3px 8px" }}>Envoyer</button>{" "}
+                        }} style={{ ...btn(T.ok), padding: "3px 8px" }}>Envoyer</button>{" "}
                         {d.statut !== "ignoree" && <button disabled={!!busy} onClick={() => { const m = window.prompt("Motif (facultatif) :", ""); if (m === null) return; act("ignore", { action: "ignore", id: d.id, motif: m || undefined }, (j) => majDemande(j.demande)); }}
-                          style={{ ...btn("#f1f5f9", "#475569"), padding: "3px 8px" }}>Ignorer</button>}
+                          style={{ ...btn(T.surface2, T.inkSoft), padding: "3px 8px" }}>Ignorer</button>}
                       </>)}
                     </td>
                   </tr>);
@@ -256,12 +260,12 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
 
       {suiviEdit && (
         <div onClick={() => setSuiviEdit(null)} style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: "white", borderRadius: 14, maxWidth: 520, width: "100%", padding: 18 }}>
-            <div style={{ fontSize: 15, fontWeight: 800, color: "#0f2d3d" }}>Suivi de la demande — {suiviEdit.demande.pharmacie?.nom}</div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>Commande n° {suiviEdit.demande.orderId} · {suiviEdit.demande.lignes.map(l => `${l.qte} × ${l.produit}`).join(", ")}</div>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, maxWidth: 520, width: "100%", padding: 18 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.petrol }}>Suivi de la demande — {suiviEdit.demande.pharmacie?.nom}</div>
+            <div style={{ fontSize: 12, color: T.inkMute, marginTop: 2 }}>Commande n° {suiviEdit.demande.orderId} · {suiviEdit.demande.lignes.map(l => `${l.qte} × ${l.produit}`).join(", ")}</div>
             {(suiviEdit.demande.suiviBrut || []).length > 0 && (
-              <div style={{ fontSize: 11, color: "#475569", marginTop: 8, background: "#f8fafc", borderRadius: 8, padding: "6px 8px" }}>
-                {suiviEdit.demande.suiviBrut.map((e, i) => <div key={i}>{dt(e.at)} — {ETAPES_SUIVI.find(x => x[0] === e.etape)?.[1] || e.etape}{e.datePrevue ? ` (prévue le ${new Date(e.datePrevue).toLocaleDateString("fr-FR")})` : ""}{e.commentaire ? ` : « ${e.commentaire} »` : ""} <span style={{ color: "#94a3b8" }}>({e.par})</span></div>)}
+              <div style={{ fontSize: 11, color: T.inkSoft, marginTop: 8, background: T.paper, borderRadius: 8, padding: "6px 8px" }}>
+                {suiviEdit.demande.suiviBrut.map((e, i) => <div key={i}>{dt(e.at)} — {ETAPES_SUIVI.find(x => x[0] === e.etape)?.[1] || e.etape}{e.datePrevue ? ` (prévue le ${new Date(e.datePrevue).toLocaleDateString("fr-FR")})` : ""}{e.commentaire ? ` : « ${e.commentaire} »` : ""} <span style={{ color: T.inkMute }}>({e.par})</span></div>)}
               </div>
             )}
             <label style={{ ...lbl, marginTop: 12 }}>Étape</label>
@@ -273,7 +277,7 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
               <input type="date" style={inp} value={suiviEdit.datePrevue} onChange={e => setSuiviEdit(s => ({ ...s, datePrevue: e.target.value }))} />
             </>)}
             {suiviEdit.etape === "expediee" && suiviEdit.demande.commande && !suiviEdit.demande.commande.processed && (
-              <div style={{ fontSize: 11, color: "#b45309", marginTop: 8 }}>La commande n'est pas encore synchronisée vers PharmaML : « 🔄 Synchroniser » la fait partir en préparation (l'étape « expédiée » s'affiche alors toute seule).</div>
+              <div style={{ fontSize: 11, color: T.warn, marginTop: 8 }}>La commande n'est pas encore synchronisée vers PharmaML : « 🔄 Synchroniser » la fait partir en préparation (l'étape « expédiée » s'affiche alors toute seule).</div>
             )}
             <label style={{ ...lbl, marginTop: 10 }}>Message pour la pharmacie (facultatif, visible sur son site ; remplace le message affiché, vide = aucun message)</label>
             <textarea style={{ ...inp, minHeight: 64 }} maxLength={600} value={suiviEdit.commentaire} onChange={e => setSuiviEdit(s => ({ ...s, commentaire: e.target.value }))}
@@ -283,7 +287,7 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
               Prévenir la pharmacie par e-mail {suiviEdit.demande.email ? `(${suiviEdit.demande.email})` : "(pas d'adresse connue)"}
             </label>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 14 }}>
-              <button onClick={() => setSuiviEdit(null)} style={btn("#f1f5f9", "#475569")}>Annuler</button>
+              <button onClick={() => setSuiviEdit(null)} style={btn(T.surface2, T.inkSoft)}>Annuler</button>
               <button disabled={!!busy} onClick={() => act("suivi", { action: "suivi", id: suiviEdit.demande.id, etape: suiviEdit.etape, commentaire: suiviEdit.commentaire,
                 datePrevue: suiviEdit.etape === "acceptee" && suiviEdit.datePrevue ? suiviEdit.datePrevue : null, prevenir: suiviEdit.prevenir }, (j) => {
                   setSuiviEdit(null); chargerDemandes();
@@ -296,11 +300,11 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
 
       {preview && (
         <div onClick={() => setPreview(null)} style={{ position: "fixed", inset: 0, zIndex: 500, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-          <div onClick={e => e.stopPropagation()} style={{ background: "white", borderRadius: 14, maxWidth: 760, width: "100%", maxHeight: "86vh", overflow: "auto", padding: 18 }}>
-            <div style={{ fontSize: 12, color: "#475569" }}>À : {preview.a}{preview.cc ? ` · Cc : ${preview.cc}` : ""}</div>
-            <div style={{ fontWeight: 800, margin: "4px 0 10px" }}>{preview.sujet}</div>
-            <iframe title="Aperçu du mail" sandbox="" srcDoc={preview.corps} style={{ width: "100%", height: 460, border: "1px solid #e2e8f0", borderRadius: 8 }} />
-            <div style={{ textAlign: "right", marginTop: 8 }}><button onClick={() => setPreview(null)} style={btn("#0f2d3d")}>Fermer</button></div>
+          <div onClick={e => e.stopPropagation()} style={{ background: T.surface, borderRadius: 14, maxWidth: 760, width: "100%", maxHeight: "86vh", overflow: "auto", padding: 18 }}>
+            <div style={{ fontSize: 12, color: T.inkSoft }}>À : {preview.a}{preview.cc ? ` · Cc : ${preview.cc}` : ""}</div>
+            <div style={{ fontWeight: 700, margin: "4px 0 10px" }}>{preview.sujet}</div>
+            <iframe title="Aperçu du mail" sandbox="" srcDoc={preview.corps} style={{ width: "100%", height: 460, border: "1px solid var(--line)", borderRadius: 8 }} />
+            <div style={{ textAlign: "right", marginTop: 8 }}><button onClick={() => setPreview(null)} style={btn(T.petrol)}>Fermer</button></div>
           </div>
         </div>
       )}

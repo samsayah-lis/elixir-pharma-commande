@@ -1,9 +1,9 @@
 import React, { useState, useRef, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { T, adm } from "../theme.js";
 
-const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
-const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
+// atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
+const LS=adm.label, IS=adm.input, PB=adm.btn;
 
 const EMPTY_FORM = { name:"", cip:"", pv:"", pct:"", remise_eur:"", pn:"", section:"otc", hasPalier:false, palier:"", note:"" };
 
@@ -12,14 +12,14 @@ const fmt = (n) => n != null ? parseFloat(n).toFixed(2).replace(".", ",") + " �
 // Affiche un CIP avec bouton « copier » (identique à AdminPanel/AdminEdit)
 function CipCopy({ cip }) {
   const [copied, setCopied] = useState(false);
-  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>—</span>;
+  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkMute }}>—</span>;
   const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
   return (
     <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
-      <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+      <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkMute }}>{cip}</span>
       <button onClick={copy} title="Copier CIP" style={{
-        background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
-        padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+        background: copied ? T.okBg : T.surface2, border:"none", borderRadius:4,
+        padding:"1px 5px", cursor:"pointer", fontSize:11, color: copied ? T.ok : T.inkMute,
         fontWeight:700, lineHeight:"14px", transition:"all 0.2s"
       }}>{copied ? "✓" : "⎘"}</button>
     </span>
@@ -35,8 +35,8 @@ function LinkCopy({ cip }) {
   const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }); };
   return (
     <button onClick={copy} title={`Copier le lien produit :\n${link}`} style={{
-      background: copied ? "#dcfce7" : "#eef2ff", border:"none", borderRadius:4,
-      padding:"1px 6px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#4f46e5",
+      background: copied ? T.okBg : T.mint, border:"none", borderRadius:4,
+      padding:"1px 6px", cursor:"pointer", fontSize:11, color: copied ? T.ok : T.teal,
       fontWeight:700, lineHeight:"14px", whiteSpace:"nowrap"
     }}>{copied ? "✓ Lien copié" : "🔗 Lien"}</button>
   );
@@ -222,54 +222,54 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
   return (
           <>
             {/* ── EXCEL IMPORT ── */}
-            <div style={{background:"#fafbfc",border:"1px solid #e8eaed",borderRadius:14,padding:"16px",marginBottom:24}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
+            <div style={{background:T.paper,border:"1px solid var(--line)",borderRadius:14,padding:"16px",marginBottom:24}}>
+              <div style={{fontWeight:700,fontSize:13,color:T.petrol,marginBottom:14,display:"flex",alignItems:"center",gap:8}}>
                 📥 Import depuis Excel
-                <span style={{fontSize:10,fontWeight:400,color:"#888",background:"#f0f2f5",borderRadius:6,padding:"2px 8px"}}>CIP · Nom · Prix catalogue · Remise · Palier</span>
+                <span style={{fontSize:11,fontWeight:400,color:T.inkMute,background:T.surface2,borderRadius:6,padding:"2px 8px"}}>CIP · Nom · Prix catalogue · Remise · Palier</span>
               </div>
               <div style={{display:"flex",gap:10,marginBottom:12}}>
                 <div style={{flex:1}}>
-                  <label style={{...LS,fontSize:10}}>Section de destination</label>
+                  <label style={{...LS,fontSize:11}}>Section de destination</label>
                   <select value={importSection} onChange={e=>setImportSection(e.target.value)} style={{...IS,fontSize:12,padding:"7px 10px"}}>
                     {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
                   </select>
                 </div>
                 <div style={{flex:1}}>
-                  <label style={{...LS,fontSize:10}}>Fichier Excel (.xlsx, .xls, .csv)</label>
-                  <label style={{display:"flex",alignItems:"center",gap:8,background:"white",border:"1.5px dashed #cbd5e0",borderRadius:10,padding:"7px 12px",cursor:"pointer"}}>
+                  <label style={{...LS,fontSize:11}}>Fichier Excel (.xlsx, .xls, .csv)</label>
+                  <label style={{display:"flex",alignItems:"center",gap:8,background:T.surface,border:"1.5px dashed var(--line)",borderRadius:10,padding:"7px 12px",cursor:"pointer"}}>
                     <span style={{fontSize:16}}>📂</span>
-                    <span style={{fontSize:12,color:"#555"}}>Choisir un fichier</span>
+                    <span style={{fontSize:12,color:T.inkSoft}}>Choisir un fichier</span>
                     <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" onChange={e=>handleImportFile(e.target.files[0])} style={{display:"none"}}/>
                   </label>
                 </div>
               </div>
 
-              {importError&&<div style={{background:"#fff5f5",border:"1px solid #fed7d7",borderRadius:8,padding:"8px 12px",fontSize:12,color:"#c53030",marginBottom:10}}>⚠️ {importError}</div>}
+              {importError&&<div style={{background:T.dangerBg,border:"1px solid rgba(185,28,28,.28)",borderRadius:8,padding:"8px 12px",fontSize:12,color:T.danger,marginBottom:10}}>⚠️ {importError}</div>}
 
               {importPreview&&(
                 <div>
-                  <div style={{fontSize:12,color:"#555",marginBottom:8,fontWeight:600}}>
+                  <div style={{fontSize:12,color:T.inkSoft,marginBottom:8,fontWeight:600}}>
                     Aperçu : {importPreview.filter(r=>r._valid).length} valide(s) / {importPreview.length} ligne(s)
-                    {importPreview.some(r=>!r._valid)&&<span style={{color:"#e07b39",marginLeft:6}}>— {importPreview.filter(r=>!r._valid).length} ignorée(s) (nom ou prix manquant)</span>}
+                    {importPreview.some(r=>!r._valid)&&<span style={{color:T.warn,marginLeft:6}}>— {importPreview.filter(r=>!r._valid).length} ignorée(s) (nom ou prix manquant)</span>}
                   </div>
-                  <div style={{maxHeight:200,overflowY:"auto",border:"1px solid #e8eaed",borderRadius:10,marginBottom:12}}>
+                  <div style={{maxHeight:200,overflowY:"auto",border:"1px solid var(--line)",borderRadius:10,marginBottom:12}}>
                     <table style={{width:"100%",borderCollapse:"collapse",fontSize:11}}>
                       <thead>
-                        <tr style={{background:"#f8fafc",position:"sticky",top:0}}>
+                        <tr style={{background:T.paper,position:"sticky",top:0}}>
                           {["CIP","Désignation","Prix cat.","Remise","Prix net","Palier",""].map(h=>(
-                            <th key={h} style={{padding:"6px 8px",textAlign:"left",fontWeight:700,color:"#555",borderBottom:"1px solid #e8eaed"}}>{h}</th>
+                            <th key={h} style={{padding:"6px 8px",textAlign:"left",fontWeight:700,color:T.inkSoft,borderBottom:"1px solid var(--line)"}}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {importPreview.map((r,i)=>(
-                          <tr key={i} style={{background:r._valid?"white":"#fff5f5",borderBottom:"1px solid #f5f5f5"}}>
+                          <tr key={i} style={{background:r._valid?T.surface:T.dangerBg,borderBottom:"1px solid var(--line-soft)"}}>
                             <td style={{padding:"5px 8px"}}><CipCopy cip={r.cip||""}/></td>
-                            <td style={{padding:"5px 8px",fontWeight:600,color:r._valid?"#0f2d3d":"#c53030"}}>{r.name||<em>manquant</em>}</td>
+                            <td style={{padding:"5px 8px",fontWeight:600,color:r._valid?T.petrol:T.danger}}>{r.name||<em>manquant</em>}</td>
                             <td style={{padding:"5px 8px",textAlign:"right"}}>{r.pv!=null?r.pv.toFixed(2)+" €":"—"}</td>
                             <td style={{padding:"5px 8px",textAlign:"right",color:"#7c3aed"}}>{r.pct||"—"}</td>
-                            <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:r.pn!=null?"#059669":"#c53030"}}>{r.pn!=null?r.pn.toFixed(2)+" €":"—"}</td>
-                            <td style={{padding:"5px 8px",textAlign:"right",color:"#888"}}>{r.palier||"—"}</td>
+                            <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:r.pn!=null?T.ok:T.danger}}>{r.pn!=null?r.pn.toFixed(2)+" €":"—"}</td>
+                            <td style={{padding:"5px 8px",textAlign:"right",color:T.inkMute}}>{r.palier||"—"}</td>
                             <td style={{padding:"5px 8px"}}>{r._valid?"✅":"⚠️"}</td>
                           </tr>
                         ))}
@@ -280,7 +280,7 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                     <button onClick={confirmImport} style={{...PB,flex:2,padding:"9px",fontSize:13}}>
                       ✅ Importer {importPreview.filter(r=>r._valid).length} produit(s) → {allSectionsList.find(s=>s.key===importSection)?.label}
                     </button>
-                    <button onClick={()=>{setImportPreview(null);if(fileInputRef.current)fileInputRef.current.value="";}} style={{flex:1,background:"#e5e7eb",border:"none",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#374151"}}>
+                    <button onClick={()=>{setImportPreview(null);if(fileInputRef.current)fileInputRef.current.value="";}} style={{flex:1,background:T.sand,border:"none",borderRadius:10,padding:"9px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.inkSoft}}>
                       Annuler
                     </button>
                   </div>
@@ -289,10 +289,10 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
             </div>
 
             {/* ── Recherche dans le stock Odoo ── */}
-            <div style={{background:"white",border:"1px solid #e8eaed",borderRadius:14,padding:"16px 20px",marginBottom:24}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
+            <div style={{background:T.surface,border:"1px solid var(--line)",borderRadius:14,padding:"16px 20px",marginBottom:24}}>
+              <div style={{fontWeight:700,fontSize:13,color:T.petrol,marginBottom:10,display:"flex",alignItems:"center",gap:8}}>
                 🔍 Rechercher dans le stock Odoo
-                <span style={{fontSize:10,fontWeight:400,color:"#888",background:"#f0f2f5",borderRadius:6,padding:"2px 8px"}}>Pré-remplit le formulaire</span>
+                <span style={{fontSize:11,fontWeight:400,color:T.inkMute,background:T.surface2,borderRadius:6,padding:"2px 8px"}}>Pré-remplit le formulaire</span>
               </div>
               <div style={{position:"relative"}}>
                 <input value={catSearch} onChange={e=>searchCatalog(e.target.value)}
@@ -300,61 +300,61 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                   style={{...IS,paddingLeft:36,fontSize:14}} />
                 <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:14,opacity:0.4}}>🔍</span>
                 {catSearch && <button onClick={()=>{setCatSearch("");setCatResults([]);}}
-                  style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#bbb"}}>✕</button>}
+                  style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",background:"none",border:"none",cursor:"pointer",fontSize:16,color:T.inkFaint}}>✕</button>}
               </div>
 
-              {catSearching && <div style={{fontSize:11,color:"#3b82f6",marginTop:8}}>Recherche en cours...</div>}
+              {catSearching && <div style={{fontSize:11,color:T.teal,marginTop:8}}>Recherche en cours...</div>}
 
               {catResults.length > 0 && !catPendingProduct && (
-                <div style={{marginTop:10,border:"1px solid #e8eaed",borderRadius:10,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
+                <div style={{marginTop:10,border:"1px solid var(--line)",borderRadius:10,overflow:"hidden",maxHeight:320,overflowY:"auto"}}>
                   {catResults.map(p => (
                     <button key={p.cip} onClick={()=>selectFromCatalog(p)}
-                      style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:"10px 14px",border:"none",borderBottom:"1px solid #f0f2f5",
-                        background:"white",cursor:"pointer",textAlign:"left",transition:"background 0.1s"}}
-                      onMouseEnter={e=>e.currentTarget.style.background="#f0f9ff"}
-                      onMouseLeave={e=>e.currentTarget.style.background="white"}>
+                      style={{display:"flex",alignItems:"center",gap:12,width:"100%",padding:"10px 14px",border:"none",borderBottom:"1px solid var(--line-soft)",
+                        background:T.surface,cursor:"pointer",textAlign:"left",transition:"background 0.1s"}}
+                      onMouseEnter={e=>e.currentTarget.style.background=T.surface2}
+                      onMouseLeave={e=>e.currentTarget.style.background=T.surface}>
                       {/* Stock badge */}
-                      <span style={{fontSize:9,fontWeight:700,borderRadius:4,padding:"2px 6px",
-                        background:p.in_stock?"#d1fae5":"#fee2e2",color:p.in_stock?"#065f46":"#991b1b"}}>
+                      <span style={{fontSize:11,fontWeight:700,borderRadius:4,padding:"2px 6px",
+                        background:p.in_stock?T.okBg:T.dangerBg,color:p.in_stock?T.ok:T.danger}}>
                         {p.in_stock?"EN STOCK":"RUPTURE"}
                       </span>
                       {/* Info */}
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontWeight:600,fontSize:12,color:"#0f2d3d",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
-                        <div style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>CIP {p.cip}</div>
+                        <div style={{fontWeight:600,fontSize:12,color:T.petrol,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.name}</div>
+                        <div style={{fontSize:11,color:T.inkMute,fontFamily:"monospace"}}>CIP {p.cip}</div>
                       </div>
                       {/* Prix */}
                       <div style={{textAlign:"right",flexShrink:0}}>
                         {p.discounted_price && p.discount_pct > 0 ? (<>
-                          <div style={{fontSize:10,color:"#aaa",textDecoration:"line-through"}}>{parseFloat(p.list_price).toFixed(2)} €</div>
-                          <div style={{fontSize:13,fontWeight:700,color:"#059669"}}>{parseFloat(p.discounted_price).toFixed(2)} €</div>
-                          <div style={{fontSize:9,color:"#10b981",fontWeight:600}}>-{p.discount_pct}%</div>
+                          <div style={{fontSize:11,color:T.inkMute,textDecoration:"line-through"}}>{parseFloat(p.list_price).toFixed(2)} €</div>
+                          <div style={{fontSize:13,fontWeight:700,color:T.ok}}>{parseFloat(p.discounted_price).toFixed(2)} €</div>
+                          <div style={{fontSize:11,color:T.ok,fontWeight:600}}>-{p.discount_pct}%</div>
                         </>) : (
-                          <div style={{fontSize:13,fontWeight:700,color:"#0f2d3d"}}>{parseFloat(p.list_price).toFixed(2)} €</div>
+                          <div style={{fontSize:13,fontWeight:700,color:T.petrol}}>{parseFloat(p.list_price).toFixed(2)} €</div>
                         )}
                       </div>
                       {/* Arrow */}
-                      <span style={{color:"#ccc",fontSize:16}}>→</span>
+                      <span style={{color:T.inkFaint,fontSize:16}}>→</span>
                     </button>
                   ))}
                 </div>
               )}
 
               {catSearch.length >= 2 && !catSearching && catResults.length === 0 && !catPendingProduct && (
-                <div style={{fontSize:11,color:"#aaa",marginTop:8}}>Aucun résultat. Vous pouvez saisir manuellement ci-dessous.</div>
+                <div style={{fontSize:11,color:T.inkMute,marginTop:8}}>Aucun résultat. Vous pouvez saisir manuellement ci-dessous.</div>
               )}
 
               {/* Section picker after product selection */}
               {catPendingProduct && (
-                <div style={{marginTop:12,background:"#f0f9ff",border:"2px solid #3b82f6",borderRadius:12,padding:"16px 20px",animation:"fadeIn 0.2s"}}>
+                <div style={{marginTop:12,background:T.mint,border:"2px solid var(--teal)",borderRadius:12,padding:"16px 20px",animation:"fadeIn 0.2s"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
                     <div>
-                      <div style={{fontSize:11,color:"#3b82f6",fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>📌 Choisissez la section de destination</div>
-                      <div style={{fontSize:14,fontWeight:700,color:"#0f2d3d",marginTop:4}}>{catPendingProduct.name}</div>
-                      <div style={{fontSize:11,color:"#888",fontFamily:"monospace"}}>CIP {catPendingProduct.cip} · {catPendingProduct.list_price ? parseFloat(catPendingProduct.list_price).toFixed(2) + " €" : ""}</div>
+                      <div style={{fontSize:11,color:T.teal,fontWeight:700,textTransform:"uppercase",letterSpacing:0.5}}>📌 Choisissez la section de destination</div>
+                      <div style={{fontSize:14,fontWeight:700,color:T.petrol,marginTop:4}}>{catPendingProduct.name}</div>
+                      <div style={{fontSize:11,color:T.inkMute,fontFamily:"monospace"}}>CIP {catPendingProduct.cip} · {catPendingProduct.list_price ? parseFloat(catPendingProduct.list_price).toFixed(2) + " €" : ""}</div>
                     </div>
                     <button onClick={()=>setCatPendingProduct(null)}
-                      style={{background:"#f0f2f5",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:"#888"}}>✕</button>
+                      style={{background:T.surface2,border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,color:T.inkMute}}>✕</button>
                   </div>
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill, minmax(180px, 1fr))",gap:8}}>
                     {allSectionsList.map(s => (
@@ -363,12 +363,12 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                           display:"flex",alignItems:"center",gap:8,
                           padding:"10px 14px",borderRadius:10,fontSize:12,fontWeight:600,
                           cursor:"pointer",transition:"all 0.15s",textAlign:"left",
-                          background: form.section === s.key ? "#dbeafe" : "white",
-                          border: form.section === s.key ? "2px solid #3b82f6" : "1px solid #e2e8f0",
-                          color:"#0f2d3d",
+                          background: form.section === s.key ? T.mint : T.surface,
+                          border: form.section === s.key ? "2px solid var(--teal)" : "1px solid var(--line)",
+                          color:T.petrol,
                         }}
-                        onMouseEnter={e=>{e.currentTarget.style.background="#eff6ff";e.currentTarget.style.borderColor="#93c5fd"}}
-                        onMouseLeave={e=>{e.currentTarget.style.background=form.section===s.key?"#dbeafe":"white";e.currentTarget.style.borderColor=form.section===s.key?"#3b82f6":"#e2e8f0"}}>
+                        onMouseEnter={e=>{e.currentTarget.style.background=T.surface2;e.currentTarget.style.borderColor=T.mint2}}
+                        onMouseLeave={e=>{e.currentTarget.style.background=form.section===s.key?T.mint:T.surface;e.currentTarget.style.borderColor=form.section===s.key?T.teal:T.line}}>
                         <span style={{fontSize:16}}>{s.label.split(" ")[0]}</span>
                         <span>{s.label.replace(/^[^\s]+\s/,"")}</span>
                       </button>
@@ -380,9 +380,9 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
 
             {/* ── Séparateur ── */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:20}}>
-              <div style={{flex:1,height:1,background:"#e8eaed"}}/>
-              <span style={{fontSize:11,color:"#aaa",fontWeight:600}}>SAISIE MANUELLE</span>
-              <div style={{flex:1,height:1,background:"#e8eaed"}}/>
+              <div style={{flex:1,height:1,background:T.line}}/>
+              <span style={{fontSize:11,color:T.inkMute,fontWeight:600}}>SAISIE MANUELLE</span>
+              <div style={{flex:1,height:1,background:T.line}}/>
             </div>
 
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14}}>
@@ -398,33 +398,33 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                   placeholder="3400930000000" style={IS}/>
                 {form.cip && medipimLookup[form.cip] && (() => {
                   const m = medipimLookup[form.cip];
-                  if (m.loading) return <div style={{fontSize:11,color:"#3b82f6",marginTop:4}}>🔍 Recherche Medipim...</div>;
-                  if (m.error) return <div style={{fontSize:11,color:"#dc2626",marginTop:4}}>⚠️ Medipim : {m.error}</div>;
+                  if (m.loading) return <div style={{fontSize:11,color:T.teal,marginTop:4}}>🔍 Recherche Medipim...</div>;
+                  if (m.error) return <div style={{fontSize:11,color:T.danger,marginTop:4}}>⚠️ Medipim : {m.error}</div>;
                   return (
-                    <div style={{marginTop:8,padding:"10px 12px",background:"#f0f9ff",border:"1px solid #bae6fd",borderRadius:8,display:"flex",gap:10,alignItems:"center"}}>
-                      {m.image_url && <img src={m.image_url} alt="" style={{width:48,height:48,objectFit:"contain",borderRadius:6,background:"white",border:"1px solid #e2e8f0"}}/>}
+                    <div style={{marginTop:8,padding:"10px 12px",background:T.mint,border:"1px solid var(--mint-2)",borderRadius:8,display:"flex",gap:10,alignItems:"center"}}>
+                      {m.image_url && <img src={m.image_url} alt="" style={{width:48,height:48,objectFit:"contain",borderRadius:6,background:T.surface,border:"1px solid var(--line)"}}/>}
                       <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:11,fontWeight:700,color:"#0369a1"}}>✅ Trouvé dans Medipim</div>
-                        {m.brand && <div style={{fontSize:11,color:"#666"}}>{m.brand}</div>}
-                        {m.name && <div style={{fontSize:12,fontWeight:600,color:"#1a2a3a",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>}
+                        <div style={{fontSize:11,fontWeight:700,color:T.teal}}>✅ Trouvé dans Medipim</div>
+                        {m.brand && <div style={{fontSize:11,color:T.inkSoft}}>{m.brand}</div>}
+                        {m.name && <div style={{fontSize:12,fontWeight:600,color:T.ink,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.name}</div>}
                       </div>
                       <button onClick={()=>{
                         if(m.name && !form.name) setForm(f=>({...f, name: m.name}));
                         if(m.image_url) setForm(f=>({...f, _medipim_image: m.image_url}));
-                      }} style={{fontSize:11,background:"#0ea5e9",color:"white",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:700}}>
+                      }} style={{fontSize:11,background:T.teal,color:"white",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:700}}>
                         ⬇️ Importer
                       </button>
                     </div>
                   );
                 })()}
                 {form._medipim_image && (
-                  <div style={{marginTop:6,fontSize:11,color:"#059669"}}>📸 Photo Medipim prête à être enregistrée</div>
+                  <div style={{marginTop:6,fontSize:11,color:T.ok}}>📸 Photo Medipim prête à être enregistrée</div>
                 )}
               </div>
               <div>
-                <label style={{...LS, color: "#3b82f6", fontWeight: 800}}>📌 Section de destination *</label>
+                <label style={{...LS, color: T.teal, fontWeight: 700}}>📌 Section de destination *</label>
                 <select value={form.section} onChange={e=>handleField("section",e.target.value)}
-                  style={{...IS, borderColor: "#3b82f6", borderWidth: 2, background: "#f0f9ff", fontWeight: 700}}>
+                  style={{...IS, borderColor: T.teal, borderWidth: 2, background: T.mint, fontWeight: 700}}>
                   {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
                 </select>
               </div>
@@ -448,8 +448,8 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                 <label style={LS}>Prix remisé (€) – calculé auto *</label>
                 <div style={{display:"flex",gap:10,alignItems:"center"}}>
                   <input type="number" step="0.01" value={form.pn} onChange={e=>handleField("pn",e.target.value)} placeholder="4.72"
-                    style={{...IS,flex:1,background:form.pv&&form.pct?"#f0fdf4":"white",fontWeight:700,color:"#059669"}}/>
-                  {form.pv&&form.pct&&<span style={{fontSize:12,color:"#059669",fontWeight:600,whiteSpace:"nowrap"}}>= {form.pv} × {(1-parseFloat(form.pct)/100).toFixed(3)}</span>}
+                    style={{...IS,flex:1,background:form.pv&&form.pct?T.okBg:T.surface,fontWeight:700,color:T.ok}}/>
+                  {form.pv&&form.pct&&<span style={{fontSize:12,color:T.ok,fontWeight:600,whiteSpace:"nowrap"}}>= {form.pv} × {(1-parseFloat(form.pct)/100).toFixed(3)}</span>}
                 </div>
               </div>
               <div style={{gridColumn:"1 / -1"}}>
@@ -458,9 +458,9 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                   {[{v:false,l:"Non"},{v:true,l:"Oui"}].map(opt=>(
                     <button key={opt.l} onClick={()=>handleField("hasPalier",opt.v)} style={{
                       flex:1,padding:"9px",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer",
-                      border:form.hasPalier===opt.v?"2px solid #0f2d3d":"2px solid #e2e8f0",
-                      background:form.hasPalier===opt.v?"#0f2d3d":"white",
-                      color:form.hasPalier===opt.v?"white":"#555",
+                      border:form.hasPalier===opt.v?"2px solid var(--petrol)":"2px solid var(--line)",
+                      background:form.hasPalier===opt.v?T.petrol:T.surface,
+                      color:form.hasPalier===opt.v?"white":T.inkSoft,
                     }}>{opt.l}</button>
                   ))}
                 </div>
@@ -476,15 +476,15 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
             </div>
             <button onClick={handleAdd} style={{...PB,marginTop:20}}>➕ Ajouter ce produit</button>
             {products.length>0&&(
-              <div style={{marginTop:24,borderTop:"1px solid #f0f2f5",paddingTop:20}}>
-                <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",marginBottom:10}}>Produits ajoutés ({products.length})</div>
+              <div style={{marginTop:24,borderTop:"1px solid var(--line-soft)",paddingTop:20}}>
+                <div style={{fontWeight:700,fontSize:13,color:T.petrol,marginBottom:10}}>Produits ajoutés ({products.length})</div>
                 {products.map(p=>(
-                  <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",background:"#fafbfc",borderRadius:10,padding:"10px 14px",marginBottom:8,border:"1px solid #f0f2f5"}}>
+                  <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",background:T.paper,borderRadius:10,padding:"10px 14px",marginBottom:8,border:"1px solid var(--line-soft)"}}>
                     <div>
-                      <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d"}}>{p.name}</div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>{allSectionsList.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}</div>
+                      <div style={{fontWeight:700,fontSize:13,color:T.petrol}}>{p.name}</div>
+                      <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>{allSectionsList.find(s=>s.key===p.section)?.label} · {fmt(p.pn)}{p.palier?` · ×${p.palier}`:""}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}</div>
                     </div>
-                    <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:16}}>🗑</button>
+                    <button onClick={()=>handleDelete(p.cip||p._key)} style={{background:"none",border:"none",cursor:"pointer",color:T.danger,fontSize:16}}>🗑</button>
                   </div>
                 ))}
               </div>

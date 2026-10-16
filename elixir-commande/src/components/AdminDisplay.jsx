@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { T } from "../theme.js";
 
 export default function AdminDisplay({ displayConfig, saveDisplayConfig, orderedKeys, allMeta, allSectionKeys, hiddenTabs, defaultTab, syncConfigToSupabase, flash, setTab }) {
   // Local state
@@ -55,25 +56,25 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
 
   return (
           <div>
-            <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d",marginBottom:8}}>Affichage global</div>
-            <div style={{fontSize:12,color:"#888",marginBottom:16}}>Personnalisez l'ordre, la visibilité et le comportement des onglets du catalogue. Les modifications sont appliquées instantanément.</div>
+            <div style={{fontWeight:700,fontSize:18,color:T.petrol,marginBottom:8}}>Affichage global</div>
+            <div style={{fontSize:12,color:T.inkMute,marginBottom:16}}>Personnalisez l'ordre, la visibilité et le comportement des onglets du catalogue. Les modifications sont appliquées instantanément.</div>
 
             {/* Sync config button */}
-            <div style={{background:"#eff6ff",borderRadius:12,padding:"12px 16px",marginBottom:20,border:"1px solid #bfdbfe",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+            <div style={{background:T.mint,borderRadius:12,padding:"12px 16px",marginBottom:20,border:"1px solid var(--mint-2)",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
               <div>
-                <div style={{fontSize:12,fontWeight:700,color:"#1e40af"}}>📡 Synchronisation config → clients</div>
-                <div style={{fontSize:11,color:"#3b82f6",marginTop:2}}>Compare votre config (onglets, promos, sections) à celle que voient les pharmacies ; en cas d'écart, un bandeau en haut permet de publier la vôtre.</div>
+                <div style={{fontSize:12,fontWeight:700,color:T.teal}}>📡 Synchronisation config → clients</div>
+                <div style={{fontSize:11,color:T.teal,marginTop:2}}>Compare votre config (onglets, promos, sections) à celle que voient les pharmacies ; en cas d'écart, un bandeau en haut permet de publier la vôtre.</div>
               </div>
               <button onClick={() => syncConfigToSupabase()}
-                style={{background:"#2563eb",color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                style={{background:T.teal,color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                 Synchroniser maintenant
               </button>
             </div>
 
             {/* Ordre + visibilité des onglets */}
-            <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
-              <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:4}}>Ordre et visibilité des onglets</div>
-              <div style={{fontSize:11,color:"#aaa",marginBottom:16}}>Glissez-déposez pour réorganiser · Cliquez sur l'œil pour masquer/afficher · L'étoile définit l'onglet par défaut</div>
+            <div style={{background:T.surface,borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid var(--line)"}}>
+              <div style={{fontWeight:700,fontSize:15,color:T.petrol,marginBottom:4}}>Ordre et visibilité des onglets</div>
+              <div style={{fontSize:11,color:T.inkMute,marginBottom:16}}>Glissez-déposez pour réorganiser · Cliquez sur l'œil pour masquer/afficher · L'étoile définit l'onglet par défaut</div>
 
               <div style={{display:"flex",flexDirection:"column",gap:4}}>
                 {orderedKeys.map((key, idx) => {
@@ -102,25 +103,25 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                       style={{
                         display:"flex", alignItems:"center", gap:12,
                         padding:"10px 14px", borderRadius:10,
-                        background: isDragging ? "#dbeafe" : isHidden ? "#fafafa" : "white",
-                        border: isDragging ? "2px dashed #3b82f6" : isHidden ? "1px solid #eee" : "1px solid #e2e8f0",
+                        background: isDragging ? T.mint : isHidden ? T.paper : T.surface,
+                        border: isDragging ? "2px dashed var(--teal)" : isHidden ? "1px solid var(--line-soft)" : "1px solid var(--line)",
                         opacity: isHidden ? 0.5 : 1,
                         cursor:"grab", transition:"all 0.15s",
                       }}
                     >
                       {/* Drag handle */}
-                      <span style={{fontSize:14,color:"#ccc",cursor:"grab",userSelect:"none"}}>⣿</span>
+                      <span style={{fontSize:14,color:T.inkFaint,cursor:"grab",userSelect:"none"}}>⣿</span>
 
                       {/* Position */}
-                      <span style={{fontSize:10,color:"#bbb",fontWeight:700,minWidth:18,textAlign:"center"}}>{idx+1}</span>
+                      <span style={{fontSize:11,color:T.inkFaint,fontWeight:700,minWidth:18,textAlign:"center"}}>{idx+1}</span>
 
                       {/* Editable Icon */}
                       {editingIcon === key ? (
                         <div style={{display:"flex",gap:2,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                           <input value={iconInput} onChange={e=>setIconInput(e.target.value)}
                             onKeyDown={e=>{ if(e.key==="Enter") saveIcon(key); if(e.key==="Escape") setEditingIcon(null); }}
-                            autoFocus style={{width:36,textAlign:"center",border:"1.5px solid #3b82f6",borderRadius:6,padding:"2px",fontSize:16,outline:"none"}} />
-                          <button onClick={e=>{e.stopPropagation();saveIcon(key);}} style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"2px 5px",fontSize:9,cursor:"pointer"}}>✓</button>
+                            autoFocus style={{width:36,textAlign:"center",border:"1.5px solid var(--teal)",borderRadius:6,padding:"2px",fontSize:16,outline:"none"}} />
+                          <button onClick={e=>{e.stopPropagation();saveIcon(key);}} style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"2px 5px",fontSize:11,cursor:"pointer"}}>✓</button>
                         </div>
                       ) : (
                         <span style={{fontSize:18,width:28,textAlign:"center",cursor:"pointer"}} title="Cliquer pour changer l'icône"
@@ -137,17 +138,17 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                           <div style={{display:"flex",gap:4,alignItems:"center"}} onClick={e=>e.stopPropagation()}>
                             <input value={labelInput} onChange={e=>setLabelInput(e.target.value)}
                               onKeyDown={e=>{ if(e.key==="Enter") saveLabel(key); if(e.key==="Escape") setEditingLabel(null); }}
-                              autoFocus style={{flex:1,border:"1.5px solid #3b82f6",borderRadius:6,padding:"3px 8px",fontSize:13,fontWeight:600,outline:"none",fontFamily:"inherit"}} />
-                            <button onClick={e=>{e.stopPropagation();saveLabel(key);}} style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:10,cursor:"pointer",fontWeight:700}}>✓</button>
-                            <button onClick={e=>{e.stopPropagation();setEditingLabel(null);}} style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:12}}>✕</button>
+                              autoFocus style={{flex:1,border:"1.5px solid var(--teal)",borderRadius:6,padding:"3px 8px",fontSize:13,fontWeight:600,outline:"none",fontFamily:"inherit"}} />
+                            <button onClick={e=>{e.stopPropagation();saveLabel(key);}} style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
+                            <button onClick={e=>{e.stopPropagation();setEditingLabel(null);}} style={{background:"none",border:"none",cursor:"pointer",color:T.inkMute,fontSize:12}}>✕</button>
                           </div>
                         ) : (
-                          <div style={{fontWeight:600,fontSize:13,color:isHidden?"#bbb":"#0f2d3d",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
+                          <div style={{fontWeight:600,fontSize:13,color:isHidden?T.inkFaint:T.petrol,cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
                             onClick={e=>{e.stopPropagation();setEditingLabel(key);setLabelInput(meta.label||"");}}>
                             <span>{meta.label}</span>
-                            <span style={{fontSize:9,opacity:0.4}}>✏️</span>
-                            {isCustom && <span style={{fontSize:8,background:"#f0fdf4",color:"#059669",borderRadius:4,padding:"1px 5px",fontWeight:700}}>CUSTOM</span>}
-                            {isPromo && <span style={{fontSize:8,background:"#faf5ff",color:"#7c3aed",borderRadius:4,padding:"1px 5px",fontWeight:700}}>PROMO</span>}
+                            <span style={{fontSize:11,opacity:0.4}}>✏️</span>
+                            {isCustom && <span style={{fontSize:11,background:T.okBg,color:T.ok,borderRadius:4,padding:"1px 5px",fontWeight:700}}>CUSTOM</span>}
+                            {isPromo && <span style={{fontSize:11,background:"#faf5ff",color:"#7c3aed",borderRadius:4,padding:"1px 5px",fontWeight:700}}>PROMO</span>}
                           </div>
                         )}
                         {editingSubtitle === key ? (
@@ -155,24 +156,24 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                             <input value={subtitleInput} onChange={e=>setSubtitleInput(e.target.value)}
                               onKeyDown={e=>{ if(e.key==="Enter") saveSubtitle(key); if(e.key==="Escape") setEditingSubtitle(null); }}
                               autoFocus placeholder="Sous-titre de la section..."
-                              style={{flex:1,border:"1.5px solid #3b82f6",borderRadius:6,padding:"3px 8px",fontSize:11,outline:"none",fontFamily:"inherit"}} />
+                              style={{flex:1,border:"1.5px solid var(--teal)",borderRadius:6,padding:"3px 8px",fontSize:11,outline:"none",fontFamily:"inherit"}} />
                             <button onClick={(e)=>{e.stopPropagation();saveSubtitle(key);}}
-                              style={{background:"#059669",color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:10,cursor:"pointer",fontWeight:700}}>✓</button>
+                              style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
                             <button onClick={(e)=>{e.stopPropagation();setEditingSubtitle(null);}}
-                              style={{background:"none",border:"none",cursor:"pointer",color:"#aaa",fontSize:12}}>✕</button>
+                              style={{background:"none",border:"none",cursor:"pointer",color:T.inkMute,fontSize:12}}>✕</button>
                           </div>
                         ) : (
-                          <div style={{fontSize:10,color: (displayConfig.subtitles?.[key] != null) ? "#3b82f6" : "#aaa",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
+                          <div style={{fontSize:11,color: (displayConfig.subtitles?.[key] != null) ? T.teal : T.inkMute,marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",cursor:"pointer",display:"flex",alignItems:"center",gap:4}}
                             onClick={(e)=>{e.stopPropagation();setEditingSubtitle(key);setSubtitleInput(displayConfig.subtitles?.[key] ?? meta.subtitle ?? "");}}>
                             <span>{displayConfig.subtitles?.[key] ?? meta.subtitle ?? "Aucun sous-titre"}</span>
-                            <span style={{fontSize:9,opacity:0.5}}>✏️</span>
+                            <span style={{fontSize:11,opacity:0.5}}>✏️</span>
                           </div>
                         )}
                       </div>
 
                       {/* Special badges */}
-                      {meta.specialView && <span style={{fontSize:9,background:"#eff6ff",color:"#3b82f6",borderRadius:4,padding:"2px 6px",fontWeight:600}}>ODOO</span>}
-                      {meta.restrictedTo && <span style={{fontSize:9,background:"#fef3c7",color:"#92400e",borderRadius:4,padding:"2px 6px",fontWeight:600}}>GROUPEMENT</span>}
+                      {meta.specialView && <span style={{fontSize:11,background:T.mint,color:T.teal,borderRadius:4,padding:"2px 6px",fontWeight:600}}>ODOO</span>}
+                      {meta.restrictedTo && <span style={{fontSize:11,background:T.warnBg,color:T.warn,borderRadius:4,padding:"2px 6px",fontWeight:600}}>GROUPEMENT</span>}
 
                       {/* Default star */}
                       <button
@@ -187,7 +188,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleTabVisibility(key); }}
                         title={isHidden ? "Afficher cet onglet" : "Masquer cet onglet"}
-                        style={{background:isHidden?"#fee2e2":"#d1fae5",border:"none",cursor:"pointer",borderRadius:6,padding:"4px 8px",fontSize:13}}
+                        style={{background:isHidden?T.dangerBg:T.okBg,border:"none",cursor:"pointer",borderRadius:6,padding:"4px 8px",fontSize:13}}
                       >
                         {isHidden ? "👁️‍🗨️" : "👁️"}
                       </button>
@@ -196,17 +197,17 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                       <div style={{display:"flex",flexDirection:"column",gap:1}}>
                         <button onClick={(e)=>{e.stopPropagation();if(idx>0)moveTab(idx,idx-1);}}
                           disabled={idx===0}
-                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:idx>0?"pointer":"default",padding:"1px 6px",fontSize:10,opacity:idx>0?1:0.3}}>▲</button>
+                          style={{background:T.surface2,border:"none",borderRadius:4,cursor:idx>0?"pointer":"default",padding:"1px 6px",fontSize:11,opacity:idx>0?1:0.3}}>▲</button>
                         <button onClick={(e)=>{e.stopPropagation();if(idx<orderedKeys.length-1)moveTab(idx,idx+1);}}
                           disabled={idx>=orderedKeys.length-1}
-                          style={{background:"#f0f2f5",border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:10,opacity:idx<orderedKeys.length-1?1:0.3}}>▼</button>
+                          style={{background:T.surface2,border:"none",borderRadius:4,cursor:"pointer",padding:"1px 6px",fontSize:11,opacity:idx<orderedKeys.length-1?1:0.3}}>▼</button>
                       </div>
 
                       {/* Delete custom section */}
                       {isCustom && (
                         <button onClick={(e)=>{e.stopPropagation();removeCustomSection(key);}}
                           title="Supprimer cette section"
-                          style={{background:"#fee2e2",border:"none",borderRadius:6,padding:"4px 8px",fontSize:11,cursor:"pointer",color:"#dc2626",fontWeight:700}}>🗑️</button>
+                          style={{background:T.dangerBg,border:"none",borderRadius:6,padding:"4px 8px",fontSize:11,cursor:"pointer",color:T.danger,fontWeight:700}}>🗑️</button>
                       )}
                     </div>
                   );
@@ -216,58 +217,58 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
               {/* Add new section button + form */}
               {!showNewSection ? (
                 <button onClick={()=>setShowNewSection(true)}
-                  style={{marginTop:12,width:"100%",padding:"12px",border:"2px dashed #cbd5e0",borderRadius:10,background:"transparent",
-                    cursor:"pointer",fontSize:13,fontWeight:600,color:"#888",display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.15s"}}
-                  onMouseEnter={e=>{e.currentTarget.style.borderColor="#3b82f6";e.currentTarget.style.color="#3b82f6"}}
-                  onMouseLeave={e=>{e.currentTarget.style.borderColor="#cbd5e0";e.currentTarget.style.color="#888"}}>
+                  style={{marginTop:12,width:"100%",padding:"12px",border:"2px dashed var(--ink-faint)",borderRadius:10,background:"transparent",
+                    cursor:"pointer",fontSize:13,fontWeight:600,color:T.inkMute,display:"flex",alignItems:"center",justifyContent:"center",gap:8,transition:"all 0.15s"}}
+                  onMouseEnter={e=>{e.currentTarget.style.borderColor=T.teal;e.currentTarget.style.color=T.teal}}
+                  onMouseLeave={e=>{e.currentTarget.style.borderColor=T.inkFaint;e.currentTarget.style.color=T.inkMute}}>
                   ➕ Créer une nouvelle section
                 </button>
               ) : (
-                <div style={{marginTop:12,background:"#f0f9ff",border:"2px solid #3b82f6",borderRadius:12,padding:"16px 20px"}}>
-                  <div style={{fontWeight:700,fontSize:13,color:"#1e40af",marginBottom:12}}>➕ Nouvelle section</div>
+                <div style={{marginTop:12,background:T.mint,border:"2px solid var(--teal)",borderRadius:12,padding:"16px 20px"}}>
+                  <div style={{fontWeight:700,fontSize:13,color:T.teal,marginBottom:12}}>➕ Nouvelle section</div>
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Clé technique *</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Clé technique *</label>
                       <input value={newSection.key} onChange={e=>setNewSection(s=>({...s,key:e.target.value}))}
-                        placeholder="ex: promo_ete" style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        placeholder="ex: promo_ete" style={{width:"100%",border:"1px solid var(--line-field)",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
                     </div>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Nom affiché *</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Nom affiché *</label>
                       <input value={newSection.label} onChange={e=>setNewSection(s=>({...s,label:e.target.value}))}
-                        placeholder="ex: Promo Été 2026" style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        placeholder="ex: Promo Été 2026" style={{width:"100%",border:"1px solid var(--line-field)",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
                     </div>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Icône (emoji)</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Icône (emoji)</label>
                       <input value={newSection.icon} onChange={e=>setNewSection(s=>({...s,icon:e.target.value}))}
-                        style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:16,outline:"none",boxSizing:"border-box",textAlign:"center"}} />
+                        style={{width:"100%",border:"1px solid var(--line-field)",borderRadius:8,padding:"7px 10px",fontSize:16,outline:"none",boxSizing:"border-box",textAlign:"center"}} />
                     </div>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Sous-titre</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Sous-titre</label>
                       <input value={newSection.subtitle} onChange={e=>setNewSection(s=>({...s,subtitle:e.target.value}))}
-                        placeholder="Description courte..." style={{width:"100%",border:"1.5px solid #ddd",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
+                        placeholder="Description courte..." style={{width:"100%",border:"1px solid var(--line-field)",borderRadius:8,padding:"7px 10px",fontSize:12,outline:"none",boxSizing:"border-box"}} />
                     </div>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Couleur principale</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Couleur principale</label>
                       <div style={{display:"flex",gap:6,alignItems:"center"}}>
                         <input type="color" value={newSection.color} onChange={e=>setNewSection(s=>({...s,color:e.target.value}))} style={{width:32,height:32,border:"none",borderRadius:6,cursor:"pointer"}} />
-                        <span style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>{newSection.color}</span>
+                        <span style={{fontSize:11,color:T.inkMute,fontFamily:"monospace"}}>{newSection.color}</span>
                       </div>
                     </div>
                     <div>
-                      <label style={{fontSize:10,fontWeight:700,color:"#444",display:"block",marginBottom:4}}>Couleur accent</label>
+                      <label style={{fontSize:11,fontWeight:700,color:T.inkSoft,display:"block",marginBottom:4}}>Couleur accent</label>
                       <div style={{display:"flex",gap:6,alignItems:"center"}}>
                         <input type="color" value={newSection.accent} onChange={e=>setNewSection(s=>({...s,accent:e.target.value}))} style={{width:32,height:32,border:"none",borderRadius:6,cursor:"pointer"}} />
-                        <span style={{fontSize:10,color:"#888",fontFamily:"monospace"}}>{newSection.accent}</span>
+                        <span style={{fontSize:11,color:T.inkMute,fontFamily:"monospace"}}>{newSection.accent}</span>
                       </div>
                     </div>
                   </div>
                   <div style={{display:"flex",gap:8,marginTop:14}}>
                     <button onClick={addCustomSection}
-                      style={{background:"#0f2d3d",color:"white",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                      style={{background:T.petrol,color:"white",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                       ✓ Créer la section
                     </button>
                     <button onClick={()=>setShowNewSection(false)}
-                      style={{background:"#f0f2f5",color:"#666",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
+                      style={{background:T.surface2,color:T.inkSoft,border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:600,cursor:"pointer"}}>
                       Annuler
                     </button>
                   </div>
@@ -276,8 +277,8 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
             </div>
 
             {/* Onglet par défaut */}
-            <div style={{background:"white",borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid #e8ecf0"}}>
-              <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d",marginBottom:12}}>Onglet par défaut à l'ouverture</div>
+            <div style={{background:T.surface,borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid var(--line)"}}>
+              <div style={{fontWeight:700,fontSize:15,color:T.petrol,marginBottom:12}}>Onglet par défaut à l'ouverture</div>
               <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
                 {orderedKeys.filter(k => !hiddenTabs.has(k)).map(key => {
                   const meta = allMeta[key];
@@ -288,9 +289,9 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                         display:"flex",alignItems:"center",gap:6,
                         padding:"8px 14px",borderRadius:8,fontSize:12,fontWeight:600,
                         cursor:"pointer",transition:"all 0.15s",
-                        background: defaultTab===key ? meta.color : "#f8fafc",
-                        color: defaultTab===key ? "white" : "#444",
-                        border: defaultTab===key ? `2px solid ${meta.accent}` : "1px solid #ddd",
+                        background: defaultTab===key ? meta.color : T.paper,
+                        color: defaultTab===key ? "white" : T.inkSoft,
+                        border: defaultTab===key ? `2px solid ${meta.accent}` : "1px solid var(--line)",
                       }}>
                       {meta.icon} {meta.label}
                     </button>
@@ -300,7 +301,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
             </div>
 
             {/* Résumé */}
-            <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+            <div style={{background:T.mint,borderRadius:14,padding:"16px 20px",border:"1px solid var(--mint-2)",fontSize:12,color:T.teal,lineHeight:1.6}}>
               <strong>Résumé :</strong> {(displayConfig.tabOrder||allSectionKeys).filter(k => !hiddenTabs.has(k)).length} onglets visibles sur {allSectionKeys.length} ·
               Onglet par défaut : <strong>{allMeta[defaultTab]?.icon} {allMeta[defaultTab]?.label}</strong> ·
               Les modifications sont sauvegardées automatiquement dans le navigateur.

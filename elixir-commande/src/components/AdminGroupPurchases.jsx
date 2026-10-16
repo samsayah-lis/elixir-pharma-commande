@@ -4,21 +4,25 @@ import { priceLine, ugLabel, invoiceDiscount, packIssues, isElixir, ELIXIR_ID, E
 import GroupOrders from "./GroupOrders.jsx";
 import { analyzeFile } from "../gp-files.js";
 import { Objective } from "./GroupOrders.jsx";
+import { T, R, tone, adm } from "../theme.js";
 
 const API = "/.netlify/functions/gp-admin";
-const LS = { fontSize: 12, fontWeight: 700, color: "#444", display: "block", marginBottom: 6 };
-const IS = { width: "100%", border: "1.5px solid #e2e8f0", borderRadius: 10, padding: "9px 12px", fontSize: 13, outline: "none", boxSizing: "border-box", fontFamily: "inherit" };
+// atomes communs de l'admin (lot 10, src/theme.js)
+const LS = adm.label, IS = adm.input;
 const CI = { ...IS, padding: "6px 8px", borderRadius: 8, fontSize: 12 };
-const card = { background: "white", borderRadius: 14, padding: "18px 20px", border: "1px solid #e2e8f0", marginBottom: 16 };
-const h3 = { fontSize: 13, fontWeight: 800, color: "#0f2d3d", textTransform: "uppercase", letterSpacing: 0.3, margin: "0 0 12px" };
-const btn = (kind = "sec") => ({ border: "none", borderRadius: 10, padding: "9px 16px", fontWeight: 800, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
-  ...(kind === "pri" ? { background: "linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)", color: "white" }
-    : kind === "ok" ? { background: "#16a34a", color: "white" } : kind === "danger" ? { background: "#fee2e2", color: "#991b1b" } : { background: "#eef2f5", color: "#0f2d3d" }) });
+const card = { background: T.surface, borderRadius: 14, padding: "18px 20px", border: "1px solid var(--line)", marginBottom: 16 };
+const h3 = { fontSize: 13, fontWeight: 700, color: T.petrol, textTransform: "uppercase", letterSpacing: 0.3, margin: "0 0 12px" };
+// boutons en pastille (lot 10) : principal pétrole à plat, « ok » vert foncé (7,7:1), danger en teinte, secondaire neutre
+const btn = (kind = "sec") => ({ border: "none", borderRadius: R.pill, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
+  ...(kind === "pri" ? { background: T.petrol, color: T.paper }
+    : kind === "ok" ? { background: T.ok, color: "white" } : kind === "danger" ? { background: T.dangerBg, color: T.danger } : { background: T.surface2, color: T.petrol }) });
 const grid = (cols) => ({ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "end" });
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";
 const dfr = (d) => d ? new Date(String(d).slice(0, 10) + "T00:00:00").toLocaleDateString("fr-FR", { day: "numeric", month: "short", year: "numeric" }) : "—";
-const STATUS = { brouillon: ["Brouillon", "#64748b"], ouverte: ["Ouverte", "#16a34a"], cloturee: ["Clôturée", "#d97706"], commandee: ["Commandée labo", "#2563eb"], terminee: ["Terminée", "#0f2d3d"], annulee: ["Annulée", "#991b1b"] };
+// statut → [libellé, ton] (lot 10 : tone(), mêmes tons que la liste des opérations côté pharmacie)
+const STATUS = { brouillon: ["Brouillon", "neutral"], ouverte: ["Ouverte", "ok"], cloturee: ["Clôturée", "warn"], commandee: ["Commandée labo", "labo"], terminee: ["Terminée", "neutral"], annulee: ["Annulée", "danger"] };
+const pastilleStatut = (ton) => { const t = tone(ton); return { fontSize: 11, fontWeight: 700, color: t.fg, background: t.bg, border: `1px solid ${t.border}`, borderRadius: 99, padding: "3px 10px" }; };
 const LOCKED = ["commandee", "terminee", "annulee"];
 const EMPTY_OP = { name: "", supplier_name: "", supplier_odoo_id: null, status: "brouillon", start_date: "", end_date: "", tier_mode: "collectif", fee_pct: 2,
   centralizer_type: "elixir", centralizer_id: null, centralizer_name: null, objective_type: "aucun", objective_value: "", delivery_slots: [],
@@ -234,8 +238,8 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div>
-          <div style={{ fontSize: 22, fontWeight: 800, color: "#0f2d3d" }}>🤝 Commandes groupées</div>
-          <div style={{ fontSize: 13, color: "#64748b" }}>{access.length} pharmacie(s) autorisée(s) à voir l'onglet</div>
+          <div style={{ fontSize: 22, fontWeight: 700, color: T.petrol }}>🤝 Commandes groupées</div>
+          <div style={{ fontSize: 13, color: T.inkMute }}>{access.length} pharmacie(s) autorisée(s) à voir l'onglet</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button style={btn()} onClick={() => setView("access")}>🏥 Pharmacies autorisées</button>
@@ -246,15 +250,15 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
       {loading && <div style={card}>Chargement…</div>}
       {!loading && !ops.length && !err && <div style={card}>Aucune opération pour le moment.</div>}
       {ops.map(o => {
-        const [label, color] = STATUS[o.status] || [o.status, "#666"];
+        const [label, ton] = STATUS[o.status] || [o.status, "neutral"];
         return (
           <div key={o.id} role="button" tabIndex={0} onClick={() => open(o.id)} onKeyDown={e => e.key === "Enter" && open(o.id)} style={{ ...card, cursor: "pointer", display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 10 }}>
             <div>
-              <div style={{ fontWeight: 800, color: "#0f2d3d" }}>{o.name}</div>
-              <div style={{ fontSize: 12, color: "#64748b" }}>{o.supplier_name || "Fournisseur ?"} · du {dfr(o.start_date)} au {dfr(o.end_date)} · {o.participants_count} participant(s) · {o.orders_count} commande(s)</div>
-              {o.pending_slots?.length > 0 && <div style={{ fontSize: 12, color: "#b45309", fontWeight: 700, marginTop: 2 }}>⏰ {o.pending_slots.length} livraison(s) avec des devis à créer</div>}
+              <div style={{ fontWeight: 700, color: T.petrol }}>{o.name}</div>
+              <div style={{ fontSize: 12, color: T.inkMute }}>{o.supplier_name || "Fournisseur ?"} · du {dfr(o.start_date)} au {dfr(o.end_date)} · {o.participants_count} participant(s) · {o.orders_count} commande(s)</div>
+              {o.pending_slots?.length > 0 && <div style={{ fontSize: 12, color: T.warn, fontWeight: 700, marginTop: 2 }}>⏰ {o.pending_slots.length} livraison(s) avec des devis à créer</div>}
             </div>
-            <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: color, borderRadius: 99, padding: "3px 10px" }}>{label}</span>
+            <span style={pastilleStatut(ton)}>{label}</span>
           </div>
         );
       })}
@@ -265,16 +269,16 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
   // ── Édition d'une opération ──
   const locked = LOCKED.includes(form.status);
   const f = (k) => (e) => setForm(x => ({ ...x, [k]: e.target.value }));
-  const [stLabel, stColor] = STATUS[form.status] || [form.status, "#666"];
+  const [stLabel, stTon] = STATUS[form.status] || [form.status, "neutral"];
   const hasTriggers = (detail?.triggers || []).length > 0;
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
           <button style={btn()} onClick={() => { if (discard()) { setView("list"); setSnapshot(""); loadList(); } }}>← Opérations</button>
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#0f2d3d" }}>{form.name || "Nouvelle opération"}</div>
-          <span style={{ fontSize: 11, fontWeight: 800, color: "white", background: stColor, borderRadius: 99, padding: "3px 10px" }}>{stLabel}</span>
-          {dirty && <span style={{ fontSize: 12, fontWeight: 700, color: "#b45309" }}>● modifications non enregistrées</span>}
+          <div style={{ fontSize: 20, fontWeight: 700, color: T.petrol }}>{form.name || "Nouvelle opération"}</div>
+          <span style={pastilleStatut(stTon)}>{stLabel}</span>
+          {dirty && <span style={{ fontSize: 12, fontWeight: 700, color: T.warn }}>● modifications non enregistrées</span>}
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {form.id && <button style={btn()} disabled={!!busy} onClick={() => discard() && reload()}>↻ Recharger</button>}
@@ -286,11 +290,11 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
         </div>
       </div>
       {err && <Err text={err} />}
-      {prodJob?.id === form.id && <div style={{ ...card, background: "#eff6ff", borderColor: "#93c5fd", fontSize: 13 }}>
+      {prodJob?.id === form.id && <div style={{ ...card, background: T.mint, borderColor: T.mint2, fontSize: 13 }}>
         ⏳ Création des fiches produits dans Odoo : <b>{prodJob.done || 0} / {prodJob.total || "…"}</b> (environ 10 secondes par fiche). Vous pouvez continuer à travailler ; l'opération ne pourra être ouverte aux commandes qu'une fois toutes les fiches créées.
       </div>}
-      {notice && <div style={{ ...card, background: "#f0fdf4", borderColor: "#86efac", fontSize: 13 }}>{notice.map((t, i) => <div key={i}>{t}</div>)}<button type="button" style={{ ...btn(), marginTop: 8, padding: "5px 10px" }} onClick={() => setNotice(null)}>OK</button></div>}
-      {locked && <div style={{ ...card, background: "#f8fafc", fontSize: 13, color: "#475569" }}>Opération {stLabel.toLowerCase()} : seules les notes et les conditions affichées restent modifiables.</div>}
+      {notice && <div style={{ ...card, background: T.okBg, borderColor: tone("ok").border, fontSize: 13 }}>{notice.map((t, i) => <div key={i}>{t}</div>)}<button type="button" style={{ ...btn(), marginTop: 8, padding: "5px 10px" }} onClick={() => setNotice(null)}>OK</button></div>}
+      {locked && <div style={{ ...card, background: T.paper, fontSize: 13, color: T.inkSoft }}>Opération {stLabel.toLowerCase()} : seules les notes et les conditions affichées restent modifiables.</div>}
 
       {!locked && <OfferImport adminFetch={adminFetch} form={form} setForm={setForm} setLines={setLines} lines={lines} />}
 
@@ -357,7 +361,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
           : !(detail.participants || []).length ? "aucune participante enregistrée : ajoutez Elixir (bouton « ＋ Elixir commande pour son stock ») ou une pharmacie, puis enregistrez"
           : null;
         return why
-          ? <div style={{ ...card, fontSize: 13, color: "#64748b" }}><div style={{ ...h3, marginBottom: 6 }}>🛒 Saisir une commande</div>Saisie impossible : {why}.</div>
+          ? <div style={{ ...card, fontSize: 13, color: T.inkMute }}><div style={{ ...h3, marginBottom: 6 }}>🛒 Saisir une commande</div>Saisie impossible : {why}.</div>
           : <OrderEntry key={`saisie-${form.id}`} detail={detail} call={call} refresh={() => refreshDetail(form.id)} onDirtyChange={setEntryDirty} focus={entryFor} />;
       })()}
       {detail && form.id && <Dashboard detail={detail} />}
@@ -374,7 +378,7 @@ export default function AdminGroupPurchases({ adminFetch, flash, onDirtyChange }
   );
 }
 
-function Err({ text }) { return <div role="alert" style={{ background: "#fee2e2", color: "#991b1b", borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{text}</div>; }
+function Err({ text }) { return <div role="alert" style={{ background: T.dangerBg, color: T.danger, borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 600, marginBottom: 14 }}>{text}</div>; }
 
 // ── Fournisseur Odoo ──
 function SupplierPicker({ call, form, setForm }) {
@@ -382,16 +386,16 @@ function SupplierPicker({ call, form, setForm }) {
   const search = async () => { try { setRes((await call(`action=suppliers&q=${encodeURIComponent(form.supplier_name || "")}`)).suppliers || []); } catch { setRes([]); } };
   return (
     <div style={{ position: "relative" }}>
-      <label style={LS}>Fournisseur {form.supplier_odoo_id ? <span style={{ color: "#16a34a" }}>· Odoo #{form.supplier_odoo_id}</span> : <span style={{ color: "#b45309" }}>· non relié à Odoo</span>}</label>
+      <label style={LS}>Fournisseur {form.supplier_odoo_id ? <span style={{ color: T.ok }}>· Odoo #{form.supplier_odoo_id}</span> : <span style={{ color: T.warn }}>· non relié à Odoo</span>}</label>
       <div style={{ display: "flex", gap: 6 }}>
         <input style={IS} value={form.supplier_name || ""} onChange={e => setForm(x => ({ ...x, supplier_name: e.target.value, supplier_odoo_id: null }))} onKeyDown={e => e.key === "Enter" && search()} placeholder="Nom du laboratoire" />
         <button type="button" style={btn()} onClick={search} title="Chercher dans les fournisseurs Odoo">🔎</button>
       </div>
       {res && (
-        <div style={{ position: "absolute", zIndex: 5, background: "white", border: "1px solid #e2e8f0", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)", marginTop: 4, width: "100%", maxHeight: 240, overflowY: "auto" }}>
-          {!res.length && <div style={{ padding: 10, fontSize: 12, color: "#64748b" }}>Aucun fournisseur trouvé</div>}
-          {res.map(s => <button type="button" key={s.id} onClick={() => { setForm(x => ({ ...x, supplier_name: s.name, supplier_odoo_id: s.id })); setRes(null); }} style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: "white", padding: "8px 12px", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>{s.name} <span style={{ color: "#94a3b8" }}>#{s.id}</span></button>)}
-          <button type="button" onClick={() => setRes(null)} style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: "1px solid #f1f5f9", background: "white", padding: "6px 12px", fontSize: 12, color: "#64748b", cursor: "pointer", fontFamily: "inherit" }}>Fermer</button>
+        <div style={{ position: "absolute", zIndex: 5, background: T.surface, border: "1px solid var(--line)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,.12)", marginTop: 4, width: "100%", maxHeight: 240, overflowY: "auto" }}>
+          {!res.length && <div style={{ padding: 10, fontSize: 12, color: T.inkMute }}>Aucun fournisseur trouvé</div>}
+          {res.map(s => <button type="button" key={s.id} onClick={() => { setForm(x => ({ ...x, supplier_name: s.name, supplier_odoo_id: s.id })); setRes(null); }} style={{ display: "block", width: "100%", textAlign: "left", border: "none", background: T.surface, padding: "8px 12px", cursor: "pointer", fontSize: 13, fontFamily: "inherit" }}>{s.name} <span style={{ color: T.inkMute }}>#{s.id}</span></button>)}
+          <button type="button" onClick={() => setRes(null)} style={{ display: "block", width: "100%", textAlign: "left", border: "none", borderTop: "1px solid var(--line-soft)", background: T.surface, padding: "6px 12px", fontSize: 12, color: T.inkMute, cursor: "pointer", fontFamily: "inherit" }}>Fermer</button>
         </div>
       )}
     </div>
@@ -406,7 +410,7 @@ function Slots({ form, setForm, triggers }) {
   return (
     <div style={card}>
       <div style={h3}>Livraisons (cadencement)</div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Chaque date devient une colonne de saisie pour les pharmacies. Les produits en stock ont en plus une colonne « Immédiat ». Sans date, une seule colonne « Quantité » (livraison à réception).</div>
+      <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>Chaque date devient une colonne de saisie pour les pharmacies. Les produits en stock ont en plus une colonne « Immédiat ». Sans date, une seule colonne « Quantité » (livraison à réception).</div>
       {slots.map((s, i) => (
         <div key={s.id} style={{ ...grid("180px 1fr 40px"), marginBottom: 8 }}>
           <input type="date" style={IS} value={s.date || ""} disabled={triggered.has(s.id)} onChange={e => set(i, "date", e.target.value)} aria-label={`Date de la livraison ${i + 1}`} />
@@ -443,14 +447,14 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
     try { const p = (await call(null, { action: "lookup", cips: lines.map(l => l.cip) })).products || {}; setInfo(p);
       setLines(ls => ls.map(l => ({ ...l, odoo_product_id: l.odoo_product_id || p[l.cip]?.odoo_product_id || null, vat_rate: l.vat_rate ?? p[l.cip]?.vat_rate ?? p[l.cip]?.medipim?.vat ?? null, name: l.name || p[l.cip]?.odoo_name || p[l.cip]?.medipim?.name || "" }))); } catch {}
   };
-  const th = { textAlign: "left", padding: "6px 6px", fontSize: 11, color: "#64748b", fontWeight: 700 };
+  const th = { textAlign: "left", padding: "6px 6px", fontSize: 11, color: T.inkMute, fontWeight: 700 };
   return (
     <div style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
         <div style={{ ...h3, margin: 0 }}>Produits ({lines.length})</div>
         {!locked && <button type="button" style={btn()} onClick={refresh}>↻ Stock et fiches Odoo</button>}
       </div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 offertes par tranche de 12 facturées, 5 par tranche de 24 (la pharmacie saisit 12, le site ajoute les 2 gratuites). « ×obj. » = poids dans l'objectif en unités (2 = compte double). Colisage : « Minimum 1 colis » ou « Colis entiers » s'imposent aux pharmacies à chaque livraison, sur les unités facturées saisies.</div>
+      <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>Paliers de remise : <code>10:5 ; 50:7,5</code> = −5 % dès 10 unités, −7,5 % dès 50. UG : <code>12+2, 24+5</code> = 2 offertes par tranche de 12 facturées, 5 par tranche de 24 (la pharmacie saisit 12, le site ajoute les 2 gratuites). « ×obj. » = poids dans l'objectif en unités (2 = compte double). Colisage : « Minimum 1 colis » ou « Colis entiers » s'imposent aux pharmacies à chaque livraison, sur les unités facturées saisies.</div>
       <div style={{ overflowX: "auto" }}>
         <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1180 }}>
           <thead><tr><th style={th}>CIP</th><th style={th}>Désignation</th><th style={th}>Prix brut HT</th><th style={th}>Remise sur facture</th><th style={th}>UG</th><th style={th}>Colisage</th><th style={th}>×obj.</th><th style={th}>TVA %</th><th style={th}>Odoo</th><th /></tr></thead>
@@ -462,26 +466,26 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
               const badUg = ugs.length !== ugParts(l._ug).length;
               const badPrice = String(l.price_gross ?? "").trim() !== "" && !(toNum(l.price_gross) >= 0);
               return (
-                <tr key={l.id || `new-${i}`} style={{ borderTop: "1px solid #f1f5f9", verticalAlign: "top" }}>
+                <tr key={l.id || `new-${i}`} style={{ borderTop: "1px solid var(--line-soft)", verticalAlign: "top" }}>
                   <td style={{ padding: 4, width: 130 }}><input style={CI} value={l.cip} onChange={e => setCipAt(i, e.target.value)} aria-label="CIP" /></td>
-                  <td style={{ padding: 4 }}><input style={{ ...CI, borderColor: l.name ? "#e2e8f0" : "#f59e0b" }} value={l.name} onChange={e => set(i, "name", e.target.value)} placeholder="Désignation" aria-label="Désignation" />
+                  <td style={{ padding: 4 }}><input style={{ ...CI, borderColor: l.name ? T.lineField : T.warn }} value={l.name} onChange={e => set(i, "name", e.target.value)} placeholder="Désignation" aria-label="Désignation" />
                     <input style={{ ...CI, marginTop: 4, fontSize: 11 }} value={l.notes || ""} onChange={e => set(i, "notes", e.target.value)} placeholder="note visible des pharmacies" /></td>
-                  <td style={{ padding: 4, width: 96 }}><input inputMode="decimal" style={{ ...CI, borderColor: badPrice ? "#ef4444" : "#e2e8f0" }} value={l.price_gross ?? ""} onChange={e => set(i, "price_gross", e.target.value)} placeholder="0,00" aria-label="Prix brut" /></td>
+                  <td style={{ padding: 4, width: 96 }}><input inputMode="decimal" style={{ ...CI, borderColor: badPrice ? T.danger : T.lineField }} value={l.price_gross ?? ""} onChange={e => set(i, "price_gross", e.target.value)} placeholder="0,00" aria-label="Prix brut" /></td>
                   <td style={{ padding: 4, width: 250 }}>
-                    <div style={{ fontSize: 10, color: "#64748b", fontWeight: 700 }}>Remise 1</div>
+                    <div style={{ fontSize: 11, color: T.inkMute, fontWeight: 700 }}>Remise 1</div>
                     <select style={CI} value={l.discount_mode} onChange={e => set(i, "discount_mode", e.target.value)} aria-label="Remise 1"><option value="aucune">Aucune</option><option value="unitaire">Taux unique</option><option value="paliers">Paliers</option></select>
                     {l.discount_mode === "unitaire" && <input inputMode="decimal" style={{ ...CI, marginTop: 4 }} value={l.discount_pct} onChange={e => set(i, "discount_pct", e.target.value)} placeholder="%" aria-label="Taux de la remise 1" />}
                     {l.discount_mode === "paliers" && <>
-                      <input style={{ ...CI, marginTop: 4, borderColor: badTiers ? "#ef4444" : "#e2e8f0" }} value={l._tiers} onChange={e => set(i, "_tiers", e.target.value)} placeholder="10:5 ; 50:7,5" aria-label="Paliers de la remise 1" />
-                      <div style={{ fontSize: 10, color: badTiers ? "#b91c1c" : "#64748b" }}>{badTiers ? "Palier illisible" : tiers.map(t => `dès ${t.min_qty} : −${fr(t.pct)} %`).join(" · ")}</div>
+                      <input style={{ ...CI, marginTop: 4, borderColor: badTiers ? T.danger : T.lineField }} value={l._tiers} onChange={e => set(i, "_tiers", e.target.value)} placeholder="10:5 ; 50:7,5" aria-label="Paliers de la remise 1" />
+                      <div style={{ fontSize: 11, color: badTiers ? T.danger : T.inkMute }}>{badTiers ? "Palier illisible" : tiers.map(t => `dès ${t.min_qty} : −${fr(t.pct)} %`).join(" · ")}</div>
                     </>}
                     {(l._extra || []).map((d, k) => {
                       const setX = (key, v) => set(i, "_extra", (l._extra || []).map((x, j) => j === k ? { ...x, [key]: v } : x));
                       return (
-                        <div key={k} style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed #e2e8f0" }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#64748b", fontWeight: 700 }}>
+                        <div key={k} style={{ marginTop: 6, paddingTop: 6, borderTop: "1px dashed var(--line)" }}>
+                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: T.inkMute, fontWeight: 700 }}>
                             <span>Remise {k + 2}</span>
-                            <button type="button" onClick={() => set(i, "_extra", (l._extra || []).filter((_, j) => j !== k))} style={{ border: "none", background: "none", color: "#b91c1c", cursor: "pointer", fontSize: 10 }} aria-label={`Retirer la remise ${k + 2}`}>retirer</button>
+                            <button type="button" onClick={() => set(i, "_extra", (l._extra || []).filter((_, j) => j !== k))} style={{ border: "none", background: "none", color: T.danger, cursor: "pointer", fontSize: 11 }} aria-label={`Retirer la remise ${k + 2}`}>retirer</button>
                           </div>
                           <div style={{ display: "flex", gap: 4 }}>
                             <select style={CI} value={d.combine} onChange={e => setX("combine", e.target.value)} aria-label={`Combinaison de la remise ${k + 2}`}><option value="cascade">En cascade</option><option value="additionnelle">Additionnelle</option></select>
@@ -495,27 +499,27 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
                     <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap", alignItems: "center" }}>
                       {(l._extra || []).length < 2 && <button type="button" style={{ ...btn(), padding: "3px 8px", fontSize: 11 }} onClick={() => set(i, "_extra", [...(l._extra || []), { mode: "unitaire", pct: "", combine: "cascade", _tiers: "" }])}>＋ Remise {(l._extra || []).length + 2}</button>}
                       {lines.length > 1 && <button type="button" style={{ ...btn(), padding: "3px 8px", fontSize: 11 }} onClick={() => window.confirm("Appliquer les remises de ce produit à tous les produits de l'opération ?") && setLines(ls => ls.map(x => ({ ...x, discount_mode: l.discount_mode, discount_pct: l.discount_pct, _tiers: l._tiers, _extra: (l._extra || []).map(e => ({ ...e })) })))}>Appliquer à tous</button>}
-                      {(l.discount_mode !== "aucune" || (l._extra || []).length > 0) && <span style={{ fontSize: 10, color: "#0f2d3d", fontWeight: 700 }}>Total : −{fr(round2(previewDiscount(l, 1e9)))} %{(l.discount_mode === "paliers" || (l._extra || []).some(d => d.mode === "paliers")) ? " (paliers max.)" : ""}</span>}
+                      {(l.discount_mode !== "aucune" || (l._extra || []).length > 0) && <span style={{ fontSize: 11, color: T.petrol, fontWeight: 700 }}>Total : −{fr(round2(previewDiscount(l, 1e9)))} %{(l.discount_mode === "paliers" || (l._extra || []).some(d => d.mode === "paliers")) ? " (paliers max.)" : ""}</span>}
                     </div>
                   </td>
-                  <td style={{ padding: 4, width: 140 }}><input style={{ ...CI, borderColor: badUg ? "#ef4444" : "#e2e8f0" }} value={l._ug} onChange={e => set(i, "_ug", e.target.value)} placeholder="12+2" />
-                    {badUg ? <div style={{ fontSize: 10, color: "#b91c1c" }}>UG illisibles</div> : ugs.map((t, k) => <div key={k} style={{ fontSize: 10, color: "#64748b" }}>{ugLabel(t)}</div>)}</td>
+                  <td style={{ padding: 4, width: 140 }}><input style={{ ...CI, borderColor: badUg ? T.danger : T.lineField }} value={l._ug} onChange={e => set(i, "_ug", e.target.value)} placeholder="12+2" />
+                    {badUg ? <div style={{ fontSize: 11, color: T.danger }}>UG illisibles</div> : ugs.map((t, k) => <div key={k} style={{ fontSize: 11, color: T.inkMute }}>{ugLabel(t)}</div>)}</td>
                   <td style={{ padding: 4, width: 128 }}>
-                    <input inputMode="numeric" style={{ ...CI, borderColor: packBad(l) ? "#ef4444" : "#e2e8f0" }} value={l.pack_size ?? ""} onChange={e => set(i, "pack_size", e.target.value)} placeholder="u. / colis" aria-label="Colisage (unités par colis)" />
+                    <input inputMode="numeric" style={{ ...CI, borderColor: packBad(l) ? T.danger : T.lineField }} value={l.pack_size ?? ""} onChange={e => set(i, "pack_size", e.target.value)} placeholder="u. / colis" aria-label="Colisage (unités par colis)" />
                     <select style={{ ...CI, marginTop: 4 }} value={l.pack_rule || "aucune"} onChange={e => set(i, "pack_rule", e.target.value)} aria-label="Règle de colisage">
                       <option value="aucune">Indicatif</option><option value="minimum">Minimum 1 colis</option><option value="multiple">Colis entiers</option>
                     </select>
-                    {packBad(l) ? <div style={{ fontSize: 10, color: "#b91c1c" }}>{packBad(l)}</div>
-                      : packNum(l.pack_size) >= 2 && l.pack_rule !== "aucune" && <div style={{ fontSize: 10, color: "#64748b" }}>{l.pack_rule === "multiple" ? `par ${packNum(l.pack_size)} à chaque livraison` : `au moins ${packNum(l.pack_size)} par livraison`}</div>}
+                    {packBad(l) ? <div style={{ fontSize: 11, color: T.danger }}>{packBad(l)}</div>
+                      : packNum(l.pack_size) >= 2 && l.pack_rule !== "aucune" && <div style={{ fontSize: 11, color: T.inkMute }}>{l.pack_rule === "multiple" ? `par ${packNum(l.pack_size)} à chaque livraison` : `au moins ${packNum(l.pack_size)} par livraison`}</div>}
                   </td>
                   <td style={{ padding: 4, width: 56 }}><input inputMode="decimal" style={CI} value={l.weight} onChange={e => set(i, "weight", e.target.value)} aria-label="Poids dans l'objectif" /></td>
                   <td style={{ padding: 4, width: 64 }}><input inputMode="decimal" style={CI} value={l.vat_rate ?? ""} onChange={e => set(i, "vat_rate", e.target.value)} placeholder="auto" aria-label="TVA" /></td>
                   <td style={{ padding: "8px 4px", fontSize: 11, width: 120 }}>
-                    {l.odoo_product_id || p.odoo_product_id ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ fiche</span>
-                      : <span style={{ color: "#b45309", fontWeight: 700 }} title="La fiche sera créée dans Odoo après l'enregistrement, en arrière-plan (prix de vente = prix brut, TVA, tarif fournisseur)">➕ à créer{p.medipim ? " (Medipim)" : ""}</span>}
-                    {!(l.odoo_product_id || p.odoo_product_id) && p.medipim?.public_price != null && <div style={{ color: "#64748b" }}>PPTTC {eur(p.medipim.public_price)}</div>}
-                    {p.in_stock != null && <div style={{ color: p.in_stock ? "#16a34a" : "#b45309" }}>{p.in_stock ? `stock ${p.available}` : "précommande"}</div>}
-                    {p.elixir_price != null && <div style={{ color: "#64748b" }}>Elixir {eur(p.elixir_price)}</div>}
+                    {l.odoo_product_id || p.odoo_product_id ? <span style={{ color: T.ok, fontWeight: 700 }}>✓ fiche</span>
+                      : <span style={{ color: T.warn, fontWeight: 700 }} title="La fiche sera créée dans Odoo après l'enregistrement, en arrière-plan (prix de vente = prix brut, TVA, tarif fournisseur)">➕ à créer{p.medipim ? " (Medipim)" : ""}</span>}
+                    {!(l.odoo_product_id || p.odoo_product_id) && p.medipim?.public_price != null && <div style={{ color: T.inkMute }}>PPTTC {eur(p.medipim.public_price)}</div>}
+                    {p.in_stock != null && <div style={{ color: p.in_stock ? T.ok : T.warn }}>{p.in_stock ? `stock ${p.available}` : "précommande"}</div>}
+                    {p.elixir_price != null && <div style={{ color: T.inkMute }}>Elixir {eur(p.elixir_price)}</div>}
                   </td>
                   <td style={{ padding: 4 }}><button type="button" style={{ ...btn("danger"), padding: "6px 10px" }} onClick={() => setLines(ls => ls.filter((_, j) => j !== i))} aria-label="Retirer le produit">✕</button></td>
                 </tr>
@@ -524,7 +528,7 @@ function LinesEditor({ lines, setLines, call, products, locked }) {
           </tbody>
         </table>
       </div>
-      {msg && <div style={{ fontSize: 12, color: "#b45309", marginTop: 8 }}>{msg}</div>}
+      {msg && <div style={{ fontSize: 12, color: T.warn, marginTop: 8 }}>{msg}</div>}
       {!locked && (
         <div style={{ display: "flex", gap: 8, marginTop: 10, maxWidth: 420 }}>
           <input style={IS} value={cip} onChange={e => setCip(e.target.value)} onKeyDown={e => e.key === "Enter" && add()} placeholder="CIP du produit à ajouter" aria-label="CIP du produit à ajouter" />
@@ -599,11 +603,11 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
   };
   const r = state?.result;
   return (
-    <div style={{ ...card, background: "#f8fbff", borderColor: "#bfdbfe" }}>
+    <div style={{ ...card, background: T.mint, borderColor: T.mint2 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ ...h3, margin: 0 }}>📄 Importer l'offre du laboratoire</div>
-          <div style={{ fontSize: 12, color: "#64748b" }}>Excel, CSV, PDF ou photo : l'IA relève les CIP, désignations, prix, remises, paliers, UG, RFA et coopération. Vous relisez avant d'appliquer, puis vous enregistrez.</div>
+          <div style={{ fontSize: 12, color: T.inkMute }}>Excel, CSV, PDF ou photo : l'IA relève les CIP, désignations, prix, remises, paliers, UG, RFA et coopération. Vous relisez avant d'appliquer, puis vous enregistrez.</div>
         </div>
         <input ref={ref} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => run(e.target.files?.[0])} />
         <button type="button" style={btn("pri")} disabled={state?.busy} onClick={() => ref.current?.click()}>{state?.busy ? `Analyse… ${state.secs || 0} s` : "Choisir un fichier"}</button>
@@ -611,31 +615,31 @@ function OfferImport({ adminFetch, form, setForm, lines, setLines }) {
       {state?.error && <div style={{ marginTop: 10 }}><Err text={state.error} /></div>}
       {r && (
         <div style={{ marginTop: 14 }}>
-          <div style={{ fontSize: 13, color: "#0f2d3d", marginBottom: 8 }}>
+          <div style={{ fontSize: 13, color: T.petrol, marginBottom: 8 }}>
             <b>{r.lines.length} produit(s)</b> trouvé(s) dans « {state.file_name} »
             {r.supplier_name && <> · {r.supplier_name}</>}{r.start_date && <> · du {dfr(r.start_date)}</>}{r.end_date && <> au {dfr(r.end_date)}</>}
             {r.rfa_pct ? <> · RFA {fr(r.rfa_pct)} %</> : null}{r.coop_amount ? <> · coopération {eur(r.coop_amount)}</> : null}
             {r.objective_type && r.objective_type !== "aucun" && r.objective_value ? <> · objectif {r.objective_value} ({r.objective_type})</> : null}
           </div>
-          <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid #e2e8f0", borderRadius: 10, background: "white" }}>
+          <div style={{ maxHeight: 260, overflowY: "auto", border: "1px solid var(--line)", borderRadius: 10, background: T.surface }}>
             <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
               <tbody>
                 {r.lines.map((l, i) => {
                   const p = state.products[l.cip] || {};
                   return (
-                    <tr key={i} style={{ borderTop: i ? "1px solid #f1f5f9" : "none" }}>
+                    <tr key={i} style={{ borderTop: i ? "1px solid var(--line-soft)" : "none" }}>
                       <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{l.cip}</td>
                       <td style={{ padding: "5px 8px" }}>{l.name}</td>
                       <td style={{ padding: "5px 8px", textAlign: "right" }}>{l.price_gross != null ? eur(l.price_gross) : "prix ?"}</td>
                       <td style={{ padding: "5px 8px" }}>{l.discount_mode === "unitaire" ? `−${fr(l.discount_pct)} %` : l.discount_mode === "paliers" ? tiersToText(l.discount_tiers) : ""}{(l.extra_discounts || []).map((d, k) => ` ${d.combine === "additionnelle" ? "+" : "puis"} ${d.mode === "paliers" ? tiersToText(d.tiers) : `−${fr(d.pct || 0)} %`}`).join("")} {ugToText(l.ug_tiers) && `UG ${ugToText(l.ug_tiers)}`}{okPack(l.pack_size) ? ` · colis de ${Math.round(l.pack_size)}${Math.round(l.pack_size) < 2 ? "" : l.pack_rule === "multiple" ? " (colis entiers)" : l.pack_rule === "minimum" ? " (minimum 1 colis)" : ""}` : ""}</td>
-                      <td style={{ padding: "5px 8px", color: p.odoo_product_id ? "#16a34a" : "#b45309", fontWeight: 700 }}>{p.odoo_product_id ? (p.in_stock ? "✓ en stock" : "✓ précommande") : p.medipim ? "➕ fiche à créer (Medipim)" : "➕ fiche à créer"}</td>
+                      <td style={{ padding: "5px 8px", color: p.odoo_product_id ? T.ok : T.warn, fontWeight: 700 }}>{p.odoo_product_id ? (p.in_stock ? "✓ en stock" : "✓ précommande") : p.medipim ? "➕ fiche à créer (Medipim)" : "➕ fiche à créer"}</td>
                     </tr>
                   );
                 })}
               </tbody>
             </table>
           </div>
-          {r.warnings?.map((w, i) => <div key={i} style={{ fontSize: 12, color: "#92400e", marginTop: 6 }}>⚠️ {w}</div>)}
+          {r.warnings?.map((w, i) => <div key={i} style={{ fontSize: 12, color: T.warn, marginTop: 6 }}>⚠️ {w}</div>)}
           <div style={{ display: "flex", gap: 16, alignItems: "center", marginTop: 12, flexWrap: "wrap", fontSize: 13 }}>
             <label><input type="radio" checked={mode === "ajouter"} onChange={() => setMode("ajouter")} /> Ajouter les nouveaux produits</label>
             <label><input type="radio" checked={mode === "remplacer"} onChange={() => setMode("remplacer")} /> Remplacer la liste (conditions mises à jour)</label>
@@ -676,29 +680,29 @@ function Participants({ parts, setParts, access, call, opFee, locked, opId, save
         {!locked && !inOp.has(ELIXIR_ID) && <button type="button" disabled={elixirBusy} style={{ ...btn(), padding: "5px 10px", fontSize: 12 }} title="Elixir commande aussi pour son stock : ses quantités comptent pour les paliers et l'objectif"
           onClick={addElixir}>{elixirBusy ? "…" : "＋ Elixir commande pour son stock"}</button>}
       </div>
-      {elixirErr && <div style={{ color: "#b91c1c", fontSize: 12, marginTop: 6 }}>{elixirErr}</div>}
+      {elixirErr && <div style={{ color: T.danger, fontSize: 12, marginTop: 6 }}>{elixirErr}</div>}
       <div style={{ height: 8 }} />
       {parts.filter(p => isElixir(p.pharmacy_id)).map(p => (
-        <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", background: "#f0f9ff", borderRadius: 8, marginBottom: 6, fontSize: 13, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}><b>🏢 {ELIXIR_NAME}</b> <span style={{ color: "#64748b" }}>· ses quantités comptent pour les paliers, l'objectif et les UG · sans frais ni coopération · dans le bon labo, sans devis client</span>
-            {!savedIds?.has(ELIXIR_ID) && <div style={{ color: "#b45309", fontSize: 12, marginTop: 2 }}>Enregistrez l'opération pour saisir la commande d'Elixir.</div>}</div>
+        <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 10px", background: T.mint, borderRadius: 8, marginBottom: 6, fontSize: 13, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}><b>🏢 {ELIXIR_NAME}</b> <span style={{ color: T.inkMute }}>· ses quantités comptent pour les paliers, l'objectif et les UG · sans frais ni coopération · dans le bon labo, sans devis client</span>
+            {!savedIds?.has(ELIXIR_ID) && <div style={{ color: T.warn, fontSize: 12, marginTop: 2 }}>Enregistrez l'opération pour saisir la commande d'Elixir.</div>}</div>
           {savedIds?.has(ELIXIR_ID) && <button type="button" style={{ ...btn("pri"), padding: "5px 10px", fontSize: 12 }} onClick={() => onEnterOrder?.(ELIXIR_ID)}>🛒 Saisir sa commande</button>}
           <button type="button" style={{ ...btn("danger"), padding: "5px 10px" }} onClick={() => setParts(ps => ps.filter(x => !isElixir(x.pharmacy_id)))} aria-label="Retirer Elixir">✕</button>
         </div>
       ))}
       {parts.filter(p => !isElixir(p.pharmacy_id)).map((p, i) => (
-        <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderTop: i ? "1px solid #f1f5f9" : "none", fontSize: 13, flexWrap: "wrap" }}>
-          <div style={{ flex: 1, minWidth: 200 }}><b>{p.pharmacy_name}</b> <span style={{ color: "#94a3b8" }}>{p.pharmacy_cip ? `CIP ${p.pharmacy_cip} · ` : ""}{p.email} · fiche Odoo {p.pharmacy_id}</span>
-            {!allowed.has(p.pharmacy_id) && <span style={{ color: "#b45309" }}> · onglet débloqué à l'enregistrement</span>}</div>
-          <span style={{ fontSize: 11, color: "#64748b" }}>frais</span>
+        <div key={p.pharmacy_id} style={{ display: "flex", gap: 10, alignItems: "center", padding: "6px 0", borderTop: i ? "1px solid var(--line-soft)" : "none", fontSize: 13, flexWrap: "wrap" }}>
+          <div style={{ flex: 1, minWidth: 200 }}><b>{p.pharmacy_name}</b> <span style={{ color: T.inkMute }}>{p.pharmacy_cip ? `CIP ${p.pharmacy_cip} · ` : ""}{p.email} · fiche Odoo {p.pharmacy_id}</span>
+            {!allowed.has(p.pharmacy_id) && <span style={{ color: T.warn }}> · onglet débloqué à l'enregistrement</span>}</div>
+          <span style={{ fontSize: 11, color: T.inkMute }}>frais</span>
           <input inputMode="decimal" style={{ ...CI, width: 70 }} value={p.fee_pct ?? ""} placeholder={String(opFee)} onChange={e => setParts(ps => ps.map(x => x.pharmacy_id === p.pharmacy_id ? { ...x, fee_pct: e.target.value === "" ? null : e.target.value } : x))} aria-label={`Frais de ${p.pharmacy_name}`} />
-          <span style={{ fontSize: 11, color: "#64748b" }}>%</span>
+          <span style={{ fontSize: 11, color: T.inkMute }}>%</span>
           <button type="button" style={{ ...btn("danger"), padding: "5px 10px" }} onClick={() => setParts(ps => ps.filter(x => x.pharmacy_id !== p.pharmacy_id))} aria-label={`Retirer ${p.pharmacy_name}`}>✕</button>
         </div>
       ))}
       {!locked && candidates.length > 0 && (
         <div style={{ marginTop: 12 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "#444", marginBottom: 6 }}>Pharmacies autorisées non inscrites</div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: T.inkSoft, marginBottom: 6 }}>Pharmacies autorisées non inscrites</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {candidates.map(a => <button type="button" key={a.pharmacy_id} style={{ ...btn(), padding: "5px 10px", fontSize: 12 }} onClick={() => addP({ id: a.pharmacy_id, name: a.pharmacy_name, email: a.email, cip: a.pharmacy_cip })}>＋ {a.pharmacy_name || a.pharmacy_id}</button>)}
             <button type="button" style={{ ...btn("pri"), padding: "5px 10px", fontSize: 12 }} onClick={() => candidates.forEach(a => addP({ id: a.pharmacy_id, name: a.pharmacy_name, email: a.email, cip: a.pharmacy_cip }))}>Tout ajouter</button>
@@ -712,11 +716,11 @@ function Participants({ parts, setParts, access, call, opFee, locked, opId, save
         </div>
         {res.map(p => (
           <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 13, padding: "5px 0", gap: 8 }}>
-            <span>{p.name} <span style={{ color: "#94a3b8" }}>{p.ville}{p.cip ? ` · CIP ${p.cip}` : ""} · {p.emails.join(", ")}</span></span>
+            <span>{p.name} <span style={{ color: T.inkMute }}>{p.ville}{p.cip ? ` · CIP ${p.cip}` : ""} · {p.emails.join(", ")}</span></span>
             <button type="button" style={{ ...btn(), padding: "4px 10px" }} disabled={inOp.has(p.id)} onClick={() => addP(p)}>{inOp.has(p.id) ? "inscrite" : "＋ Ajouter"}</button>
           </div>
         ))}
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>Seules les pharmacies clientes d'Elixir apparaissent. Une pharmacie nouvellement inscrite reçoit l'accès à l'onglet à l'enregistrement.</div>
+        <div style={{ fontSize: 11, color: T.inkMute, marginTop: 8 }}>Seules les pharmacies clientes d'Elixir apparaissent. Une pharmacie nouvellement inscrite reçoit l'accès à l'onglet à l'enregistrement.</div>
       </>}
     </div>
   );
@@ -750,7 +754,7 @@ function OrderEntry({ detail, call, refresh, onDirtyChange, focus }) {
           {parts.map(p => <option key={p.pharmacy_id} value={p.pharmacy_id}>{isElixir(p.pharmacy_id) ? `🏢 ${ELIXIR_NAME}` : p.pharmacy_name}</option>)}
         </select>
       </div>
-      <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>{isElixir(pid)
+      <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>{isElixir(pid)
         ? "Commande d'Elixir pour son stock : quantités facturées par livraison ; elles entrent dans les paliers, l'objectif et le bon de commande au laboratoire (aucun devis client)."
         : "Commande saisie par Elixir pour le compte de cette pharmacie (aucun e-mail envoyé)."}</div>
       {pid && <GroupOrders key={pid} admin={admin} onDirtyChange={setEntryDirty} />}
@@ -794,19 +798,19 @@ function Dashboard({ detail }) {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Détail");
     XLSX.writeFile(wb, `Commande groupee - ${op.name}.xlsx`);
   };
-  const th = { textAlign: "left", padding: "6px 8px", fontSize: 11, color: "#64748b", fontWeight: 700, whiteSpace: "nowrap" };
-  const td = { padding: "6px 8px", fontSize: 12, borderTop: "1px solid #f1f5f9" };
+  const th = { textAlign: "left", padding: "6px 8px", fontSize: 11, color: T.inkMute, fontWeight: 700, whiteSpace: "nowrap" };
+  const td = { padding: "6px 8px", fontSize: 12, borderTop: "1px solid var(--line-soft)" };
   return (
     <div style={card}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, gap: 8, flexWrap: "wrap" }}>
         <div style={{ ...h3, margin: 0 }}>Suivi — {confirmed.length}/{s.pharmacies.length} commande(s) · {tot.units || 0} unités · {eur(tot.totalHT)} HT</div>
         <button type="button" style={btn()} onClick={exportXlsx}>⬇ Excel</button>
       </div>
-      {packAlerts.length > 0 && <div style={{ fontSize: 12, color: "#991b1b", background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+      {packAlerts.length > 0 && <div style={{ fontSize: 12, color: T.danger, background: T.dangerBg, border: "1px solid #fecaca", borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
         <b>📦 {packAlerts.length} commande(s) hors colisage</b> — {op.status === "ouverte" ? "la pharmacie devra corriger avant de pouvoir modifier sa commande" : "opération fermée aux pharmacies : rouvrez-la pour qu'elles corrigent, ou voyez avec elles"} :
         {packAlerts.map(({ p, iss }) => <div key={p.id}>• {p.name} : {iss.map(x => `${x.line.name} — ${slotName(x.slot_id)} : ${x.qty} u. (${x.text})`).join(" ; ")}</div>)}
       </div>}
-      {s.orphans > 0 && <div style={{ fontSize: 12, color: "#b45309", marginBottom: 10 }}>⚠️ {s.orphans} quantité(s) enregistrée(s) ne comptent plus (produit, date ou pharmacie retirés).</div>}
+      {s.orphans > 0 && <div style={{ fontSize: 12, color: T.warn, marginBottom: 10 }}>⚠️ {s.orphans} quantité(s) enregistrée(s) ne comptent plus (produit, date ou pharmacie retirés).</div>}
       {s.objective && <div style={{ marginBottom: 14 }}><Objective o={s.objective} /></div>}
       <div style={{ overflowX: "auto", marginBottom: 16 }}>
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
@@ -818,11 +822,11 @@ function Dashboard({ detail }) {
               return (
                 <tr key={l.id}>
                   <td style={td}>{l.name}</td>
-                  {usedSlots.map(sl => <td key={sl.id} style={{ ...td, textAlign: "right" }}>{s.groupBySlot[l.id]?.[sl.id] || ""}{s.groupFreeBySlot?.[l.id]?.[sl.id] ? <span style={{ color: "#15803d" }}> +{s.groupFreeBySlot[l.id][sl.id]}</span> : null}</td>)}
+                  {usedSlots.map(sl => <td key={sl.id} style={{ ...td, textAlign: "right" }}>{s.groupBySlot[l.id]?.[sl.id] || ""}{s.groupFreeBySlot?.[l.id]?.[sl.id] ? <span style={{ color: T.ok }}> +{s.groupFreeBySlot[l.id][sl.id]}</span> : null}</td>)}
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{q}</td>
-                  <td style={{ ...td, textAlign: "right", color: "#15803d", fontWeight: 700 }}>{s.groupFree?.[l.id] ? `+${s.groupFree[l.id]}` : ""}</td>
+                  <td style={{ ...td, textAlign: "right", color: T.ok, fontWeight: 700 }}>{s.groupFree?.[l.id] ? `+${s.groupFree[l.id]}` : ""}</td>
                   <td style={td}>{op.tier_mode === "individuel" ? "par pharmacie" : [p.invoicePct ? `−${fr(round2(p.invoicePct))} %` : "", p.ug.free ? `${p.ug.free} UG` : ""].filter(Boolean).join(" · ") || "—"}</td>
-                  <td style={{ ...td, color: "#0369a1" }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → remise totale −${fr(round2(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct))} %` : p.ug.next ? `encore ${p.ug.next.missing} → +${p.ug.next.gain} UG` : ""}</td>
+                  <td style={{ ...td, color: T.teal }}>{op.tier_mode === "individuel" ? "" : p.nextInvoiceTier ? `encore ${p.nextInvoiceTier.missing} → remise totale −${fr(round2(p.nextInvoiceTier.totalPct ?? p.nextInvoiceTier.pct))} %` : p.ug.next ? `encore ${p.ug.next.missing} → +${p.ug.next.gain} UG` : ""}</td>
                 </tr>
               );
             })}
@@ -835,10 +839,10 @@ function Dashboard({ detail }) {
           <tbody>
             {s.pharmacies.map(p => (
               <tr key={p.id}>
-                <td style={td}><b>{p.name}</b>{isElixir(p.id) && <span style={{ marginLeft: 6, fontSize: 10, fontWeight: 800, background: "#e0f2fe", color: "#075985", borderRadius: 99, padding: "1px 7px" }}>STOCK · BON LABO, SANS DEVIS</span>}</td>
-                <td style={td}>{p.totals ? <span style={{ color: "#16a34a", fontWeight: 700 }}>✓ {dfr(p.order.confirmed_at)}{p.order.email_sent_at ? " ✉️" : ""}</span> : <span style={{ color: "#94a3b8" }}>pas encore</span>}</td>
+                <td style={td}><b>{p.name}</b>{isElixir(p.id) && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 700, background: T.mint, color: T.teal, borderRadius: 99, padding: "1px 7px" }}>STOCK · BON LABO, SANS DEVIS</span>}</td>
+                <td style={td}>{p.totals ? <span style={{ color: T.ok, fontWeight: 700 }}>✓ {dfr(p.order.confirmed_at)}{p.order.email_sent_at ? " ✉️" : ""}</span> : <span style={{ color: T.inkMute }}>pas encore</span>}</td>
                 {p.totals ? (<>
-                  <td style={{ ...td, textAlign: "right" }}>{p.totals.units}{p.totals.freeUnits ? <span style={{ color: "#15803d" }}> +{p.totals.freeUnits} UG</span> : null}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.gross)}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{p.totals.units}{p.totals.freeUnits ? <span style={{ color: T.ok }}> +{p.totals.freeUnits} UG</span> : null}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.gross)}</td>
                   <td style={{ ...td, textAlign: "right" }}>{p.totals.rfaValue ? eur(p.totals.rfaValue) : ""}</td><td style={{ ...td, textAlign: "right" }}>{p.totals.coop ? eur(p.totals.coop) : ""}</td>
                   <td style={{ ...td, textAlign: "right" }}>{eur(p.totals.net)}</td><td style={{ ...td, textAlign: "right" }}>{eur(p.totals.fee)}</td>
                   <td style={{ ...td, textAlign: "right", fontWeight: 700 }}>{eur(p.totals.totalHT)}</td>
@@ -906,9 +910,9 @@ function Fulfilment({ detail, call, refresh, dirty }) {
     <div style={card}>
       <div style={h3}>Commandes Odoo</div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, padding: "8px 0", flexWrap: "wrap" }}>
-        <div style={{ fontSize: 13 }}><b>Bon de commande au laboratoire</b> {op.po_odoo_id ? <span style={{ color: "#16a34a" }}>· créé (Odoo #{op.po_odoo_id}, le {dfr(op.po_created_at)})</span>
-          : op.po_created_at ? <span style={{ color: "#b45309" }}>· création {Date.now() - Date.parse(op.po_created_at) > 2 * 60e3 ? "interrompue : relancez (le bon déjà créé sera retrouvé, pas de doublon)" : "en cours…"}</span>
-          : <span style={{ color: "#64748b" }}>· quantités totales, une ligne par produit et par date de livraison</span>}</div>
+        <div style={{ fontSize: 13 }}><b>Bon de commande au laboratoire</b> {op.po_odoo_id ? <span style={{ color: T.ok }}>· créé (Odoo #{op.po_odoo_id}, le {dfr(op.po_created_at)})</span>
+          : op.po_created_at ? <span style={{ color: T.warn }}>· création {Date.now() - Date.parse(op.po_created_at) > 2 * 60e3 ? "interrompue : relancez (le bon déjà créé sera retrouvé, pas de doublon)" : "en cours…"}</span>
+          : <span style={{ color: T.inkMute }}>· quantités totales, une ligne par produit et par date de livraison</span>}</div>
         {!op.po_odoo_id && op.status === "cloturee" && (!op.po_created_at || Date.now() - Date.parse(op.po_created_at) > 2 * 60e3) &&
           <button type="button" style={btn("pri")} disabled={!!busy} onClick={po}>{busy === "po" ? "Création…" : op.po_created_at ? "Reprendre la création du bon" : "Créer le bon de commande"}</button>}
       </div>
@@ -918,24 +922,24 @@ function Fulfilment({ detail, call, refresh, dirty }) {
         if (!n && !job) return null;
         const running = job?.status === "en_cours";
         return (
-          <div key={sl.id} style={{ padding: "8px 0", borderTop: "1px solid #f1f5f9" }}>
+          <div key={sl.id} style={{ padding: "8px 0", borderTop: "1px solid var(--line-soft)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-              <div style={{ fontSize: 13 }}><b>{sl.label}</b>{sl.date ? ` · ${dfr(sl.date)}` : ""} · {n} pharmacie(s) · <span style={{ color: done >= n ? "#16a34a" : "#b45309" }}>{done} devis créé(s)</span></div>
+              <div style={{ fontSize: 13 }}><b>{sl.label}</b>{sl.date ? ` · ${dfr(sl.date)}` : ""} · {n} pharmacie(s) · <span style={{ color: done >= n ? T.ok : T.warn }}>{done} devis créé(s)</span></div>
               {done < n && <button type="button" style={btn("ok")} disabled={!!busy || running} onClick={() => trigger(sl)}>{running ? `Création… ${(job.created || []).length + (job.errors || []).length}/${job.total || "?"}` : `Créer les commandes (${n - done})`}</button>}
             </div>
             {job && job.status !== "en_cours" && (
               <div style={{ fontSize: 12, marginTop: 6 }}>
-                {job.error && <div style={{ color: "#991b1b" }}>✕ {job.error}</div>}
-                {(job.created || []).map(c => <div key={c.id} style={{ color: "#166534" }}>✓ {c.name} : devis {c.so_name} ({eur(c.amount_ht)} HT){c.recovered ? " — retrouvé après interruption" : ""}</div>)}
-                {(job.errors || []).map(c => <div key={c.id} style={{ color: "#991b1b" }}>✕ {c.name} : {c.error}</div>)}
+                {job.error && <div style={{ color: T.danger }}>✕ {job.error}</div>}
+                {(job.created || []).map(c => <div key={c.id} style={{ color: T.ok }}>✓ {c.name} : devis {c.so_name} ({eur(c.amount_ht)} HT){c.recovered ? " — retrouvé après interruption" : ""}</div>)}
+                {(job.errors || []).map(c => <div key={c.id} style={{ color: T.danger }}>✕ {c.name} : {c.error}</div>)}
               </div>
             )}
           </div>
         );
       })}
-      <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 6 }}>Les devis sont créés en brouillon dans Odoo sur la fiche client Elixir de chaque pharmacie : prix brut de l'offre et une remise unique qui regroupe remise sur facture, UG, RFA et coopération, frais de traitement inclus (remise arrondie à 2 décimales, comme dans Odoo). Vérifiez-les puis confirmez-les dans Odoo.</div>
+      <div style={{ fontSize: 11, color: T.inkMute, marginTop: 6 }}>Les devis sont créés en brouillon dans Odoo sur la fiche client Elixir de chaque pharmacie : prix brut de l'offre et une remise unique qui regroupe remise sur facture, UG, RFA et coopération, frais de traitement inclus (remise arrondie à 2 décimales, comme dans Odoo). Vérifiez-les puis confirmez-les dans Odoo.</div>
       {out?.error && <div style={{ marginTop: 10 }}><Err text={out.error} /></div>}
-      {out?.type === "po" && <div style={{ marginTop: 10, fontSize: 13, color: "#166534" }}>✓ Bon {out.po_name} {out.reused ? "retrouvé" : "créé"} : {out.lines} ligne(s), {eur(out.amount_ht)} HT.{out.skipped?.length ? ` Sans fiche Odoo (non repris) : ${out.skipped.join(", ")}` : ""}</div>}
+      {out?.type === "po" && <div style={{ marginTop: 10, fontSize: 13, color: T.ok }}>✓ Bon {out.po_name} {out.reused ? "retrouvé" : "créé"} : {out.lines} ligne(s), {eur(out.amount_ht)} HT.{out.skipped?.length ? ` Sans fiche Odoo (non repris) : ${out.skipped.join(", ")}` : ""}</div>}
     </div>
   );
 }
@@ -955,14 +959,14 @@ function AccessView({ access, setAccess, call, back, err, setErr }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
         <button type="button" style={btn()} onClick={back}>← Opérations</button>
-        <div style={{ fontSize: 20, fontWeight: 800, color: "#0f2d3d" }}>Pharmacies autorisées ({access.length})</div>
+        <div style={{ fontSize: 20, fontWeight: 700, color: T.petrol }}>Pharmacies autorisées ({access.length})</div>
       </div>
       {err && <Err text={err} />}
       <div style={card}>
-        <div style={{ fontSize: 12, color: "#64748b", marginBottom: 10 }}>Seules ces pharmacies voient l'onglet « Commandes groupées » dans leur menu. Vous choisissez ensuite, opération par opération, celles qui participent.</div>
+        <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>Seules ces pharmacies voient l'onglet « Commandes groupées » dans leur menu. Vous choisissez ensuite, opération par opération, celles qui participent.</div>
         {access.map((a, i) => (
-          <div key={a.pharmacy_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: i ? "1px solid #f1f5f9" : "none", fontSize: 13, gap: 8 }}>
-            <span><b>{a.pharmacy_name}</b> <span style={{ color: "#94a3b8" }}>{a.pharmacy_cip ? `CIP ${a.pharmacy_cip} · ` : ""}{a.email} · fiche Odoo {a.pharmacy_id}</span></span>
+          <div key={a.pharmacy_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderTop: i ? "1px solid var(--line-soft)" : "none", fontSize: 13, gap: 8 }}>
+            <span><b>{a.pharmacy_name}</b> <span style={{ color: T.inkMute }}>{a.pharmacy_cip ? `CIP ${a.pharmacy_cip} · ` : ""}{a.email} · fiche Odoo {a.pharmacy_id}</span></span>
             <button type="button" style={{ ...btn("danger"), padding: "5px 10px" }} onClick={() => del(a)}>Retirer</button>
           </div>
         ))}
@@ -974,11 +978,11 @@ function AccessView({ access, setAccess, call, back, err, setErr }) {
         </div>
         {res.map(p => (
           <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "6px 0", gap: 8 }}>
-            <span>{p.name} <span style={{ color: "#94a3b8" }}>{p.ville}{p.cip ? ` · CIP ${p.cip}` : ""} · {p.emails.join(", ")}</span></span>
+            <span>{p.name} <span style={{ color: T.inkMute }}>{p.ville}{p.cip ? ` · CIP ${p.cip}` : ""} · {p.emails.join(", ")}</span></span>
             <button type="button" style={{ ...btn(), padding: "5px 10px" }} disabled={have.has(p.id)} onClick={() => add(p)}>{have.has(p.id) ? "autorisée" : "＋ Autoriser"}</button>
           </div>
         ))}
-        <div style={{ fontSize: 11, color: "#94a3b8", marginTop: 8 }}>Seules les pharmacies clientes d'Elixir (société 2) apparaissent.</div>
+        <div style={{ fontSize: 11, color: T.inkMute, marginTop: 8 }}>Seules les pharmacies clientes d'Elixir (société 2) apparaissent.</div>
       </div>
     </div>
   );

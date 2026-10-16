@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { T, tone } from "../theme.js";
 
 // Relais PharmaML (agent du Mac du bureau) : état de l'agent, envoi automatique des commandes du site,
 // pause générale (refus 403), envois à vérifier. Logique : netlify/functions/_relais.js
 const API = "/.netlify/functions/pml-relais";
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+// état → [libellé, texte, fond], aux tons de la charte (lot 10 : tone(), src/theme.js)
+const et = (lib, ton) => [lib, tone(ton).fg, tone(ton).bg];
 const ETATS = {
-  a_envoyer: ["📡 en file", "#1e40af", "#dbeafe"], prise: ["📤 envoi en cours", "#1e40af", "#dbeafe"], envoyee: ["✓ envoyée", "#166534", "#dcfce7"],
-  refusee: ["✕ refusée", "#991b1b", "#fee2e2"], incertaine: ["⚠ à vérifier", "#9a3412", "#ffedd5"], expiree: ["non prise (agent absent)", "#475569", "#f1f5f9"],
-  annulee: ["annulée", "#475569", "#f1f5f9"], non_envoyee: ["vérifiée non envoyée", "#475569", "#f1f5f9"],
+  a_envoyer: et("📡 en file", "labo"), prise: et("📤 envoi en cours", "labo"), envoyee: et("✓ envoyée", "ok"),
+  refusee: et("✕ refusée", "danger"), incertaine: et("⚠ à vérifier", "acting"), expiree: et("non prise (agent absent)", "neutral"),
+  annulee: et("annulée", "neutral"), non_envoyee: et("vérifiée non envoyée", "neutral"),
 };
-const Badge = ({ etat }) => { const [t, c, bg] = ETATS[etat] || [etat, "#475569", "#f1f5f9"]; return <span style={{ background: bg, color: c, fontSize: 10, fontWeight: 800, padding: "1px 7px", borderRadius: 10, whiteSpace: "nowrap" }}>{t}</span>; };
+const Badge = ({ etat }) => { const [t, c, bg] = ETATS[etat] || et(etat, "neutral"); return <span style={{ background: bg, color: c, fontSize: 11, fontWeight: 700, padding: "1px 7px", borderRadius: 10, whiteSpace: "nowrap" }}>{t}</span>; };
 
 async function appel(adminFetch, body) {
   const r = await adminFetch(API, { method: "POST", body: JSON.stringify(body) });
@@ -27,9 +30,9 @@ async function confirmer(adminFetch, flash, ref, onChange) {
   try { await appel(adminFetch, { action: "confirmer", ref, confirme: true }); flash?.(`✓ ${ref} : marquée envoyée`); onChange?.(); }
   catch (e) { flash?.(`⚠ ${e.message}`); }
 }
-const lien = { background: "none", border: "none", cursor: "pointer", fontSize: 10, fontWeight: 700, textDecoration: "underline", padding: 0 };
+const lien = { background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: 0 };
 const Verifier = ({ t, adminFetch, flash, onChange }) => (<>
-  <button onClick={() => confirmer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: "#166534" }}>vérifié : arrivé dans PharmaML</button>
+  <button onClick={() => confirmer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: T.ok }}>vérifié : arrivé dans PharmaML</button>
   <button onClick={() => liberer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: "#9a3412" }}>vérifié : pas dans PharmaML</button>
 </>);
 
@@ -38,13 +41,13 @@ export function RelaisCommande({ taches, adminFetch, flash, onChange }) {
   return (
     <div style={{ marginTop: 4, display: "flex", flexDirection: "column", gap: 2 }}>
       {taches.map(t => (
-        <div key={t.ref} style={{ fontSize: 10, color: "#475569", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+        <div key={t.ref} style={{ fontSize: 11, color: T.inkSoft, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <Badge etat={t.etat} />
           <span style={{ fontFamily: "monospace" }}>{t.ref}</span>
           <span>{t.creePar === "auto" ? "auto" : t.creePar?.startsWith("auto-saisie") ? "auto (saisie Elixir)" : "synchro admin"} · {dt(t.renduA || t.priseA || t.creeA)}</span>
           {t.message && t.etat !== "envoyee" && <span title={t.message} style={{ maxWidth: 360, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>— {t.message}</span>}
           {t.etat === "a_envoyer" && <button onClick={async () => { try { await appel(adminFetch, { action: "annuler", ref: t.ref }); flash?.(`✓ ${t.ref} annulée`); onChange?.(); } catch (e) { flash?.(`⚠ ${e.message}`); } }}
-            style={{ background: "none", border: "none", color: "#2563eb", cursor: "pointer", fontSize: 10, fontWeight: 700, textDecoration: "underline", padding: 0 }}>annuler</button>}
+            style={{ background: "none", border: "none", color: T.teal, cursor: "pointer", fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: 0 }}>annuler</button>}
           {t.etat === "incertaine" && <Verifier t={t} adminFetch={adminFetch} flash={flash} onChange={onChange} />}
         </div>
       ))}
@@ -61,9 +64,9 @@ export default function AdminRelais({ adminFetch, flash }) {
     try { setSt(await appel(adminFetch, { action: "statut" })); setErr(""); } catch (e) { setErr(e.message); }
   }, [adminFetch]);
   useEffect(() => { charger(); const t = setInterval(charger, 30e3); return () => clearInterval(t); }, [charger]);
-  if (!st) return err ? <div style={{ fontSize: 12, color: "#b91c1c", marginBottom: 10 }}>⚠ Relais PharmaML : {err}</div> : null;
+  if (!st) return err ? <div style={{ fontSize: 12, color: T.danger, marginBottom: 10 }}>⚠ Relais PharmaML : {err}</div> : null;
   const vu = st.agent?.vuA ? (Date.now() - Date.parse(st.agent.vuA)) / 60e3 : Infinity;
-  const couleur = vu < 2 ? "#059669" : vu < 10 ? "#d97706" : "#dc2626";
+  const couleur = vu < 2 ? T.ok : vu < 10 ? T.warn : T.danger;
   const basculer = async () => {
     const actif = !st.config?.autoSite;
     if (!window.confirm(actif
@@ -74,10 +77,10 @@ export default function AdminRelais({ adminFetch, flash }) {
     catch (e) { flash?.(`⚠ ${e.message}`); } finally { setBusy(false); }
   };
   return (
-    <div style={{ background: "white", border: "1px solid #e2e8f0", borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 12 }}>
+    <div style={{ background: T.surface, border: "1px solid var(--line)", borderRadius: 12, padding: "10px 14px", marginBottom: 12, fontSize: 12 }}>
       <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
-        <b style={{ color: "#0f2d3d" }}>📡 Relais PharmaML</b>
-        <span><span style={{ color: couleur, fontWeight: 800 }}>●</span> agent du Mac {Number.isFinite(vu) ? (vu < 2 ? "connecté" : `vu il y a ${Math.round(vu)} min`) : "jamais vu"}{st.agent?.version ? ` (v${st.agent.version})` : ""}</span>
+        <b style={{ color: T.petrol }}>📡 Relais PharmaML</b>
+        <span><span style={{ color: couleur, fontWeight: 700 }}>●</span> agent du Mac {Number.isFinite(vu) ? (vu < 2 ? "connecté" : `vu il y a ${Math.round(vu)} min`) : "jamais vu"}{st.agent?.version ? ` (v${st.agent.version})` : ""}</span>
         <span>{st.enFile} en file</span>
         <span style={{ flex: 1 }} />
         <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: busy ? "wait" : "pointer" }}>
@@ -104,14 +107,14 @@ export default function AdminRelais({ adminFetch, flash }) {
               await charger();
             } catch (e) { setTest(`⚠ ${e.message}`); } finally { setBusy(false); }
           }}
-          disabled={busy} title="L'agent du Mac envoie à PharmaML une liste VIDE (aucune commande créée) ; marche aussi pendant une pause, pour vérifier l'adresse du bureau" style={{ background: "#f1f5f9", border: "none", borderRadius: 8, padding: "4px 10px", cursor: busy ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }}>{busy ? "Essai (jusqu'à 90 s)…" : "🔌 Tester"}</button>
+          disabled={busy} title="L'agent du Mac envoie à PharmaML une liste VIDE (aucune commande créée) ; marche aussi pendant une pause, pour vérifier l'adresse du bureau" style={{ background: T.surface2, border: "none", borderRadius: 8, padding: "4px 10px", cursor: busy ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }}>{busy ? "Essai (jusqu'à 90 s)…" : "🔌 Tester"}</button>
       </div>
-      {test && <div style={{ marginTop: 6, fontSize: 12, color: /^✓/.test(test) ? "#166534" : "#9a3412" }}>{test}</div>}
+      {test && <div style={{ marginTop: 6, fontSize: 12, color: /^✓/.test(test) ? T.ok : "#9a3412" }}>{test}</div>}
       {st.pause?.at && (
-        <div style={{ marginTop: 8, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 8, padding: "6px 10px", color: "#991b1b" }}>
+        <div style={{ marginTop: 8, background: T.dangerBg, border: "1px solid #fecaca", borderRadius: 8, padding: "6px 10px", color: T.danger }}>
           ⛔ Envois suspendus depuis le {dt(st.pause.at)} : {st.pause.motif}{" "}
           <button onClick={async () => { if (!window.confirm("Reprendre les envois vers PharmaML ? (l'adresse du bureau doit de nouveau être autorisée par InfoSoft)")) return; try { await appel(adminFetch, { action: "reprendre_envois" }); await charger(); } catch (e) { flash?.(`⚠ ${e.message}`); } }}
-            style={{ marginLeft: 8, background: "#991b1b", color: "white", border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Reprendre les envois</button>
+            style={{ marginLeft: 8, background: T.danger, color: "white", border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Reprendre les envois</button>
         </div>
       )}
       {(st.aVerifier || []).length > 0 && (

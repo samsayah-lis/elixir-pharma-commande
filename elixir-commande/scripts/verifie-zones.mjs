@@ -37,6 +37,13 @@ const ZONES = [
     de: /\{\/\* Bouton confirmation commande groupée U-Labs \*\/\}/, puis: /^\s*const confirmOrder = async \(\) => \{$/, fin: "bloc" },
   { fichier: "src/tiers.jsx", nom: "paliers de quantité (applyTiers)",
     de: /^import React from "react";$/, puis: /^export function applyTiers\(/, fin: "bloc" },
+  // lot 10 (admin) : accès, publication de la configuration et connexion — interdits du plan (§ 3, lot 10)
+  { fichier: "src/AdminPanel.jsx", nom: "admin : appels authentifiés et rafraîchissement du jeton (adminFetch)",
+    de: /^  const adminFetch = useCallback\(async \(url, options = \{\}\) => \{$/, fin: "bloc" },
+  { fichier: "src/AdminPanel.jsx", nom: "admin : publication de la configuration (publier … saveDisplayConfig)",
+    de: /^  const publier = \(key, value, \{ forcer = false \} = \{\}\) => \{$/, puis: /^  const saveDisplayConfig = \(newConfig\) => \{$/, fin: "bloc" },
+  { fichier: "src/AdminPanel.jsx", nom: "admin : version en ligne, publication choisie et connexion (chargerConfigServeur … handleLogin)",
+    de: /^  const chargerConfigServeur = async \(\) => \{$/, puis: /^  const handleLogin = async \(\) => \{$/, fin: "bloc" },
 ];
 
 // Fichiers et dossiers dont aucune ligne ne doit changer

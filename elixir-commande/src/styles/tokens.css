@@ -291,6 +291,32 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   .ex-app .ex-ops:not(.ex-admin *) td:nth-child(5) { grid-area: action; align-self: center; }
 }
 
+/* ── Admin (lot 10, alignement léger) : règles propres au back-office, toutes sous .ex-admin (rendu dans l'arbre
+   d'App) ; les règles du site client restent sous .ex-app … :not(.ex-admin *). Couleurs de données de l'admin
+   (campagnes, menus promo, sections) inchangées : ce sont des données, pas la charte ── */
+/* barre du haut (pétrole) : « Commander pour une pharmacie » en ton acting (orange conservé, 6,9:1), « Retour au
+   catalogue » sur --petrol-field ; le fond est posé ici et non en inline, sinon pas de survol */
+.ex-admin-btn-acting { background: #fff7ed; color: var(--orange-acting); transition: background-color .15s var(--ease); }
+.ex-admin-btn-sombre { background: var(--petrol-field); color: var(--paper); transition: background-color .15s var(--ease); }
+@media (hover: hover) {
+  .ex-admin-btn-acting:hover { background: #ffedd5; }
+  .ex-admin-btn-sombre:hover { background: #36505e; }
+}
+/* tableaux : chiffres alignés ; survol de ligne discret pour suivre une ligne dans les tableaux larges (les lignes
+   .ex-tr des composants partagés, Péremptions et Commandes groupées, ont déjà le leur) */
+.ex-admin table { font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .ex-admin tbody tr:not(.ex-tr):hover > td { background-color: rgba(15,45,61,.035); } }
+/* téléphone : l'admin reste un outil de bureau, mais la barre du haut et les onglets ne débordent plus — libellés
+   masqués visuellement (toujours lus par les lecteurs d'écran), onglets réduits à leur icône, statistiques retirées */
+@media (max-width: 767px) {
+  .ex-admin-stats { display: none; }
+  .ex-admin-libelle { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .ex-admin-onglets { width: 60px !important; }
+  .ex-admin-onglets button { justify-content: center; padding: 11px 0 !important; }
+  .ex-admin-onglets .ex-admin-badge { position: absolute; top: 2px; right: 3px; }
+  .ex-admin-contenu { padding: 16px 12px !important; }
+}
+
 /* barre de défilement fine, recolorée aux tons de la charte (était #f1f5f9 / #cbd5e0) */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }

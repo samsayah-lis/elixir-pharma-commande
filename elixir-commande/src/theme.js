@@ -123,6 +123,22 @@ export const ui = {
     display: "inline-flex", alignItems: "center", justifyContent: "center" }),
 };
 
+// ── Admin (lot 10) : atomes du back-office ──
+// Remplacent LS / IS / PB / CB d'AdminPanel et leurs copies (AdminAdd, AdminEdit, AdminCampaigns, AdminGroupPurchases).
+// Densité de l'admin conservée : champs en 13 px sans hauteur minimale (les surcharges locales de marge interne et
+// de taille restent valables), bouton principal de 13 px de marge interne ; filet --line-field (3,13:1) au lieu de
+// #e2e8f0 (1,2:1). Le focus vient de l'anneau global (tokens.css), malgré outline: none.
+export const adm = {
+  label: { fontSize: 12, fontWeight: 700, color: T.inkSoft, display: "block", marginBottom: 6 },
+  input: { width: "100%", border: `1px solid ${T.lineField}`, borderRadius: R.s, padding: "9px 12px", fontSize: 13, outline: "none",
+    boxSizing: "border-box", fontFamily: "inherit", background: T.surface, color: T.ink },
+  // bouton principal : pétrole à plat (fini le dégradé), en pastille comme les boutons du site
+  btn: { width: "100%", background: T.petrol, color: T.paper, border: "none", borderRadius: R.pill, padding: "13px", fontWeight: 700,
+    fontSize: 14, cursor: "pointer" },
+  // bouton rond « fermer » (fond et survol par la classe ex-btn-discret)
+  fermer: { ...ui.rond(32), fontSize: 16 },
+};
+
 // ── Formats d'affichage (français) ──
 // Affichage seulement : les données envoyées (e-mail, texte copié, relais) gardent leurs toFixed() d'origine.
 // Espace fine insécable entre milliers, espace insécable avant € et %, vrai signe moins (−).

@@ -11,18 +11,20 @@ import AdminGroupPurchases from "./components/AdminGroupPurchases";
 import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
+import { T, R, tone, alpha, adm } from "./theme.js";
+import { Icone, CroixElixir } from "./icons.jsx";
 
 // ── Copy CIP button ──────────────────────────────────────────────────────────
 function CipCopy({ cip }) {
   const [copied, setCopied] = useState(false);
-  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>—</span>;
+  if (!cip) return <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkMute }}>—</span>;
   const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
   return (
     <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
-      <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+      <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkMute }}>{cip}</span>
       <button onClick={copy} title="Copier CIP" style={{
-        background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
-        padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+        background: copied ? T.okBg : T.surface2, border:"none", borderRadius:4,
+        padding:"1px 5px", cursor:"pointer", fontSize:11, color: copied ? T.ok : T.inkMute,
         fontWeight:700, lineHeight:"14px", transition:"all 0.2s"
       }}>{copied ? "✓" : "⎘"}</button>
     </span>
@@ -1011,15 +1013,20 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   };
 
   // LOGIN
+  // lot 10 : fond cream, carte paper (rayon 16 au plus dans l'admin), croix Elixir sarcelle ; champs, bouton et
+  // gestionnaires inchangés (autoFocus, Entrée, handleLogin)
   if (!authed) return (
-    <div style={{position:"fixed",inset:0,background:"#f1f5f9",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"inherit"}}>
-      <div style={{background:"white",borderRadius:20,padding:"40px 44px",maxWidth:420,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.12)"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:28}}>
-          <div>
-            <div style={{fontWeight:800,fontSize:22,color:"#0f2d3d"}}>🔐 Espace Admin</div>
-            <div style={{fontSize:12,color:"#aaa",marginTop:3}}>Elixir Pharma – Authentification Supabase</div>
+    <div className="ex-admin" style={{position:"fixed",inset:0,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,fontFamily:"inherit",padding:16}}>
+      <div style={{background:T.paper,borderRadius:R.m,padding:"40px 44px",maxWidth:420,width:"100%",border:`1px solid ${T.line}`,boxShadow:T.shadow3}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",gap:12,marginBottom:28}}>
+          <div style={{display:"flex",alignItems:"center",gap:12}}>
+            <CroixElixir taille={30} epaisseur={75} style={{color:T.teal}} />
+            <div>
+              <h1 style={{margin:0,fontWeight:640,fontSize:22,letterSpacing:"-0.02em",lineHeight:1.2,color:T.petrol}}>Espace Admin</h1>
+              <div style={{fontSize:12,color:T.inkMute,marginTop:3}}>Elixir Pharma – Authentification Supabase</div>
+            </div>
           </div>
-          <button onClick={onClose} style={CB}>✕</button>
+          <button onClick={onClose} aria-label="Fermer" title="Fermer" className="ex-btn-discret" style={CB}><Icone nom="fermer" taille={16} /></button>
         </div>
         <label style={LS}>Email</label>
         <input type="email" value={adminEmail} onChange={e=>setAdminEmail(e.target.value)}
@@ -1028,8 +1035,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         <label style={LS}>Mot de passe</label>
         <input type="password" value={pwd} onChange={e=>setPwd(e.target.value)}
           onKeyDown={e=>e.key==="Enter"&&handleLogin()} placeholder="••••••••"
-          style={{...IS,borderColor:pwdError?"#f87171":"#e2e8f0"}} />
-        {pwdError&&<div style={{color:"#ef4444",fontSize:12,marginTop:6}}>{pwdError}</div>}
+          style={{...IS,borderColor:pwdError?T.danger:T.lineField}} />
+        {pwdError&&<div role="alert" style={{color:T.danger,fontSize:12,marginTop:6,display:"flex",alignItems:"center",gap:6}}><Icone nom="alerte" taille={14} />{pwdError}</div>}
         <button onClick={handleLogin} style={{...PB,marginTop:16}}>Accéder →</button>
       </div>
     </div>
@@ -1053,44 +1060,48 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   ];
 
   return (
-    <div className="ex-admin" style={{position:"fixed",inset:0,zIndex:1000,background:"#f1f5f9",display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
+    <div className="ex-admin" style={{position:"fixed",inset:0,zIndex:1000,background:T.cream,display:"flex",flexDirection:"column",fontFamily:"inherit"}}>
 
-      {/* ── Top bar ── */}
-      <div style={{background:"#0f2d3d",color:"white",padding:"0 24px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,boxShadow:"0 2px 8px rgba(0,0,0,0.25)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:16}}>
-          <div style={{fontWeight:800,fontSize:17,letterSpacing:"-0.3px"}}>⚙️ Administration Elixir Pharma</div>
-          <div style={{fontSize:11,color:"rgba(255,255,255,0.5)",paddingLeft:16,borderLeft:"1px solid rgba(255,255,255,0.15)"}}>
+      {/* ── Top bar ── lot 10 : pétrole comme l'en-tête du site, croix or clair, anneau de focus or clair (ex-on-dark) */}
+      <div className="ex-on-dark" style={{background:T.petrol,color:T.paper,padding:"0 24px",height:56,display:"flex",alignItems:"center",justifyContent:"space-between",gap:12,flexShrink:0,boxShadow:T.shadow1}}>
+        <div style={{display:"flex",alignItems:"center",gap:16,minWidth:0,overflow:"hidden"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,fontWeight:640,fontSize:17,letterSpacing:"-0.02em",minWidth:0}}>
+            <CroixElixir taille={22} style={{color:T.orClair}} />
+            <span style={{whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>Administration Elixir Pharma</span>
+          </div>
+          <div className="num ex-admin-stats" style={{fontSize:11,color:T.paperMute,paddingLeft:16,borderLeft:"1px solid rgba(251,248,242,0.18)",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
             {products.filter(p=>p.source==="admin").length} ajoutés · {products.length} produits · {orders.length} commandes
           </div>
         </div>
-        <div style={{display:"flex",gap:8}}>
-          {onOrderForPharmacy && <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Continuer ?")) return; onOrderForPharmacy(); }} title="Passer une commande sur le site à la place d'une pharmacie (sans accès, par téléphone…)" style={{background:"#fb923c",border:"none",borderRadius:8,color:"#1c1917",padding:"6px 14px",fontWeight:800,cursor:"pointer",fontSize:13}}>
-            🛠 Commander pour une pharmacie
+        <div style={{display:"flex",gap:8,flexShrink:0}}>
+          {onOrderForPharmacy && <button className="ex-admin-btn-acting" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Continuer ?")) return; onOrderForPharmacy(); }} title="Passer une commande sur le site à la place d'une pharmacie (sans accès, par téléphone…)" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+            <Icone nom="crayon" taille={15} /> <span className="ex-admin-libelle">Commander pour une pharmacie</span>
           </button>}
-          <button onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} style={{background:"rgba(255,255,255,0.12)",border:"none",borderRadius:8,color:"white",padding:"6px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6}}>
-            ← Retour au catalogue
+          <button className="ex-admin-btn-sombre" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} title="Retour au catalogue" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+            <Icone nom="retour" taille={15} /> <span className="ex-admin-libelle">Retour au catalogue</span>
           </button>
         </div>
       </div>
 
       {/* ── Configuration (menus promo, affichage) différente de celle que voient les pharmacies ── */}
+      {/* lot 10 : ton warn (écart) ou danger (erreur de publication) ; textes, boutons et gestionnaires inchangés */}
       {configEcart && (
-        <div role="alert" style={{background: configEcart.erreurSeule ? "#fef2f2" : "#fffbeb", borderBottom:`1px solid ${configEcart.erreurSeule ? "#fecaca" : "#fde68a"}`, padding:"10px 24px", fontSize:12, color:"#78350f", display:"flex", gap:16, alignItems:"center", flexWrap:"wrap", flexShrink:0}}>
+        <div role="alert" style={{background: configEcart.erreurSeule ? T.dangerBg : T.warnBg, borderBottom:`1px solid ${configEcart.erreurSeule ? tone("danger").border : tone("warn").border}`, padding:"10px 24px", fontSize:12, color: configEcart.erreurSeule ? T.danger : T.warn, display:"flex", gap:16, alignItems:"center", flexWrap:"wrap", flexShrink:0}}>
           <div style={{flex:"1 1 420px", lineHeight:1.5}}>
             {configEcart.erreurSeule ? (
-              <><b style={{color:"#991b1b"}}>⚠ Dernière modification NON publiée</b> : les pharmacies ne la voient pas ({configEcart.erreur}).</>
+              <><b style={{color:T.danger}}>⚠ Dernière modification NON publiée</b> : les pharmacies ne la voient pas ({configEcart.erreur}).</>
             ) : (<>
               <b>⚠ Ce navigateur n'a pas la même configuration que celle que voient les pharmacies.</b> Rien n'est publié tant que vous n'avez pas choisi.
               {configEcart.seulementIci?.length > 0 && <div>Menus promo présents seulement ici : <b>{configEcart.seulementIci.join(", ")}</b></div>}
               {configEcart.seulementEnLigne?.length > 0 && <div>Menus promo en ligne absents d'ici : <b>{configEcart.seulementEnLigne.join(", ")}</b></div>}
               {configEcart.modifies?.length > 0 && <div>Menus promo différents : <b>{configEcart.modifies.join(", ")}</b></div>}
               {configEcart.affichage?.length > 0 && <div>Réglages d'affichage différents : {configEcart.affichage.join(", ")}</div>}
-              {configEcart.erreurPublication && <div style={{color:"#991b1b"}}>Publication impossible : {configEcart.erreurPublication}</div>}
+              {configEcart.erreurPublication && <div style={{color:T.danger}}>Publication impossible : {configEcart.erreurPublication}</div>}
             </>)}
           </div>
           <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-            <button onClick={publierMaVersion} style={{background:"#b45309",color:"white",border:"none",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Publier la version de ce navigateur</button>
-            {!configEcart.erreurSeule && <button onClick={reprendreVersionEnLigne} style={{background:"white",color:"#78350f",border:"1px solid #fcd34d",borderRadius:8,padding:"7px 12px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Reprendre la version en ligne</button>}
+            <button onClick={publierMaVersion} style={{background:T.warn,color:"white",border:"none",borderRadius:R.pill,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Publier la version de ce navigateur</button>
+            {!configEcart.erreurSeule && <button onClick={reprendreVersionEnLigne} style={{background:T.surface,color:T.warn,border:`1px solid ${tone("warn").border}`,borderRadius:R.pill,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Reprendre la version en ligne</button>}
           </div>
         </div>
       )}
@@ -1099,19 +1110,21 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
 
         {/* Sidebar */}
-        <div style={{width:200,background:"white",borderRight:"1px solid #e2e8f0",display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
+        {/* lot 10 : paper + filet ; onglet actif menthe + sarcelle (aria-current), survol par ex-menu (fond actif en inline,
+            il l'emporte) ; emoji de tête des TABS conservé (la regex du libellé retire le premier mot) */}
+        <nav aria-label="Onglets de l'administration" className="ex-admin-onglets" style={{width:200,background:T.paper,borderRight:`1px solid ${T.line}`,display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
           {TABS.map(t=>(
-            <button key={t.k} onClick={()=>{ if (tab==="gp" && t.k!=="gp" && gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'onglet ?")) return; setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
-              style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?"#f0f9ff":"transparent",color:tab===t.k?"#0f2d3d":"#555",fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?"3px solid #0ea5e9":"3px solid transparent",position:"relative"}}>
+            <button key={t.k} className="ex-menu" aria-current={tab===t.k?"page":undefined} title={t.label.replace(/^[^\s]+\s/,"")} onClick={()=>{ if (tab==="gp" && t.k!=="gp" && gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'onglet ?")) return; setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
+              style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?T.mint:undefined,color:tab===t.k?T.teal:T.inkSoft,fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?`3px solid ${T.teal}`:"3px solid transparent",position:"relative"}}>
               <span style={{fontSize:16}}>{t.icon}</span>
-              <span style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
-              {t.badge ? <span style={{background:"#ef4444",color:"white",borderRadius:99,fontSize:10,fontWeight:800,padding:"1px 6px",minWidth:18,textAlign:"center"}}>{t.badge}</span> : null}
+              <span className="ex-admin-libelle" style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
+              {t.badge ? <span className="num ex-admin-badge" style={{background:T.danger,color:"white",borderRadius:99,fontSize:11,fontWeight:700,padding:"1px 6px",minWidth:18,textAlign:"center"}}>{t.badge}</span> : null}
             </button>
           ))}
-        </div>
+        </nav>
 
         {/* Main content */}
-        <div style={{flex:1,overflowY:"auto",padding:"24px 32px"}}>
+        <div className="ex-admin-contenu" style={{flex:1,overflowY:"auto",padding:"24px 32px"}}>
 
 
 
@@ -1124,37 +1137,37 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         {tab==="promos"&&(
           <>
             {/* Create new promo form */}
-            <div style={{background:"#fafbfc",borderRadius:14,padding:"16px",marginBottom:20,border:"1px solid #e8eaed"}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",marginBottom:14}}>Créer une section promotionnelle</div>
+            <div style={{background:T.paper,borderRadius:14,padding:"16px",marginBottom:20,border:"1px solid var(--line)"}}>
+              <div style={{fontWeight:700,fontSize:13,color:T.petrol,marginBottom:14}}>Créer une section promotionnelle</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                 <div style={{gridColumn:"1/-1"}}>
-                  <label style={{...LS,fontSize:10}}>Nom de la section *</label>
+                  <label style={{...LS,fontSize:11}}>Nom de la section *</label>
                   <input value={promoForm.name} onChange={e=>setPromoForm(f=>({...f,name:e.target.value}))} placeholder="Flash Semaine / Offre Spéciale..." style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                 </div>
                 <div style={{gridColumn:"1/-1"}}>
-                  <label style={{...LS,fontSize:10}}>Description (affichée dans le popup)</label>
+                  <label style={{...LS,fontSize:11}}>Description (affichée dans le popup)</label>
                   <input value={promoForm.description} onChange={e=>setPromoForm(f=>({...f,description:e.target.value}))} placeholder="Promotions exclusives cette semaine !" style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                 </div>
                 <div>
-                  <label style={{...LS,fontSize:10}}>Icône (emoji)</label>
+                  <label style={{...LS,fontSize:11}}>Icône (emoji)</label>
                   <input value={promoForm.icon} onChange={e=>setPromoForm(f=>({...f,icon:e.target.value}))} placeholder="🏷️" style={{...IS,fontSize:18,padding:"5px 10px",textAlign:"center"}}/>
                 </div>
                 <div>
-                  <label style={{...LS,fontSize:10}}>Date de fin (optionnel)</label>
+                  <label style={{...LS,fontSize:11}}>Date de fin (optionnel)</label>
                   <input type="date" value={promoForm.endDate} onChange={e=>setPromoForm(f=>({...f,endDate:e.target.value}))} style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                 </div>
                 <div>
-                  <label style={{...LS,fontSize:10}}>Couleur principale</label>
+                  <label style={{...LS,fontSize:11}}>Couleur principale</label>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <input type="color" value={promoForm.color} onChange={e=>setPromoForm(f=>({...f,color:e.target.value}))} style={{width:36,height:36,border:"none",borderRadius:8,cursor:"pointer",padding:2}}/>
-                    <span style={{fontSize:12,color:"#888"}}>{promoForm.color}</span>
+                    <span style={{fontSize:12,color:T.inkMute}}>{promoForm.color}</span>
                   </div>
                 </div>
                 <div>
-                  <label style={{...LS,fontSize:10}}>Couleur accent</label>
+                  <label style={{...LS,fontSize:11}}>Couleur accent</label>
                   <div style={{display:"flex",gap:8,alignItems:"center"}}>
                     <input type="color" value={promoForm.accentColor} onChange={e=>setPromoForm(f=>({...f,accentColor:e.target.value}))} style={{width:36,height:36,border:"none",borderRadius:8,cursor:"pointer",padding:2}}/>
-                    <span style={{fontSize:12,color:"#888"}}>{promoForm.accentColor}</span>
+                    <span style={{fontSize:12,color:T.inkMute}}>{promoForm.accentColor}</span>
                   </div>
                 </div>
               </div>
@@ -1163,11 +1176,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   <input type="checkbox" checked={promoForm.withPhotos}
                     onChange={e=>setPromoForm(f=>({...f,withPhotos:e.target.checked}))}
                     style={{width:16,height:16,cursor:"pointer"}}/>
-                  <span style={{fontSize:13,fontWeight:600,color:"#0f2d3d"}}>
+                  <span style={{fontSize:13,fontWeight:600,color:T.petrol}}>
                     🖼️ Affichage avec photos (présentation horizontale)
                   </span>
                 </label>
-                <div style={{fontSize:11,color:"#999",marginTop:3,marginLeft:26}}>
+                <div style={{fontSize:11,color:T.inkMute,marginTop:3,marginLeft:26}}>
                   Les produits avec image_url seront affichés en mode visuel, les autres en tableau.
                 </div>
               </div>
@@ -1175,83 +1188,83 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             </div>
 
             {/* Existing promos */}
-            {promos.length===0&&<div style={{textAlign:"center",padding:"30px",color:"#aaa",fontSize:13}}>Aucune section promo créée.</div>}
+            {promos.length===0&&<div style={{textAlign:"center",padding:"30px",color:T.inkMute,fontSize:13}}>Aucune section promo créée.</div>}
             {promos.map(ps=>(
-              <div key={ps.id} style={{borderRadius:14,marginBottom:14,border:`2px solid ${ps.active?ps.color+"60":"#e8eaed"}`,background:ps.active?`${ps.color}08`:"#fafbfc",overflow:"hidden"}}>
+              <div key={ps.id} style={{borderRadius:14,marginBottom:14,border:`2px solid ${ps.active?alpha(ps.color,.38):T.line}`,background:ps.active?alpha(ps.color,.03):T.paper,overflow:"hidden"}}>
                 {/* Promo header */}
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid #f0f2f5"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 16px",borderBottom:"1px solid var(--line-soft)"}}>
                   <div style={{display:"flex",alignItems:"center",gap:10}}>
                     <span style={{fontSize:24}}>{ps.icon}</span>
                     <div>
-                      <div style={{fontWeight:800,fontSize:14,color:"#0f2d3d",display:"flex",alignItems:"center",gap:8}}>
+                      <div style={{fontWeight:700,fontSize:14,color:T.petrol,display:"flex",alignItems:"center",gap:8}}>
                         {ps.name}
                         {ps.active
-                          ? <span style={{background:"#dcfce7",color:"#166534",fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:10}}>● VISIBLE</span>
-                          : <span style={{background:"#f3f4f6",color:"#6b7280",fontSize:9,fontWeight:800,padding:"2px 7px",borderRadius:10}}>○ MASQUÉ</span>
+                          ? <span style={{background:T.okBg,color:T.ok,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>● VISIBLE</span>
+                          : <span style={{background:T.surface2,color:T.inkMute,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>○ MASQUÉ</span>
                         }
                       </div>
-                      {ps.description&&<div style={{fontSize:11,color:"#888"}}>{ps.description}</div>}
-                      {ps.endDate&&<div style={{fontSize:11,color:"#e07b39",fontWeight:600}}>⏰ Jusqu'au {new Date(ps.endDate).toLocaleDateString("fr-FR")}</div>}
-                      <div style={{fontSize:11,color:"#999"}}>{(ps.products||[]).length} produit(s)</div>
+                      {ps.description&&<div style={{fontSize:11,color:T.inkMute}}>{ps.description}</div>}
+                      {ps.endDate&&<div style={{fontSize:11,color:T.warn,fontWeight:600}}>⏰ Jusqu'au {new Date(ps.endDate).toLocaleDateString("fr-FR")}</div>}
+                      <div style={{fontSize:11,color:T.inkMute}}>{(ps.products||[]).length} produit(s)</div>
                     </div>
                   </div>
                   <div style={{display:"flex",gap:6,flexShrink:0}}>
                     <button onClick={()=>togglePromoActive(ps.id)} style={{
-                      background:ps.active?"#fef3c7":"#dcfce7",border:"none",borderRadius:8,padding:"5px 10px",
-                      cursor:"pointer",fontSize:11,fontWeight:800,color:ps.active?"#92400e":"#166534"
+                      background:ps.active?T.warnBg:T.okBg,border:"none",borderRadius:8,padding:"5px 10px",
+                      cursor:"pointer",fontSize:11,fontWeight:700,color:ps.active?T.warn:T.ok
                     }}>{ps.active?"Masquer":"Afficher"}</button>
                     <button onClick={()=>updatePromoField(ps.id,"withPhotos",!ps.withPhotos)} title="Affichage des produits avec leurs photos (grille) ou en tableau"
-                      style={{background:ps.withPhotos?"#ede9fe":"#f3f4f6",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:ps.withPhotos?"#5b21b6":"#6b7280"}}>📷 {ps.withPhotos?"Photos":"Tableau"}</button>
+                      style={{background:ps.withPhotos?"#ede9fe":T.surface2,border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:ps.withPhotos?"#5b21b6":T.inkMute}}>📷 {ps.withPhotos?"Photos":"Tableau"}</button>
                     <button onClick={()=>updatePromoField(ps.id,"sansStock",!ps.sansStock)} title="Précommande : ne rien afficher sur le stock (ni filtres « En stock / Ruptures », ni badge rupture)"
-                      style={{background:ps.sansStock?"#fef3c7":"#f3f4f6",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:ps.sansStock?"#92400e":"#6b7280"}}>📦 {ps.sansStock?"Sans stock":"Stock affiché"}</button>
-                    <button onClick={()=>editerPromo(ps)} title="Modifier le nom et le sous-titre" style={{background:"#f3f4f6",border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#374151"}}>✏️</button>
-                    <button onClick={()=>{ setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); setAddingProductToPromo(addingProductToPromo===ps.id?null:ps.id); }} style={{background:"#eff6ff",border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:"#1e40af"}}>+ Produit</button>
-                    <button onClick={()=>deletePromo(ps.id)} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:"#b91c1c"}}>🗑</button>
+                      style={{background:ps.sansStock?T.warnBg:T.surface2,border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:ps.sansStock?T.warn:T.inkMute}}>📦 {ps.sansStock?"Sans stock":"Stock affiché"}</button>
+                    <button onClick={()=>editerPromo(ps)} title="Modifier le nom et le sous-titre" style={{background:T.surface2,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:11,fontWeight:700,color:T.inkSoft}}>✏️</button>
+                    <button onClick={()=>{ setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); setAddingProductToPromo(addingProductToPromo===ps.id?null:ps.id); }} style={{background:T.mint,border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:700,color:T.teal}}>+ Produit</button>
+                    <button onClick={()=>deletePromo(ps.id)} style={{background:T.dangerBg,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:T.danger}}>🗑</button>
                   </div>
                 </div>
 
                 {/* Add product form */}
                 {addingProductToPromo===ps.id&&(
-                  <div style={{background:"#eff6ff",padding:"12px 16px",borderBottom:"1px solid #dbeafe"}}>
-                    <div style={{fontWeight:700,fontSize:12,color:"#1e40af",marginBottom:10}}>{editingPromoProduct?.promoId===ps.id ? "Modifier le produit" : `Ajouter un produit à ${ps.name}`}</div>
+                  <div style={{background:T.mint,padding:"12px 16px",borderBottom:`1px solid ${T.mint2}`}}>
+                    <div style={{fontWeight:700,fontSize:12,color:T.teal,marginBottom:10}}>{editingPromoProduct?.promoId===ps.id ? "Modifier le produit" : `Ajouter un produit à ${ps.name}`}</div>
                     <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:8,marginBottom:8}}>
                       <div>
-                        <label style={{...LS,fontSize:10}}>Nom *</label>
+                        <label style={{...LS,fontSize:11}}>Nom *</label>
                         <input value={promoProductForm.name} onChange={e=>setPromoProductForm(f=>({...f,name:e.target.value}))} placeholder="DOLIPRANE 1G..." style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                       <div>
-                        <label style={{...LS,fontSize:10}}>CIP</label>
+                        <label style={{...LS,fontSize:11}}>CIP</label>
                         <input value={promoProductForm.cip} onChange={e=>setPromoProductForm(f=>({...f,cip:e.target.value}))} placeholder="3400930..." style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                     </div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8,marginBottom:8}}>
                       <div>
-                        <label style={{...LS,fontSize:10}}>Prix brut (€)</label>
+                        <label style={{...LS,fontSize:11}}>Prix brut (€)</label>
                         <input type="number" step="0.01" value={promoProductForm.pv} onChange={e=>setPromoProductForm(f=>({...f,pv:e.target.value}))} style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                       <div>
-                        <label style={{...LS,fontSize:10}}>Remise</label>
+                        <label style={{...LS,fontSize:11}}>Remise</label>
                         <input value={promoProductForm.pct} onChange={e=>setPromoProductForm(f=>({...f,pct:e.target.value}))} placeholder="-20%" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                       <div>
-                        <label style={{...LS,fontSize:10,color:"#059669"}}>Prix net (€) ★</label>
-                        <input type="number" step="0.01" value={promoProductForm.pn} onChange={e=>setPromoProductForm(f=>({...f,pn:e.target.value}))} style={{...IS,fontSize:12,padding:"6px 10px",borderColor:"#86efac",color:"#059669",fontWeight:700}}/>
+                        <label style={{...LS,fontSize:11,color:T.ok}}>Prix net (€) ★</label>
+                        <input type="number" step="0.01" value={promoProductForm.pn} onChange={e=>setPromoProductForm(f=>({...f,pn:e.target.value}))} style={{...IS,fontSize:12,padding:"6px 10px",borderColor:T.ok,color:T.ok,fontWeight:700}}/>
                       </div>
                       <div>
-                        <label style={{...LS,fontSize:10}}>Note</label>
+                        <label style={{...LS,fontSize:11}}>Note</label>
                         <input value={promoProductForm.note} onChange={e=>setPromoProductForm(f=>({...f,note:e.target.value}))} placeholder="Stock limité" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                     </div>
                     <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:8}}>
                       <div style={{flex:1}}>
-                        <label style={{...LS,fontSize:10}}>Photo (adresse https:// de l'image, facultatif)</label>
+                        <label style={{...LS,fontSize:11}}>Photo (adresse https:// de l'image, facultatif)</label>
                         <input value={promoProductForm.image_url} onChange={e=>setPromoProductForm(f=>({...f,image_url:e.target.value}))} placeholder="https://…/image.png" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                       {/^https:\/\//.test(promoProductForm.image_url||"") && <img src={promoProductForm.image_url} alt="" style={{width:44,height:44,objectFit:"contain",borderRadius:6,background:"white",border:"1px solid #dbeafe"}}/>}
                     </div>
                     <div style={{display:"flex",gap:8}}>
                       <button onClick={()=>addProductToPromo(ps.id)} style={{...PB,flex:1,padding:"8px",fontSize:12}}>{editingPromoProduct?.promoId===ps.id ? "💾 Enregistrer" : "➕ Ajouter"}</button>
-                      <button onClick={()=>{ setAddingProductToPromo(null); setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); }} style={{background:"#e5e7eb",border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#374151"}}>Annuler</button>
+                      <button onClick={()=>{ setAddingProductToPromo(null); setEditingPromoProduct(null); setPromoProductForm(PRODUIT_VIDE); }} style={{background:T.sand,border:"none",borderRadius:10,padding:"8px 14px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.inkSoft}}>Annuler</button>
                     </div>
                   </div>
                 )}
@@ -1260,24 +1273,24 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 {(ps.products||[]).length>0&&(
                   <div style={{padding:"8px 16px 12px"}}>
                     {ps.products.map(prod=>(
-                      <div key={prod.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid #f5f5f5"}}>
+                      <div key={prod.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"1px solid var(--line-soft)"}}>
                         <div style={{display:"flex",alignItems:"center",gap:8}}>
-                          {prod.image_url && <img src={prod.image_url} alt="" style={{width:30,height:30,objectFit:"contain",borderRadius:4,background:"white",border:"1px solid #eee"}}/>}
-                          <span style={{fontWeight:600,fontSize:12,color:"#0f2d3d"}}>{prod.name}</span>
+                          {prod.image_url && <img src={prod.image_url} alt="" style={{width:30,height:30,objectFit:"contain",borderRadius:4,background:T.surface,border:"1px solid var(--line-soft)"}}/>}
+                          <span style={{fontWeight:600,fontSize:12,color:T.petrol}}>{prod.name}</span>
                           {prod.cip&&<span style={{marginLeft:8}}><CipCopy cip={prod.cip}/></span>}
-                          {prod.note&&<span style={{fontSize:10,color:"#e07b39",marginLeft:6,background:"#fef3ec",borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
+                          {prod.note&&<span style={{fontSize:11,color:T.warn,marginLeft:6,background:T.warnBg,borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
-                          <span style={{fontSize:12,fontWeight:700,color:"#059669"}}>{prod.pn?.toFixed(2)} €</span>
+                          <span style={{fontSize:12,fontWeight:700,color:T.ok}}>{prod.pn?.toFixed(2)} €</span>
                           {prod.pct&&<span style={{fontSize:11,color:"#7c3aed"}}>{prod.pct}</span>}
                           <button onClick={()=>editerProduitPromo(ps.id,prod)} title="Modifier" style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px"}}>✏️</button>
-                          <button onClick={()=>{ if (window.confirm(`Retirer « ${prod.name} » du menu ?`)) removeProductFromPromo(ps.id,prod.id); }} style={{background:"none",border:"none",cursor:"pointer",color:"#f87171",fontSize:14,padding:"0 2px"}}>🗑</button>
+                          <button onClick={()=>{ if (window.confirm(`Retirer « ${prod.name} » du menu ?`)) removeProductFromPromo(ps.id,prod.id); }} style={{background:"none",border:"none",cursor:"pointer",color:T.danger,fontSize:14,padding:"0 2px"}}>🗑</button>
                         </div>
                       </div>
                     ))}
                   </div>
                 )}
-                {(ps.products||[]).length===0&&<div style={{padding:"12px 16px",fontSize:12,color:"#aaa",fontStyle:"italic"}}>Aucun produit dans cette section.</div>}
+                {(ps.products||[]).length===0&&<div style={{padding:"12px 16px",fontSize:12,color:T.inkMute,fontStyle:"italic"}}>Aucun produit dans cette section.</div>}
               </div>
             ))}
           </>
@@ -1289,37 +1302,37 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             {orders.length > 0 && <AdminOrderKPIs orders={orders} />}
             <AdminRelais adminFetch={adminFetch} flash={flash} />
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-              <div style={{fontSize:12,color:"#666"}}>
-                <span style={{fontWeight:700,color:"#0f2d3d"}}>{orders.filter(o=>!o.processed).length}</span> en attente · <span style={{color:"#888"}}>{orders.filter(o=>o.processed).length} traitée(s)</span>
+              <div style={{fontSize:12,color:T.inkSoft}}>
+                <span style={{fontWeight:700,color:T.petrol}}>{orders.filter(o=>!o.processed).length}</span> en attente · <span style={{color:T.inkMute}}>{orders.filter(o=>o.processed).length} traitée(s)</span>
               </div>
               <div style={{display:"flex",gap:6}}>
-                <button onClick={syncAllPending} disabled={syncingAll||bulkPending.length===0} title="Commandes en attente sans envoi partiel (le reste d'une commande partielle part par son bouton « Sync le reste »)" style={{background:"#0f2d3d",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white",opacity:syncingAll||bulkPending.length===0?0.4:1}}>
+                <button onClick={syncAllPending} disabled={syncingAll||bulkPending.length===0} title="Commandes en attente sans envoi partiel (le reste d'une commande partielle part par son bouton « Sync le reste »)" style={{background:T.petrol,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white",opacity:syncingAll||bulkPending.length===0?0.4:1}}>
                   {syncingAll ? "⏳ Sync en cours…" : `🔁 Sync toutes (${bulkPending.length})`}
                 </button>
-                <button onClick={refreshOrders} style={{background:"#f0f2f5",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"#555"}}>🔄 Actualiser</button>
-                <button onClick={exportOrdersXlsx} style={{background:"#059669",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white"}}>📥 Export Excel</button>
+                <button onClick={refreshOrders} style={{background:T.surface2,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.inkSoft}}>🔄 Actualiser</button>
+                <button onClick={exportOrdersXlsx} style={{background:T.ok,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white"}}>📥 Export Excel</button>
               </div>
             </div>
             {orders.length===0&&(
-              <div style={{textAlign:"center",padding:"40px 20px",color:"#aaa",fontSize:13}}>
+              <div style={{textAlign:"center",padding:"40px 20px",color:T.inkMute,fontSize:13}}>
                 Aucune commande reçue pour le moment.
               </div>
             )}
             {orders.map(o=>(
               <div key={o.id} style={{
                 borderRadius:12,marginBottom:10,overflow:"hidden",
-                border: o.processed?"1px solid #e5e7eb":"2px solid #3b82f6",
-                background: o.processed?"#fafbfc":"#eff6ff",
+                border: o.processed?"1px solid var(--line)":"2px solid var(--teal)",
+                background: o.processed?T.paper:T.mint,
               }}>
                 <div style={{padding:"12px 14px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8}}>
                     <div style={{flex:1}}>
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
-                        <span style={{fontWeight:800,fontSize:14,color:"#0f2d3d"}}>{o.pharmacyName}</span>
-                        {o.avisAuto?.code === "double" && !o.processed && <span title={o.avisAuto.error} style={{background:"#fee2e2",color:"#991b1b",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>⚠ POSSIBLE DOUBLON{o.avisAuto.doubleDe ? ` de n° ${o.avisAuto.doubleDe}` : ""} : à vérifier</span>}
-                        {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:"#ffedd5",color:"#9a3412",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
+                        <span style={{fontWeight:700,fontSize:14,color:T.petrol}}>{o.pharmacyName}</span>
+                        {o.avisAuto?.code === "double" && !o.processed && <span title={o.avisAuto.error} style={{background:T.dangerBg,color:T.danger,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>⚠ POSSIBLE DOUBLON{o.avisAuto.doubleDe ? ` de n° ${o.avisAuto.doubleDe}` : ""} : à vérifier</span>}
+                        {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:tone("acting").bg,color:tone("acting").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
                         {o.source === "justificatif" && <span title={`Commande sur justificatif labo : à synchroniser à réception de la marchandise.${(o.justif||[]).map(j => ` ${j.lab} : ${j.statut}${j.poNom ? ` (${j.poNom})` : ""}${j.motif ? ` — ${j.motif}` : ""}`).join(" ;")}`}
-                          style={{background:"#ede9fe",color:"#5b21b6",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
+                          style={{background:tone("labo").bg,color:tone("labo").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
                         {o.source === "justificatif" && !(o.justif||[]).length && (
                           <button title="La demande au laboratoire n'a pas été créée (session expirée, panne…). Elle sera créée « à vérifier » dans l'onglet Justificatifs labos."
                             onClick={async () => {
@@ -1331,33 +1344,33 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                                 flash("✓ Demande labo créée : à vérifier dans l'onglet Justificatifs labos");
                               } catch (e) { flash(`⚠ ${e.message}`); }
                             }}
-                            style={{background:"#fff7ed",color:"#9a3412",border:"1px solid #fdba74",fontSize:10,fontWeight:800,padding:"2px 8px",borderRadius:10,cursor:"pointer"}}>⚠ demande labo non créée — créer</button>
+                            style={{background:tone("acting").bg,color:tone("acting").fg,border:`1px solid ${tone("acting").border}`,fontSize:11,fontWeight:700,padding:"2px 8px",borderRadius:10,cursor:"pointer"}}>⚠ demande labo non créée — créer</button>
                         )}
                         {o.processed
-                          ? <span style={{background:"#dcfce7",color:"#166534",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>✓ TRAITÉE</span>
+                          ? <span style={{background:T.okBg,color:T.ok,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>✓ TRAITÉE</span>
                           : (o.items||[]).some(lineDone)
-                            ? <span style={{background:"#fef3c7",color:"#92400e",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>PARTIELLE · {[
+                            ? <span style={{background:T.warnBg,color:T.warn,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>PARTIELLE · {[
                                 (o.items||[]).filter(it=>it?.synced_at).length ? `${(o.items||[]).filter(it=>it?.synced_at).length} ENVOYÉE(S)` : "",
                                 (o.items||[]).filter(it=>it?.handled_at && !it?.synced_at).length ? `${(o.items||[]).filter(it=>it?.handled_at && !it?.synced_at).length} TRAITÉE(S) SANS ENVOI` : ""].filter(Boolean).join(" · ")} / {(o.items||[]).length} LIGNES</span>
-                            : <span style={{background:"#dbeafe",color:"#1e40af",fontSize:10,fontWeight:800,padding:"2px 7px",borderRadius:10}}>EN ATTENTE</span>
+                            : <span style={{background:T.surface,color:T.teal,border:`1px solid ${T.mint2}`,fontSize:11,fontWeight:700,padding:"1px 7px",borderRadius:10}}>EN ATTENTE</span>
                         }
                       </div>
-                      <div style={{fontSize:11,color:"#666",marginTop:3}}>
+                      <div style={{fontSize:11,color:T.inkSoft,marginTop:3}}>
                         {o.pharmacyEmail} · {new Date(o.date).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}
                       </div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>
+                      <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>
                         {o.nbLignes} référence(s) · Total : <strong>{o.totalHt?.toFixed(2)} €</strong>
                       </div>
                       {(o.relais||[]).length > 0 && <RelaisCommande taches={o.relais} adminFetch={adminFetch} flash={flash} onChange={refreshOrders} />}
                     </div>
                     <div style={{display:"flex",gap:6,flexShrink:0}}>
                       {/* Sync button + status */}
-                      {syncStatus[o.id]==="pending" && <span style={{fontSize:11,color:"#2563eb",fontWeight:700,padding:"6px 4px"}}>⏳ Sync…</span>}
-                      {syncStatus[o.id]==="ok" && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ Envoyée</span>}
-                      {String(syncStatus[o.id]||"").startsWith("partielle:") && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) envoyée(s)</span>}
-                      {String(syncStatus[o.id]||"").startsWith("traitees:") && <span style={{fontSize:11,color:"#059669",fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) traitée(s)</span>}
+                      {syncStatus[o.id]==="pending" && <span style={{fontSize:11,color:T.teal,fontWeight:700,padding:"6px 4px"}}>⏳ Sync…</span>}
+                      {syncStatus[o.id]==="ok" && <span style={{fontSize:11,color:T.ok,fontWeight:700,padding:"6px 4px"}}>✓ Envoyée</span>}
+                      {String(syncStatus[o.id]||"").startsWith("partielle:") && <span style={{fontSize:11,color:T.ok,fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) envoyée(s)</span>}
+                      {String(syncStatus[o.id]||"").startsWith("traitees:") && <span style={{fontSize:11,color:T.ok,fontWeight:700,padding:"6px 4px"}}>✓ {syncStatus[o.id].split(":")[1]} ligne(s) traitée(s)</span>}
                       {syncStatus[o.id] && syncStatus[o.id]!=="pending" && syncStatus[o.id]!=="ok" && !/^(partielle|traitees):/.test(String(syncStatus[o.id])) && (
-                        <span title={syncStatus[o.id]} style={{fontSize:11,color:"#dc2626",fontWeight:700,padding:"6px 4px",cursor:"help",maxWidth:300,display:"inline-block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⚠️ {syncStatus[o.id]}</span>
+                        <span title={syncStatus[o.id]} style={{fontSize:11,color:T.danger,fontWeight:700,padding:"6px 4px",cursor:"help",maxWidth:300,display:"inline-block",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>⚠️ {syncStatus[o.id]}</span>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (lineSel[o.id]||[]).length>0 && (
                         <button onClick={()=>syncOrder(o, lineSel[o.id])} title="Envoyer seulement les lignes cochées" style={{background:"#7c3aed",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
@@ -1365,22 +1378,22 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         </button>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (lineSel[o.id]||[]).length>0 && (
-                        <button onClick={()=>markLines(o, lineSel[o.id], true)} title="Marquer les lignes cochées comme traitées, SANS les envoyer à PharmaML" style={{background:"#dcfce7",border:"1px solid #86efac",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"#166534",fontWeight:700}}>
+                        <button onClick={()=>markLines(o, lineSel[o.id], true)} title="Marquer les lignes cochées comme traitées, SANS les envoyer à PharmaML" style={{background:T.okBg,border:"1px solid #86efac",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:T.ok,fontWeight:700}}>
                           ✓ Traiter sélection ({lineSel[o.id].length})
                         </button>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (
-                        <button onClick={()=>syncOrder(o)} title="Envoyer toutes les lignes pas encore transmises" style={{background:"#2563eb",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
+                        <button onClick={()=>syncOrder(o)} title="Envoyer toutes les lignes pas encore transmises" style={{background:T.teal,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
                           🔁 {(o.items||[]).some(lineDone) ? `Sync le reste (${(o.items||[]).filter(it=>!lineDone(it)).length})` : "Sync"}
                         </button>
                       )}
-                      <button onClick={()=>downloadCsv(o)} title="Télécharger CSV" style={{background:"#0f2d3d",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>⬇ CSV</button>
+                      <button onClick={()=>downloadCsv(o)} title="Télécharger CSV" style={{background:T.petrol,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>⬇ CSV</button>
                       <button onClick={()=>toggleProcessed(o.id)} style={{
-                        background:o.processed?"#f3f4f6":"#dcfce7",border:"none",borderRadius:8,
+                        background:o.processed?T.surface2:T.okBg,border:"none",borderRadius:8,
                         padding:"6px 10px",cursor:"pointer",fontSize:12,fontWeight:700,
-                        color:o.processed?"#6b7280":"#166534"
+                        color:o.processed?T.inkMute:T.ok
                       }}>{o.processed?"↩ Rouvrir":"✓ Traiter"}</button>
-                      <button onClick={()=>{ if(window.confirm("Supprimer cette commande ?")) deleteOrder(o.id); }} style={{background:"#fee2e2",border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:13,color:"#b91c1c"}}>🗑</button>
+                      <button onClick={()=>{ if(window.confirm("Supprimer cette commande ?")) deleteOrder(o.id); }} style={{background:T.dangerBg,border:"none",borderRadius:8,padding:"6px 10px",cursor:"pointer",fontSize:13,color:T.danger}}>🗑</button>
                     </div>
                   </div>
                   {/* Sélection des lignes à envoyer (commande en attente) */}
@@ -1388,9 +1401,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     const rest = (o.items||[]).map((it,i)=>i).filter(i=>!lineDone(o.items[i]));
                     const inSt = rest.filter(i=>orderStock[o.items[i]?.cip]===true), pre = rest.filter(i=>orderStock[o.items[i]?.cip]===false);
                     const pick = (arr) => setLineSel(sel=>({...sel,[o.id]:arr}));
-                    const link = {background:"none",border:"none",color:"#2563eb",cursor:"pointer",fontSize:11,fontWeight:700,padding:"0 4px"};
+                    const link = {background:"none",border:"none",color:T.teal,cursor:"pointer",fontSize:11,fontWeight:700,padding:"0 4px"};
                     return (
-                      <div style={{marginTop:8,fontSize:11,color:"#555",display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
+                      <div style={{marginTop:8,fontSize:11,color:T.inkSoft,display:"flex",gap:4,alignItems:"center",flexWrap:"wrap"}}>
                         <span>Cocher :</span>
                         <button style={link} disabled={!inSt.length} onClick={()=>pick(inSt)}>en stock ({inSt.length})</button>·
                         <button style={link} disabled={!pre.length} onClick={()=>pick(pre)}>précommande ({pre.length})</button>·
@@ -1400,46 +1413,46 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     );
                   })()}
                   {/* Items preview */}
-                  <div style={{marginTop:10,background:"white",borderRadius:8,padding:"8px 10px",fontSize:11,color:"#555",maxHeight:!o.processed?260:140,overflowY:"auto"}}>
+                  <div style={{marginTop:10,background:T.surface,borderRadius:8,padding:"8px 10px",fontSize:11,color:T.inkSoft,maxHeight:!o.processed?260:140,overflowY:"auto"}}>
                     {(() => {
                       const campAdmin = campaigns.find(cp => cp.id === o.source);
                       const hasUG = campAdmin && o.items?.some(item => calcUgAdmin(item.name||'', item.qty||0, campAdmin) > 0);
                       return (<>
-                        <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid #e5e7eb",marginBottom:4,fontWeight:800,fontSize:10,color:"#999",textTransform:"uppercase",letterSpacing:"0.05em"}}>
+                        <div style={{display:"flex",padding:"0 0 5px 0",borderBottom:"2px solid var(--line)",marginBottom:4,fontWeight:700,fontSize:11,color:T.inkMute,textTransform:"uppercase",letterSpacing:"0.05em"}}>
                           {(!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{width:22,flexShrink:0}} />}
                           <span style={{fontFamily:"monospace",width:110,flexShrink:0}}>CIP13</span>
                           <span style={{flex:1}}>Désignation</span>
                           <span style={{width:30,textAlign:"right"}}>Qté</span>
-                          {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:"#059669"}}>UG</span>}
+                          {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:T.ok}}>UG</span>}
                           <span style={{width:55,textAlign:"right",marginLeft:10}}>PU HT</span>
                           <span style={{width:60,textAlign:"right",marginLeft:10}}>Total HT</span>
                         </div>
                         {o.items?.map((item,i)=>{
                           const ug = campAdmin ? calcUgAdmin(item.name||'', item.qty||0, campAdmin) : 0;
                           return (
-                            <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid #f5f5f5":"none",opacity:lineDone(item)&&(!o.processed||(o.items||[]).some(it=>it?.handled_at))?0.55:1}}>
+                            <div key={i} style={{display:"flex",alignItems:"center",padding:"3px 0",borderBottom:i<o.items.length-1?"1px solid var(--line-soft)":"none",opacity:lineDone(item)&&(!o.processed||(o.items||[]).some(it=>it?.handled_at))?0.55:1}}>
                               {(!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{width:22,flexShrink:0}}>
-                                {item.synced_at ? <span title={`Envoyée le ${new Date(item.synced_at).toLocaleString("fr-FR")} (réf. ${item.synced_ref})`} style={{color:"#059669",fontWeight:800}}>✓</span>
-                                  : item.handled_at ? <span title={`Traitée sans envoi le ${new Date(item.handled_at).toLocaleString("fr-FR")}`} style={{color:"#64748b",fontWeight:800}}>✓</span>
+                                {item.synced_at ? <span title={`Envoyée le ${new Date(item.synced_at).toLocaleString("fr-FR")} (réf. ${item.synced_ref})`} style={{color:T.ok,fontWeight:700}}>✓</span>
+                                  : item.handled_at ? <span title={`Traitée sans envoi le ${new Date(item.handled_at).toLocaleString("fr-FR")}`} style={{color:T.inkMute,fontWeight:700}}>✓</span>
                                   : o.processed ? null : <input type="checkbox" aria-label={`Envoyer ${item.name}`} checked={(lineSel[o.id]||[]).includes(i)}
                                       onChange={e=>setLineSel(sel=>{ const cur=sel[o.id]||[]; return {...sel,[o.id]: e.target.checked ? [...cur,i] : cur.filter(x=>x!==i)}; })} />}
                               </span>}
                               <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
                               <span style={{flex:1,paddingRight:8}}>{item.name}
-                                {!o.processed && !lineDone(item) && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:9,fontWeight:800,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?"#dcfce7":"#ffedd5",color:orderStock[item.cip]?"#166534":"#9a3412"}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
-                                {item.synced_at && (!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{marginLeft:6,fontSize:9,color:"#059669",fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
-                                {!item.synced_at && item.handled_at && <span style={{marginLeft:6,fontSize:9,color:"#475569",fontWeight:700}}>traitée sans envoi
-                                  <button onClick={()=>markLines(o,[i],false)} disabled={syncStatus[o.id]==="pending"} style={{marginLeft:4,background:"none",border:"none",color:"#2563eb",cursor:"pointer",fontSize:9,fontWeight:700,padding:0,textDecoration:"underline"}}>annuler</button></span>}
+                                {!o.processed && !lineDone(item) && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?T.okBg:tone("acting").bg,color:orderStock[item.cip]?T.ok:tone("acting").fg}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
+                                {item.synced_at && (!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{marginLeft:6,fontSize:11,color:T.ok,fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
+                                {!item.synced_at && item.handled_at && <span style={{marginLeft:6,fontSize:11,color:T.inkSoft,fontWeight:700}}>traitée sans envoi
+                                  <button onClick={()=>markLines(o,[i],false)} disabled={syncStatus[o.id]==="pending"} style={{marginLeft:4,background:"none",border:"none",color:T.teal,cursor:"pointer",fontSize:11,fontWeight:700,padding:0,textDecoration:"underline"}}>annuler</button></span>}
                               </span>
                               <span style={{fontWeight:700,width:30,textAlign:"right"}}>{item.qty}</span>
-                              {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:ug>0?"#059669":"#ddd",fontWeight:ug>0?800:400}}>{ug>0?`+${ug}`:"—"}</span>}
-                              <span style={{color:"#555",width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
-                              <span style={{fontWeight:700,color:"#0f2d3d",width:60,textAlign:"right",marginLeft:10}}>{item.total!=null?item.total.toFixed(2)+" €":"—"}</span>
+                              {hasUG && <span style={{width:36,textAlign:"right",marginLeft:6,color:ug>0?T.ok:T.inkFaint,fontWeight:ug>0?800:400}}>{ug>0?`+${ug}`:"—"}</span>}
+                              <span style={{color:T.inkSoft,width:55,textAlign:"right",marginLeft:10}}>{item.pn!=null?item.pn.toFixed(2)+" €":"—"}</span>
+                              <span style={{fontWeight:700,color:T.petrol,width:60,textAlign:"right",marginLeft:10}}>{item.total!=null?item.total.toFixed(2)+" €":"—"}</span>
                             </div>
                           );
                         })}
                         {hasUG && (
-                          <div style={{marginTop:6,padding:"4px 6px",background:"#d1fae5",borderRadius:6,fontSize:10,color:"#065f46",fontWeight:700}}>
+                          <div style={{marginTop:6,padding:"4px 6px",background:T.okBg,borderRadius:6,fontSize:11,color:T.ok,fontWeight:700}}>
                             🎁 Total UG : {o.items.reduce((s,item)=>s+calcUgAdmin(item.name||'',item.qty||0,campAdmin),0)} unités offertes
                           </div>
                         )}
@@ -1471,12 +1484,12 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           <div>
             {/* Sélecteur campagne */}
             <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:20,flexWrap:"wrap"}}>
-              <div style={{fontWeight:700,fontSize:13,color:"#444"}}>Campagne :</div>
+              <div style={{fontWeight:700,fontSize:13,color:T.inkSoft}}>Campagne :</div>
               <input value={selectedCampaign} onChange={e=>setSelectedCampaign(e.target.value)}
                 placeholder="ex: ulabs"
                 style={{...IS,width:140,display:"inline-block"}}/>
               <button onClick={()=>fetchGroupCampaignOrders(selectedCampaign)} style={{
-                background:"#0f2d3d",color:"white",border:"none",borderRadius:8,
+                background:T.petrol,color:"white",border:"none",borderRadius:8,
                 padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13
               }}>🔄 Charger</button>
               {gcOrders.length>0&&(
@@ -1490,7 +1503,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   a.href = URL.createObjectURL(blob);
                   a.download = `groupement_${selectedCampaign}_${new Date().toISOString().slice(0,10)}.csv`;
                   a.click();
-                }} style={{background:"#059669",color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                }} style={{background:T.ok,color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
                   ⬇️ Exporter CSV
                 </button>
               )}
@@ -1502,13 +1515,13 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     await fetch(`/.netlify/functions/group-order?fournisseur=${selectedCampaign}&pharmacy_cip=${pc}`,{method:"DELETE"});
                   }
                   fetchGroupCampaignOrders(selectedCampaign);
-                }} style={{background:"#dc2626",color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                }} style={{background:T.danger,color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
                   🗑️ Vider la campagne
                 </button>
               )}
             </div>
 
-            {gcOrdersLoading&&<div style={{textAlign:"center",padding:24,color:"#888"}}>Chargement…</div>}
+            {gcOrdersLoading&&<div style={{textAlign:"center",padding:24,color:T.inkMute}}>Chargement…</div>}
 
             {!gcOrdersLoading&&gcOrders.length>0&&(()=>{
               // Map CIP → nom produit depuis la liste produits chargée
@@ -1529,13 +1542,13 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   {/* Résumé */}
                   <div style={{display:"flex",gap:16,marginBottom:20,flexWrap:"wrap"}}>
                     {[
-                      {label:"Pharmacies",val:totalPharm,bg:"#eff6ff",color:"#1d4ed8"},
-                      {label:"Unités commandées",val:totalUnites,bg:"#f0fdf4",color:"#166534"},
-                      {label:"Références",val:new Set(gcOrders.map(r=>r.cip)).size,bg:"#fefce8",color:"#92400e"},
+                      {label:"Pharmacies",val:totalPharm,bg:T.mint,color:T.teal},
+                      {label:"Unités commandées",val:totalUnites,bg:T.okBg,color:T.ok},
+                      {label:"Références",val:new Set(gcOrders.map(r=>r.cip)).size,bg:T.warnBg,color:T.warn},
                     ].map(s=>(
                       <div key={s.label} style={{background:s.bg,borderRadius:12,padding:"12px 20px",flex:1,minWidth:120,textAlign:"center"}}>
-                        <div style={{fontWeight:800,fontSize:24,color:s.color}}>{s.val}</div>
-                        <div style={{fontSize:11,color:"#666"}}>{s.label}</div>
+                        <div style={{fontWeight:700,fontSize:24,color:s.color}}>{s.val}</div>
+                        <div style={{fontSize:11,color:T.inkSoft}}>{s.label}</div>
                       </div>
                     ))}
                   </div>
@@ -1543,8 +1556,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   {/* Vue par pharmacie */}
                   <div style={{display:"flex",flexDirection:"column",gap:12}}>
                     {pharmacies.map(ph=>(
-                      <div key={ph.cip} style={{border:"1px solid #e2e8f0",borderRadius:12,overflow:"hidden"}}>
-                        <div style={{background:"#0f2d3d",padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                      <div key={ph.cip} style={{border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
+                        <div style={{background:T.petrol,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                           <div style={{fontWeight:700,color:"white",fontSize:14}}>{ph.name}</div>
                           <div style={{color:"rgba(255,255,255,0.6)",fontSize:12}}>
                             {ph.lines.length} réf. · {ph.lines.reduce((s,r)=>s+(parseInt(r.qty)||0),0)} unités
@@ -1552,18 +1565,18 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         </div>
                         <table style={{width:"100%",borderCollapse:"collapse"}}>
                           <thead>
-                            <tr style={{background:"#f8fafc"}}>
+                            <tr style={{background:T.paper}}>
                               {["CIP","Quantité","Modifié le"].map(h=>(
-                                <th key={h} style={{padding:"7px 12px",textAlign:"left",fontSize:11,color:"#666",fontWeight:700,borderBottom:"1px solid #e2e8f0"}}>{h}</th>
+                                <th key={h} style={{padding:"7px 12px",textAlign:"left",fontSize:11,color:T.inkSoft,fontWeight:700,borderBottom:"1px solid var(--line)"}}>{h}</th>
                               ))}
                             </tr>
                           </thead>
                           <tbody>
                             {ph.lines.sort((a,b)=>b.qty-a.qty).map(r=>(
-                              <tr key={r.cip} style={{borderBottom:"1px solid #f0f2f5"}}>
-                                <td style={{padding:"7px 12px",fontSize:12,color:"#222"}}>{cipToName[r.cip] || r.cip}</td>
-                                <td style={{padding:"7px 12px",fontSize:13,fontWeight:700,color:"#0f2d3d"}}>{r.qty}</td>
-                                <td style={{padding:"7px 12px",fontSize:11,color:"#999"}}>{r.updated_at?new Date(r.updated_at).toLocaleString("fr-FR"):"-"}</td>
+                              <tr key={r.cip} style={{borderBottom:"1px solid var(--line-soft)"}}>
+                                <td style={{padding:"7px 12px",fontSize:12,color:T.ink}}>{cipToName[r.cip] || r.cip}</td>
+                                <td style={{padding:"7px 12px",fontSize:13,fontWeight:700,color:T.petrol}}>{r.qty}</td>
+                                <td style={{padding:"7px 12px",fontSize:11,color:T.inkMute}}>{r.updated_at?new Date(r.updated_at).toLocaleString("fr-FR"):"-"}</td>
                               </tr>
                             ))}
                           </tbody>
@@ -1574,10 +1587,10 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
                   {/* Récap par produit */}
                   <div style={{marginTop:20}}>
-                    <div style={{fontWeight:700,fontSize:14,color:"#0f2d3d",marginBottom:10}}>Récapitulatif par produit</div>
-                    <table style={{width:"100%",borderCollapse:"collapse",background:"white",borderRadius:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
+                    <div style={{fontWeight:700,fontSize:14,color:T.petrol,marginBottom:10}}>Récapitulatif par produit</div>
+                    <table style={{width:"100%",borderCollapse:"collapse",background:T.surface,borderRadius:10,overflow:"hidden",boxShadow:"0 1px 6px rgba(0,0,0,0.06)"}}>
                       <thead>
-                        <tr style={{background:"#0f2d3d"}}>
+                        <tr style={{background:T.petrol}}>
                           {["CIP","Total unités","Nb pharmacies"].map(h=>(
                             <th key={h} style={{padding:"9px 14px",textAlign:"left",fontSize:11,color:"rgba(255,255,255,0.8)",fontWeight:700}}>{h}</th>
                           ))}
@@ -1589,11 +1602,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                           const total = lines.reduce((s,r)=>s+(parseInt(r.qty)||0),0);
                           const nbP = new Set(lines.map(r=>r.pharmacy_cip)).size;
                           return(
-                            <tr key={cip} style={{borderBottom:"1px solid #f0f2f5"}}>
-                              <td style={{padding:"8px 14px",fontSize:12,color:"#222"}}>{cipToName[cip] || cip}</td>
-                              <td style={{padding:"8px 14px",fontSize:11,fontFamily:"monospace",color:"#aaa"}}>{cip}</td>
-                              <td style={{padding:"8px 14px",fontSize:14,fontWeight:800,color:"#059669"}}>{total}</td>
-                              <td style={{padding:"8px 14px",fontSize:12,color:"#888"}}>{nbP}</td>
+                            <tr key={cip} style={{borderBottom:"1px solid var(--line-soft)"}}>
+                              <td style={{padding:"8px 14px",fontSize:12,color:T.ink}}>{cipToName[cip] || cip}</td>
+                              <td style={{padding:"8px 14px",fontSize:11,fontFamily:"monospace",color:T.inkMute}}>{cip}</td>
+                              <td style={{padding:"8px 14px",fontSize:14,fontWeight:700,color:T.ok}}>{total}</td>
+                              <td style={{padding:"8px 14px",fontSize:12,color:T.inkMute}}>{nbP}</td>
                             </tr>
                           );
                         }).sort((a,b)=>0)}
@@ -1605,7 +1618,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             })()}
 
             {!gcOrdersLoading&&gcOrders.length===0&&(
-              <div style={{textAlign:"center",padding:40,color:"#aaa",fontSize:14}}>
+              <div style={{textAlign:"center",padding:40,color:T.inkMute,fontSize:14}}>
                 Aucune commande pour cette campagne. Cliquez sur "Charger" pour voir les données.
               </div>
             )}
@@ -1633,48 +1646,48 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         {tab==="pharmacies"&&(
           <div style={{padding:"0 4px"}}>
             {/* ── Sync Odoo ── */}
-            <div style={{background:"#f0fdf4",borderRadius:12,padding:16,marginBottom:16,border:"1px solid #86efac",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+            <div style={{background:T.okBg,borderRadius:12,padding:16,marginBottom:16,border:`1px solid ${tone("ok").border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
               <div>
-                <div style={{fontWeight:700,fontSize:14,color:"#065f46"}}>🔄 Synchronisation depuis Odoo</div>
-                <div style={{fontSize:11,color:"#059669",marginTop:2}}>Met à jour toutes les pharmacies depuis Odoo (partenaires actifs avec email)</div>
+                <div style={{fontWeight:700,fontSize:14,color:T.ok}}>🔄 Synchronisation depuis Odoo</div>
+                <div style={{fontSize:11,color:T.ok,marginTop:2}}>Met à jour toutes les pharmacies depuis Odoo (partenaires actifs avec email)</div>
               </div>
-              <button onClick={syncPharmacies} disabled={pharmSyncing} style={{background:"#059669",color:"white",border:"none",borderRadius:10,padding:"9px 18px",fontWeight:800,fontSize:13,cursor:"pointer",opacity:pharmSyncing?0.6:1}}>
+              <button onClick={syncPharmacies} disabled={pharmSyncing} style={{background:T.ok,color:"white",border:"none",borderRadius:10,padding:"9px 18px",fontWeight:700,fontSize:13,cursor:"pointer",opacity:pharmSyncing?0.6:1}}>
                 {pharmSyncing?"⏳ Sync…":"🔄 Lancer la sync"}
               </button>
             </div>
 
             {/* ── Recherche ── */}
-            <div style={{background:"white",borderRadius:12,padding:16,marginBottom:16,border:"1.5px solid #e2e8f0"}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#1a2a3a",marginBottom:10}}>🔍 Rechercher une pharmacie</div>
+            <div style={{background:T.surface,borderRadius:12,padding:16,marginBottom:16,border:"1.5px solid var(--line)"}}>
+              <div style={{fontWeight:700,fontSize:14,color:T.ink,marginBottom:10}}>🔍 Rechercher une pharmacie</div>
               <div style={{display:"flex",gap:8}}>
                 <input value={pharmSearch} onChange={e=>setPharmSearch(e.target.value)}
                   onKeyDown={e=>e.key==="Enter"&&searchPharm(pharmSearch)}
                   placeholder="Email ou nom…" style={{...IS,flex:1}}/>
-                <button onClick={()=>searchPharm(pharmSearch)} disabled={pharmSearching} style={{background:"#0ea5e9",color:"white",border:"none",borderRadius:10,padding:"9px 16px",fontWeight:700,cursor:"pointer"}}>
+                <button onClick={()=>searchPharm(pharmSearch)} disabled={pharmSearching} style={{background:T.teal,color:"white",border:"none",borderRadius:10,padding:"9px 16px",fontWeight:700,cursor:"pointer"}}>
                   {pharmSearching?"…":"Chercher"}
                 </button>
               </div>
               {pharmResults.length > 0 && (
                 <div style={{marginTop:10}}>
                   {pharmResults.map((p,i)=>(
-                    <div key={i} style={{padding:"8px 12px",borderBottom:"1px solid #f0f2f5",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div key={i} style={{padding:"8px 12px",borderBottom:"1px solid var(--line-soft)",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
                         <div style={{fontWeight:700,fontSize:13}}>{p.name}</div>
-                        <div style={{fontSize:11,color:"#888"}}>{p.email} · CIP : {p.cip||"—"} · {p.ville||"—"}</div>
+                        <div style={{fontSize:11,color:T.inkMute}}>{p.email} · CIP : {p.cip||"—"} · {p.ville||"—"}</div>
                       </div>
-                      <button onClick={()=>setPharmManual({...p})} style={{fontSize:11,background:"#f0f2f5",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Éditer</button>
+                      <button onClick={()=>setPharmManual({...p})} style={{fontSize:11,background:T.surface2,border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer"}}>✏️ Éditer</button>
                     </div>
                   ))}
                 </div>
               )}
               {pharmResults.length === 0 && pharmSearch && !pharmSearching && (
-                <div style={{marginTop:8,fontSize:12,color:"#dc2626"}}>Aucun résultat — ajoutez-la manuellement ci-dessous</div>
+                <div style={{marginTop:8,fontSize:12,color:T.danger}}>Aucun résultat — ajoutez-la manuellement ci-dessous</div>
               )}
             </div>
 
             {/* ── Ajout / édition manuel ── */}
-            <div style={{background:"white",borderRadius:12,padding:16,border:"1.5px solid #e2e8f0"}}>
-              <div style={{fontWeight:700,fontSize:14,color:"#1a2a3a",marginBottom:12}}>➕ Ajouter / modifier manuellement</div>
+            <div style={{background:T.surface,borderRadius:12,padding:16,border:"1.5px solid var(--line)"}}>
+              <div style={{fontWeight:700,fontSize:14,color:T.ink,marginBottom:12}}>➕ Ajouter / modifier manuellement</div>
               <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                 <div>
                   <label style={LS}>Email *</label>
@@ -1733,57 +1746,57 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         {/* ── SYNC TAB ── */}
         {tab==="sync"&&(
           <div>
-            <div style={{fontWeight:800,fontSize:18,color:"#0f2d3d",marginBottom:24}}>Synchronisation Odoo → Supabase</div>
+            <div style={{fontWeight:700,fontSize:18,color:T.petrol,marginBottom:24}}>Synchronisation Odoo → Supabase</div>
 
             {/* Stock sync */}
-            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+            <div style={{background:T.surface,borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid var(--line)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔄 Catalogue & Stock</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Exclut les emplacements dont la case <strong>do_not_export</strong> est cochée dans Odoo (ou marqués comme scrap).</div>
+                  <div style={{fontWeight:700,fontSize:15,color:T.petrol}}>🔄 Catalogue & Stock</div>
+                  <div style={{fontSize:12,color:T.inkMute,marginTop:4}}>Synchronise les produits et le stock depuis Odoo. Exclut les emplacements dont la case <strong>do_not_export</strong> est cochée dans Odoo (ou marqués comme scrap).</div>
                 </div>
                 <button onClick={handleSyncStock} disabled={syncStock.running}
-                  style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncStock.running?"default":"pointer",opacity:syncStock.running?0.6:1,whiteSpace:"nowrap"}}>
+                  style={{background:T.petrol,color:T.paper,border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncStock.running?"default":"pointer",opacity:syncStock.running?0.6:1,whiteSpace:"nowrap"}}>
                   {syncStock.running?"⏳ En cours...":"Lancer le sync"}
                 </button>
               </div>
-              {syncStock.progress&&<div style={{marginTop:12,fontSize:12,color:syncStock.progress.startsWith("✓")?"#059669":"#888",fontWeight:600,background:"#f8fafc",borderRadius:8,padding:"8px 12px"}}>{syncStock.progress}</div>}
+              {syncStock.progress&&<div style={{marginTop:12,fontSize:12,color:syncStock.progress.startsWith("✓")?T.ok:T.inkMute,fontWeight:600,background:T.paper,borderRadius:8,padding:"8px 12px"}}>{syncStock.progress}</div>}
             </div>
 
             {/* Audit emplacements */}
-            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+            <div style={{background:T.surface,borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid var(--line)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>🔍 Audit emplacements Odoo</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Liste tous les emplacements internes (company 2) et vérifie ceux qui sont exclus du sync stock. Affiche le nombre de quants par emplacement.</div>
+                  <div style={{fontWeight:700,fontSize:15,color:T.petrol}}>🔍 Audit emplacements Odoo</div>
+                  <div style={{fontSize:12,color:T.inkMute,marginTop:4}}>Liste tous les emplacements internes (company 2) et vérifie ceux qui sont exclus du sync stock. Affiche le nombre de quants par emplacement.</div>
                 </div>
                 <button onClick={handleAuditLocations} disabled={audit.running}
-                  style={{background:"linear-gradient(135deg, #475569, #334155)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:audit.running?"default":"pointer",opacity:audit.running?0.6:1,whiteSpace:"nowrap"}}>
+                  style={{background:T.inkSoft,color:T.paper,border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:audit.running?"default":"pointer",opacity:audit.running?0.6:1,whiteSpace:"nowrap"}}>
                   {audit.running?"⏳ Analyse...":"Lancer l'audit"}
                 </button>
               </div>
-              {audit.error&&<div style={{marginTop:12,fontSize:12,color:"#dc2626",fontWeight:600,background:"#fef2f2",borderRadius:8,padding:"8px 12px"}}>Erreur : {audit.error}</div>}
+              {audit.error&&<div style={{marginTop:12,fontSize:12,color:T.danger,fontWeight:600,background:T.dangerBg,borderRadius:8,padding:"8px 12px"}}>Erreur : {audit.error}</div>}
               {audit.data&&(
                 <div style={{marginTop:16}}>
                   {/* Résumé */}
                   <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:16}}>
-                    <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 12px",border:"1px solid #e2e8f0"}}>
-                      <div style={{fontSize:11,color:"#64748b",fontWeight:600}}>Total emplacements</div>
-                      <div style={{fontSize:20,fontWeight:800,color:"#0f2d3d",marginTop:2}}>{audit.data.summary.total_locations}</div>
+                    <div style={{background:T.paper,borderRadius:8,padding:"10px 12px",border:"1px solid var(--line)"}}>
+                      <div style={{fontSize:11,color:T.inkMute,fontWeight:600}}>Total emplacements</div>
+                      <div style={{fontSize:20,fontWeight:700,color:T.petrol,marginTop:2}}>{audit.data.summary.total_locations}</div>
                     </div>
-                    <div style={{background:"#fef2f2",borderRadius:8,padding:"10px 12px",border:"1px solid #fecaca"}}>
-                      <div style={{fontSize:11,color:"#991b1b",fontWeight:600}}>Exclus</div>
-                      <div style={{fontSize:20,fontWeight:800,color:"#dc2626",marginTop:2}}>{audit.data.summary.excluded}</div>
-                      <div style={{fontSize:10,color:"#991b1b",marginTop:2}}>{audit.data.summary.total_quants_excluded} quants</div>
+                    <div style={{background:T.dangerBg,borderRadius:8,padding:"10px 12px",border:`1px solid ${tone("danger").border}`}}>
+                      <div style={{fontSize:11,color:T.danger,fontWeight:600}}>Exclus</div>
+                      <div style={{fontSize:20,fontWeight:700,color:T.danger,marginTop:2}}>{audit.data.summary.excluded}</div>
+                      <div style={{fontSize:11,color:T.danger,marginTop:2}}>{audit.data.summary.total_quants_excluded} quants</div>
                     </div>
-                    <div style={{background:"#ecfdf5",borderRadius:8,padding:"10px 12px",border:"1px solid #a7f3d0"}}>
-                      <div style={{fontSize:11,color:"#065f46",fontWeight:600}}>Inclus dans le stock</div>
-                      <div style={{fontSize:20,fontWeight:800,color:"#059669",marginTop:2}}>{audit.data.summary.included}</div>
-                      <div style={{fontSize:10,color:"#065f46",marginTop:2}}>{audit.data.summary.total_quants_included} quants</div>
+                    <div style={{background:T.okBg,borderRadius:8,padding:"10px 12px",border:`1px solid ${tone("ok").border}`}}>
+                      <div style={{fontSize:11,color:T.ok,fontWeight:600}}>Inclus dans le stock</div>
+                      <div style={{fontSize:20,fontWeight:700,color:T.ok,marginTop:2}}>{audit.data.summary.included}</div>
+                      <div style={{fontSize:11,color:T.ok,marginTop:2}}>{audit.data.summary.total_quants_included} quants</div>
                     </div>
-                    <div style={{background:"#fef3c7",borderRadius:8,padding:"10px 12px",border:"1px solid #fde68a"}}>
-                      <div style={{fontSize:11,color:"#92400e",fontWeight:600}}>Détail exclusions</div>
-                      <div style={{fontSize:12,color:"#92400e",marginTop:4,lineHeight:1.5}}>
+                    <div style={{background:T.warnBg,borderRadius:8,padding:"10px 12px",border:`1px solid ${tone("warn").border}`}}>
+                      <div style={{fontSize:11,color:T.warn,fontWeight:600}}>Détail exclusions</div>
+                      <div style={{fontSize:12,color:T.warn,marginTop:4,lineHeight:1.5}}>
                         do_not_export : {audit.data.summary.excluded_by_do_not_export}<br/>
                         scrap : {audit.data.summary.excluded_by_scrap}
                       </div>
@@ -1791,15 +1804,15 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   </div>
 
                   {/* Règles appliquées */}
-                  <div style={{background:"#f8fafc",borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:11,color:"#475569",border:"1px solid #e2e8f0"}}>
-                    <strong>Règle d'exclusion :</strong> un emplacement est exclu du sync stock si <code style={{background:"#fff",padding:"1px 5px",borderRadius:3,border:"1px solid #ddd"}}>do_not_export = true</code> OU <code style={{background:"#fff",padding:"1px 5px",borderRadius:3,border:"1px solid #ddd"}}>scrap_location = true</code>.<br/>
+                  <div style={{background:T.paper,borderRadius:8,padding:"10px 14px",marginBottom:12,fontSize:11,color:T.inkSoft,border:"1px solid var(--line)"}}>
+                    <strong>Règle d'exclusion :</strong> un emplacement est exclu du sync stock si <code style={{background:T.surface,padding:"1px 5px",borderRadius:3,border:"1px solid var(--line)"}}>do_not_export = true</code> OU <code style={{background:T.surface,padding:"1px 5px",borderRadius:3,border:"1px solid var(--line)"}}>scrap_location = true</code>.<br/>
                     Pour modifier l'exclusion : ouvre la fiche emplacement dans Odoo et coche/décoche la case <strong>"Do not export"</strong>. Plus besoin de toucher au code.
                   </div>
 
                   {/* Tableau */}
-                  <div style={{maxHeight:480,overflow:"auto",border:"1px solid #e8ecf0",borderRadius:8}}>
+                  <div style={{maxHeight:480,overflow:"auto",border:"1px solid var(--line)",borderRadius:8}}>
                     <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
-                      <thead style={{position:"sticky",top:0,background:"#0f2d3d",color:"white",zIndex:1}}>
+                      <thead style={{position:"sticky",top:0,background:T.petrol,color:"white",zIndex:1}}>
                         <tr>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Statut</th>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Emplacement</th>
@@ -1812,8 +1825,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                       </thead>
                       <tbody>
                         {audit.data.locations.map(loc=>(
-                          <tr key={loc.id} style={{background:loc.excluded?"#fef2f2":"white",borderBottom:"1px solid #f0f2f5"}}>
-                            <td style={{padding:"6px 10px",fontWeight:700,color:loc.excluded?"#dc2626":"#059669",whiteSpace:"nowrap"}}>
+                          <tr key={loc.id} style={{background:loc.excluded?T.dangerBg:T.surface,borderBottom:"1px solid var(--line-soft)"}}>
+                            <td style={{padding:"6px 10px",fontWeight:700,color:loc.excluded?T.danger:T.ok,whiteSpace:"nowrap"}}>
                               {loc.excluded?"❌ Exclu":"✓ Inclus"}
                             </td>
                             <td style={{padding:"6px 10px",fontFamily:"monospace",fontSize:11}}>{loc.complete_name}</td>
@@ -1821,7 +1834,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                             <td style={{padding:"6px 10px",textAlign:"center",fontSize:14}}>{loc.scrap_location?"☑":"☐"}</td>
                             <td style={{padding:"6px 10px",textAlign:"right",fontWeight:600}}>{loc.quants_count}</td>
                             <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11}}>{loc.total_quantity}</td>
-                            <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:"#94a3b8"}}>{loc.id}</td>
+                            <td style={{padding:"6px 10px",textAlign:"right",fontFamily:"monospace",fontSize:11,color:T.inkMute}}>{loc.id}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -1832,36 +1845,36 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             </div>
 
             {/* Price sync */}
-            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+            <div style={{background:T.surface,borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid var(--line)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>💰 Prix remisés (Liste de prix EUR 2)</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les 7 376 règles de prix depuis Odoo. Nécessite un sync stock préalable. ~2 minutes.</div>
+                  <div style={{fontWeight:700,fontSize:15,color:T.petrol}}>💰 Prix remisés (Liste de prix EUR 2)</div>
+                  <div style={{fontSize:12,color:T.inkMute,marginTop:4}}>Synchronise les 7 376 règles de prix depuis Odoo. Nécessite un sync stock préalable. ~2 minutes.</div>
                 </div>
                 <button onClick={handleSyncPrice} disabled={syncPrice.running}
-                  style={{background:"linear-gradient(135deg, #0f2d3d, #1a4a5e)",color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncPrice.running?"default":"pointer",opacity:syncPrice.running?0.6:1,whiteSpace:"nowrap"}}>
+                  style={{background:T.petrol,color:T.paper,border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:syncPrice.running?"default":"pointer",opacity:syncPrice.running?0.6:1,whiteSpace:"nowrap"}}>
                   {syncPrice.running?"⏳ En cours...":"Lancer le sync"}
                 </button>
               </div>
-              {syncPrice.progress&&<div style={{marginTop:12,fontSize:12,color:syncPrice.progress.startsWith("✓")?"#059669":"#888",fontWeight:600,background:"#f8fafc",borderRadius:8,padding:"8px 12px"}}>{syncPrice.progress}</div>}
+              {syncPrice.progress&&<div style={{marginTop:12,fontSize:12,color:syncPrice.progress.startsWith("✓")?T.ok:T.inkMute,fontWeight:600,background:T.paper,borderRadius:8,padding:"8px 12px"}}>{syncPrice.progress}</div>}
             </div>
 
             {/* Expiry sync */}
-            <div style={{background:"white",borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid #e8ecf0"}}>
+            <div style={{background:T.surface,borderRadius:14,padding:"24px",marginBottom:16,border:"1px solid var(--line)"}}>
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                 <div>
-                  <div style={{fontWeight:700,fontSize:15,color:"#0f2d3d"}}>⏰ Péremptions & Lots</div>
-                  <div style={{fontSize:12,color:"#888",marginTop:4}}>Synchronise les dates de péremption et les lots pour chaque produit en stock. Le bouton se trouve dans l'onglet Péremptions.</div>
+                  <div style={{fontWeight:700,fontSize:15,color:T.petrol}}>⏰ Péremptions & Lots</div>
+                  <div style={{fontSize:12,color:T.inkMute,marginTop:4}}>Synchronise les dates de péremption et les lots pour chaque produit en stock. Le bouton se trouve dans l'onglet Péremptions.</div>
                 </div>
                 <button onClick={()=>setTab("expiry")}
-                  style={{background:"#f0f2f5",color:"#0f2d3d",border:"1px solid #ddd",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                  style={{background:T.surface2,color:T.petrol,border:"1px solid var(--line)",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                   Aller à Péremptions →
                 </button>
               </div>
             </div>
 
             {/* Info */}
-            <div style={{background:"#eff6ff",borderRadius:14,padding:"16px 20px",border:"1px solid #bfdbfe",fontSize:12,color:"#1e40af",lineHeight:1.6}}>
+            <div style={{background:T.mint,borderRadius:14,padding:"16px 20px",border:"1px solid var(--mint-2)",fontSize:12,color:T.teal,lineHeight:1.6}}>
               <strong>Ordre recommandé :</strong> 1. Stock → 2. Prix → 3. Péremptions<br/>
               Le sync stock charge les produits et quantités. Le sync prix associe les remises de la liste de prix EUR 2. Le sync péremptions charge les lots et dates d'expiration pour les produits en stock.
             </div>
@@ -1875,14 +1888,14 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
         </div>
       </div>
-      {saved&&<div style={{position:"fixed",bottom:24,right:24,background:"#0f2d3d",color:"white",borderRadius:12,padding:"12px 20px",fontWeight:700,fontSize:13,boxShadow:"0 8px 24px rgba(0,0,0,0.2)",zIndex:2000}}>{saved}</div>}
+      {saved&&<div role="status" style={{position:"fixed",bottom:24,right:24,background:T.petrol,color:T.paper,borderRadius:12,padding:"12px 20px",fontWeight:700,fontSize:13,boxShadow:T.shadow2,zIndex:2000}}>{saved}</div>}
     </div>
   );
 }
 
-const OV={position:"fixed",inset:0,background:"rgba(0,0,0,0.55)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000,padding:16,backdropFilter:"blur(4px)"};
-const MO={background:"white",borderRadius:20,padding:"36px 40px",maxWidth:480,width:"100%",boxShadow:"0 24px 64px rgba(0,0,0,0.3)",fontFamily:"inherit"};
-const CB={background:"#f0f2f5",border:"none",borderRadius:8,width:32,height:32,cursor:"pointer",fontSize:16,display:"flex",alignItems:"center",justifyContent:"center"};
-const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
-const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
+// ── Atomes de l'admin (lot 10) : communs à AdminAdd, AdminEdit, AdminCampaigns, AdminGroupPurchases (src/theme.js) ──
+// OV et MO (fenêtre et voile) ne servaient nulle part : retirés.
+const CB=adm.fermer;
+const LS=adm.label;
+const IS=adm.input;
+const PB=adm.btn;

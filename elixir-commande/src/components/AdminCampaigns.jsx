@@ -1,8 +1,8 @@
 import React, { useState } from "react";
+import { T, adm } from "../theme.js";
 
-const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
-const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
+// atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
+const LS=adm.label, IS=adm.input, PB=adm.btn;
 
 const EMPTY_CAMPAIGN = {
   id: "", label: "", subtitle: "", color: "#0d4f3c", accent: "#059669", icon: "🤝",
@@ -50,13 +50,13 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
             {/* ── En-tête ── */}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
               {campEditing
-                ? <button onClick={()=>setCampEditing(null)} style={{fontSize:13,background:"#f0f2f5",border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>← Retour</button>
-                : <span style={{fontWeight:800,fontSize:16,color:"#1a2a3a"}}>🏗️ Campagnes groupement</span>
+                ? <button onClick={()=>setCampEditing(null)} style={{fontSize:13,background:T.surface2,border:"none",borderRadius:8,padding:"6px 14px",cursor:"pointer",fontWeight:600}}>← Retour</button>
+                : <span style={{fontWeight:700,fontSize:16,color:T.ink}}>🏗️ Campagnes groupement</span>
               }
               {!campEditing&&(
                 <div style={{display:"flex",gap:8}}>
-                  <button onClick={fetchCampaigns} style={{fontSize:12,background:"#f0f2f5",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>🔄</button>
-                  <button onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})} style={{fontSize:12,background:"#059669",color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>+ Nouvelle campagne</button>
+                  <button onClick={fetchCampaigns} style={{fontSize:12,background:T.surface2,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>🔄</button>
+                  <button onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})} style={{fontSize:12,background:T.ok,color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>+ Nouvelle campagne</button>
                 </div>
               )}
             </div>
@@ -64,23 +64,23 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
             {/* ── Liste des campagnes ── */}
             {!campEditing&&(
               campLoading
-                ? <div style={{textAlign:"center",padding:40,color:"#aaa"}}>Chargement…</div>
+                ? <div style={{textAlign:"center",padding:40,color:T.inkMute}}>Chargement…</div>
                 : campaigns.length===0
-                  ? <div style={{textAlign:"center",padding:40,color:"#aaa",fontSize:14}}>
+                  ? <div style={{textAlign:"center",padding:40,color:T.inkMute,fontSize:14}}>
                       Aucune campagne.{" "}
-                      <span style={{color:"#059669",cursor:"pointer",fontWeight:700}} onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})}>Créer la première →</span>
+                      <span style={{color:T.ok,cursor:"pointer",fontWeight:700}} onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})}>Créer la première →</span>
                     </div>
                   : campaigns.map(c=>(
-                    <div key={c.id} style={{background:"white",border:"1.5px solid #e2e8f0",borderRadius:12,padding:"14px 18px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                    <div key={c.id} style={{background:T.surface,border:"1.5px solid var(--line)",borderRadius:12,padding:"14px 18px",marginBottom:10,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
-                        <div style={{fontWeight:800,fontSize:15}}>{c.icon} {c.label}</div>
-                        <div style={{fontSize:11,color:"#aaa",marginTop:2}}>ID : {c.id} · {c.groupes?.length||0} groupes · {c.min_refs} réf. min · palier {c.palier_qty}u →−{c.palier_remise}%</div>
-                        {c.restricted_to?.length>0&&<div style={{fontSize:11,color:"#0ea5e9"}}>🔒 {c.restricted_to.join(", ")}</div>}
+                        <div style={{fontWeight:700,fontSize:15}}>{c.icon} {c.label}</div>
+                        <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>ID : {c.id} · {c.groupes?.length||0} groupes · {c.min_refs} réf. min · palier {c.palier_qty}u →−{c.palier_remise}%</div>
+                        {c.restricted_to?.length>0&&<div style={{fontSize:11,color:T.teal}}>🔒 {c.restricted_to.join(", ")}</div>}
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                        <span style={{fontSize:11,background:c.active?"#d1fae5":"#fee2e2",color:c.active?"#065f46":"#dc2626",borderRadius:6,padding:"3px 9px",fontWeight:700}}>{c.active?"Actif":"Inactif"}</span>
-                        <button onClick={()=>setCampEditing({...c, restricted_to: c.restricted_to||[], conditions: c.conditions||[], groupes: c.groupes||[]})} style={{fontSize:12,background:"#0ea5e9",color:"white",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>✏️ Éditer</button>
-                        <button onClick={()=>deleteCampaign(c.id)} style={{fontSize:12,background:"#fee2e2",color:"#dc2626",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>🗑️</button>
+                        <span style={{fontSize:11,background:c.active?T.okBg:T.dangerBg,color:c.active?T.ok:T.danger,borderRadius:6,padding:"3px 9px",fontWeight:700}}>{c.active?"Actif":"Inactif"}</span>
+                        <button onClick={()=>setCampEditing({...c, restricted_to: c.restricted_to||[], conditions: c.conditions||[], groupes: c.groupes||[]})} style={{fontSize:12,background:T.teal,color:"white",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>✏️ Éditer</button>
+                        <button onClick={()=>deleteCampaign(c.id)} style={{fontSize:12,background:T.dangerBg,color:T.danger,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>🗑️</button>
                       </div>
                     </div>
                   ))
@@ -105,13 +105,13 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
 
               return (
                 <div>
-                  <div style={{fontWeight:800,fontSize:15,marginBottom:16,color:"#1a2a3a"}}>
+                  <div style={{fontWeight:700,fontSize:15,marginBottom:16,color:T.ink}}>
                     {campEditing.id ? `✏️ Éditer "${campEditing.id}"` : "✨ Nouvelle campagne"}
                   </div>
 
                   {/* ── Infos générales ── */}
-                  <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:16}}>
-                    <div style={{fontWeight:700,fontSize:13,color:"#555",marginBottom:10}}>📋 Informations générales</div>
+                  <div style={{background:T.paper,borderRadius:12,padding:16,marginBottom:16}}>
+                    <div style={{fontWeight:700,fontSize:13,color:T.inkSoft,marginBottom:10}}>📋 Informations générales</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
                       <div>
                         <label style={LS}>Identifiant (ID unique, ex: ulabs)</label>
@@ -133,18 +133,18 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                       </div>
                       <div>
                         <label style={LS}>Couleur principale</label>
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}><input type="color" value={campEditing.color} onChange={e=>upd("color",e.target.value)} style={{width:40,height:36,borderRadius:6,border:"1.5px solid #e2e8f0",cursor:"pointer"}}/><input value={campEditing.color} onChange={e=>upd("color",e.target.value)} style={{...IS,flex:1}}/></div>
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}><input type="color" value={campEditing.color} onChange={e=>upd("color",e.target.value)} style={{width:40,height:36,borderRadius:6,border:"1px solid var(--line-field)",cursor:"pointer"}}/><input value={campEditing.color} onChange={e=>upd("color",e.target.value)} style={{...IS,flex:1}}/></div>
                       </div>
                       <div>
                         <label style={LS}>Couleur accent</label>
-                        <div style={{display:"flex",gap:6,alignItems:"center"}}><input type="color" value={campEditing.accent} onChange={e=>upd("accent",e.target.value)} style={{width:40,height:36,borderRadius:6,border:"1.5px solid #e2e8f0",cursor:"pointer"}}/><input value={campEditing.accent} onChange={e=>upd("accent",e.target.value)} style={{...IS,flex:1}}/></div>
+                        <div style={{display:"flex",gap:6,alignItems:"center"}}><input type="color" value={campEditing.accent} onChange={e=>upd("accent",e.target.value)} style={{width:40,height:36,borderRadius:6,border:"1px solid var(--line-field)",cursor:"pointer"}}/><input value={campEditing.accent} onChange={e=>upd("accent",e.target.value)} style={{...IS,flex:1}}/></div>
                       </div>
                     </div>
                   </div>
 
                   {/* ── Accès & Date ── */}
-                  <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:16}}>
-                    <div style={{fontWeight:700,fontSize:13,color:"#555",marginBottom:10}}>🔒 Accès & Planning</div>
+                  <div style={{background:T.paper,borderRadius:12,padding:16,marginBottom:16}}>
+                    <div style={{fontWeight:700,fontSize:13,color:T.inkSoft,marginBottom:10}}>🔒 Accès & Planning</div>
                     <div>
                       <label style={LS}>Emails autorisés (un par ligne — vide = tout le monde)</label>
                       <textarea
@@ -165,8 +165,8 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                   </div>
 
                   {/* ── Objectif palier ── */}
-                  <div style={{background:"#f8fafc",borderRadius:12,padding:16,marginBottom:16}}>
-                    <div style={{fontWeight:700,fontSize:13,color:"#555",marginBottom:10}}>🎯 Objectif & Remise</div>
+                  <div style={{background:T.paper,borderRadius:12,padding:16,marginBottom:16}}>
+                    <div style={{fontWeight:700,fontSize:13,color:T.inkSoft,marginBottom:10}}>🎯 Objectif & Remise</div>
                     <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
                       <div>
                         <label style={LS}>Palier (nb unités)</label>
@@ -190,9 +190,9 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                       <button onClick={addCond} style={{fontSize:12,background:"#7e22ce",color:"white",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter</button>
                     </div>
                     <div style={{fontSize:11,color:"#9333ea",marginBottom:10}}>Ex : "3 dentifrices Parogencyl" → label="Parogencyl", regex="parogencyl.*dentifrice", count=3</div>
-                    {(campEditing.conditions||[]).length===0&&<div style={{color:"#bbb",fontSize:13,textAlign:"center",padding:8}}>Aucune condition obligatoire</div>}
+                    {(campEditing.conditions||[]).length===0&&<div style={{color:T.inkFaint,fontSize:13,textAlign:"center",padding:8}}>Aucune condition obligatoire</div>}
                     {(campEditing.conditions||[]).map((cond,ci)=>(
-                      <div key={ci} style={{background:"white",borderRadius:8,padding:12,marginBottom:8,border:"1px solid #e9d5ff",display:"grid",gridTemplateColumns:"1fr 1fr 80px 32px",gap:8,alignItems:"end"}}>
+                      <div key={ci} style={{background:T.surface,borderRadius:8,padding:12,marginBottom:8,border:"1px solid #e9d5ff",display:"grid",gridTemplateColumns:"1fr 1fr 80px 32px",gap:8,alignItems:"end"}}>
                         <div>
                           <label style={LS}>Libellé (ex: Parogencyl)</label>
                           <input value={cond.label||""} onChange={e=>updCond(ci,"label",e.target.value)} placeholder="Parogencyl" style={IS}/>
@@ -205,27 +205,27 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                           <label style={LS}>Nb min</label>
                           <input type="number" min={1} value={cond.count||1} onChange={e=>updCond(ci,"count",Number(e.target.value))} style={IS}/>
                         </div>
-                        <button onClick={()=>removeCond(ci)} style={{background:"#fee2e2",border:"none",borderRadius:8,cursor:"pointer",color:"#dc2626",fontWeight:800,fontSize:16,height:36}}>✕</button>
+                        <button onClick={()=>removeCond(ci)} style={{background:T.dangerBg,border:"none",borderRadius:8,cursor:"pointer",color:T.danger,fontWeight:700,fontSize:16,height:36}}>✕</button>
                       </div>
                     ))}
                   </div>
 
                   {/* ── Groupes produits ── */}
-                  <div style={{background:"#f0fdf4",borderRadius:12,padding:16,marginBottom:16,border:"1px solid #86efac"}}>
+                  <div style={{background:T.okBg,borderRadius:12,padding:16,marginBottom:16,border:"1px solid rgba(6,95,70,.28)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                      <div style={{fontWeight:700,fontSize:13,color:"#065f46"}}>📦 Groupes de produits</div>
-                      <button onClick={addGroupe} style={{fontSize:12,background:"#059669",color:"white",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter un groupe</button>
+                      <div style={{fontWeight:700,fontSize:13,color:T.ok}}>📦 Groupes de produits</div>
+                      <button onClick={addGroupe} style={{fontSize:12,background:T.ok,color:"white",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter un groupe</button>
                     </div>
-                    <div style={{fontSize:11,color:"#059669",marginBottom:10}}>Les produits sont classés dans le premier groupe dont la regex correspond à leur nom. Ordre = priorité.</div>
-                    {(campEditing.groupes||[]).length===0&&<div style={{color:"#bbb",fontSize:13,textAlign:"center",padding:8}}>Aucun groupe — les produits seront affichés sans regroupement</div>}
+                    <div style={{fontSize:11,color:T.ok,marginBottom:10}}>Les produits sont classés dans le premier groupe dont la regex correspond à leur nom. Ordre = priorité.</div>
+                    {(campEditing.groupes||[]).length===0&&<div style={{color:T.inkFaint,fontSize:13,textAlign:"center",padding:8}}>Aucun groupe — les produits seront affichés sans regroupement</div>}
                     {(campEditing.groupes||[]).map((g,gi)=>(
-                      <div key={gi} style={{background:"white",borderRadius:10,padding:14,marginBottom:10,border:"1.5px solid #86efac"}}>
+                      <div key={gi} style={{background:T.surface,borderRadius:10,padding:14,marginBottom:10,border:"1.5px solid rgba(6,95,70,.28)"}}>
                         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
-                          <div style={{fontWeight:700,fontSize:13,color:g.color||"#1a2a3a"}}>{g.icon||"📦"} {g.label||`Groupe ${gi+1}`}</div>
+                          <div style={{fontWeight:700,fontSize:13,color:g.color||T.ink}}>{g.icon||"📦"} {g.label||`Groupe ${gi+1}`}</div>
                           <div style={{display:"flex",gap:6}}>
-                            {gi>0&&<button onClick={()=>{ const gs=[...campEditing.groupes]; [gs[gi-1],gs[gi]]=[gs[gi],gs[gi-1]]; setCampEditing(p=>({...p,groupes:gs})); }} style={{background:"#f0f2f5",border:"none",borderRadius:6,cursor:"pointer",padding:"4px 8px"}}>↑</button>}
-                            {gi<campEditing.groupes.length-1&&<button onClick={()=>{ const gs=[...campEditing.groupes]; [gs[gi],gs[gi+1]]=[gs[gi+1],gs[gi]]; setCampEditing(p=>({...p,groupes:gs})); }} style={{background:"#f0f2f5",border:"none",borderRadius:6,cursor:"pointer",padding:"4px 8px"}}>↓</button>}
-                            <button onClick={()=>removeGroupe(gi)} style={{background:"#fee2e2",border:"none",borderRadius:6,cursor:"pointer",color:"#dc2626",fontWeight:800,padding:"4px 8px"}}>✕</button>
+                            {gi>0&&<button onClick={()=>{ const gs=[...campEditing.groupes]; [gs[gi-1],gs[gi]]=[gs[gi],gs[gi-1]]; setCampEditing(p=>({...p,groupes:gs})); }} style={{background:T.surface2,border:"none",borderRadius:6,cursor:"pointer",padding:"4px 8px"}}>↑</button>}
+                            {gi<campEditing.groupes.length-1&&<button onClick={()=>{ const gs=[...campEditing.groupes]; [gs[gi],gs[gi+1]]=[gs[gi+1],gs[gi]]; setCampEditing(p=>({...p,groupes:gs})); }} style={{background:T.surface2,border:"none",borderRadius:6,cursor:"pointer",padding:"4px 8px"}}>↓</button>}
+                            <button onClick={()=>removeGroupe(gi)} style={{background:T.dangerBg,border:"none",borderRadius:6,cursor:"pointer",color:T.danger,fontWeight:700,padding:"4px 8px"}}>✕</button>
                           </div>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:8}}>
@@ -245,16 +245,16 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                         <div style={{marginBottom:8}}>
                           <label style={LS}>Regex de correspondance (nom produit, insensible casse)</label>
                           <input value={g.match_regex||""} onChange={e=>updGroupe(gi,"match_regex",e.target.value)} placeholder="bain de bouche" style={{...IS,fontFamily:"monospace",fontSize:11}}/>
-                          <div style={{fontSize:10,color:"#aaa",marginTop:2}}>Ex : <code>fluocaril.*145</code> · <code>brosse</code> · <code>junior|kids</code></div>
+                          <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>Ex : <code>fluocaril.*145</code> · <code>brosse</code> · <code>junior|kids</code></div>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:8}}>
                           <div>
                             <label style={LS}>Couleur fond</label>
-                            <div style={{display:"flex",gap:4}}><input type="color" value={g.color||"#1e3a5f"} onChange={e=>updGroupe(gi,"color",e.target.value)} style={{width:36,height:34,borderRadius:6,border:"1.5px solid #e2e8f0",cursor:"pointer"}}/><input value={g.color||""} onChange={e=>updGroupe(gi,"color",e.target.value)} style={{...IS,flex:1}}/></div>
+                            <div style={{display:"flex",gap:4}}><input type="color" value={g.color||"#1e3a5f"} onChange={e=>updGroupe(gi,"color",e.target.value)} style={{width:36,height:34,borderRadius:6,border:"1px solid var(--line-field)",cursor:"pointer"}}/><input value={g.color||""} onChange={e=>updGroupe(gi,"color",e.target.value)} style={{...IS,flex:1}}/></div>
                           </div>
                           <div>
                             <label style={LS}>Couleur accent</label>
-                            <div style={{display:"flex",gap:4}}><input type="color" value={g.accent||"#3b82f6"} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{width:36,height:34,borderRadius:6,border:"1.5px solid #e2e8f0",cursor:"pointer"}}/><input value={g.accent||""} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{...IS,flex:1}}/></div>
+                            <div style={{display:"flex",gap:4}}><input type="color" value={g.accent||"#3b82f6"} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{width:36,height:34,borderRadius:6,border:"1px solid var(--line-field)",cursor:"pointer"}}/><input value={g.accent||""} onChange={e=>updGroupe(gi,"accent",e.target.value)} style={{...IS,flex:1}}/></div>
                           </div>
                           <div>
                             <label style={LS}>Step (incrément + / −)</label>
@@ -265,12 +265,12 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                           <div>
                             <label style={LS}>Qté min (1er clic sur + → saute ici)</label>
                             <input type="number" min={0} value={g.min_qty||""} onChange={e=>updGroupe(gi,"min_qty",e.target.value===""?0:Number(e.target.value))} placeholder="ex: 6" style={IS}/>
-                            <div style={{fontSize:10,color:"#aaa",marginTop:2}}>0 = pas de minimum</div>
+                            <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>0 = pas de minimum</div>
                           </div>
                           <div>
                             <label style={LS}>Multiple obligatoire (ex: 3 → 3, 6, 9…)</label>
                             <input type="number" min={1} value={g.multiple||""} onChange={e=>updGroupe(gi,"multiple",e.target.value===""?1:Number(e.target.value))} placeholder="ex: 3" style={IS}/>
-                            <div style={{fontSize:10,color:"#aaa",marginTop:2}}>1 = libre</div>
+                            <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>1 = libre</div>
                           </div>
                         </div>
                         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
@@ -297,7 +297,7 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                   <button onClick={()=>saveCampaign(campEditing)} disabled={campSaving||!campEditing.id||!campEditing.label} style={{...PB, opacity: (campSaving||!campEditing.id||!campEditing.label)?0.5:1}}>
                     {campSaving ? "⏳ Sauvegarde…" : "💾 Sauvegarder la campagne"}
                   </button>
-                  {(!campEditing.id||!campEditing.label)&&<div style={{fontSize:11,color:"#dc2626",marginTop:6,textAlign:"center"}}>L'ID et le nom sont obligatoires</div>}
+                  {(!campEditing.id||!campEditing.label)&&<div style={{fontSize:11,color:T.danger,marginTop:6,textAlign:"center"}}>L'ID et le nom sont obligatoires</div>}
                 </div>
               );
             })()}

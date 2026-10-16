@@ -1,8 +1,8 @@
 import React from "react";
+import { T, tone, adm } from "../theme.js";
 
-const LS={fontSize:12,fontWeight:700,color:"#444",display:"block",marginBottom:6};
-const IS={width:"100%",border:"1.5px solid #e2e8f0",borderRadius:10,padding:"9px 12px",fontSize:13,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-const PB={width:"100%",background:"linear-gradient(135deg, #0f2d3d 0%, #1a4a5e 100%)",color:"white",border:"none",borderRadius:12,padding:"13px",fontWeight:800,fontSize:14,cursor:"pointer"};
+// atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
+const LS=adm.label, IS=adm.input, PB=adm.btn;
 
 export default function AdminEdit({
   products, search, setSearch, filterSection, setFilterSection,
@@ -15,14 +15,14 @@ export default function AdminEdit({
 
   function CipCopy({ cip }) {
     const [copied, setCopied] = React.useState(false);
-    if (!cip || cip === "–") return <span style={{ fontFamily:"monospace", fontSize:11, color:"#bbb" }}>–</span>;
+    if (!cip || cip === "–") return <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkFaint }}>–</span>;
     const copy = () => { navigator.clipboard.writeText(cip).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }); };
     return (
       <span style={{ display:"inline-flex", alignItems:"center", gap:4 }}>
-        <span style={{ fontFamily:"monospace", fontSize:11, color:"#888" }}>{cip}</span>
+        <span style={{ fontFamily:"monospace", fontSize:11, color:T.inkMute }}>{cip}</span>
         <button onClick={copy} title="Copier CIP" style={{
-          background: copied ? "#dcfce7" : "#f0f2f5", border:"none", borderRadius:4,
-          padding:"1px 5px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#999",
+          background: copied ? T.okBg : T.surface2, border:"none", borderRadius:4,
+          padding:"1px 5px", cursor:"pointer", fontSize:11, color: copied ? T.ok : T.inkMute,
           fontWeight:700, lineHeight:"14px"
         }}>{copied ? "✓" : "⎘"}</button>
       </span>
@@ -39,8 +39,8 @@ export default function AdminEdit({
     const copy = () => { navigator.clipboard.writeText(link).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); }); };
     return (
       <button onClick={copy} title={`Copier le lien produit :\n${link}`} style={{
-        background: copied ? "#dcfce7" : "#eef2ff", border:"none", borderRadius:4,
-        padding:"1px 6px", cursor:"pointer", fontSize:9, color: copied ? "#166534" : "#4f46e5",
+        background: copied ? T.okBg : T.mint, border:"none", borderRadius:4,
+        padding:"1px 6px", cursor:"pointer", fontSize:11, color: copied ? T.ok : T.teal,
         fontWeight:700, lineHeight:"14px", whiteSpace:"nowrap"
       }}>{copied ? "✓ Lien copié" : "🔗 Lien"}</button>
     );
@@ -155,13 +155,13 @@ export default function AdminEdit({
                 {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
-            <div style={{fontSize:11,color:"#999",marginBottom:12}}>
+            <div style={{fontSize:11,color:T.inkMute,marginBottom:12}}>
               {filtered.length} produit(s) dans Supabase
               {false&&(
                 <button onClick={()=>{
                   if(!window.confirm("Réinitialiser TOUTES les modifications ?")) return;
                   flash("↩️ Les modifications sont dans Supabase — utilisez l'onglet Modifier pour réinitialiser.");
-                }} style={{marginLeft:12,background:"#fee2e2",border:"none",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:11,color:"#b91c1c",fontWeight:700}}>
+                }} style={{marginLeft:12,background:T.dangerBg,border:"none",borderRadius:6,padding:"2px 8px",cursor:"pointer",fontSize:11,color:T.danger,fontWeight:700}}>
                   Tout réinitialiser
                 </button>
               )}
@@ -174,52 +174,52 @@ export default function AdminEdit({
               return (
                 <div key={p._key} style={{
                   borderRadius:12,marginBottom:8,
-                  border:hasOv?"2px solid #fbbf24":"1px solid #e8eaed",
-                  background:hasOv?"#fffbeb":"#fafbfc",overflow:"hidden"
+                  border:hasOv?"2px solid #fbbf24":"1px solid var(--line)",
+                  background:hasOv?"#fffbeb":T.paper,overflow:"hidden"
                 }}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px"}}>
                     <div style={{flex:1,minWidth:0}}>
-                      <div style={{fontWeight:700,fontSize:13,color:"#0f2d3d",display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
-                        {hasOv&&<span style={{background:"#fbbf24",color:"#78350f",fontSize:9,fontWeight:800,padding:"1px 5px",borderRadius:4}}>MODIFIÉ</span>}
+                      <div style={{fontWeight:700,fontSize:13,color:T.petrol,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
+                        {hasOv&&<span style={{background:"#fbbf24",color:"#78350f",fontSize:11,fontWeight:700,padding:"1px 5px",borderRadius:4}}>MODIFIÉ</span>}
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
                       </div>
-                      <div style={{fontSize:11,color:"#888",marginTop:2}}>
+                      <div style={{fontSize:11,color:T.inkMute,marginTop:2}}>
                         {p._sectionLabel}{p.cip && <> · <CipCopy cip={p.cip}/> <LinkCopy cip={p.cip}/></>}
                         {" · "}
-                        <span style={{color:hasOv?"#d97706":"#555",fontWeight:600}}>
+                        <span style={{color:hasOv?T.warn:T.inkSoft,fontWeight:600}}>
                           {fmt(ov?.pn??p.pn)} net
                           {(ov?.palier??p.palier??p.colis)?` · ×${ov?.palier??p.palier??p.colis}`:""}
                         </span>
-                        {hasOv&&<span style={{color:"#9ca3af",marginLeft:4}}>(orig: {fmt(p.pn)})</span>}
+                        {hasOv&&<span style={{color:T.inkMute,marginLeft:4}}>(orig: {fmt(p.pn)})</span>}
                       </div>
                     </div>
                     <div style={{display:"flex",gap:6,marginLeft:10,flexShrink:0}}>
                       {hasOv&&(
-                        <button onClick={()=>clearEdit(p._key)} title="Réinitialiser" style={{background:"#fef3c7",border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:"#92400e",fontWeight:700}}>↩</button>
+                        <button onClick={()=>clearEdit(p._key)} title="Réinitialiser" style={{background:T.warnBg,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:T.warn,fontWeight:700}}>↩</button>
                       )}
                       <button onClick={()=>isEditing?setEditingKey(null):startEdit(p)} style={{
-                        background:isEditing?"#e5e7eb":"#0f2d3d",border:"none",borderRadius:8,
+                        background:isEditing?T.sand:T.petrol,border:"none",borderRadius:8,
                         padding:"5px 12px",cursor:"pointer",fontSize:12,
-                        color:isEditing?"#374151":"white",fontWeight:700
+                        color:isEditing?T.inkSoft:"white",fontWeight:700
                       }}>{isEditing?"Annuler":"✏️ Modifier"}</button>
                     </div>
                   </div>
 
                   {isEditing&&(
-                    <div style={{background:"white",borderTop:"1px solid #e8eaed",padding:"14px 14px 16px"}}>
+                    <div style={{background:T.surface,borderTop:"1px solid var(--line)",padding:"14px 14px 16px"}}>
                       <div style={{marginBottom:10}}>
-                        <label style={{...LS,fontSize:10}}>Nom affiché aux pharmacies</label>
+                        <label style={{...LS,fontSize:11}}>Nom affiché aux pharmacies</label>
                         <input value={editForm.name ?? ""} onChange={e=>setEditForm(f=>({...f,name:e.target.value}))}
                           style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                       </div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}}>
                         <div>
-                          <label style={{...LS,fontSize:10}}>Code CIP / Référence</label>
+                          <label style={{...LS,fontSize:11}}>Code CIP / Référence</label>
                           <input value={editForm.cip} onChange={e=>setEditForm(f=>({...f,cip:e.target.value}))}
                             placeholder="3400930000000" style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                         </div>
                         <div>
-                          <label style={{...LS,fontSize:10}}>Section</label>
+                          <label style={{...LS,fontSize:11}}>Section</label>
                           <select value={editForm.section ?? p._section} onChange={e=>setEditForm(f=>({...f,section:e.target.value}))}
                             style={{...IS,fontSize:12,padding:"7px 10px"}}>
                             {(allSectionsList||[]).filter(s=>!String(s.key).startsWith("promo_")).map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
@@ -228,7 +228,7 @@ export default function AdminEdit({
                         </div>
                       </div>
                       {p._price_source === "odoo" && (
-                        <div style={{fontSize:11,color:"#475569",background:"#f1f5f9",borderRadius:8,padding:"6px 10px",marginBottom:10}}>
+                        <div style={{fontSize:11,color:T.inkSoft,background:T.surface2,borderRadius:8,padding:"6px 10px",marginBottom:10}}>
                           ℹ️ Prix affichés aux pharmacies = Odoo (prix de vente et liste n°5), mis à jour automatiquement : pour les changer, modifiez-les dans Odoo. Les prix ci-dessous ne servent que si le produit sort d'Odoo.
                         </div>
                       )}
@@ -239,7 +239,7 @@ export default function AdminEdit({
                           {key:"remise_eur", label:"Remise (€)"},
                         ].map(({key,label})=>(
                           <div key={key}>
-                            <label style={{...LS,fontSize:10}}>{label}</label>
+                            <label style={{...LS,fontSize:11}}>{label}</label>
                             <input type="number" step="0.01" value={editForm[key]||""}
                               onChange={e=>setEditForm(f=>({...f,[key]:e.target.value,_lastEdited:key==="remise_eur"?"eur":"pct"}))}
                               style={{...IS,fontSize:12,padding:"7px 10px"}}/>
@@ -252,32 +252,32 @@ export default function AdminEdit({
                           {key:"palier", label:"Palier / Colis"},
                         ].map(({key,label,green})=>(
                           <div key={key}>
-                            <label style={{...LS,fontSize:10,color:green?"#059669":undefined}}>{label}</label>
+                            <label style={{...LS,fontSize:11,color:green?T.ok:undefined}}>{label}</label>
                             <input type="number" step="0.01" value={editForm[key]||""}
                               onChange={e=>setEditForm(f=>({...f,[key]:e.target.value}))}
                               style={{...IS,fontSize:12,padding:"7px 10px",
-                                borderColor:green?"#86efac":"#e2e8f0",
-                                fontWeight:green?700:400,color:green?"#059669":"inherit"}}/>
+                                borderColor:green?T.ok:T.lineField,
+                                fontWeight:green?700:400,color:green?T.ok:"inherit"}}/>
                           </div>
                         ))}
                       </div>
                       <div style={{marginBottom:12}}>
-                        <label style={{...LS,fontSize:10}}>Note</label>
+                        <label style={{...LS,fontSize:11}}>Note</label>
                         <input value={editForm.note} onChange={e=>setEditForm(f=>({...f,note:e.target.value}))}
                           placeholder="Stock limité, Promo..." style={{...IS,fontSize:12,padding:"7px 10px"}}/>
                       </div>
                       {GRID_SECTIONS.includes(p._section) && (
                         <div style={{marginBottom:12}}>
-                          <label style={{...LS,fontSize:10}}>📸 Photo produit</label>
+                          <label style={{...LS,fontSize:11}}>📸 Photo produit</label>
                           <div style={{display:"flex",alignItems:"center",gap:8,marginTop:4}}>
                             {(uploadedImgs[p.cip] || p.image_url) && (
                               <img src={uploadedImgs[p.cip] || p.image_url} alt=""
-                                style={{width:48,height:48,objectFit:"cover",borderRadius:6,border:"1px solid #e2e8f0"}}/>
+                                style={{width:48,height:48,objectFit:"cover",borderRadius:6,border:"1px solid var(--line)"}}/>
                             )}
                             <label style={{
                               display:"inline-block",padding:"6px 12px",borderRadius:8,
-                              background:"#f0f2f5",border:"1px solid #e2e8f0",cursor:"pointer",
-                              fontSize:11,fontWeight:600,color:"#555"
+                              background:T.surface2,border:"1px solid var(--line)",cursor:"pointer",
+                              fontSize:11,fontWeight:600,color:T.inkSoft
                             }}>
                               {uploadingImg===p.cip ? "⏳ Upload..." : "📂 Choisir une photo"}
                               <input type="file" accept="image/*" style={{display:"none"}}
@@ -296,12 +296,12 @@ export default function AdminEdit({
                                   if(j.success){setUploadedImgs(prev=>({...prev,[p.cip]:j.image_url}));flash("🖼️ Photo Medipim importée !");await fetchProducts();}
                                   setUploadingImg(null);
                                 }catch(e){alert(e.message);setUploadingImg(null);}
-                              }} style={{fontSize:11,background:"#0ea5e9",color:"white",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
+                              }} style={{fontSize:11,background:T.teal,color:"white",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
                                 🔄 Photo Medipim
                               </button>
                             )}
                             {p.cip && !medipimLookup[p.cip] && !p.image_url && (
-                              <button onClick={()=>lookupMedipim(p.cip)} style={{fontSize:11,background:"#f0f2f5",border:"1px solid #e2e8f0",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:"#555"}}>
+                              <button onClick={()=>lookupMedipim(p.cip)} style={{fontSize:11,background:T.surface2,border:"1px solid var(--line)",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:600,color:T.inkSoft}}>
                                 🔍 Chercher Medipim
                               </button>
                             )}
@@ -316,7 +316,7 @@ export default function AdminEdit({
                 </div>
               );
             })}
-            {filtered.length>80&&<div style={{textAlign:"center",fontSize:12,color:"#999",padding:10}}>Affichage limité à 80 résultats – affinez la recherche.</div>}
+            {filtered.length>80&&<div style={{textAlign:"center",fontSize:12,color:T.inkMute,padding:10}}>Affichage limité à 80 résultats – affinez la recherche.</div>}
             {filtered.length>0&&(
               <div style={{textAlign:"center",padding:"10px 0 4px"}}>
                 <button onClick={async()=>{
@@ -353,17 +353,17 @@ export default function AdminEdit({
                   }
                   await fetchProducts();
                   flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}${sature>0?`, ${sature} non traitées (base photos saturée : relancez plus tard)`:""}`)
-                }} style={{fontSize:12,background:"#0ea5e9",color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
+                }} style={{fontSize:12,background:T.teal,color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
                   🔄 Importer photos Medipim pour les produits filtrés sans photo
                 </button>
                 {filterSection === "ulabs" && (
-                  <div style={{marginTop:8,padding:"10px 14px",background:"#f0fdf4",borderRadius:8,border:"1px solid #86efac",fontSize:12,color:"#166534"}}>
+                  <div style={{marginTop:8,padding:"10px 14px",background:T.okBg,borderRadius:8,border:`1px solid ${tone("ok").border}`,fontSize:12,color:T.ok}}>
                     💡 <strong>U-Labs :</strong> Le bouton ci-dessus importera les photos pour les {filtered.filter(p=>!p.image_url).length} produits U-Labs sans photo via Medipim.
                   </div>
                 )}
               </div>
             )}
-            {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:"#999",padding:24}}>Aucun produit trouvé pour « {search} »</div>}
+            {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:T.inkMute,padding:24}}>Aucun produit trouvé pour « {search} »</div>}
           </>
   );
 }
