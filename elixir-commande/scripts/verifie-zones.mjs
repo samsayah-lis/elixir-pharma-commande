@@ -247,6 +247,8 @@ const verifieFichier = (chemin, silencieux) => {
   const a = enRef(chemin), b = enCours(chemin);
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
+  // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction de l'Assistant Elixir)`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
