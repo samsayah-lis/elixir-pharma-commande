@@ -22,7 +22,7 @@ import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 import CipCell from "./components/ui/CipCell.jsx";
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
 // Assistant Elixir (docs/assistant-conception.md § 1) : panneau chargé à la demande, seuls le bouton et l'état d'ouverture ici
-import { PanneauAssistant, GroupeAide } from "./components/assistant/Entree.jsx";
+import { PanneauAssistant, GroupeAide, CoucheAssistant } from "./components/assistant/Entree.jsx";
 import { authAssistant, etatAssistant } from "./assistant-client.js";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
@@ -2231,7 +2231,8 @@ export default function App() {
 
       <div style={{ display: "flex", flex: 1, position: "relative" }}>
         {/* Main content */}
-        <main style={{ flex: 1, padding: isMobile ? `12px 10px ${panierFlottant ? 96 : 12}px` : `20px 24px ${panierFlottant ? 96 : 20}px`, minWidth: 0 }}>
+        {/* bas réservé aux boutons flottants : panier (96 px), lanceur de l'Assistant Elixir (+72 px, posé au-dessus du panier) */}
+        <main style={{ flex: 1, padding: isMobile ? `12px 10px ${(panierFlottant ? 96 : 12) + (assistantDispo ? 72 : 0)}px` : `20px 24px ${(panierFlottant ? 96 : 20) + (assistantDispo ? 72 : 0)}px`, minWidth: 0 }}>
 
           {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement.
               Sous l'en-tête collant : sur mobile (lot 9), pour ne plus cacher le compteur du panier qui vient de changer ;
@@ -3527,6 +3528,12 @@ export default function App() {
           onClose={() => setAssistantOuvert(false)} onInfos={(infos) => setAssistant(a => ({ ...a, infos }))}
           // reconnexion par code sans quitter la session (panier gardé) ; le panneau se ferme avec l'identité (identiteAssistant)
           onReconnecter={demanderReconnexion} />
+      )}
+      {/* Assistant Elixir : lanceur flottant (au-dessus du panier flottant) et fenêtre de présentation, une fois le catalogue
+          affiché, aux pharmacies seulement (jamais en saisie Elixir) ; chargés à la demande (Aide.jsx, Presentation.jsx) */}
+      {assistantDispo && (
+        <CoucheAssistant identite={identiteAssistant} mobile={isMobile} presenter={!actingFor && assistant.mode === "complet"} pret={!productsLoading}
+          ouvert={assistantOuvert} cache={cartOpen || showAdmin || (sidebarOpen && !isDesktop)} pile={cartCount > 0} onOuvrir={ouvrirAssistant} />
       )}
 
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son

@@ -33,7 +33,8 @@
 }
 /* Pile des z-index (inline, inchangée — on la documente, on ne la renumérote pas) :
    50 barre collante U-Labs · 80 barre A–Z · 90 en-tête collant · 140 voile du menu mobile · 150 barre latérale ·
-   300 voile du panier · 301 panier · 400 Mes commandes, visionneuse photo · 1000 admin · 2000 Offres du moment ·
+   290 panier flottant, lanceur de l'Assistant Elixir · 300 voile du panier · 301 panier, panneau de l'Assistant Elixir ·
+   400 Mes commandes, visionneuse photo · 1000 admin · 2000 Offres du moment, présentation de l'Assistant Elixir ·
    9999 message flash, erreur admin · 10000 choix de la pharmacie (saisie Elixir) */
 
 /* ── Base ── */

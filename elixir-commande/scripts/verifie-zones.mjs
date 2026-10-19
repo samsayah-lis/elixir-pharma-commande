@@ -113,6 +113,9 @@ const ECARTS_AUTORISES = [
 const LOTS = {
   securite: { nom: "correctifs de sécurité du 19/10/2026", repere: "scripts/test-securite-2.mjs" },
   assistant: { nom: "Assistant Elixir", repere: "src/assistant-client.js" },
+  // suite du même projet, demandée par Zineb le 19/10/2026 après la mise en ligne de l'assistant (origin/master contient
+  // déjà le lot « assistant ») : fenêtre de présentation et lanceur flottant
+  assistantPresentation: { nom: "Assistant Elixir (présentation et lanceur)", repere: "src/components/assistant/presentation.js" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -160,6 +163,11 @@ const CLES_AUTORISEES = {
   assistant: { 'localStorage.getItem("pharmacy_token"': 1, 'localStorage.getItem("admin_token"': 1,
     'localStorage.getItem("pharmacy_refresh_token"': 1, 'localStorage.getItem("admin_refresh_token"': 1,
     "sessionStorage.getItem(cle(identite": 1, "sessionStorage.setItem(cle(identite": 1, "sessionStorage.removeItem(cle(identite": 1 },
+  // src/components/assistant/presentation.js, clé assistant_presentation_<identite> (compte de la pharmacie) :
+  // localStorage { vues, fini } — fenêtre de présentation affichée 3 fois au plus, plus jamais une fois l'assistant ouvert
+  // ou sur « Ne plus afficher » ; sessionStorage « 1 » — « Plus tard » : plus rien jusqu'à la prochaine session
+  assistantPresentation: { "localStorage.getItem(clePresentation(identite": 1, "localStorage.setItem(clePresentation(identite": 1,
+    "sessionStorage.getItem(clePresentation(identite": 1, "sessionStorage.setItem(clePresentation(identite": 1 },
 };
 
 // ── lecture ──
@@ -334,7 +342,8 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // bundle des pharmacies pèse ~895 000 octets : budget resserré à 940 000 pour qu'il reste un garde-fou.
 // Part de l'Assistant Elixir dans ce bundle (bouton, état, renouvellement des jetons, entrées d'App et de Mes commandes ;
 // groupe « AIDE » et panneau chargés à la demande) : ≈ 3,6 Ko mesurés le 19/10/2026 ; critère relevé de 3 à 4 Ko avec
-// l'accord de Zineb (19/10/2026).
+// l'accord de Zineb (19/10/2026). Lanceur flottant et fenêtre de présentation (chargés à la demande, eux aussi) :
+// 3 559 octets en tout, mesurés contre le build de f2461b7 (master sans l'assistant), soit +120 octets.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 940_000;

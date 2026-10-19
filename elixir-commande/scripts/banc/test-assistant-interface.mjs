@@ -4,8 +4,11 @@
 //  2. les formats français des cartes (format.js) ;
 //  3. la conversation fictive des aperçus (cas « chat » de src/dev/reponses-fictives.js) : formes du contrat ;
 //  4. les appels au serveur (assistant-client.js, assistant/api.js) : jeton, pour_odoo_id, 401 rejoué, erreurs, attente ;
-//  5. le rendu des cartes et du panneau (React côté serveur, via esbuild) : aucun lien hors tel:, aucune image, a11y.
+//  5. le rendu des cartes et du panneau (React côté serveur, via esbuild) : aucun lien hors tel:, aucune image, a11y ;
+//  6. la fenêtre de présentation et le lanceur flottant (presentation.js, Presentation.jsx, CoucheAssistant d'Aide.jsx) :
+//     règles d'affichage par compte et par session, clavier, rendu, absence du bundle des pharmacies.
 import { build } from "esbuild";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyseTexte, segments } from "../../src/components/assistant/texte-sur.js";
@@ -231,9 +234,13 @@ import { renderToStaticMarkup } from "react-dom/server.browser";
 import TexteSur from "./components/assistant/TexteSur.jsx";
 import Carte from "./components/assistant/Cartes.jsx";
 import AssistantPanel from "./components/AssistantPanel.jsx";
+import Presentation from "./components/assistant/Presentation.jsx";
+import { CoucheAssistant } from "./components/assistant/Aide.jsx";
 export const texte = (t) => renderToStaticMarkup(React.createElement("div", null, React.createElement(TexteSur, { texte: t })));
 export const carte = (a, outils) => renderToStaticMarkup(React.createElement(Carte, { action: a, outils }));
 export const panneau = (props) => renderToStaticMarkup(React.createElement(AssistantPanel, props));
+export const presentation = (props) => renderToStaticMarkup(React.createElement(Presentation, props));
+export const couche = (props) => renderToStaticMarkup(React.createElement(CoucheAssistant, props));
 `;
 const lot = await build({ stdin: { contents: entree, resolveDir: SRC, loader: "jsx" }, bundle: true, write: false, format: "esm", platform: "browser",
   jsx: "automatic", define: { "process.env.NODE_ENV": '"production"', "import.meta.env.DEV": "false" }, logLevel: "silent" });
@@ -288,6 +295,100 @@ vrai("mobile : dialog modal", /^<div[^>]*role="dialog"[^>]*aria-modal="true"/.te
 vrai("mobile : bouton Retour", mobile.includes("Retour : fermer l&#x27;assistant"));
 vrai("saisie Elixir : bandeau", mobile.includes("Vous agissez pour <b>PHARMACIE SERVIE</b>"));
 vrai("messages sélectionnables malgré l'anti-copie", /ex-assistant__fil ex-selectionnable/.test(bureau));
+
+// ── 6. fenêtre de présentation et lanceur flottant ──
+const pres = await import("../../src/components/assistant/presentation.js");
+const compte = "ppharmacie-1@banc.test", cleCompte = `assistant_presentation_${compte}`;
+const nouvelleSession = () => globalThis.sessionStorage.clear();
+reinit();
+vrai("nouveau compte : fenêtre à présenter", pres.aPresenter(compte));
+pres.noterVue(compte);
+eq("affichée : plus rien jusqu'à la fin de la session (« Plus tard »)", pres.aPresenter(compte), false);
+eq("mémoire par compte : localStorage { vues, fini } et sessionStorage, clé avec l'identité",
+  [globalThis.localStorage.getItem(cleCompte), globalThis.sessionStorage.getItem(cleCompte)], ['{"vues":1,"fini":false}', "1"]);
+vrai("autre compte du même poste : pas touché", pres.aPresenter("pautre@banc.test"));
+nouvelleSession(); vrai("session suivante : revient (1er retour)", pres.aPresenter(compte)); pres.noterVue(compte);
+nouvelleSession(); vrai("session suivante : revient (2e et dernier retour)", pres.aPresenter(compte)); pres.noterVue(compte);
+nouvelleSession(); eq("après 3 affichages : plus jamais", [pres.aPresenter(compte), pres.VUES_MAX], [false, 3]);
+reinit(); pres.noterFini(compte);
+eq("assistant ouvert ou « Ne plus afficher » : plus jamais", pres.aPresenter(compte), false);
+nouvelleSession(); eq("… même à une autre session", pres.aPresenter(compte), false);
+reinit(); pres.noterVue(compte); pres.noterFini(compte);
+eq("fini garde le nombre d'affichages", JSON.parse(globalThis.localStorage.getItem(cleCompte)), { vues: 1, fini: true });
+eq("sans identité (session sans compte) : rien", [pres.aPresenter(""), pres.aPresenter(null)], [false, false]);
+reinit(); globalThis.localStorage.setItem(cleCompte, "{pas du json");
+eq("valeur illisible : pas de fenêtre (elle reviendrait à chaque page)", pres.aPresenter(compte), false);
+{
+  const bloque = { getItem() { throw new Error("bloqué"); }, setItem() { throw new Error("bloqué"); }, removeItem() {}, clear() {} };
+  const avant = globalThis.localStorage;
+  Object.defineProperty(globalThis, "localStorage", { value: bloque, configurable: true, writable: true });
+  let leve = false;
+  try { pres.noterVue(compte); pres.noterFini(compte); } catch { leve = true; }
+  eq("stockage bloqué : pas de fenêtre, aucune erreur", [pres.aPresenter(compte), leve], [false, false]);
+  Object.defineProperty(globalThis, "localStorage", { value: avant, configurable: true, writable: true });
+}
+vrai("délai de calme : quelques secondes", pres.DELAI_PRESENTATION >= 2000 && pres.DELAI_PRESENTATION <= 4000);
+eq("champs qui ouvrent le clavier (lanceur masqué)", [{ tagName: "INPUT", type: "text" }, { tagName: "INPUT", type: "number" }, { tagName: "INPUT", type: "search" },
+  { tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "SELECT" }, { tagName: "DIV", isContentEditable: true }].map(pres.champSaisie), [true, true, true, true, true, true, true]);
+eq("pas de clavier : boutons, cases, rien", [{ tagName: "BUTTON" }, { tagName: "INPUT", type: "checkbox" }, { tagName: "INPUT", type: "button" }, { tagName: "A" }, null]
+  .map(pres.champSaisie), [false, false, false, false, false]);
+{
+  const [a, b, c] = ["a", "b", "c"].map((n) => ({ n }));
+  eq("Tab sur le dernier bouton → premier", pres.focusSuivant([a, b, c], c, false), a);
+  eq("Maj+Tab sur le premier → dernier", pres.focusSuivant([a, b, c], a, true), c);
+  eq("Tab au milieu : suit son cours", [pres.focusSuivant([a, b, c], b, false), pres.focusSuivant([a, b, c], b, true)], [null, null]);
+  eq("focus sur la fenêtre elle-même : premier, ou dernier avec Maj", [pres.focusSuivant([a, b, c], {}, false), pres.focusSuivant([a, b, c], {}, true)], [a, c]);
+  eq("aucun bouton", pres.focusSuivant([], a, false), null);
+}
+
+const appels6 = { essayer: 0, plusTard: 0, jamais: 0 };
+const fenetre = (mobile) => rendu.presentation({ mobile, onEssayer: () => appels6.essayer++, onPlusTard: () => appels6.plusTard++, onNePlusAfficher: () => appels6.jamais++ });
+const fb = fenetre(false), fm = fenetre(true);
+vrai("fenêtre : role=dialog aria-modal", /^<div[^>]*role="dialog"[^>]*aria-modal="true"/.test(fb), fb.slice(0, 240));
+{
+  const titre = /aria-labelledby="([^"]+)"/.exec(fb)?.[1], texteId = /aria-describedby="([^"]+)"/.exec(fb)?.[1];
+  vrai("fenêtre : titre et texte reliés", !!titre && fb.includes(`<h2 id="${titre}"`) && !!texteId && fb.includes(`id="${texteId}"`), `${titre} ${texteId}`);
+}
+vrai("fenêtre : titre « Nouveau : votre Assistant Elixir »", fb.includes("Nouveau : votre Assistant Elixir"));
+vrai("fenêtre : ce que c'est (factures et commandes Elixir, jamais les règlements)",
+  fb.includes("assistant automatique") && fb.includes("vos factures et vos commandes Elixir") && fb.includes("Il ne voit jamais vos règlements"));
+vrai("fenêtre : les 4 exemples", ["Duplicata d&#x27;une facture", "Relevé de facturation", "Où en est ma commande ?", "Demande de retour ou réclamation"]
+  .every((t) => fb.includes(t)) && (fb.match(/<li\b/g) || []).length === 4, fb);
+vrai("fenêtre : 4 icônes d'exemple décoratives", (fb.match(/<span aria-hidden="true"[^>]*><svg/g) || []).length === 4);
+vrai("fenêtre : transmission à l'équipe Elixir", fb.includes("il transmet votre demande à l&#x27;équipe Elixir"));
+vrai("fenêtre : « Essayer maintenant », « Plus tard », « Ne plus afficher » (vrais boutons)",
+  [">Essayer maintenant<", ">Plus tard<", ">Ne plus afficher<"].every((t) => fb.includes(t)) && !/<button(?![^>]*type="button")/.test(fb));
+vrai("fenêtre : focus initial sur « Fermer » (FocusFenetre)", /<button[^>]*data-focus-initial="true"[^>]*aria-label="Fermer"/.test(fb));
+vrai("fenêtre : en-tête pétrole, croix or clair, bouton principal pétrole, aucun or",
+  fb.includes("background:var(--petrol)") && fb.includes("color:var(--or-clair)") && /class="ex-btn-petrole"[^>]*>.*Essayer maintenant/.test(fb) && !/var\(--or\)/.test(fb));
+vrai("fenêtre : aucun lien ni image", !/<a\b|<img/i.test(fb + fm));
+vrai("fenêtre : où retrouver l'assistant (ordinateur / mobile)", fb.includes("le bouton « Une question ? »") && fm.includes("la bulle en bas à droite"));
+eq("fenêtre : rendue sans action", [appels6.essayer, appels6.plusTard, appels6.jamais], [0, 0, 0]);
+
+const lanceur = (props) => rendu.couche({ identite: compte, mobile: false, presenter: true, pret: true, ouvert: false, cache: false, pile: false, onOuvrir() {}, ...props });
+const lb = lanceur(), lm = lanceur({ mobile: true });
+vrai("lanceur : vrai bouton avec aria-label", /<button type="button" class="ex-lanceur"[^>]*aria-label="Une question \? Assistant Elixir"/.test(lb), lb.slice(0, 400));
+vrai("lanceur (ordinateur) : pastille « Une question ? Assistant Elixir » avec la bulle", lb.includes("Une question ?</span> Assistant Elixir") && lb.includes("<svg"));
+vrai("lanceur (mobile) : bulle seule, nommée par aria-label", !lm.includes("Une question ?</span>") && /aria-label="Une question \? Assistant Elixir"/.test(lm));
+vrai("lanceur : affiché par défaut, au coin quand il n'y a pas de panier", !/<button[^>]*hidden/.test(lb) && !/<button[^>]*data-pile/.test(lb));
+vrai("lanceur : au-dessus du panier flottant quand il est affiché", /<button[^>]*data-pile=""/.test(lanceur({ pile: true })));
+vrai("lanceur : masqué pendant que le panneau est ouvert", /<button[^>]*hidden=""/.test(lanceur({ ouvert: true })));
+vrai("lanceur : masqué pendant que le panier (ou l'admin, le tiroir de menu) est ouvert", /<button[^>]*hidden=""/.test(lanceur({ cache: true })));
+vrai("lanceur : zIndex du panier flottant, zone de sécurité, mouvement réduit, impression",
+  ["z-index: 290", "env(safe-area-inset-bottom", "prefers-reduced-motion: reduce", ".ex-lanceur--appel { animation: none; }", "@media print"].every((t) => lb.includes(t)));
+vrai("lanceur : pas de fenêtre au premier rendu (elle attend le catalogue et le calme)", !lb.includes("role=\"dialog\""));
+
+// bundle des pharmacies (après npm run build) : la fenêtre et le lanceur sont dans des morceaux chargés à la demande
+{
+  const dist = resolve(SRC, "../dist/assets");
+  const index = existsSync(dist) ? readdirSync(dist).filter((n) => /^index-.*\.js$/.test(n)) : [];
+  if (!index.length) console.log("  · dist/ absent : lancer npm run build pour contrôler le bundle des pharmacies");
+  else {
+    const js = index.map((n) => readFileSync(resolve(dist, n), "utf8")).join("\n");
+    vrai("bundle des pharmacies : ni la fenêtre de présentation ni le lanceur", !js.includes("Nouveau : votre Assistant Elixir") && !js.includes("ex-lanceur"));
+    vrai("morceaux à la demande : Aide (lanceur) et Presentation (fenêtre)", readdirSync(dist).some((n) => /^Aide-.*\.js$/.test(n)) && readdirSync(dist).some((n) => /^Presentation-.*\.js$/.test(n)));
+  }
+}
 
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);

@@ -11,7 +11,10 @@ Pour Zineb Moulatif. Branche `assistant-elixir`, état du 19/10/2026. Détails t
 **Pour les pharmacies**, un panneau « Assistant Elixir » dans l'espace de commande. On l'ouvre par :
 - la bulle de l'en-tête, placée avant « Mes commandes » ;
 - le groupe « AIDE » de la barre latérale, qui affiche aussi le téléphone et les horaires ;
-- le bouton « Une question sur cette commande ? » de chaque carte de « Mes commandes ».
+- le bouton « Une question sur cette commande ? » de chaque carte de « Mes commandes » ;
+- le lanceur flottant « Une question ? Assistant Elixir » (bulle ronde sur téléphone), au coin bas droit, au-dessus du panier flottant (ajouté le 19/10/2026).
+
+Pour que la pharmacie comprenne de quoi il s'agit (demande du 19/10/2026), une **fenêtre de présentation** « Nouveau : votre Assistant Elixir » s'affiche d'elle-même quelques secondes après l'arrivée sur le catalogue, après la fenêtre « Offres du moment » s'il y en a une : ce que fait l'assistant, 4 exemples, « Essayer maintenant », « Plus tard », « Ne plus afficher ». Elle revient au plus 2 fois après « Plus tard » (à des sessions suivantes), plus jamais une fois l'assistant ouvert ou « Ne plus afficher » choisi, et jamais en saisie Elixir pour une pharmacie.
 
 Ce que fait l'assistant, à partir d'Odoo, pour la pharmacie connectée et elle seule :
 
@@ -77,7 +80,7 @@ Sur ces adresses, le mode « essai à blanc » est actif :
 
 Pour vous connecter, saisissez n'importe quelle adresse e-mail et n'importe quel code à 6 chiffres, sauf `000000`. Vous êtes alors « PHARMACIE D'ESSAI ». Ensuite :
 
-1. Ouvrez l'assistant par la bulle de l'en-tête, puis par le groupe « AIDE ».
+1. Attendez la fenêtre « Nouveau : votre Assistant Elixir » (quelques secondes après le catalogue, après « Offres du moment »), cliquez sur « Plus tard » : le lanceur du coin bas droit s'anime trois fois. Ouvrez l'assistant par ce lanceur, par la bulle de l'en-tête, puis par le groupe « AIDE ». Pour revoir la fenêtre, effacez les données du site (ou la clé `assistant_presentation_…`).
 2. Essayez les pastilles d'accueil.
 3. Écrivez « **toutes les cartes** » : toutes les cartes s'affichent (document, choix, relevé, commande, retour à confirmer, transmission, erreur).
 4. Cliquez sur « Confirmer la demande » et sur « Annuler ».
