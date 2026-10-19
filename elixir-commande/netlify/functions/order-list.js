@@ -1,10 +1,13 @@
-// Liste les commandes depuis Supabase — FIX SEC-05 : filtrage par pharmacie
-// GET /order-list                         → toutes (admin) ou filtrées (pharmacie)
-// GET /order-list?source=ulabs            → filtre par source campagne
-// GET /order-list?pharmacy_cip=XXX        → filtre par pharmacie
+// Liste les commandes depuis Supabase — FIX SEC-05 : filtrage par pharmacie ; lot 0 (16/10/2026) : jeton obligatoire
+// GET /order-list                         → admin : toutes ; pharmacie : les siennes (CIP du jeton)
+// GET /order-list?source=ulabs            → filtre par source campagne (pharmacie : parmi les siennes seulement)
+// GET /order-list?pharmacy_cip=XXX        → admin en saisie pour une pharmacie : ses commandes ; ignoré pour une pharmacie
+// Sans jeton valide → 401 { error: "reconnexion" } ; jeton pharmacie sans CIP → 403 { error: "fiche" }.
+// L'ancien accès sans jeton (?pharmacy_cip=, ?source= : commandes de toutes les pharmacies) est fermé.
 import { verifyTokenAsync } from "./auth.js";
 import { frise, etatCommandeDemande } from "./_lab-justif.js";
 import { resumeTache } from "./_relais.js";
+import { validCip } from "./_pharmacies.js";
 import { getCors } from "./cors.js";
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -13,37 +16,33 @@ const SUPABASE_KEY = process.env.SUPABASE_KEY;
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  const json = (code, body) => ({ statusCode: code, headers: { ...cors, "Cache-Control": "no-store" }, body: JSON.stringify(body) });
 
-  // Vérifie le JWT Supabase si présent
+  // Identité = jeton vérifié côté serveur (admin, ou pharmacie dont le CIP vient de l'e-mail vérifié du jeton)
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
   const user = token ? await verifyTokenAsync(token) : null;
-  const isAdmin = user?.isAdmin === true;
+  if (!user) return json(401, { error: "reconnexion", message: "Session expirée : reconnectez-vous pour voir vos commandes." });
+  const isAdmin = user.isAdmin === true;
+  if (!isAdmin && !validCip(user.cip)) return json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." });
 
   const params = event.queryStringParameters || {};
-
-  // Sans admin JWT et sans filtre, bloquer l'accès
-  if (!isAdmin && !params.pharmacy_cip && !user?.cip && !params.source) {
-    return { statusCode: 403, headers: cors, body: JSON.stringify({ error: "Accès non autorisé" }) };
-  }
 
   // Construction de l'URL Supabase avec filtres
   let url = `${SUPABASE_URL}/rest/v1/elixir_orders?select=*&order=date.desc`;
 
-  // Si un filtre source est demandé (ex: campagne ulabs)
+  // Si un filtre source est demandé (ex: campagne ulabs) : il restreint, il n'élargit jamais
   if (params.source) {
     url += `&source=eq.${encodeURIComponent(params.source)}`;
   }
 
-  // Si pas admin : le CIP du JETON pharmacie prime (sécurisé). À défaut de jeton,
-  // fallback legacy sur le pharmacy_cip de la requête (à retirer une fois toutes
-  // les pharmacies migrées vers l'OTP).
-  if (!isAdmin && user?.cip) {
-    url += `&pharmacy_cip=eq.${encodeURIComponent(user.cip)}`;
-  } else if (params.pharmacy_cip) {   // admin en saisie pour une pharmacie : ses commandes seulement
+  // Pharmacie : le CIP du JETON, toujours (un pharmacy_cip de la requête est ignoré).
+  // Admin : toutes les commandes, ou celles d'une pharmacie (saisie pour une pharmacie).
+  if (!isAdmin) {
+    url += `&pharmacy_cip=eq.${encodeURIComponent(String(user.cip).trim())}`;
+  } else if (params.pharmacy_cip) {
     url += `&pharmacy_cip=eq.${encodeURIComponent(params.pharmacy_cip)}`;
   }
-  // Si admin sans filtre → toutes les commandes
 
   try {
     const res = await fetch(url, {
@@ -56,21 +55,10 @@ export const handler = async (event) => {
 
     if (!res.ok) {
       const err = await res.text();
-      return { statusCode: 500, headers: cors, body: JSON.stringify({ error: err }) };
+      return json(500, { error: err });
     }
 
     const rows = await res.json();
-
-    // SEC : le mode `source` (barre de progression campagne, appelé côté client)
-    // ne doit PAS exposer les PII des autres pharmacies. Réponse réduite aux
-    // seuls CIP/quantités agrégés tant qu'on n'est pas admin.
-    if (!isAdmin && params.source) {
-      const orders = rows.map(r => ({
-        items: Array.isArray(r.items) ? r.items.map(i => ({ cip: i.cip, qty: i.qty })) : [],
-        source: r.source || "catalogue",
-      }));
-      return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };
-    }
 
     // Commandes « sur justificatif labo » : où en est la transmission au laboratoire (kv lj:req:s-<id>-<labo>)
     const justif = {};
@@ -89,9 +77,8 @@ export const handler = async (event) => {
         }
       } catch { /* suivi indisponible : la commande s'affiche quand même */ }
     }
-    // suivi (kv lj:suivi:<id demande>) : étape courante, message d'Elixir, date prévue — appelant authentifié seulement
-    // (pas via l'ancien accès par ?pharmacy_cip sans jeton)
-    if (reqs.length && (isAdmin || user)) try {
+    // suivi (kv lj:suivi:<id demande>) : étape courante, message d'Elixir, date prévue (appelant toujours authentifié)
+    if (reqs.length) try {
       const keys = reqs.map(x => `"lj:suivi:${x.v.id}"`).join(",");
       const kr = await fetch(`${SUPABASE_URL}/rest/v1/kv_store?key=in.(${encodeURIComponent(keys)})&select=key,value`, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
       const suivis = new Map();
@@ -139,8 +126,8 @@ export const handler = async (event) => {
       ...(avis[String(r.id)] ? { avisAuto: avis[String(r.id)] } : {}),
     }));
 
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ orders }) };
+    return json(200, { orders });
   } catch (e) {
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
+    return json(500, { error: e.message });
   }
 };
