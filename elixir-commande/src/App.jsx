@@ -19,6 +19,9 @@ import EtatVide, { ActionEtat, SqueletteCatalogue, Chargement } from "./componen
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 import CipCell from "./components/ui/CipCell.jsx";
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
+// Assistant Elixir (docs/assistant-conception.md § 1) : panneau chargé à la demande, seuls le bouton et l'état d'ouverture ici
+import { PanneauAssistant, GroupeAide } from "./components/assistant/Entree.jsx";
+import { authAssistant, etatAssistant, jetonCourant, renouvelleJeton } from "./assistant-client.js";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
@@ -378,19 +381,30 @@ export default function App() {
   const [showMyOrders, setShowMyOrders] = useState(false);
   const [myOrders, setMyOrders] = useState([]);
   const [myOrdersLoading, setMyOrdersLoading] = useState(false);
+  const [myOrdersErreur, setMyOrdersErreur] = useState(null);   // null | "reconnexion" | "fiche" | "lecture"
+
+  // Appel authentifié (lot 0 : order-list et restock-alert exigent un jeton) : admin_token en saisie pour une pharmacie,
+  // sinon jeton pharmacie, renouvelé une fois s'il a expiré (renouvellement partagé avec l'assistant, assistant-client.js)
+  const appelAuthentifie = useCallback(async (url, options = {}) => {
+    const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
+    let res = await envoi(jetonCourant(authAssistant(actingFor)));
+    if (res.status === 401 && !actingFor) { const t = await renouvelleJeton(); if (t) res = await envoi(t); }
+    return res;
+  }, [actingFor]);
 
   const fetchMyOrders = useCallback(async () => {
     if (!pharmacyCip || pharmacyCip === "0") return;
     setMyOrdersLoading(true);
+    setMyOrdersErreur(null);
     try {
-      const ptok = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
-      const res = await fetch(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`,
-        ptok ? { headers: { Authorization: `Bearer ${ptok}` } } : {});
-      const data = await res.json();
-      setMyOrders(data.orders || []);
-    } catch { setMyOrders([]); }
+      // ?pharmacy_cip= sert à l'admin en saisie ; pour une pharmacie, le serveur prend le CIP de son jeton
+      const res = await appelAuthentifie(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setMyOrders(data.orders || []);
+      else { setMyOrders([]); setMyOrdersErreur(res.status === 401 ? "reconnexion" : res.status === 403 ? "fiche" : "lecture"); }
+    } catch { setMyOrders([]); setMyOrdersErreur("lecture"); }
     setMyOrdersLoading(false);
-  }, [pharmacyCip, actingFor]);
+  }, [pharmacyCip, appelAuthentifie]);
   useEffect(() => {
     setReorderSuggestions([]); setShowReorder(false);   // autre pharmacie (saisie Elixir) : pas les suggestions de la précédente
     setUlabsConfirmed(false); setUlabsError(null);
@@ -527,7 +541,9 @@ export default function App() {
 
   // ── Charger la config partagée depuis Supabase (source de vérité) ────
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [authMode, setAuthMode] = useState("legacy"); // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode
+  // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode ; connexion par code par défaut (lot 0) : l'ancien mode (sans code)
+  // ne sert que si la configuration le déclare, jamais quand elle n'est pas encore chargée ou illisible
+  const [authMode, setAuthMode] = useState("otp");
   useEffect(() => {
     (async () => {
       try {
@@ -587,10 +603,10 @@ export default function App() {
     if (activeTab === "ulabs") fetchGroupOrders();
     const _camp = getCampaign(activeTab);
     if (_camp && pharmacyCip) {
-      fetch(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
-        .then(r => r.json())
+      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
+        .then(r => r.ok ? r.json() : { orders: [] })
         .then(orders => {
-          // Toutes les commandes validées de la campagne (toutes pharmacies)
+          // Commandes validées de la campagne : les vôtres (l'admin en saisie : toutes) ; les autres pharmacies comptent via group-order
           const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
             .filter(o => o.source === activeTab);
           const cipArr = [];
@@ -598,7 +614,7 @@ export default function App() {
           setValidatedCampOrders(prev => ({...prev, [activeTab]: cipArr}));
         }).catch(() => {});
     }
-  }, [activeTab, fetchGroupOrders]);
+  }, [activeTab, fetchGroupOrders, appelAuthentifie]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
   // Hauteur de l'en-tête pétrole collant : la barre A–Z se colle juste dessous (et le bloc de marque de la barre latérale s'y aligne)
@@ -802,6 +818,16 @@ export default function App() {
     setJustifInfo({});
     setCartOpen(false);
   };
+  // Jeton expiré ou session de l'ancien mode (sans code) : retour à l'écran de connexion, adresse préremplie, panier gardé
+  // (handleLogout, lui, le vide) ; après le code reçu par e-mail, handleVerifyOtp réécrit la session et les jetons
+  const reconnecter = () => {
+    setShowMyOrders(false);
+    setOnboardingDone(false);
+    setObStep("email");
+    setEmailInput(pharmacyEmail);
+    setOtpInput("");
+    setOnboardingError("");
+  };
   const [isClient, setIsClient] = useState(() => actingFor ? true : null);
   const startActing = (ph) => {
     // chaque pharmacie servie a son propre panier ; celui de votre session reste de côté, intact
@@ -823,6 +849,24 @@ export default function App() {
     setPharmacyName(localStorage.getItem("session_name") || ""); setPharmacyEmail(localStorage.getItem("session_email") || ""); setPharmacyCip(localStorage.getItem("session_cip") || "");
     setIsClient(null);
   };
+  // ── Assistant Elixir (docs/assistant-conception.md § 1) : bouton affiché seulement si le serveur le dit disponible pour
+  // cette identité (action « etat », lue une fois par identité) ; tiroir exclusif avec le panier ──
+  const identiteAssistant = actingFor ? `a${actingFor.odoo_id}` : (onboardingDone && pharmacyEmail ? `p${pharmacyEmail}` : "");
+  // assistant : réponse de « etat » ({ disponible, mode, raison, infos }) ; infos (téléphone, horaires des réglages) : ligne de
+  // contact de la barre latérale, mise à jour à l'ouverture du panneau
+  const [assistant, setAssistant] = useState(null);
+  const [assistantOuvert, setAssistantOuvert] = useState(false);
+  const [assistantContexte, setAssistantContexte] = useState(null);   // { commande_site_id, date } depuis Mes commandes
+  useEffect(() => {
+    setAssistant(null); setAssistantOuvert(false); setAssistantContexte(null);
+    if (!identiteAssistant) return;
+    let annule = false;
+    etatAssistant(authAssistant(actingFor), identiteAssistant).then(e => { if (!annule) setAssistant(e); });
+    return () => { annule = true; };
+  }, [identiteAssistant]);   // eslint-disable-line react-hooks/exhaustive-deps -- actingFor est dans l'identité
+  useEffect(() => { if (cartOpen) setAssistantOuvert(false); }, [cartOpen]);
+  const assistantDispo = !!assistant?.disponible;
+  const ouvrirAssistant = (contexte = null) => { setCartOpen(false); setSidebarOpen(false); setShowMyOrders(false); setAssistantContexte(contexte); setAssistantOuvert(true); };
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");
@@ -1904,6 +1948,8 @@ export default function App() {
             })}
           </div>
         ))}
+        {/* Assistant Elixir : groupe « AIDE » sous « OUTILS » (ouvre le panneau, ce n'est pas un onglet du catalogue) */}
+        {assistantDispo && <GroupeAide isDesktop={isDesktop} infos={assistant.infos} onOuvrir={() => ouvrirAssistant()} />}
         </nav>
       </aside>
 
@@ -2000,6 +2046,11 @@ export default function App() {
               {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
+            {/* Assistant Elixir : avant « Mes commandes » ; data-assistant-ouvrir : le focus y revient à la fermeture du panneau */}
+            {assistantDispo && (
+              <button className="ex-icone-entete ex-cible" data-assistant-ouvrir onClick={() => (assistantOuvert ? setAssistantOuvert(false) : ouvrirAssistant())}
+                title="Assistant Elixir" aria-label="Assistant Elixir" aria-expanded={assistantOuvert} style={btnEntete}><Icone nom="bulle" /></button>
+            )}
             {pharmacyCip && pharmacyCip !== "0" && (
               <button className="ex-icone-entete ex-cible" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
             )}
@@ -2191,6 +2242,7 @@ export default function App() {
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
             <OrderEntry
               justifProducts={justifProducts}
+              fetchAuth={appelAuthentifie}
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
@@ -3032,6 +3084,11 @@ export default function App() {
             loading={myOrdersLoading}
             pharmacyName={pharmacyName}
             onClose={() => setShowMyOrders(false)}
+            // lecture refusée (jeton expiré, compte sans fiche) : message et, pour une pharmacie, « Se reconnecter »
+            erreur={myOrdersErreur}
+            onReconnecter={actingFor ? null : reconnecter}
+            // Assistant Elixir : « Une question sur cette commande ? » — seule la référence du site part (revérifiée par le serveur)
+            onQuestion={assistantDispo ? (order) => ouvrirAssistant({ commande_site_id: String(order.id), date: order.date }) : undefined}
             onReorder={async (items) => {
               // article à plusieurs références : une ligne au prix du jour (référence servie en premier),
               // répartie par CIP à l'envoi ; quantité remplacée comme pour les lignes du catalogue
@@ -3281,9 +3338,17 @@ export default function App() {
         </aside>
       </div>
 
+      {/* ── Assistant Elixir : tiroir au niveau du panier (301), exclusif avec lui ; panneau chargé à la demande ── */}
+      {assistantOuvert && assistantDispo && (
+        <PanneauAssistant key={identiteAssistant} identite={identiteAssistant} auth={authAssistant(actingFor)} mobile={isMobile}
+          pharmacyName={pharmacyName} acting={actingFor} contexte={assistantContexte}
+          onClose={() => setAssistantOuvert(false)} onInfos={(infos) => setAssistant(a => ({ ...a, infos }))}
+          onReconnecter={() => { setAssistantOuvert(false); reconnecter(); }} />
+      )}
+
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son
-          zIndex (290) le laissait seul au-dessus du voile du menu (140) (lot 9) */}
-      {!cartOpen && cartCount > 0 && !(sidebarOpen && !isDesktop) && (
+          zIndex (290) le laissait seul au-dessus du voile du menu (140) (lot 9) ; masqué aussi pendant que l'assistant est ouvert */}
+      {!cartOpen && cartCount > 0 && !(sidebarOpen && !isDesktop) && !assistantOuvert && (
         <button className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 290,   // sous le voile du panier (300)
           color: T.paper, border: "none", borderRadius: R.pill, width: 60, height: 60,   // fond pétrole : classe (survol)

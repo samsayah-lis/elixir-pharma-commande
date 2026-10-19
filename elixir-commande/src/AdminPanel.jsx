@@ -11,6 +11,7 @@ import AdminGroupPurchases from "./components/AdminGroupPurchases";
 import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
+import AdminAssistant from "./components/AdminAssistant.jsx";
 import { T, R, tone, alpha, adm } from "./theme.js";
 import { Icone, CroixElixir } from "./icons.jsx";
 
@@ -90,6 +91,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   // Helper : fetch avec JWT Supabase + auto-refresh
   const gpDirtyRef = useRef(false);   // saisie non enregistrée dans l'onglet Commandes groupées
   const onGpDirty = useCallback((d) => { gpDirtyRef.current = d; }, []);
+  const assistantDirtyRef = useRef(false);   // réglages de l'onglet Assistant modifiés, non enregistrés
+  const onAssistantDirty = useCallback((d) => { assistantDirtyRef.current = d; }, []);
+  const quitterAssistant = (suite) => !assistantDirtyRef.current || window.confirm(`Des réglages de l'Assistant ne sont pas enregistrés. ${suite}`);
   const adminFetch = useCallback(async (url, options = {}) => {
     const token = localStorage.getItem("admin_token") || "";
     const headers = { "Authorization": `Bearer ${token}`, ...(options.headers || {}) };
@@ -1050,6 +1054,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"gp",       label:"🛒 Commandes groupées",icon:"🛒"},
     {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
     {k:"sanofipro",label:"💉 Sanofi Pro",icon:"💉"},
+    {k:"assistant",label:"💬 Assistant",icon:"💬"},
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
@@ -1074,10 +1079,10 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           </div>
         </div>
         <div style={{display:"flex",gap:8,flexShrink:0}}>
-          {onOrderForPharmacy && <button className="ex-admin-btn-acting" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Continuer ?")) return; onOrderForPharmacy(); }} title="Passer une commande sur le site à la place d'une pharmacie (sans accès, par téléphone…)" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+          {onOrderForPharmacy && <button className="ex-admin-btn-acting" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Continuer ?")) return; if (!quitterAssistant("Continuer ?")) return; onOrderForPharmacy(); }} title="Passer une commande sur le site à la place d'une pharmacie (sans accès, par téléphone…)" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
             <Icone nom="crayon" taille={15} /> <span className="ex-admin-libelle">Commander pour une pharmacie</span>
           </button>}
-          <button className="ex-admin-btn-sombre" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; onClose(); }} title="Retour au catalogue" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+          <button className="ex-admin-btn-sombre" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; if (!quitterAssistant("Quitter l'administration ?")) return; onClose(); }} title="Retour au catalogue" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
             <Icone nom="retour" taille={15} /> <span className="ex-admin-libelle">Retour au catalogue</span>
           </button>
         </div>
@@ -1114,7 +1119,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             il l'emporte) ; emoji de tête des TABS conservé (la regex du libellé retire le premier mot) */}
         <nav aria-label="Onglets de l'administration" className="ex-admin-onglets" style={{width:200,background:T.paper,borderRight:`1px solid ${T.line}`,display:"flex",flexDirection:"column",padding:"16px 0",flexShrink:0,overflowY:"auto"}}>
           {TABS.map(t=>(
-            <button key={t.k} className="ex-menu" aria-current={tab===t.k?"page":undefined} title={t.label.replace(/^[^\s]+\s/,"")} onClick={()=>{ if (tab==="gp" && t.k!=="gp" && gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'onglet ?")) return; setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
+            <button key={t.k} className="ex-menu" aria-current={tab===t.k?"page":undefined} title={t.label.replace(/^[^\s]+\s/,"")} onClick={()=>{ if (tab==="gp" && t.k!=="gp" && gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'onglet ?")) return; if (tab==="assistant" && t.k!=="assistant" && !quitterAssistant("Quitter l'onglet ?")) return; setTab(t.k); if(t.k==="grouporders") fetchGroupCampaignOrders("ulabs"); if(t.k==="campaigns") fetchCampaigns(); }}
               style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?T.mint:undefined,color:tab===t.k?T.teal:T.inkSoft,fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?`3px solid ${T.teal}`:"3px solid transparent",position:"relative"}}>
               <span style={{fontSize:16}}>{t.icon}</span>
               <span className="ex-admin-libelle" style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
@@ -1639,6 +1644,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {tab==="sanofipro"&&(
           <AdminSanofiPro adminFetch={adminFetch} flash={flash} />
+        )}
+        {tab==="assistant"&&(
+          <AdminAssistant adminFetch={adminFetch} flash={flash} onDirtyChange={onAssistantDirty} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

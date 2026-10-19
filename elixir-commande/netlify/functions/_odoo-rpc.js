@@ -8,10 +8,12 @@ const ODOO_KEY  = process.env.ODOO_APIKEY || "";
 export const COMPANY_ID = parseInt(process.env.ODOO_COMPANY || "2");
 
 let uidCache = null;
-async function rpc(service, method, args) {
+// timeoutMs (facultatif) : coupure de l'appel (assistant : 6 s par lecture) ; sans lui, aucun délai (comme avant)
+async function rpc(service, method, args, timeoutMs = 0) {
   const r = await fetch(`${ODOO_URL}/jsonrpc`, {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", method: "call", params: { service, method, args }, id: Date.now() }),
+    ...(timeoutMs > 0 ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
   });
   const j = await r.json();
   if (j.error) throw new Error(String(j.error?.data?.message || j.error?.message || "Erreur Odoo").slice(0, 300));
@@ -20,11 +22,12 @@ async function rpc(service, method, args) {
 
 // Langue française par défaut (noms produits traduisibles : sans langue, Odoo renvoie le nom
 // anglais, parfois resté « Nom à préciser : <CIP> » après un renommage fait en français)
-export async function odoo(model, method, args, kwargs = {}) {
-  if (!uidCache) uidCache = await rpc("common", "login", [ODOO_DB, ODOO_USER, ODOO_KEY]);
+// opts.timeoutMs (facultatif, 5e argument) : délai maximal de l'appel, connexion comprise
+export async function odoo(model, method, args, kwargs = {}, { timeoutMs = 0 } = {}) {
+  if (!uidCache) uidCache = await rpc("common", "login", [ODOO_DB, ODOO_USER, ODOO_KEY], timeoutMs);
   if (!uidCache) throw new Error("Authentification Odoo refusée");
   const kw = { ...(kwargs || {}), context: { lang: "fr_FR", ...((kwargs || {}).context || {}) } };
-  return rpc("object", "execute_kw", [ODOO_DB, uidCache, ODOO_KEY, model, method, args, kw]);
+  return rpc("object", "execute_kw", [ODOO_DB, uidCache, ODOO_KEY, model, method, args, kw], timeoutMs);
 }
 
 // search_read paginé, sans plafond

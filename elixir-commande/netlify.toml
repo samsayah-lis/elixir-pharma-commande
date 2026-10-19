@@ -45,3 +45,7 @@
 # Relais PharmaML (agent du Mac) : échéances, alertes si l'agent ne répond plus, toutes les 5 min
 [functions."pml-relais-cron"]
   schedule = "*/5 * * * *"
+
+# Assistant Elixir : purge des conversations (90 jours), brouillons expirés, alertes budget et pannes (≈ 4 h, heure de Paris)
+[functions."chat-purge"]
+  schedule = "15 2 * * *"

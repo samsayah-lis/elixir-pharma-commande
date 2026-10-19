@@ -336,7 +336,7 @@ Chaque lot fait l'objet d'une PR et d'un déploiement de prévisualisation. On f
   - sert des données figées pour les GET ;
   - répond « succès » à tous les POST et journalise leurs données dans `dev-fixtures/_envois/` ;
   - ne relaie jamais rien vers la production.
-  - **GET couverts :** products-get, stock-get, config-get (`display_config`, `admin_promos`, `pharmacy_auth_mode`), campaign-get, odoo-catalog, supplier-code-refs, lab-justif?action=products, ml-recommend, group-order?fournisseur=ulabs, order-list?source=.
+  - **GET couverts :** products-get, stock-get, config-get (`display_config`, `admin_promos`, `pharmacy_auth_mode`), campaign-get, odoo-catalog, supplier-code-refs, lab-justif?action=products, ml-recommend, group-order?fournisseur=ulabs, order-list?source= (réponse calculée par le banc, plus capturée : la lecture exige un jeton depuis le lot 0 de l'Assistant Elixir).
   - **Capture :** une seule fois, par des GET en production.
   - `dev-fixtures/` va dans `.gitignore`, car il contient des données de pharmacies.
 - **Mode « essai à blanc ».** `src/dev/essai-a-blanc.js` est importé dynamiquement par main.jsx seulement si `import.meta.env.VITE_ESSAI_A_BLANC === "1"`.

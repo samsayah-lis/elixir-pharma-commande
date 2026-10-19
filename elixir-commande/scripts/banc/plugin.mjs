@@ -4,13 +4,17 @@
 //           d'elles (recherche locale, « Mes commandes » et suggestions de la pharmacie du banc), sinon 404.
 //  • autres méthodes : réponse « succès » (src/dev/reponses-fictives.js, ou dev-fixtures/post/<fn>[.<action>].json
 //           si présent) ; le corps reçu est journalisé dans dev-fixtures/_envois/<jour>/ (jetons jamais écrits).
+//  • Assistant Elixir (fonctions chat et chat-fichier) : réponses écrites d'avance (src/dev/reponses-fictives.js, cas
+//           « chat »), attente de la réponse rejouée (GET ?tour=, étape puis réponse), PDF et Excel d'essai ; « #401 »,
+//           « #409 », « #429 », « #503 » ou « #erreur » dans un message essaient les écrans d'erreur.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>,
-// BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour).
+// BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (l'assistant
+// répond 401 « reconnexion » à l'ouverture : encart « Me reconnecter »).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
-import { reponseFictive } from "../../src/dev/reponses-fictives.js";
+import { reponseFictive, FICHIERS_FICTIFS } from "../../src/dev/reponses-fictives.js";
 
 // Pharmacie du banc (identité renvoyée à l'identification) ; remplaçable par dev-fixtures/pharmacie.json
 const PHARMACIE_BANC = { name: "PHARMACIE DU BANC D'ESSAI", cip: "9999999", email: "" };
@@ -167,10 +171,92 @@ function reponsePost({ fn, methode, corps }) {
   const action = corps && typeof corps === "object" && typeof corps.action === "string" ? corps.action : "";
   const perso = (action ? litJson(resolve(DOSSIER_POST, `${fn}.${action}.json`)) : undefined) ?? litJson(resolve(DOSSIER_POST, `${fn}.json`));
   if (perso !== undefined) return { corps: perso, source: "post personnalisé" };
+  if (fn === "chat") return reponseChatBanc(corps && typeof corps === "object" ? corps : {});
   const r = reponseFictive({ fn, methode, corps, pharmacie: pharmacieBanc(), admin: true });
   // « Mes commandes » montre les commandes passées sur le banc
   if (fn === "order-save" && corps && typeof corps === "object" && Array.isArray(corps.items)) commandesDuBanc.push({ ...corps, date: corps.date || new Date().toISOString() });
   return { corps: r, source: "fictif" };
+}
+
+// ── Assistant Elixir : conversation du banc (docs/assistant-contrat.md, « API HTTP ») ──
+// POST chat : réponse écrite d'avance ; pour « message », seul le tour_id part tout de suite et la réponse est servie
+// par l'attente (GET ?tour=) : une étape d'abord (texte du serveur, d'après la carte), puis la réponse.
+const ETAPES_FICTIVES = {
+  document: "Je recherche vos factures…", documents: "Je recherche vos factures…", releve: "Je prépare votre relevé…",
+  commande: "Je consulte vos commandes…", recap_retour: "Je prépare le récapitulatif de votre demande…",
+  transmission: "Je transmets votre demande à l'équipe Elixir…",
+};
+const toursDuBanc = new Map();   // tour_id → { message, erreur, etape, appels }
+const ERREURS_CHAT = {
+  "#401": [401, { error: "reconnexion" }], "#409": [409, { error: "tour_en_cours" }],
+  "#429": [429, { error: "quota", message: "Banc d'essai : quota de messages atteint (exemple), réessayez dans une heure." }],
+  "#503": [503, { error: "indisponible", message: "Banc d'essai : l'assistant est momentanément indisponible (exemple)." }],
+};
+function reponseChatBanc(corps) {
+  if (process.env.BANC_CHAT === "reconnexion" && corps.action !== "etat") return { statut: 401, corps: { error: "reconnexion" }, source: "fictif" };
+  const texte = String(corps.texte || "");
+  const essai = corps.action === "message" && Object.keys(ERREURS_CHAT).find((k) => texte.includes(k));
+  if (essai) { const [statut, c] = ERREURS_CHAT[essai]; return { statut, corps: c, source: "fictif" }; }
+  const r = reponseFictive({ fn: "chat", corps, pharmacie: pharmacieBanc(), admin: true });
+  if (corps.action !== "message" || !r.tour_id) return { corps: r, source: "fictif" };
+  const type = r.message?.ui_actions?.[0]?.type;
+  if (toursDuBanc.size > 200) toursDuBanc.delete(toursDuBanc.keys().next().value);
+  toursDuBanc.set(r.tour_id, { message: r.message, erreur: texte.includes("#erreur"), etape: ETAPES_FICTIVES[type] || null, appels: 0 });
+  return { statut: 202, corps: { tour_id: r.tour_id }, source: "fictif" };
+}
+const pause = (ms) => new Promise((ok) => setTimeout(ok, ms));
+async function attenteFictive(q) {
+  const t = toursDuBanc.get(q.tour);
+  if (!t) return { statut: 404, corps: { error: "tour_inconnu" }, source: "fictif" };
+  t.appels++;
+  await pause(t.appels === 1 ? 700 : 1200);
+  if (t.appels === 1) return { statut: 200, corps: { statut: "en_cours", etape: t.etape, message: null }, source: "fictif" };
+  return { statut: 200, corps: t.erreur ? { statut: "erreur", etape: null, message: null } : { statut: "termine", etape: null, message: t.message }, source: "fictif" };
+}
+
+// GET chat-fichier : PDF d'une page ou classeur Excel d'essai, servis comme les vrais (attachment, no-store, nosniff)
+function pdfFictif(lignes) {
+  const texte = (l) => `(${l.replace(/[^\x20-\x7e]/g, "?").replace(/[\\()]/g, "\\$&")}) '`;
+  const flux = ["BT", "/F1 13 Tf", "72 790 Td", "20 TL", ...lignes.map(texte), "ET"].join("\n");
+  const objets = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Length ${Buffer.byteLength(flux, "latin1")} >>\nstream\n${flux}\nendstream`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const positions = objets.map((o, i) => { const p = Buffer.byteLength(pdf, "latin1"); pdf += `${i + 1} 0 obj\n${o}\nendobj\n`; return p; });
+  const xref = Buffer.byteLength(pdf, "latin1");
+  pdf += `xref\n0 ${objets.length + 1}\n0000000000 65535 f \n${positions.map((p) => `${String(p).padStart(10, "0")} 00000 n \n`).join("")}`;
+  pdf += `trailer\n<< /Size ${objets.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+async function fichierFictif(q) {
+  const id = String(q.id || "");
+  const mention = ["Elixir Pharma - banc d'essai de l'Assistant Elixir", "Document fictif : aucune donnee reelle."];
+  if (id === FICHIERS_FICTIFS.releve_xlsx) {
+    const X = await import("xlsx");
+    const XLSX = X.utils ? X : X.default;
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[mention[0]], [mention[1]], [], ["Document", "Date", "Total TTC"],
+      ["INV/2026/90412", "fictif", 1234.56], ["INV/2026/90388", "fictif", 487.2], ["RINV/2026/09021", "fictif", -86.4]]), "Relevé");
+    return { corps: XLSX.write(wb, { type: "buffer", bookType: "xlsx" }), type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", nom: "Releve_banc_essai.xlsx" };
+  }
+  if (id === FICHIERS_FICTIFS.releve_pdf) return { corps: pdfFictif([...mention, "Releve des factures et avoirs emis (fictif)"]), type: "application/pdf", nom: "Releve_banc_essai.pdf" };
+  if (id === FICHIERS_FICTIFS.facture) return { corps: pdfFictif([...mention, "Duplicata de facture INV/2026/90412 (fictif)"]), type: "application/pdf", nom: "Duplicata_INV_2026_90412.pdf" };
+  return null;
+}
+function envoieFichier(res, f, log) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Banc", encodeURIComponent("fictif"));
+  if (!f) { res.statusCode = 404; res.setHeader("Content-Type", "application/json; charset=utf-8"); return res.end(JSON.stringify({ error: "introuvable" })); }
+  log(`GET chat-fichier → fichier d'essai ${f.nom}`);
+  res.statusCode = 200;
+  res.setHeader("Content-Type", f.type);
+  res.setHeader("Content-Disposition", `attachment; filename="${f.nom}"`);
+  return res.end(f.corps);
 }
 
 export default function bancEssai() {
@@ -196,7 +282,9 @@ export default function bancEssai() {
           if (latence) await new Promise(r => setTimeout(r, latence));
           if (methode === "OPTIONS") { res.statusCode = 204; return res.end(); }
           if (methode === "GET" || methode === "HEAD") {
-            const r = reponseGet(url);
+            const { fn: f, query: q } = decoupe(url);
+            if (f === "chat-fichier") return envoieFichier(res, await fichierFictif(q), log);
+            const r = f === "chat" && q.tour ? await attenteFictive(q) : reponseGet(url);
             if (r.statut !== 200) log(`GET ${url.slice(0, 120)} → ${r.statut} (${r.source})`);
             return envoie(r.statut, r.corps, r.source);
           }
@@ -206,7 +294,7 @@ export default function bancEssai() {
           const fichier = journalise({ methode, url, fn, corps, entetes: req.headers });
           const r = reponsePost({ fn, methode, corps });
           log(`${methode} ${fn}${corps?.action ? ` (${corps.action})` : ""} → rien n'est parti, journal ${fichier}`);
-          return envoie(200, r.corps, r.source);
+          return envoie(r.statut || 200, r.corps, r.source);
         } catch (e) {
           server.config.logger.error(`[banc] ${methode} ${url} : ${e.message}`);
           return envoie(500, { error: `Banc d'essai : ${e.message}` }, "erreur");

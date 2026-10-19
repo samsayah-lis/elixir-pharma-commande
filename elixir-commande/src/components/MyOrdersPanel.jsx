@@ -2,7 +2,7 @@ import React from "react";
 import { JUSTIF_STATUTS } from "../lab-justif-client.js";
 import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
-import EtatVide, { Chargement } from "./ui/EtatVide.jsx";
+import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 import FocusFenetre from "./ui/FocusFenetre.jsx";
 
 // ── Mes commandes (refonte charte, lot 7 : docs/refonte-charte.md § 3) ──
@@ -17,8 +17,22 @@ const STATUT = {
 };
 const dateLongue = (d) => new Date(d).toLocaleDateString("fr-FR", { day:"numeric", month:"long" });
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
+// pastille à filet des actions d'une commande (« Recommander », « Une question sur cette commande ? »)
+const btnFilet = { ...ui.btn("ligne", "m"), background:undefined, color:T.petrol, boxShadow:`inset 0 0 0 1.5px ${T.lineField}` };
 
-export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder }) {
+// onQuestion(order) (facultatif) : « Une question sur cette commande ? » ouvre l'Assistant Elixir sur cette commande
+// (App ne le passe que si l'assistant est disponible pour la pharmacie)
+// erreur (lot 0, order-list exige un jeton) : null | "reconnexion" (401) | "fiche" (403) | "lecture" ; onReconnecter :
+// retour à la connexion par code, panier gardé (absent en saisie pour une pharmacie)
+const ERREURS = {
+  reconnexion: ["Reconnectez-vous", "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail."],
+  fiche: ["Pharmacie introuvable", "Aucune pharmacie n'est rattachée à ce compte : contactez Elixir Pharma."],
+  lecture: ["Lecture impossible", "Vos commandes n'ont pas pu être lues. Réessayez dans un instant."],
+};
+export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder, onQuestion, erreur = null, onReconnecter = null }) {
+  // saisie pour une pharmacie (pas de onReconnecter) : c'est la session d'administration qui a expiré
+  const [titreErreur, texteErreur] = erreur === "reconnexion" && !onReconnecter
+    ? ["Session expirée", "Votre session d'administration a expiré : reconnectez-vous depuis l'admin."] : ERREURS[erreur] || ERREURS.lecture;
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="mes-commandes-titre" style={{ ...ui.overlay, zIndex:400, padding:16 }}
       onClick={onClose}>
@@ -31,7 +45,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         <div style={{ padding:"20px 20px 16px 24px", borderBottom:`1px solid ${T.line}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
           <div style={{ minWidth:0 }}>
             <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
-            <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
+            <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading || erreur ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
           </div>
           <button className="ex-btn-discret ex-cible" data-focus-initial onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
@@ -40,7 +54,11 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px", background:T.cream }}>
           {/* chargement, aucune commande : composants communs (lot 8) ; « 0 commande » n'est plus annoncé pendant la lecture */}
           {loading && <Chargement texte="Chargement de vos commandes…" />}
-          {!loading && orders.length === 0 && (
+          {!loading && erreur && (
+            <EtatVide icone="commandes" erreur titre={titreErreur} texte={texteErreur}
+              actions={erreur === "reconnexion" && onReconnecter ? <ActionEtat principal onClick={onReconnecter}>Se reconnecter</ActionEtat> : null} />
+          )}
+          {!loading && !erreur && orders.length === 0 && (
             <EtatVide icone="commandes" titre="Aucune commande trouvée"
               texte="Vos commandes envoyées depuis le site apparaîtront ici, prêtes à être recommandées." />
           )}
@@ -105,10 +123,18 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                 {/* Recommander (pastille à filet, comme la maquette de la vitrine ; 44 px sous 768 px, ex-tactile, lot 9) */}
                 <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginTop:10, flexWrap:"wrap" }}>
                   <span className="num" style={{ fontSize:12, color:T.inkMute }}>{items.length > 5 ? `+ ${items.length - 5} autre${items.length - 5 > 1 ? "s" : ""}…` : ""}</span>
-                  <button className="ex-btn-ligne ex-tactile" onClick={() => onReorder(items)}
-                    style={{ ...ui.btn("ligne", "m"), background:undefined, color:T.petrol, boxShadow:`inset 0 0 0 1.5px ${T.lineField}`, marginLeft:"auto" }}>
-                    <Icone nom="recommander" taille={16} epaisseur={2.4} />Recommander cette commande
-                  </button>
+                  <div style={{ display:"flex", flexWrap:"wrap", justifyContent:"flex-end", gap:8, marginLeft:"auto", minWidth:0 }}>
+                    {/* Assistant Elixir : bouton à filet ; libellé sur deux lignes si la carte est étroite (375 px) */}
+                    {onQuestion && (
+                      <button className="ex-btn-ligne ex-tactile" onClick={() => onQuestion(order)}
+                        style={{ ...btnFilet, height:"auto", minHeight:36, whiteSpace:"normal", lineHeight:1.25, padding:"6px 16px", textAlign:"left" }}>
+                        <Icone nom="bulle" taille={16} epaisseur={2.2} />Une question sur cette commande ?
+                      </button>
+                    )}
+                    <button className="ex-btn-ligne ex-tactile" onClick={() => onReorder(items)} style={btnFilet}>
+                      <Icone nom="recommander" taille={16} epaisseur={2.4} />Recommander cette commande
+                    </button>
+                  </div>
                 </div>
               </li>
             );

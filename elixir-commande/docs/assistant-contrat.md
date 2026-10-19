@@ -30,11 +30,12 @@ Conception détaillée : `docs/assistant-conception.md` (copie de l'étude du 16
 | Fichier | Propriétaire |
 |---|---|
 | `netlify/functions/order-list.js`, `pharmacy-lookup.js`, `restock-alert.js` | Lot 0 (sécurité de l'existant) |
-| `netlify/functions/_chat-perimetre.js`, `_chat-outils.js`, `_chat-releve.js`, `chat-fichier.js`, `scripts/test-chat-perimetre.mjs`, `scripts/test-chat-outils.mjs`, `scripts/chat-essai-odoo.mjs` | Lot 1 (Odoo, outils, fichiers) |
+| `netlify/functions/_chat-perimetre.js`, `_chat-outils.js` (+ `_chat-outils-liste.js` : définitions seules, sans dépendance), `_chat-releve.js`, `chat-fichier.js`, `scripts/test-chat-perimetre.mjs`, `scripts/test-chat-outils.mjs`, `scripts/chat-essai-odoo.mjs` | Lot 1 (Odoo, outils, fichiers) |
 | `netlify/functions/_chat-stock.js`, `_chat-config.js`, `_chat-systeme.js`, `_chat-moteur.js`, `_chat-demandes.js`, `chat.js`, `chat-tour-background.js`, `chat-purge.js`, `chat-admin.js`, `sql/chat-schema.sql`, `scripts/test-chat-moteur.mjs`, `scripts/test-chat-api.mjs`, `scripts/test-chat-demandes.mjs`, `scripts/eval-chat.mjs` | Lot 2-3-5 (moteur, API, demandes, stockage) |
 | `src/components/AssistantPanel.jsx`, `src/components/assistant/*`, `src/assistant-client.js`, entrées dans `src/App.jsx` et `src/components/MyOrdersPanel.jsx`, cas `chat` de `src/dev/reponses-fictives.js` et du banc `scripts/banc/*` | Lot 4 (interface) |
 | `src/components/AdminAssistant.jsx` + son onglet dans l'admin | Lot 7 (admin) |
 | `package.json` / `package-lock.json` | Lot 1 seulement (ajout éventuel de `pdf-lib`) |
+| `scripts/test-chat-integration.mjs` (vrais modules branchés entre eux, doublures aux extrémités seulement) | Intégration |
 
 ## Réglages (`_chat-config.js`)
 
@@ -60,6 +61,7 @@ export const REGLAGES_DEFAUT = {
   profondeur: { factures_mois: 24, releve_mois: 12, commandes_mois: 6 },
 };
 ```
+Modèles acceptés (`MODELES`) : `claude-opus-5-5`, `claude-sonnet-5-5` (pas Haiku 5.5 : ni messages `role:"system"` en cours de conversation documentés, ni repli serveur). `budget_jour_eur: 0` = sans plafond.
 
 ## Identité (`_chat-perimetre.js`)
 
@@ -82,7 +84,7 @@ ctx = {
 ## Outils (`_chat-outils.js`)
 
 ```js
-export const OUTILS;            // tableau figé des 7 définitions JSON (strict: true), ordre et octets stables
+export const OUTILS;            // tableau figé des 7 définitions JSON (strict: true), ordre et octets stables (réexporté de _chat-outils-liste.js)
 export const VERSION_OUTILS;    // chaîne, change si une définition change
 export const ETAPES;            // { nom_outil: "Je recherche vos factures…" } (texte d'attente affiché)
 // Valide `entree` (Zod), applique le périmètre de ctx, renvoie toujours un objet (ne lève pas pour une erreur métier)
@@ -112,6 +114,7 @@ export function creerStock(deps = {}) → {
   compter: { messages(odooId, depuisIso), fichiers(odooId, depuisIso), demandes(odooId, type, depuisIso), coutJour(jourIso) },
 }
 ```
+En plus (compatibles) : `conversations.modifier`, `afficher`, `lister`, `lireAdmin` ; `tours.lireServeur`, `lister` ; `compter.messagesAdmin`, `erreurs` ; `reglages.lire`, `ecrire(valeur, base)` ; `alertes` ; `purger`. Une demande de retour reçoit son numéro (`R-AAAA-NNNN`) dès le brouillon.
 
 ## API HTTP
 
@@ -119,11 +122,11 @@ Toutes les réponses : CORS de `cors.js` (y compris 401/403/409/429/503), `Cache
 
 | Appel | Corps / paramètres | Réponse |
 |---|---|---|
-| `POST /.netlify/functions/chat` `{action:"etat"}` | `pour_odoo_id?` | `200 { disponible: boolean, mode: "complet"|"conseiller_seul"|null, raison: null|"inactif"|"hors_pilote"|"reconnexion"|"budget" }` — n'échoue jamais en 401 : `disponible:false, raison:"reconnexion"` |
-| `{action:"ouvrir", conversation_id?}` | | `200 { conversation_id, pharmacie: { nom, ville }, admin: string|null, mode, messages: MessageAffiche[], infos: { delai_annonce, telephone, horaires } }` |
-| `{action:"message", conversation_id, texte, contexte?: { commande_site_id?: string }}` | texte ≤ 2 000 car. | `202 { tour_id }` · `409 { error:"tour_en_cours" }` · `429 { error:"quota", message }` · `503 { error:"indisponible", message }` |
+| `POST /.netlify/functions/chat` `{action:"etat"}` | `pour_odoo_id?` | `200 { disponible: boolean, mode: "complet"|"conseiller_seul"|null, raison: null|"inactif"|"hors_pilote"|"reconnexion"|"budget", infos? }` (`infos` si disponible) — n'échoue jamais en 401 : `disponible:false, raison:"reconnexion"` |
+| `{action:"ouvrir", conversation_id?}` | | `200 { conversation_id, pharmacie: { nom, ville }, admin: string|null, mode, messages: MessageAffiche[], infos: { delai_annonce, telephone, horaires, conservation_jours }, tour_en_cours: string|null }` |
+| `{action:"message", conversation_id, texte, contexte?: { commande_site_id?: string }}` | texte ≤ 2 000 car. | `202 { tour_id }` · `409 { error:"tour_en_cours" }` · `429 { error:"quota", message }` · `503 { error:"indisponible", message }` (y compris prompt ou outils mis à jour : « ouvrez une nouvelle conversation ») |
 | `GET /.netlify/functions/chat?tour=<id>&conversation_id=<id>` | long-poll ≤ 8 s | `200 { statut: "en_attente"|"en_cours"|"termine"|"erreur", etape: string|null, message: MessageAffiche|null }` |
-| `{action:"confirmer", conversation_id, demande_id, decision: "confirmer"|"annuler"}` | sans IA | `200 { message: MessageAffiche }` (carte `demande_enregistree` ou texte « Demande annulée ») · `410 { error:"expiree" }` |
+| `{action:"confirmer", conversation_id, demande_id, decision: "confirmer"|"annuler", prevenir_pharmacie?: boolean}` | sans IA ; `prevenir_pharmacie` : admin seulement (défaut true) | `200 { message: MessageAffiche }` (id `d-<demande_id>` ; carte `demande_enregistree` ou texte « Demande annulée ») · `410 { error:"expiree" }` · `503` (recontrôle Odoo impossible : le brouillon reste) |
 | `{action:"nouvelle", conversation_id?}` | ferme l'ouverte | `200` comme `ouvrir` |
 | `GET /.netlify/functions/chat-fichier?id=<hex32>` (+ `pour_odoo_id` en admin) | | PDF ou XLSX en `attachment`, `no-store`, `nosniff` · `404` sinon |
 

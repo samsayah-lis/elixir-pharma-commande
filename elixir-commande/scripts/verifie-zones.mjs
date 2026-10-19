@@ -57,8 +57,26 @@ const DOSSIERS = ["netlify/functions"];
 // désormais les lots 1, E2 et 8 ; y inscrire un nouvel écart volontaire, avec sa zone, son motif, son avant et son après.
 const ECARTS_AUTORISES = [];
 
+// Projet « Assistant Elixir » (branche assistant-elixir, docs/assistant-contrat.md), en attente de fusion dans master :
+//  • fonctions ajoutées sous netlify/functions (chat*.js, _chat-*.js) : admises tant qu'elles n'existent pas dans la référence ;
+//  • fonctions existantes modifiées (lot 0 : sécurité de l'existant ; délai des lectures Odoo de l'assistant) : figées
+//    par leur empreinte (sha256, 12 caractères, comme les zones) — toute autre modification reste signalée ;
+//  • clés de stockage : appels ajoutés par l'assistant (jeton renouvelé, conversation gardée pour l'onglet).
+// À vider après la fusion dans master, comme ECARTS_AUTORISES. Empreinte d'un fichier : node scripts/verifie-zones.mjs --empreintes
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*)\.js$/;
+const FICHIERS_AUTORISES = {
+  "netlify/functions/_odoo-rpc.js": { empreinte: "c405c5a8fadd", motif: "délai facultatif des lectures (5e argument), lectures de l'assistant coupées à 6 s" },
+  "netlify/functions/order-list.js": { empreinte: "09cc359871db", motif: "lot 0 : jeton obligatoire, une pharmacie ne lit que son CIP" },
+  "netlify/functions/pharmacy-lookup.js": { empreinte: "1a702100a2ab", motif: "lot 0 : limite par IP, rien en mode code" },
+  "netlify/functions/restock-alert.js": { empreinte: "88962a3f4878", motif: "lot 0 : jeton obligatoire, CIP du jeton" },
+};
+const CLES_AUTORISEES = {   // appel → nombre d'appels en plus par rapport à la référence
+  'localStorage.getItem("pharmacy_refresh_token"': 1,   // assistant-client.js : renouvellement du jeton partagé (assistant, Mes commandes, alertes)
+  "sessionStorage.getItem(cle(identite": 1, "sessionStorage.setItem(cle(identite": 1, "sessionStorage.removeItem(cle(identite": 1,   // conversation de l'onglet
+};
+
 // ── lecture ──
-const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"] });
 const enRef = (chemin) => { try { return git("show", `${REF}:./${chemin}`); } catch { return null; } };
 const enCours = (chemin) => existsSync(join(APP, chemin)) ? readFileSync(join(APP, chemin), "utf8") : null;
 const empreinte = (t) => createHash("sha256").update(t).digest("hex").slice(0, 12);
@@ -95,6 +113,12 @@ let ecarts = 0, erreurs = 0;
 const ok = (m) => console.log(`  ✓ ${m}`);
 const ko = (m) => { ecarts++; console.log(`  ✗ ${m}`); };
 
+// --empreintes : empreinte actuelle des fichiers de FICHIERS_AUTORISES (à recopier après une modification voulue)
+if (args.includes("--empreintes")) {
+  for (const f of Object.keys(FICHIERS_AUTORISES)) console.log(`${f} ${enCours(f) == null ? "absent" : empreinte(enCours(f))}`);
+  process.exit(0);
+}
+
 try { git("rev-parse", "--verify", `${REF}^{commit}`); }
 catch { console.error(`Référence « ${REF} » inconnue de git.`); process.exit(2); }
 console.log(`Zones protégées : ${REF} ↔ arbre de travail (${relative(process.cwd(), APP) || "."})\n`);
@@ -129,9 +153,17 @@ const fichiersDe = (dossier) => {
     .flatMap(n => statSync(join(APP, d, n)).isDirectory() ? parcours(join(d, n)) : [join(d, n)]);
   return [...new Set([...enRefListe, ...parcours(dossier)])].sort();
 };
+const assistant = { ajoutes: 0, modifies: 0 };
 const verifieFichier = (chemin, silencieux) => {
   const a = enRef(chemin), b = enCours(chemin);
   if (a == null && b == null) return true;
+  if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
+  const permis = FICHIERS_AUTORISES[chemin];
+  if (permis && a != null && b != null && a !== b) {
+    if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
+    ko(`${chemin} : modifié (${empreinte(b)}), empreinte admise pour l'Assistant Elixir : ${permis.empreinte} (FICHIERS_AUTORISES)`);
+    return false;
+  }
   if (a == null) { ko(`${chemin} : ajouté`); return false; }
   if (b == null) { ko(`${chemin} : supprimé`); return false; }
   if (a !== b) { const d = premiereDifference(a, b); ko(`${chemin} : modifié, ligne ${d.i + 1}`); return false; }
@@ -142,7 +174,8 @@ for (const f of FICHIERS) verifieFichier(f, false);
 for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length} fichiers identiques`);
+  const admis = assistant.ajoutes + assistant.modifies;
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, Assistant Elixir : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) admis` : ""}`);
 }
 
 // 3. clés de stockage
@@ -152,11 +185,15 @@ const sources = (liste) => liste.filter(f => /\.(jsx?|mjs)$/.test(f));
 const appelsRef = sources(git("ls-tree", "-r", "--name-only", REF, "--", "src").split("\n").filter(Boolean))
   .flatMap(f => (enRef(f) || "").match(RE_STOCKAGE) || []).sort();
 const appelsCours = sources(fichiersDe("src")).flatMap(f => (enCours(f) || "").match(RE_STOCKAGE) || []).sort();
-if (JSON.stringify(appelsRef) === JSON.stringify(appelsCours)) ok(`${appelsCours.length} appels identiques`);
-else {
+{
   const compte = (l) => l.reduce((m, x) => m.set(x, (m.get(x) || 0) + 1), new Map());
   const cr = compte(appelsRef), cc = compte(appelsCours);
-  for (const k of new Set([...cr.keys(), ...cc.keys()])) if ((cr.get(k) || 0) !== (cc.get(k) || 0)) ko(`${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0}`);
+  // attendu : la référence, plus les appels admis pour l'Assistant Elixir (seulement s'ils manquent encore à la référence)
+  const attendu = (k) => (cr.get(k) || 0) + (CLES_AUTORISEES[k] && (cc.get(k) || 0) > (cr.get(k) || 0) ? CLES_AUTORISEES[k] : 0);
+  const fautes = [...new Set([...cr.keys(), ...cc.keys()])].filter(k => attendu(k) !== (cc.get(k) || 0));
+  for (const k of fautes) ko(`${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0}${CLES_AUTORISEES[k] ? ` (admis : +${CLES_AUTORISEES[k]})` : ""}`);
+  const admis = [...cc.keys()].filter(k => attendu(k) !== (cr.get(k) || 0)).length;
+  if (!fautes.length) ok(`${appelsCours.length} appels${admis ? `, dont ${admis} clé(s) ajoutée(s) pour l'Assistant Elixir (admises)` : " identiques"}`);
 }
 
 // 4. tableaux d'ordinateur : autant d'en-têtes que de cellules par ligne (revue, docs/refonte-charte.md § 20 : la
