@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { T } from "../theme.js";
+import AdminAccueil from "./AdminAccueil.jsx";
 
-export default function AdminDisplay({ displayConfig, saveDisplayConfig, orderedKeys, allMeta, allSectionKeys, hiddenTabs, defaultTab, syncConfigToSupabase, flash, setTab }) {
+export default function AdminDisplay({ displayConfig, saveDisplayConfig, orderedKeys, allMeta, allSectionKeys, hiddenTabs, defaultTab, syncConfigToSupabase, flash, setTab, adminFetch }) {
   // Local state
   const [dragIdx, setDragIdx] = useState(null);
   const [editingSubtitle, setEditingSubtitle] = useState(null);
@@ -70,6 +71,9 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                 Synchroniser maintenant
               </button>
             </div>
+
+            {/* Page d'accueil (docs/accueil.md) : réglages et aperçu du classement */}
+            <AdminAccueil displayConfig={displayConfig} saveDisplayConfig={saveDisplayConfig} adminFetch={adminFetch} />
 
             {/* Ordre + visibilité des onglets */}
             <div style={{background:T.surface,borderRadius:14,padding:"20px 24px",marginBottom:20,border:"1px solid var(--line)"}}>

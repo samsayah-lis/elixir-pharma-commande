@@ -34,6 +34,8 @@ Spécification complète : concept B′ « La Tête de gondole » (étude du 19/
 - **Résolution** (le slider ne contredit jamais un menu ni le panier) : prix, paliers, menu et règle de quantité repris du catalogue chargé, dans l'ordre d'`addItemToCart` ; retirés : justificatif, exclusions de l'admin, rupture d'un produit de menu, menu non ouvrable.
 - **Ajout** : `ajouterDepuisSaisie` (arrondi au colis, minimum, justificatif, contingentement), comme la Saisie ; « − » par `setItemQty`. Montant affiché = `applyTiers(pn, paliers, lot) × lot`, ce que le panier facture (jamais le champ manuel `carton`).
 - La fenêtre « Offres du moment » ne s'ouvre pas sur l'accueil : la rangée du même nom la remplace.
+- Budgets mesurés (19/10/2026, `npm run build`) : bundle des pharmacies **+2 493 octets** (891 542 ≤ 940 000) ; chunk `Accueil-*` **12,8 Ko + 5,1 Ko gzip** (JS + CSS). Squelette statique (charte : squelettes jamais animés).
+- Admin, onglet « Affichage » : bloc « Page d'accueil » (`src/components/AdminAccueil.jsx`) : interrupteurs et aperçu du classement avec « Exclure » / « Réintégrer ».
 - Réglages (`display_config.accueil`) : `masque` (interrupteur d'urgence), `arrivee` (page d'arrivée), `auto` (rotation), `exclus` (CIP retirés de la vitrine).
 
 ## 5. Banc d'essai et aperçus

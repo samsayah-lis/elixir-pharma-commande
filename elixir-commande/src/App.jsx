@@ -28,6 +28,11 @@ import { authAssistant, etatAssistant } from "./assistant-client.js";
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
 const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ default: AdminIndisponible })));
+// Page d'accueil « La Tête de gondole » (docs/accueil.md) : chunk Accueil-* chargé à la demande ; ici, le préchargement
+// (chunk + GET des offres), le squelette et l'écran « nouvelle version » seulement
+import { lireOffres } from "./components/accueil/precharge.js";
+import SqueletteAccueil, { AccueilIndisponible } from "./components/accueil/Squelette.jsx";
+const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catch(() => ({ default: AccueilIndisponible })));
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 // Envoi d'une commande refusé AVANT tout envoi (correctif de sécurité du 19/10/2026 : session vérifiée d'abord) :
@@ -304,7 +309,8 @@ function LienMenu({ menu }) {
 
 export default function App() {
   // Lien direct vers un produit : ?cip=... (ou ?produit=) → ouvre la Saisie de commande pré-remplie
-  const [initialProductQuery] = useState(() => {
+  // (setter : « Voir dans la Saisie de commande » de l'accueil pré-remplit la Saisie avec le CIP, OrderEntry repart à neuf)
+  const [initialProductQuery, setInitialProductQuery] = useState(() => {
     try { const p = new URLSearchParams(window.location.search); return p.get("cip") || p.get("produit") || ""; } catch { return ""; }
   });
   // Adresse propre à chaque menu : ?menu=<clé> (ex. ?menu=otc, ?menu=promo_1792040000000). Un menu promo
@@ -320,7 +326,9 @@ export default function App() {
       if (outil && OUTILS_LIEN.includes(outil)) return outil;
       if (p.get("cip") || p.get("produit")) return "saisie";
     } catch {}
-    return getDisplayConfig().defaultTab || "expert";
+    // arrivée sans lien (?menu=, ?outil=, ?cip=) : la page d'accueil, sauf si l'admin l'a masquée ou a coupé l'arrivée
+    const acc = getDisplayConfig().accueil || {};
+    return (!acc.masque && acc.arrivee !== false) ? "accueil" : (getDisplayConfig().defaultTab || "expert");
   });
   // Saisie par Elixir pour une pharmacie (admin connecté) : la commande part au nom de cette pharmacie.
   // L'identité de session ci-dessous est remplacée en mémoire seulement (la connexion pharmacie
@@ -819,6 +827,12 @@ export default function App() {
       merged.groupees = { label: "Commandes groupées", subtitle: gpAllowed === "reconnexion" ? "Reconnectez-vous pour y accéder" : "Achats groupés et précommandes aux conditions négociées",
         color: "#0f2d3d", accent: "#2d9cbc", icon: "🤝", columns: [], specialView: "groupPurchases", products: [] };
     }
+    // Page d'accueil (?menu=accueil) : vue spéciale sans produits (rien n'y est rangé par addItemToCart) ; absente si
+    // l'admin la masque (display_config.accueil.masque : interrupteur d'urgence). Hors de SECTION_META : l'admin ne la
+    // propose pas comme rayon. Sans icône : la barre latérale prend la maison au trait (ICONES_RAYON)
+    if (!dc.accueil?.masque) {
+      merged.accueil = { label: "Accueil", accent: "#2d9cbc", columns: [], products: [], specialView: "accueil" };
+    }
     return merged;
   }, [dbProducts, promoSections, campaigns, pharmacyEmail, configLoaded, gpAllowed]);
 
@@ -1310,6 +1324,30 @@ export default function App() {
       if (o) flash(`⚠ Contingentement dépassé : ${o.name || item.name} (${o.qty} au panier, reste ${o.remaining} pour cette période)`, 6000);
     });
   };
+
+  // ── Page d'accueil (docs/accueil.md) : mêmes règles que le reste du site, rien de réécrit (le chunk reçoit le
+  // catalogue, regleSaisie, ajouterDepuisSaisie et ces deux helpers) ──
+  // « − » du sélecteur de l'accueil : ligne du panier de ce CIP (celle qu'addItemToCart remplit), quantité par setItemQty
+  // (fonction du panier ; 0 retire la ligne)
+  const modifierQte = (cip, n) => {
+    const ligne = cartItems.find(i => i.cip === cip);   // lignes des menus d'abord (ordre d'addItemToCart), puis hors catalogue
+    if (ligne) setItemQty(ligne, n);
+  };
+  // Changement de menu par l'utilisateur (barre latérale, logo, accueil) : même enchaînement que le clic d'un menu —
+  // confirmation d'une commande groupée non confirmée, entrée d'historique, recherche du menu (terme), tiroir fermé
+  const naviguerVers = (key, { terme = "" } = {}) => {
+    if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return false;
+    setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(terme || ""); setSidebarOpen(false);
+    return true;
+  };
+  const allerAccueil = () => { if (CATALOG_WITH_ADMIN.accueil) naviguerVers("accueil"); };
+  // « Offres du moment » : la rangée de l'accueil remplace la fenêtre ; ouverte (connexion) alors que l'accueil est affiché,
+  // elle est refermée aussitôt, pour ne pas surgir en quittant l'accueil (déclencheurs de l'identification inchangés)
+  useEffect(() => { if (promoPopupOpen && activeTab === "accueil") setPromoPopupOpen(false); }, [promoPopupOpen, activeTab]);
+  // Préchargement : sur l'accueil, GET des offres dès l'identité connue, en parallèle de products-get et du chunk (que
+  // React.lazy charge au premier rendu) : pas de cascade chunk → données
+  const identiteAccueil = actingFor ? `a${actingFor.odoo_id}` : (onboardingDone && pharmacyEmail ? `p${pharmacyEmail}:${jetonVersion}` : "");
+  useEffect(() => { if (identiteAccueil && activeTab === "accueil") lireOffres(appelAuthentifie, identiteAccueil); }, [identiteAccueil, activeTab]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const cat = CATALOG_WITH_ADMIN[activeTab];
   // Si une campagne active existe pour ce tab, on surcharge label/subtitle/couleurs
@@ -2068,21 +2106,24 @@ export default function App() {
           height: isDesktop ? hauteurEntete : undefined, padding: isDesktop ? "0 20px" : "12px 12px 12px 20px",
           background: T.petrol, color: T.paper,
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          {/* logo : bouton « Accueil » (convention du logo) */}
+          <button className="acc-logo ex-icone-entete" onClick={allerAccueil} aria-label="Accueil">
             <CroixElixir taille={26} style={{ color: T.orClair }} />
             <span style={{ fontSize: 15, fontWeight: 600, letterSpacing: "0.28em", lineHeight: 1 }}>ELIXIR</span>
-          </div>
+          </button>
           {!isDesktop && (
             <button className="ex-icone-entete ex-cible" onClick={() => setSidebarOpen(false)} aria-label="Fermer le menu" style={btnEntete}><Icone nom="fermer" /></button>
           )}
         </div>
         <nav aria-label="Menus" style={{ padding: "8px 0 16px" }}>
+        {/* « Accueil » : première entrée, hors des groupes (groupe sans titre) */}
         {[
-          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
+          { title: "", keys: CATALOG_WITH_ADMIN.accueil ? ["accueil"] : [] },
+          { title: "CATALOGUES", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => !["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees", "accueil"].includes(k)) },
           { title: "OUTILS", keys: getOrderedTabs(CATALOG_WITH_ADMIN).filter(k => ["saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"].includes(k)) },
         ].map(group => group.keys.length === 0 ? null : (
           <div key={group.title} style={{ marginBottom: 6 }}>
-            <div style={{ padding: "12px 22px 6px", fontSize: 11, letterSpacing: "0.14em", color: T.inkMute, fontWeight: 700 }}>{group.title}</div>
+            {group.title && <div style={{ padding: "12px 22px 6px", fontSize: 11, letterSpacing: "0.14em", color: T.inkMute, fontWeight: 700 }}>{group.title}</div>}
             {group.keys.map(key => {
               const c = CATALOG_WITH_ADMIN[key];
               if (!c) return null;
@@ -2090,7 +2131,7 @@ export default function App() {
               // tiroir (mobile, tablette, lot 9) : entrées de 44 px au doigt ; libellé long sur deux lignes au plus (plus de
               // « Commande labo sur justif… »), barre fixe d'ordinateur comprise depuis la revue (§ 20)
               return (
-                <button key={key} className="ex-menu" aria-current={active ? "page" : undefined} title={c.label} onClick={() => { if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return; setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(""); setSidebarOpen(false); }} style={{
+                <button key={key} className="ex-menu" aria-current={active ? "page" : undefined} title={c.label} onClick={() => naviguerVers(key)} style={{
                   display: "flex", alignItems: "center", gap: 10, width: "calc(100% - 20px)", margin: "1px 10px", textAlign: "left",
                   background: active ? T.mint : undefined, border: "none", borderRadius: isDesktop ? R.pill : 22,
                   color: active ? T.teal : T.inkSoft, padding: isDesktop ? "8px 12px" : "10px 12px", minHeight: isDesktop ? undefined : 44, cursor: "pointer",
@@ -2110,7 +2151,7 @@ export default function App() {
 
       {/* ── PROMO POPUP « Offres du moment » (lot 7) : fenêtre paper de rayon 28 sur voile --scrim, sans flou ; la couleur
           de chaque menu promo (saisie dans l'admin) n'est plus qu'un filet et une pastille d'icône, textes aux jetons ── */}
-      {promoPopupOpen && promoSections.some(p => p.active) && (
+      {promoPopupOpen && activeTab !== "accueil" && promoSections.some(p => p.active) && (
         <div role="dialog" aria-modal="true" aria-labelledby="offres-titre" style={{ ...ui.overlay, zIndex:2000 }}>
           <div style={{ ...ui.modal, maxHeight:"calc(100vh - 32px)", overflowY:"auto", padding: isMobile ? "22px 18px" : "28px 32px" }}>
             <FocusFenetre />{/* revue (§ 20) : focus sur « Fermer » à l'ouverture, rendu à la fermeture */}
@@ -2163,10 +2204,10 @@ export default function App() {
               <button className="ex-icone-entete ex-cible" onClick={() => setSidebarOpen(true)} aria-label="Ouvrir le menu" aria-expanded={sidebarOpen} style={btnEntete}><Icone nom="menu" /></button>
             )}
             {!isDesktop && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+              <button className="acc-logo ex-icone-entete" onClick={allerAccueil} aria-label="Accueil">
                 <CroixElixir taille={24} style={{ color: T.orClair }} />
                 <span className="ex-mot-elixir" style={{ fontSize: 14, fontWeight: 600, letterSpacing: "0.28em", lineHeight: 1 }}>ELIXIR</span>
-              </div>
+              </button>
             )}
             {isDesktop && (
               <div style={{ minWidth: 0 }}>
@@ -2210,7 +2251,7 @@ export default function App() {
               <button className="ex-icone-entete ex-cible" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
             )}
             {/* panier rempli : pastille or + encre avec le compteur (seul rôle de l'or dans l'en-tête) */}
-            <button className={cartCount > 0 ? "ex-cible" : "ex-icone-entete ex-cible"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
+            <button data-cible-panier className={cartCount > 0 ? "ex-cible" : "ex-icone-entete ex-cible"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
               aria-label={cartCount > 0 ? `Panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}` : "Panier (vide)"} title="Panier"
               style={cartCount > 0
                 ? { ...btnEntete, width: "auto", gap: 6, padding: "0 13px 0 10px", background: T.or, color: T.ink, fontSize: 13, fontWeight: 700 }
@@ -2394,9 +2435,40 @@ export default function App() {
             </div>
           )}
 
+          {/* ── PAGE D'ACCUEIL « La Tête de gondole » (docs/accueil.md) : chunk à la demande, squelette en attendant.
+              L'ajout passe par ajouterDepuisSaisie (règle du catalogue, justificatif, contingentement), « − » par setItemQty ── */}
+          {CATALOG_WITH_ADMIN[activeTab]?.specialView === "accueil" && (
+            <React.Suspense fallback={<SqueletteAccueil mobile={isMobile} />}>
+              <Accueil
+                identite={identiteAccueil}
+                lireOffres={() => lireOffres(appelAuthentifie, identiteAccueil)}
+                catalogue={CATALOG_WITH_ADMIN}
+                catalogueCharge={!productsLoading}
+                ordre={getOrderedTabs(CATALOG_WITH_ADMIN)}
+                iconeMenu={iconeMenu}
+                regleSaisie={regleSaisie}
+                menuOuvrable={menuOuvrable}
+                justifProducts={justifProducts}
+                stockData={stockData}
+                qteAuPanier={cartTotalsByCip}
+                onAjouter={ajouterDepuisSaisie}
+                onModifier={modifierQte}
+                onOuvrirPanier={() => setCartOpen(true)}
+                naviguer={naviguerVers}
+                voirDansSaisie={(cip) => { setInitialProductQuery(cip); return naviguerVers("saisie"); }}
+                reglages={getDisplayConfig().accueil || {}}
+                pauseExterne={cartOpen || showMyOrders || assistantOuvert}
+                promos={promoSections}
+                ouvrirMesCommandes={pharmacyCip && pharmacyCip !== "0" ? () => { setShowMyOrders(true); fetchMyOrders(); } : null}
+                dateFin={dateFin}
+              />
+            </React.Suspense>
+          )}
+
           {/* ── SPECIAL VIEWS : Saisie de commande & Péremption courte ── */}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
             <OrderEntry
+              key={initialProductQuery}
               justifProducts={justifProducts}
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
@@ -3544,7 +3616,7 @@ export default function App() {
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son
           zIndex (290) le laissait seul au-dessus du voile du menu (140) (lot 9) ; masqué aussi pendant que l'assistant est ouvert */}
       {!cartOpen && cartCount > 0 && !(sidebarOpen && !isDesktop) && !assistantOuvert && (
-        <button className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
+        <button data-cible-panier className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 290,   // sous le voile du panier (300)
           color: T.paper, border: "none", borderRadius: R.pill, width: 60, height: 60,   // fond pétrole : classe (survol)
           cursor: "pointer", boxShadow: T.shadow2, padding: 0,

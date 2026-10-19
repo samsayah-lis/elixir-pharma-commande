@@ -1,0 +1,260 @@
+/* ─────────────────────────────────────────────────────────────
+   Page d'accueil « La Tête de gondole » (docs/accueil.md) — chunk Accueil-*.css, classes préfixées acc-
+   Jetons de tokens.css seulement (Inter, pétrole, sarcelle, menthe, sable ; or réservé à la remise et au compteur).
+   Sans color-mix() ni backdrop-filter ; on n'anime que transform et opacity (et le tracé du pouls).
+   ───────────────────────────────────────────────────────────── */
+:root { --acc-ressort: cubic-bezier(.34,1.56,.64,1); }
+@supports (transition-timing-function: linear(0, 1)) {
+  :root { --acc-ressort: linear(0, .25 7%, 1.05 30%, 1.08 38%, 1 55%, .99 70%, 1); }
+}
+.acc-vh { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.acc-page { max-width: 1400px; }
+
+/* ── En-tête de la vitrine ── */
+.acc-entete { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+.acc-entete-titres { min-width: 0; }
+.acc-eyebrow { font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-mute); }
+.acc-eyebrow--titre { display: block; margin: 0 0 4px; }
+.acc-h1 { margin: 0; font-size: 26px; font-weight: 640; letter-spacing: -.02em; line-height: 1.15; color: var(--ink); }
+.acc-controles { display: flex; gap: 8px; flex-shrink: 0; }
+.acc-rond { width: 40px; height: 40px; padding: 0; border: none; border-radius: 999px; cursor: pointer; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center; background: var(--surface); color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow-1); transition: background-color .15s var(--ease); }
+.acc-rond--44 { width: 44px; height: 44px; }
+@media (hover: hover) { .acc-rond:hover { background: var(--surface-2); } }
+
+/* ── Le linéaire (liste d'onglets) : facings sur une tablette de verre, étiquettes de rayon ── */
+.acc-lineaire { display: flex; gap: 8px; overflow-x: auto; scroll-snap-type: x proximity; scrollbar-width: none;
+  padding: 14px 16px 10px; margin-bottom: 16px; background: var(--paper); border: 1px solid var(--line); border-radius: 16px;
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%); }
+.acc-lineaire::-webkit-scrollbar { display: none; }
+.acc-emplacement { position: relative; flex: 1 0 84px; min-width: 84px; max-width: 120px; display: flex; flex-direction: column;
+  padding: 0; border: none; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; scroll-snap-align: start; border-radius: 8px; }
+.acc-facing { height: 64px; display: flex; align-items: flex-end; justify-content: center; transition: opacity .2s var(--ease), transform .2s var(--ease); }
+.acc-facing img { max-height: 64px; max-width: 76px; object-fit: contain; mix-blend-mode: multiply; display: block; }
+.acc-facing-boite { position: relative; display: block; width: 58px; height: 64px; }
+.acc-facing-boite .acc-boite { position: absolute; left: 0; bottom: 0; transform: scale(.2857); transform-origin: bottom left; }
+.acc-emplacement[aria-selected="true"] .acc-facing { opacity: .25; }
+@media (hover: hover) { .acc-emplacement:hover .acc-facing { transform: translateY(-3px); } }
+.acc-tablette { display: block; height: 9px; margin: 0 -4px; border-top: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(255,255,255,.9), rgba(15,45,61,.06)); }
+.acc-etiq-rayon { display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "rang nom" "rang prix"; column-gap: 6px; align-items: center;
+  margin-top: 6px; padding: 4px 8px 4px 7px; background: var(--surface); color: var(--ink); border-left: 3px solid var(--acc-teinte, var(--teal-2));
+  border-radius: 3px 8px 8px 3px; box-shadow: 0 1px 2px rgba(15,45,61,.08); transition: background-color .2s var(--ease), color .2s var(--ease); }
+.acc-etiq-rayon b { grid-area: rang; font-size: 11px; font-weight: 700; align-self: start; padding-top: 1px; }
+.acc-etiq-nom { grid-area: nom; font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.acc-etiq-prix { grid-area: prix; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.acc-emplacement[aria-selected="true"] .acc-etiq-rayon { background: var(--petrol); color: var(--paper); }
+.acc-deja { position: absolute; top: 0; right: 6px; width: 18px; height: 18px; border-radius: 999px; background: var(--ok-bg); color: var(--ok);
+  display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 2px var(--paper); }
+.acc-progression { display: block; height: 3px; margin-top: 5px; border-radius: 2px; overflow: hidden; }
+.acc-progression-barre { display: block; height: 100%; background: var(--teal-2); transform: scaleX(0); transform-origin: left center; }
+
+/* ── La tête de gondole (panneau) : scène 58 % + étiquette 42 % ── */
+.acc-tete-gondole { display: grid; grid-template-columns: 58fr 42fr; min-height: clamp(380px, 52vh, 520px);
+  background: var(--paper); border: 1px solid var(--line); border-radius: 28px; box-shadow: var(--shadow-2); }
+@media (max-width: 1279px) { .acc-tete-gondole { grid-template-columns: 1fr 1fr; } }
+.acc-scene { position: relative; display: flex; align-items: flex-end; justify-content: center; padding: 64px 24px 52px; min-width: 0;
+  touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; }
+.acc-scene:active { cursor: grabbing; }
+.acc-scene-fond { position: absolute; inset: 0; overflow: hidden; border-radius: 27px 0 0 27px; pointer-events: none;
+  background: linear-gradient(180deg, var(--surface-2), var(--cream)); }
+.acc-scene-fond::after { content: ""; position: absolute; inset: 0; background: radial-gradient(120% 90% at 50% 40%, transparent 55%, rgba(15,45,61,.06)); }
+.acc-projecteur { position: absolute; inset: 0 -20%; background: radial-gradient(42% 70% at 50% -8%, rgba(255,255,255,.95), rgba(255,255,255,.5) 38%, transparent 72%); }
+.acc-rang-geant { position: absolute; left: 26px; top: 6px; font-size: 200px; font-weight: 640; letter-spacing: -.04em; line-height: 1; color: #e3dccd; }
+.acc-halo { position: absolute; left: 50%; top: 56%; width: 64px; height: 64px; margin: -32px 0 0 -32px; }
+.acc-halo img { width: 64px; height: 64px; object-fit: cover; display: block; filter: blur(6px) saturate(1.4); transform: scale(7); opacity: .32; }
+.acc-halo--boite { width: 76%; height: 80%; left: 12%; top: 14%; margin: 0; background: radial-gradient(closest-side, var(--acc-halo, rgba(60,119,130,.14)), transparent); }
+.acc-socle { position: absolute; left: 50%; bottom: 38px; width: 220px; height: 26px; margin-left: -110px; pointer-events: none;
+  background: radial-gradient(50% 50% at 50% 50%, rgba(15,45,61,.22), transparent 70%); }
+.acc-scene::after { content: ""; position: absolute; left: 14%; right: 14%; bottom: 50px; height: 1px; pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.95) 30%, var(--line) 50%, rgba(255,255,255,.95) 70%, transparent); }
+.acc-emplacement-produit { position: relative; z-index: 1; width: min(100%, 320px); height: 300px; display: flex; align-items: flex-end; justify-content: center; }
+.acc-produit { display: flex; align-items: flex-end; justify-content: center; height: 100%; width: 100%; }
+.acc-produit--sortant { position: absolute; inset: 0; pointer-events: none; }
+.acc-produit-incl { display: flex; align-items: flex-end; justify-content: center; height: 100%; width: 100%; transform-origin: 50% 85%; }
+.acc-photo { display: block; max-width: 100%; max-height: 100%; object-fit: contain; mix-blend-mode: multiply; }
+/* pointeur fin : inclinaison, profondeur, projecteur qui suit (variables écrites par Gondole.jsx) */
+.acc-scene--vivante .acc-produit-incl { transform: perspective(900px) rotateX(calc(var(--py, 0) * -6deg)) rotateY(calc(var(--px, 0) * 6deg))
+  translate3d(calc(var(--px, 0) * 8px), calc(var(--py, 0) * 8px), 0); }
+.acc-scene--vivante .acc-rang-geant { transform: translate(calc(var(--px, 0) * -12px), calc(var(--py, 0) * -12px)); }
+.acc-scene--vivante .acc-halo { transform: translate(calc(var(--px, 0) * -6px), calc(var(--py, 0) * -6px)); }
+.acc-scene--vivante .acc-projecteur { transform: translateX(calc(var(--px, 0) * 15%)); }
+
+/* ── La boîte Elixir générée ── */
+.acc-boite { position: relative; width: 168px; height: 224px; flex-shrink: 0; perspective: 900px; perspective-origin: 50% 0%; }
+.acc-boite-corps { position: absolute; inset: 0; transform-style: preserve-3d; }
+.acc-boite--3d .acc-boite-corps { transform: rotateY(-24deg) rotateX(-8deg); transition: transform .4s var(--ease); }
+@media (hover: hover) { .acc-scene--vivante:hover .acc-boite--3d .acc-boite-corps { transform: rotateY(-31deg) rotateX(-8deg); } }
+.acc-boite-face { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: flex-start; padding: 18px 14px 12px; overflow: hidden;
+  color: var(--ink); text-align: left; border-radius: 5px; background: linear-gradient(165deg, #fffdf9, var(--surface) 55%, #f4eee3);
+  box-shadow: inset 0 0 0 1px rgba(32,25,23,.1), 0 18px 30px -18px rgba(15,45,61,.4); }
+.acc-boite--3d .acc-boite-face { transform: translateZ(28px); box-shadow: inset 0 0 0 1px rgba(32,25,23,.1); }
+.acc-boite-bandeau { position: absolute; left: 0; right: 0; top: 0; height: 6px; background: var(--acc-teinte, var(--teal-2)); }
+.acc-boite-marque { margin-top: 4px; max-width: 100%; font-size: 15px; font-weight: 640; letter-spacing: .02em; line-height: 1.1; overflow-wrap: anywhere; }
+.acc-boite-dosage { margin-top: 18px; font-size: 34px; font-weight: 700; letter-spacing: -.02em; line-height: 1.05; white-space: nowrap; }
+.acc-boite-dosage--moyen { font-size: 27px; }
+.acc-boite-dosage--long { font-size: 21px; }
+.acc-boite-dosage--forme { font-size: 20px; font-weight: 640; white-space: normal; }
+.acc-boite-forme { margin-top: 6px; font-size: 11px; color: var(--ink-mute); }
+.acc-boite-labo { position: absolute; left: 14px; bottom: 12px; font-size: 10px; font-weight: 600; color: var(--ink-mute); }
+.acc-boite-croix { position: absolute; right: 10px; bottom: 10px; color: var(--teal); opacity: .08; }
+.acc-boite-tranche { position: absolute; top: 0; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+  padding: 12px 0; overflow: hidden; background: linear-gradient(90deg, #ebe4d6, #d6cdbc); }
+.acc-boite--3d .acc-boite-tranche { left: calc(50% - 28px); width: 56px; transform: rotateY(90deg) translateZ(84px); }
+.acc-boite--25d .acc-boite-tranche { left: 100%; width: 34px; transform-origin: left center; transform: skewY(-30deg); border-radius: 0 3px 3px 0; }
+.acc-boite-cip { writing-mode: vertical-rl; font: 10px/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace; letter-spacing: .04em; color: var(--ink-soft); }
+.acc-boite-elixir { writing-mode: vertical-rl; font-size: 9px; font-weight: 600; letter-spacing: .28em; color: var(--ink-faint); }
+.acc-boite-dessus { position: absolute; left: 0; top: calc(50% - 28px); width: 100%; height: 56px; transform: rotateX(90deg) translateZ(112px);
+  background: linear-gradient(180deg, #fffefb, #f1ebdf); }
+.acc-boite--carte { transform: scale(.714); transform-origin: bottom center; margin: -64px -24px 0; }
+
+/* ── Compteurs mécaniques ── */
+.acc-rouleau { display: inline-flex; line-height: 1; animation: acc-fondu .2s var(--ease); }
+.acc-rouleau-col { display: inline-block; height: 1em; overflow: hidden; }
+.acc-rouleau-bande { display: flex; flex-direction: column; transition: transform .36s var(--ease); }
+.acc-rouleau-bande > span { display: block; height: 1em; }
+.acc-rouleau--net .acc-rouleau-bande { transition: none; }
+@keyframes acc-fondu { from { opacity: 0; } }
+
+/* ── L'étiquette ── */
+.acc-tete-gondole > .acc-etiquette { margin: 16px 16px 16px 0; padding: 22px 24px 16px; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-1); }
+.acc-etiquette { display: flex; flex-direction: column; align-items: flex-start; gap: 9px; min-width: 0; }
+.acc-etiquette-tete { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.acc-bandeau-rang { padding: 5px 10px; border-radius: 999px; background: var(--petrol); color: var(--paper); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; line-height: 1.2; }
+.acc-puce { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+  background: var(--surface-2); color: var(--ink-soft); line-height: 1.2; }
+.acc-puce--info { min-height: 24px; background: var(--mint); color: var(--teal); }
+.acc-puce--ok { background: var(--ok-bg); color: var(--ok); }
+.acc-puce--warn { background: var(--warn-bg); color: var(--warn); }
+.acc-rayon { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; background: var(--mint); color: var(--petrol); font-size: 11px; font-weight: 700; }
+.acc-marque { margin: 2px 0 0; font-size: 32px; font-weight: 640; letter-spacing: -.02em; line-height: 1.05; color: var(--ink); overflow-wrap: anywhere; }
+.acc-sous-ligne { margin: -4px 0 0; font-size: 13px; color: var(--ink-mute); }
+.acc-dosages { display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.acc-dosages-liste { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 3px; margin: -3px; min-width: 0; }
+.acc-dosages-liste::-webkit-scrollbar { display: none; }
+.acc-puce-dosage { flex-shrink: 0; min-width: 40px; height: 32px; padding: 0 12px; border: none; border-radius: 999px; cursor: pointer; white-space: nowrap;
+  background: var(--sand); color: var(--ink); font: 600 13px/1 var(--sans); font-variant-numeric: tabular-nums; transition: background-color .15s var(--ease), color .15s var(--ease); }
+.acc-puce-dosage[aria-checked="true"] { background: var(--ink); color: var(--paper); }
+@media (hover: hover) { .acc-puce-dosage:not([aria-checked="true"]):hover { background: #e2dccf; } }
+.acc-dosages-unite { flex-shrink: 0; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
+.acc-prix-bloc { display: flex; flex-direction: column; gap: 4px; margin-top: 2px; }
+.acc-prix-ligne { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.acc-prix { display: inline-flex; align-items: center; gap: 6px; font-size: 40px; font-weight: 700; letter-spacing: -.02em; line-height: 1; color: var(--ink); }
+.acc-prix-ht { font-size: 15px; font-weight: 700; letter-spacing: 0; color: var(--ink-soft); }
+.acc-badge-remise { padding: 4px 9px; border-radius: 999px; background: var(--or); color: var(--ink); font-size: 13px; font-weight: 700; }
+.acc-pv { margin: 0; font-size: 13px; color: var(--ink-soft); }
+.acc-palier { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.acc-palier--atteint { background: var(--tier-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--or); }
+.acc-palier--suivant { background: var(--warn-bg); color: var(--warn); }
+.acc-faits { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.acc-pouls-bloc { display: flex; flex-direction: column; gap: 2px; width: 240px; max-width: 100%; }
+.acc-pouls { display: block; width: 100%; height: 44px; overflow: visible; }
+.acc-pouls-aire { fill: var(--mint); opacity: .45; }
+.acc-pouls-trait { fill: none; stroke: var(--teal-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.acc-pouls-encours { fill: none; stroke: var(--teal-2); stroke-width: 2; stroke-linecap: round; stroke-dasharray: 2 4; }
+.acc-pouls-legende { font-size: 11px; color: var(--ink-mute); }
+.acc-voir { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin: -6px 0 -10px; padding: 0 2px; border: none; background: none; cursor: pointer;
+  color: var(--ink-soft); font: 600 13px var(--sans); text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 1px; }
+@media (hover: hover) { .acc-voir:hover { color: var(--ink); text-decoration-thickness: 2px; } }
+
+/* ── Ajout au panier : bouton, puis sélecteur − / au panier / + ── */
+.acc-lot { display: grid; grid-template-columns: 0px minmax(0, 1fr) 0px; gap: 0; width: 100%; max-width: 440px; margin-top: 4px;
+  transition: grid-template-columns .2s var(--ease), gap .2s var(--ease); }
+.acc-lot[data-plein] { grid-template-columns: 48px minmax(0, 1fr) 48px; gap: 8px; }
+.acc-lot-pas { min-width: 0; height: 48px; padding: 0; border: none; border-radius: 999px; overflow: hidden; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; transition: background-color .15s var(--ease); }
+.acc-lot:not([data-plein]) .acc-lot-pas { visibility: hidden; }
+.acc-lot-moins { background: var(--sand); color: var(--ink); }
+.acc-lot-plus { background: var(--petrol); color: var(--paper); }
+.acc-lot-centre { min-width: 0; height: 48px; padding: 0 18px; border: none; border-radius: 999px; cursor: pointer; overflow: hidden; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center; gap: 8px; background: var(--petrol); color: var(--paper); font: 700 15px/1.1 var(--sans);
+  transition: background-color .15s var(--ease), color .15s var(--ease), transform .1s var(--ease); }
+.acc-lot-centre > span { overflow: hidden; text-overflow: ellipsis; }
+.acc-lot-centre:active:not([aria-disabled]) { transform: scale(.98); }
+.acc-lot[data-plein] .acc-lot-centre { background: var(--mint); color: var(--teal); }
+.acc-lot-centre--attente { background: var(--sand); color: var(--ink-soft); cursor: progress; }
+@media (hover: hover) {
+  .acc-lot-centre:not([aria-disabled]):hover { background: var(--teal); color: var(--paper); }
+  .acc-lot-moins:hover { background: #e2dccf; }
+  .acc-lot-plus:hover { background: var(--teal); }
+}
+
+/* ── Le vol vers le panier (calque ajouté au body) ── */
+.acc-vol { position: fixed; left: 0; top: 0; z-index: 295; width: 56px; height: 56px; pointer-events: none; }
+.acc-vol-y { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 14px; background: var(--surface); box-shadow: var(--shadow-2); }
+.acc-vol-y img { max-width: 48px; max-height: 48px; object-fit: contain; mix-blend-mode: multiply; }
+.acc-vol-boite { width: 38px; height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; overflow: hidden; text-align: center;
+  border-radius: 3px; border-top: 4px solid var(--acc-teinte, var(--teal-2)); background: var(--paper); box-shadow: inset 0 0 0 1px rgba(32,25,23,.1);
+  color: var(--ink); font: 700 6px/1.1 var(--sans); letter-spacing: .02em; }
+.acc-vol-boite b { font-size: 9px; }
+
+/* ── Mobile (< 768 px) : segments et piste de cartes à aimantation ── */
+.acc-vitrine--mobile .acc-h1 { font-size: 22px; }
+.acc-segments-rangee { display: flex; align-items: center; gap: 6px; height: 44px; margin: 0 0 8px; }
+.acc-segments { flex: 1; display: flex; gap: 3px; min-width: 0; }
+.acc-segment { flex: 1 1 0; min-width: 0; height: 44px; padding: 0; border: none; background: none; cursor: pointer; display: flex; align-items: center; }
+.acc-segment-barre { display: block; width: 100%; height: 4px; border-radius: 2px; background: var(--ink-faint); transform-origin: left center; transition: background-color .2s var(--ease); }
+.acc-segment[aria-selected="true"] .acc-segment-barre { background: var(--petrol); }
+.acc-piste { display: flex; gap: 12px; overflow-x: auto; overscroll-behavior-x: contain; scroll-snap-type: x mandatory; scroll-padding-inline: 16px;
+  scrollbar-width: none; margin: 0 -10px; padding: 4px 16px 18px; }
+.acc-piste::-webkit-scrollbar { display: none; }
+.acc-carte-env { flex: 0 0 calc(100% - 28px); min-width: 0; scroll-snap-align: start; }
+.acc-carte { height: 100%; overflow: hidden; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-1); }
+.acc-piste .acc-carte { transform: perspective(900px) rotateY(calc(var(--d, 0) * -10deg)) scale(calc(1 - .08 * var(--da, 0))); opacity: calc(1 - .35 * var(--da, 0)); }
+.acc-carte-scene { position: relative; height: clamp(150px, 24vh, 200px); display: flex; align-items: flex-end; justify-content: flex-end; padding: 0 30px 26px 16px; }
+.acc-carte-scene .acc-scene-fond { border-radius: 0; background: linear-gradient(180deg, var(--surface-2), var(--paper)); }
+.acc-carte-scene .acc-rang-geant { left: 12px; top: 2px; font-size: 120px; }
+.acc-carte-scene .acc-socle { bottom: 16px; left: auto; right: 12%; width: 160px; margin-left: 0; height: 20px; }
+.acc-carte-scene .acc-emplacement-produit { width: 62%; height: calc(100% - 22px); max-height: 168px; }
+.acc-carte-scene .acc-halo { top: 50%; }
+.acc-carte-pouls { position: absolute; left: 0; right: 0; bottom: 2px; height: 24px; pointer-events: none; }
+.acc-pouls--fin { width: 100%; height: 24px; }
+.acc-pouls--fin .acc-pouls-trait, .acc-pouls--fin .acc-pouls-encours { stroke-width: 1.5; opacity: .75; }
+.acc-piste .acc-produit-incl { transform: rotate(var(--v, 0deg)); transition: transform .32s var(--acc-ressort); }
+.acc-piste[data-defile] .acc-produit-incl { transition: none; }
+.acc-carte .acc-etiquette { padding: 12px 16px 10px; gap: 7px; }
+.acc-carte .acc-marque { font-size: 22px; margin-top: 0; }
+.acc-carte .acc-prix { font-size: 28px; }
+.acc-carte .acc-lot { max-width: none; }
+.acc-carte .acc-lot-centre { font-size: 14px; padding: 0 14px; }
+@media (max-width: 420px) { .acc-carte .acc-lot:not([data-plein]) .acc-lot-verbe { display: none; } }
+
+/* une ou deux cartes : côte à côte, sans onglets */
+.acc-duo .acc-h1 { margin-bottom: 14px; }
+.acc-duo-cartes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+/* ── Sous la vitrine ── */
+.acc-maj { margin: 12px 2px 28px; font-size: 12px; color: var(--ink-mute); }
+.acc-section { margin-bottom: 28px; content-visibility: auto; contain-intrinsic-size: auto 220px; }
+.acc-h2 { margin: 0 0 12px; font-size: 16px; font-weight: 640; letter-spacing: -.01em; color: var(--ink); }
+.acc-offres { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.acc-offre { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px; border-radius: 16px; border-left: 3px solid var(--line);
+  background: var(--surface); color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.acc-offre-icone, .acc-tuile-icone { width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  background: var(--mint); color: var(--teal); font-size: 20px; }
+.acc-offre-textes, .acc-tuile-textes { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.acc-offre-nom, .acc-tuile-titre { font-size: 14px; font-weight: 600; line-height: 1.3; color: var(--ink); }
+.acc-offre-fin { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; color: var(--warn); }
+.acc-offre-nb { font-size: 12px; font-weight: 700; color: var(--teal); }
+.acc-acces { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.acc-tuile { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 12px 14px; border-radius: 16px; background: var(--surface);
+  color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.acc-tuile-texte { font-size: 12px; line-height: 1.35; color: var(--ink-mute); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 767px) {
+  .acc-offres { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin: 0 -10px; padding: 2px 10px 10px; scroll-padding-inline: 10px; }
+  .acc-offres::-webkit-scrollbar { display: none; }
+  .acc-offre { flex: 0 0 82%; scroll-snap-align: start; }
+  .acc-acces { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .acc-tuile { flex-direction: column; align-items: flex-start; gap: 8px; }
+}
+
+/* ── Impression : la vitrine à plat, diapositive active seule, contrôles masqués ── */
+@media print {
+  .acc-controles, .acc-segments-rangee, .acc-lineaire, .acc-lot, .acc-voir, .acc-dosages, .acc-acces, .acc-projecteur, .acc-halo { display: none !important; }
+  .acc-tete-gondole, .acc-carte { box-shadow: none !important; break-inside: avoid; }
+  .acc-piste { display: block; overflow: visible; margin: 0; padding: 0; }
+  .acc-carte-env:not(:first-child) { display: none; }
+  .acc-piste .acc-carte { transform: none !important; opacity: 1 !important; }
+}

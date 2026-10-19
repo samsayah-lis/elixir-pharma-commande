@@ -1750,7 +1750,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             displayConfig={displayConfig} saveDisplayConfig={saveDisplayConfig}
             orderedKeys={orderedKeys} allMeta={allMeta} allSectionKeys={allSectionKeys}
             hiddenTabs={hiddenTabs} defaultTab={defaultTab}
-            syncConfigToSupabase={syncConfigToSupabase} flash={flash} setTab={setTab}
+            syncConfigToSupabase={syncConfigToSupabase} flash={flash} setTab={setTab} adminFetch={adminFetch}
           />
         )}
 

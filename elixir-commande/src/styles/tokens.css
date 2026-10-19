@@ -263,6 +263,8 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   border-top-color: var(--teal-2); flex-shrink: 0; animation: ex-roue .8s linear infinite; }
 @keyframes ex-roue { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ex-roue { animation: none; } }
+/* logo (croix + ELIXIR) de la barre latérale et de l'en-tête mobile : bouton « Accueil » (docs/accueil.md) ; fond au survol : ex-icone-entete */
+.acc-logo { display: flex; flex-shrink: 0; align-items: center; gap: 9px; margin: -6px -10px; padding: 6px 10px; border: none; border-radius: 999px; color: inherit; cursor: pointer; }
 
 /* ── Passe mobile (lot 9) : cibles tactiles, champs sans zoom, listes en cartes sous 768 px ──
    Règles du site client seulement : l'admin (.ex-admin, rendu dans l'arbre d'App) est exclu par :not(.ex-admin *).

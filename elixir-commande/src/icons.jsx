@@ -44,6 +44,9 @@ const TRACES = {
   trombone: <path d="m20 11.5-7.8 7.8a5 5 0 0 1-7.1-7.1l8.3-8.3a3.3 3.3 0 0 1 4.7 4.7l-8.3 8.3a1.7 1.7 0 0 1-2.4-2.4l7.6-7.6" />,
   importer: <><path d="M12 15V4" /><path d="m7.5 8.5 4.5-4.5 4.5 4.5" /><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" /></>,
   plus: <path d="M12 5v14M5 12h14" />,
+  // page d'accueil : entrée « Accueil » (barre latérale, accès rapide) et arrêt du défilement de la vitrine
+  maison: <><path d="M4 11.5 12 4.5l8 7" /><path d="M6 9.8v9.7h12V9.8" /><path d="M10 19.5V14h4v5.5" /></>,
+  pause: <path d="M9 5.5v13M15 5.5v13" />,
   moins: <path d="M5 12h14" />,
   // ── rayons (barre latérale ; lot 2) ──
   gelule: <><path d="M10.6 19.9a4.9 4.9 0 0 1-6.9-6.9l6.4-6.4a4.9 4.9 0 0 1 6.9 6.9z" /><path d="m7.4 9.8 6.8 6.8" /></>,
@@ -67,7 +70,7 @@ export const NOMS_ICONES = Object.keys(TRACES);
 export const ICONES_RAYON = {
   expert: "gelule", stratege: "carton", master: "feuille", obeso: "balance", nr: "flacon", molnlycke: "pansement",
   blanche: "etiquette", covid: "tube", otc: "sac", ulabs: "groupe", saisie: "crayon", peremption: "horloge",
-  fauteuil: "fauteuil", transfert: "chaise", justificatif: "document", groupees: "groupe",
+  fauteuil: "fauteuil", transfert: "chaise", justificatif: "document", groupees: "groupe", accueil: "maison",
 };
 
 export function Icone({ nom, taille = 20, epaisseur = 2, plein = false, titre, style, ...reste }) {
