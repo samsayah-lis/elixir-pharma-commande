@@ -300,21 +300,30 @@ vrai("messages sélectionnables malgré l'anti-copie", /ex-assistant__fil ex-sel
 const pres = await import("../../src/components/assistant/presentation.js");
 const compte = "ppharmacie-1@banc.test", cleCompte = `assistant_presentation_${compte}`;
 const nouvelleSession = () => globalThis.sessionStorage.clear();
+const T0 = Date.parse("2026-10-20T08:00:00Z"), H = 3600e3;
 reinit();
-vrai("nouveau compte : fenêtre à présenter", pres.aPresenter(compte));
-pres.noterVue(compte);
-eq("affichée : plus rien jusqu'à la fin de la session (« Plus tard »)", pres.aPresenter(compte), false);
-eq("mémoire par compte : localStorage { vues, fini } et sessionStorage, clé avec l'identité",
-  [globalThis.localStorage.getItem(cleCompte), globalThis.sessionStorage.getItem(cleCompte)], ['{"vues":1,"fini":false}', "1"]);
-vrai("autre compte du même poste : pas touché", pres.aPresenter("pautre@banc.test"));
-nouvelleSession(); vrai("session suivante : revient (1er retour)", pres.aPresenter(compte)); pres.noterVue(compte);
-nouvelleSession(); vrai("session suivante : revient (2e et dernier retour)", pres.aPresenter(compte)); pres.noterVue(compte);
-nouvelleSession(); eq("après 3 affichages : plus jamais", [pres.aPresenter(compte), pres.VUES_MAX], [false, 3]);
+vrai("nouveau compte : fenêtre à présenter", pres.aPresenter(compte, T0));
+pres.noterVue(compte, T0);
+eq("affichée : plus rien jusqu'à la fin de la session (« Plus tard »)", pres.aPresenter(compte, T0), false);
+eq("mémoire par compte : localStorage { vues, fini, derniere } et sessionStorage, clé avec l'identité",
+  [globalThis.localStorage.getItem(cleCompte), globalThis.sessionStorage.getItem(cleCompte)], [`{"vues":1,"fini":false,"derniere":${T0}}`, "1"]);
+vrai("autre compte du même poste : pas touché", pres.aPresenter("pautre@banc.test", T0));
+// liens des mailings : chaque lien ouvre un nouvel onglet (nouvelle session du navigateur) ; la fenêtre n'y revient pas
+nouvelleSession(); eq("deux onglets en quelques minutes : un seul affichage", pres.aPresenter(compte, T0 + 5 * 60e3), false);
+nouvelleSession(); eq("… ni 19 h plus tard", pres.aPresenter(compte, T0 + 19 * H), false);
+nouvelleSession(); vrai("session suivante, 20 h plus tard : revient (1er retour)", pres.aPresenter(compte, T0 + 20 * H)); pres.noterVue(compte, T0 + 20 * H);
+nouvelleSession(); eq("… puis plus avant 20 h de plus", pres.aPresenter(compte, T0 + 30 * H), false);
+nouvelleSession(); vrai("session suivante, un jour après : revient (2e et dernier retour)", pres.aPresenter(compte, T0 + 44 * H)); pres.noterVue(compte, T0 + 44 * H);
+nouvelleSession(); eq("après 3 affichages : plus jamais", [pres.aPresenter(compte, T0 + 30 * 24 * H), pres.VUES_MAX], [false, 3]);
+reinit(); pres.noterVue(compte, T0); nouvelleSession();
+vrai("horloge du poste reculée : la fenêtre n'est pas bloquée pour autant", pres.aPresenter(compte, T0 - 48 * H));
+reinit(); globalThis.localStorage.setItem(cleCompte, '{"vues":1,"fini":false}'); nouvelleSession();
+vrai("mémoire sans heure (premier format) : comptée comme ancienne", pres.aPresenter(compte, T0));
 reinit(); pres.noterFini(compte);
-eq("assistant ouvert ou « Ne plus afficher » : plus jamais", pres.aPresenter(compte), false);
-nouvelleSession(); eq("… même à une autre session", pres.aPresenter(compte), false);
-reinit(); pres.noterVue(compte); pres.noterFini(compte);
-eq("fini garde le nombre d'affichages", JSON.parse(globalThis.localStorage.getItem(cleCompte)), { vues: 1, fini: true });
+eq("assistant ouvert ou « Ne plus afficher » : plus jamais", pres.aPresenter(compte, T0), false);
+nouvelleSession(); eq("… même à une autre session, des jours après", pres.aPresenter(compte, T0 + 30 * 24 * H), false);
+reinit(); pres.noterVue(compte, T0); pres.noterFini(compte);
+eq("fini garde le nombre d'affichages et l'heure", JSON.parse(globalThis.localStorage.getItem(cleCompte)), { vues: 1, fini: true, derniere: T0 });
 eq("sans identité (session sans compte) : rien", [pres.aPresenter(""), pres.aPresenter(null)], [false, false]);
 reinit(); globalThis.localStorage.setItem(cleCompte, "{pas du json");
 eq("valeur illisible : pas de fenêtre (elle reviendrait à chaque page)", pres.aPresenter(compte), false);
@@ -328,32 +337,78 @@ eq("valeur illisible : pas de fenêtre (elle reviendrait à chaque page)", pres.
   Object.defineProperty(globalThis, "localStorage", { value: avant, configurable: true, writable: true });
 }
 vrai("délai de calme : quelques secondes", pres.DELAI_PRESENTATION >= 2000 && pres.DELAI_PRESENTATION <= 4000);
+vrai("écart entre deux affichages : 20 h", pres.ECART_RETOUR === 20 * H);
 eq("champs qui ouvrent le clavier (lanceur masqué)", [{ tagName: "INPUT", type: "text" }, { tagName: "INPUT", type: "number" }, { tagName: "INPUT", type: "search" },
   { tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "SELECT" }, { tagName: "DIV", isContentEditable: true }].map(pres.champSaisie), [true, true, true, true, true, true, true]);
 eq("pas de clavier : boutons, cases, rien", [{ tagName: "BUTTON" }, { tagName: "INPUT", type: "checkbox" }, { tagName: "INPUT", type: "button" }, { tagName: "A" }, null]
   .map(pres.champSaisie), [false, false, false, false, false]);
+eq("champ rempli en cours de saisie : la fenêtre attend (vide, liste, case : non)",
+  [{ tagName: "INPUT", type: "text", value: "dolip" }, { tagName: "TEXTAREA", value: "x" }, { tagName: "DIV", isContentEditable: true, textContent: "a" },
+    { tagName: "INPUT", type: "search", value: "" }, { tagName: "SELECT", value: "otc" }, { tagName: "INPUT", type: "checkbox", value: "on" }, null].map(pres.champRempli),
+  [true, true, true, false, false, false, false]);
+{
+  // boucle d'attente : calme d'affilée, morceau chargé, échec du chargement (lanceur gardé, rien de compté)
+  const P = pres.PAS_ATTENTE, D = pres.DELAI_PRESENTATION;
+  let etat = { calme: 0 }, suites = [];
+  for (let i = 0; i < D / P; i++) { etat = pres.pasAttente({ calme: etat.calme, occupe: false, charge: true, echec: false }); suites.push(etat.suite); }
+  eq("attente : calme d'affilée puis affichage", suites, [...Array(D / P - 1).fill("attendre"), "afficher"]);
+  eq("attente : activité, autre fenêtre ou champ rempli → le calme repart de zéro", pres.pasAttente({ calme: D - P, occupe: true, charge: true, echec: false }), { calme: 0, suite: "attendre" });
+  eq("attente : calme atteint mais morceau pas encore chargé → attendre", pres.pasAttente({ calme: D, occupe: false, charge: false, echec: false }).suite, "attendre");
+  eq("attente : morceau introuvable (nouvelle version en ligne) → abandon", pres.pasAttente({ calme: D, occupe: false, charge: false, echec: true }), { calme: 0, suite: "abandonner" });
+}
 {
   const [a, b, c] = ["a", "b", "c"].map((n) => ({ n }));
   eq("Tab sur le dernier bouton → premier", pres.focusSuivant([a, b, c], c, false), a);
   eq("Maj+Tab sur le premier → dernier", pres.focusSuivant([a, b, c], a, true), c);
   eq("Tab au milieu : suit son cours", [pres.focusSuivant([a, b, c], b, false), pres.focusSuivant([a, b, c], b, true)], [null, null]);
-  eq("focus sur la fenêtre elle-même : premier, ou dernier avec Maj", [pres.focusSuivant([a, b, c], {}, false), pres.focusSuivant([a, b, c], {}, true)], [a, c]);
+  eq("focus hors de la fenêtre (<body> après un clic sur le voile) : premier, ou dernier avec Maj", [pres.focusSuivant([a, b, c], {}, false), pres.focusSuivant([a, b, c], {}, true)], [a, c]);
   eq("aucun bouton", pres.focusSuivant([], a, false), null);
+}
+{
+  // place du lanceur au repos : sonde sous le lanceur (doublure d'elementsFromPoint : une page à zones)
+  const lanceurEl = { nom: "lanceur" }, panierEl = { nom: "panier" }, plus = { nom: "+", controle: true }, texte = { nom: "texte" }, fond = { nom: "fond" };
+  // page : un « + » occupe x 900-940, y 760-800 ; le panier x 1350-1410, y 816-876 ; ailleurs du texte
+  const page = (x, y) => {
+    const sous = x >= 900 && x <= 940 && y >= 760 && y <= 800 ? [plus, fond] : [texte, fond];
+    return x >= 1350 && x <= 1410 && y >= 816 && y <= 876 ? [panierEl, ...sous] : sous;
+  };
+  const sonde = (r, avecLanceur = true) => pres.recouvre(r, { aPoint: (x, y) => (avecLanceur && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom ? [lanceurEl, ...page(x, y)] : page(x, y)),
+    ignorer: (e) => e === lanceurEl || e === panierEl, estControle: (e) => !!e.controle });
+  const pastille = { left: 880, top: 752, right: 1406, bottom: 804 }, bulle = { left: 1354, top: 752, right: 1406, bottom: 804 };
+  eq("sonde : la pastille couvrirait le « + », la bulle non", [sonde(pastille), sonde(bulle)], [true, false]);
+  vrai("sonde : le lanceur et le panier flottant sont ignorés", !sonde({ left: 1350, top: 816, right: 1410, bottom: 876 }));
+  vrai("sonde : marge de 4 px autour du lanceur (contrôle juste à côté)", sonde({ left: 944, top: 760, right: 990, bottom: 800 }) && !sonde({ left: 946, top: 760, right: 990, bottom: 800 }));
+  const pts = pres.pointsSonde({ left: 0, top: 0, right: 52, bottom: 52 }, 4, 8);
+  vrai("sonde : grille de points, bords compris", pts.some(([x, y]) => x === -4 && y === -4) && pts.some(([x, y]) => x === 56 && y === 56) && pts.length === 81, String(pts.length));
+  const place = (pastilleVoulue, libres, garde = false) => pres.placeLanceur({ pastilleVoulue, libre: (f) => libres.includes(f), garde });
+  eq("place : pastille en haut de page si sa place est libre", place(true, ["pastille", "bulle"]), "pastille");
+  eq("place : pastille qui couvrirait un contrôle → bulle", place(true, ["bulle"]), "bulle");
+  eq("place : page défilée (ou mobile) → bulle", place(false, ["pastille", "bulle"]), "bulle");
+  eq("place : même la bulle couvrirait un contrôle → masqué", [place(true, []), place(false, [])], ["masque", "masque"]);
+  eq("place : focus clavier ou pointeur sur le lanceur → jamais masqué", place(false, [], true), "bulle");
 }
 
 const appels6 = { essayer: 0, plusTard: 0, jamais: 0 };
 const fenetre = (mobile) => rendu.presentation({ mobile, onEssayer: () => appels6.essayer++, onPlusTard: () => appels6.plusTard++, onNePlusAfficher: () => appels6.jamais++ });
 const fb = fenetre(false), fm = fenetre(true);
+const NB = " ";
 vrai("fenêtre : role=dialog aria-modal", /^<div[^>]*role="dialog"[^>]*aria-modal="true"/.test(fb), fb.slice(0, 240));
 {
   const titre = /aria-labelledby="([^"]+)"/.exec(fb)?.[1], texteId = /aria-describedby="([^"]+)"/.exec(fb)?.[1];
   vrai("fenêtre : titre et texte reliés", !!titre && fb.includes(`<h2 id="${titre}"`) && !!texteId && fb.includes(`id="${texteId}"`), `${titre} ${texteId}`);
 }
-vrai("fenêtre : titre « Nouveau : votre Assistant Elixir »", fb.includes("Nouveau : votre Assistant Elixir"));
-vrai("fenêtre : ce que c'est (factures et commandes Elixir, jamais les règlements)",
-  fb.includes("assistant automatique") && fb.includes("vos factures et vos commandes Elixir") && fb.includes("Il ne voit jamais vos règlements"));
-vrai("fenêtre : les 4 exemples", ["Duplicata d&#x27;une facture", "Relevé de facturation", "Où en est ma commande ?", "Demande de retour ou réclamation"]
+vrai("fenêtre : titre « Nouveau : votre Assistant Elixir » (espace insécable avant « : »)", fb.includes(`Nouveau${NB}: votre Assistant Elixir`));
+vrai("fenêtre : ce que c'est (factures et commandes Elixir, jamais les règlements), sans promettre une réponse immédiate",
+  fb.includes("assistant automatique") && fb.includes("vos factures et vos commandes Elixir") && fb.includes("Il ne voit jamais vos règlements")
+  && /vous répond\s+directement/.test(fb) && !fb.includes("tout de suite"));
+vrai("fenêtre : les 4 exemples", ["Duplicata d&#x27;une facture", "Relevé de facturation", `Où en est ma commande${NB}?`, "Demande de retour ou réclamation"]
   .every((t) => fb.includes(t)) && (fb.match(/<li\b/g) || []).length === 4, fb);
+{
+  // texte visible de la fenêtre (sans CSS ni balises) : jamais d'espace sécable avant « ? », « : », « » » ni après « « »
+  const texte = (h) => h.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, "").replace(/&#x27;/g, "'");
+  const fautes = [fb, fm].flatMap((h) => texte(h).match(/.{0,20}(?: [?:»]|« ).{0,10}/g) || []);
+  vrai("fenêtre : typographie (insécables avant « ? » et « : », dans « »)", fb.includes(`par exemple${NB}:`) && fb.includes(`«${NB}Aide${NB}»`) && !fautes.length, JSON.stringify(fautes));
+}
 vrai("fenêtre : 4 icônes d'exemple décoratives", (fb.match(/<span aria-hidden="true"[^>]*><svg/g) || []).length === 4);
 vrai("fenêtre : transmission à l'équipe Elixir", fb.includes("il transmet votre demande à l&#x27;équipe Elixir"));
 vrai("fenêtre : « Essayer maintenant », « Plus tard », « Ne plus afficher » (vrais boutons)",
@@ -362,20 +417,41 @@ vrai("fenêtre : focus initial sur « Fermer » (FocusFenetre)", /<button[^>]*da
 vrai("fenêtre : en-tête pétrole, croix or clair, bouton principal pétrole, aucun or",
   fb.includes("background:var(--petrol)") && fb.includes("color:var(--or-clair)") && /class="ex-btn-petrole"[^>]*>.*Essayer maintenant/.test(fb) && !/var\(--or\)/.test(fb));
 vrai("fenêtre : aucun lien ni image", !/<a\b|<img/i.test(fb + fm));
-vrai("fenêtre : où retrouver l'assistant (ordinateur / mobile)", fb.includes("le bouton « Une question ? »") && fm.includes("la bulle en bas à droite"));
+vrai("fenêtre : où retrouver l'assistant (la bulle, commune au lanceur et à l'en-tête)", [fb, fm].every((h) => h.includes("avec la bulle de discussion, en haut de l&#x27;écran ou en bas à droite")));
+vrai("fenêtre : écran bas (375 × 667) — exemples resserrés, ligne « Vous le retrouverez… » retirée",
+  fb.includes("@media (max-width: 767px) and (max-height: 700px)") && /\.ex-presentation__retrouver \{ display: none/.test(fb) && fb.includes('class="ex-presentation__retrouver"'));
 eq("fenêtre : rendue sans action", [appels6.essayer, appels6.plusTard, appels6.jamais], [0, 0, 0]);
+{
+  // clavier écouté sur le document (capture), pas sur la fenêtre : Tab et Échap marchent même après un clic sur le voile
+  const src = readFileSync(resolve(SRC, "components/assistant/Presentation.jsx"), "utf8");
+  vrai("fenêtre : Tab et Échap écoutés sur le document, en capture", src.includes('document.addEventListener("keydown", auClavier, true)') && !src.includes("onKeyDown={auClavier}"));
+  vrai("fenêtre : un clic sur le voile ne retire pas le focus des boutons", /onMouseDown=\{\(e\) => \{ if \(e\.target === e\.currentTarget\) e\.preventDefault\(\); \}\}/.test(src));
+  const app = readFileSync(resolve(SRC, "App.jsx"), "utf8");
+  vrai("App : pas de fenêtre à l'arrivée par le lien d'un menu promo (comme « Offres du moment »)", /presenter=\{!actingFor && assistant\.mode === "complet" && !menuViaLien\.current\}/.test(app));
+  vrai("App : lanceur masqué pendant la barre de confirmation U-Labs", /activeTab === "ulabs" && Object\.keys\(quantities\)\.some\(k => k\.startsWith\("ulabs-"\)/.test(app));
+  const aide = readFileSync(resolve(SRC, "components/assistant/Aide.jsx"), "utf8");
+  vrai("couche : défilement (molette, doigt, barre) compté comme activité", ['"wheel"', '"touchmove"', '"scroll"'].every((t) => aide.includes(t)));
+  vrai("couche : fenêtre affichée et comptée seulement une fois son morceau chargé", aide.includes("pasAttente({ calme, occupe, charge, echec })") && /if \(pas\.suite === "afficher"\) \{ noterVue\(identite\); setAffiche\(true\); \}/.test(aide));
+  vrai("couche : focus rendu au lanceur (ou à la bulle de l'en-tête) quand rien ne l'a repris", aide.includes('document.querySelector("[data-assistant-ouvrir]")'));
+}
 
 const lanceur = (props) => rendu.couche({ identite: compte, mobile: false, presenter: true, pret: true, ouvert: false, cache: false, pile: false, onOuvrir() {}, ...props });
 const lb = lanceur(), lm = lanceur({ mobile: true });
-vrai("lanceur : vrai bouton avec aria-label", /<button type="button" class="ex-lanceur"[^>]*aria-label="Une question \? Assistant Elixir"/.test(lb), lb.slice(0, 400));
-vrai("lanceur (ordinateur) : pastille « Une question ? Assistant Elixir » avec la bulle", lb.includes("Une question ?</span> Assistant Elixir") && lb.includes("<svg"));
-vrai("lanceur (mobile) : bulle seule, nommée par aria-label", !lm.includes("Une question ?</span>") && /aria-label="Une question \? Assistant Elixir"/.test(lm));
-vrai("lanceur : affiché par défaut, au coin quand il n'y a pas de panier", !/<button[^>]*hidden/.test(lb) && !/<button[^>]*data-pile/.test(lb));
+vrai("lanceur : vrai bouton avec aria-label", new RegExp(`<button type="button" class="ex-lanceur"[^>]*aria-label="Une question${NB}\\? Assistant Elixir"`).test(lb), lb.slice(0, 400));
+vrai("lanceur (ordinateur) : pastille « Une question ? Assistant Elixir » avec la bulle", lb.includes(`Une question${NB}?</span> Assistant Elixir`) && lb.includes("<svg"));
+vrai("lanceur (mobile) : bulle seule, nommée par aria-label", !lm.includes(`Une question${NB}?</span>`) && new RegExp(`aria-label="Une question${NB}\\? Assistant Elixir"`).test(lm));
+vrai("lanceur : affiché par défaut, au coin quand il n'y a pas de panier", !/<button[^>]*hidden/.test(lb) && !/<button[^>]*data-pile/.test(lb) && !/<button[^>]*data-masque/.test(lb));
+vrai("lanceur : pastille au premier rendu sur ordinateur, bulle sur mobile", !/<button[^>]*data-forme/.test(lb) && /<button[^>]*data-forme="bulle"/.test(lm));
 vrai("lanceur : au-dessus du panier flottant quand il est affiché", /<button[^>]*data-pile=""/.test(lanceur({ pile: true })));
 vrai("lanceur : masqué pendant que le panneau est ouvert", /<button[^>]*hidden=""/.test(lanceur({ ouvert: true })));
-vrai("lanceur : masqué pendant que le panier (ou l'admin, le tiroir de menu) est ouvert", /<button[^>]*hidden=""/.test(lanceur({ cache: true })));
+vrai("lanceur : masqué pendant que le panier (ou l'admin, le tiroir de menu, la barre U-Labs) est ouvert", /<button[^>]*hidden=""/.test(lanceur({ cache: true })));
 vrai("lanceur : zIndex du panier flottant, zone de sécurité, mouvement réduit, impression",
   ["z-index: 290", "env(safe-area-inset-bottom", "prefers-reduced-motion: reduce", ".ex-lanceur--appel { animation: none; }", "@media print"].every((t) => lb.includes(t)));
+vrai("lanceur : bulle de 52 px sur l'axe du panier (bord droit 28 px), libellé au survol (souris) et au focus clavier",
+  ['.ex-lanceur[data-forme="bulle"] { width: 52px;', "right: 28px", '.ex-lanceur[data-forme="bulle"]:focus-visible', "@media (hover: hover)", '.ex-lanceur[data-forme="bulle"]:hover']
+    .every((t) => lb.replace(/&quot;/g, '"').includes(t)));
+vrai("lanceur : masqué sans disparaître de la mise en page (sondes), ni clic ni focus possibles",
+  /\.ex-lanceur\[data-masque\] \{ visibility: hidden; opacity: 0; pointer-events: none; \}/.test(lb));
 vrai("lanceur : pas de fenêtre au premier rendu (elle attend le catalogue et le calme)", !lb.includes("role=\"dialog\""));
 
 // bundle des pharmacies (après npm run build) : la fenêtre et le lanceur sont dans des morceaux chargés à la demande
@@ -385,7 +461,7 @@ vrai("lanceur : pas de fenêtre au premier rendu (elle attend le catalogue et le
   if (!index.length) console.log("  · dist/ absent : lancer npm run build pour contrôler le bundle des pharmacies");
   else {
     const js = index.map((n) => readFileSync(resolve(dist, n), "utf8")).join("\n");
-    vrai("bundle des pharmacies : ni la fenêtre de présentation ni le lanceur", !js.includes("Nouveau : votre Assistant Elixir") && !js.includes("ex-lanceur"));
+    vrai("bundle des pharmacies : ni la fenêtre de présentation ni le lanceur", !js.includes("votre Assistant Elixir") && !js.includes("Demandez-lui par exemple") && !js.includes("ex-lanceur"));
     vrai("morceaux à la demande : Aide (lanceur) et Presentation (fenêtre)", readdirSync(dist).some((n) => /^Aide-.*\.js$/.test(n)) && readdirSync(dist).some((n) => /^Presentation-.*\.js$/.test(n)));
   }
 }

@@ -343,7 +343,8 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // Part de l'Assistant Elixir dans ce bundle (bouton, état, renouvellement des jetons, entrées d'App et de Mes commandes ;
 // groupe « AIDE » et panneau chargés à la demande) : ≈ 3,6 Ko mesurés le 19/10/2026 ; critère relevé de 3 à 4 Ko avec
 // l'accord de Zineb (19/10/2026). Lanceur flottant et fenêtre de présentation (chargés à la demande, eux aussi) :
-// 3 559 octets en tout, mesurés contre le build de f2461b7 (master sans l'assistant), soit +120 octets.
+// 3 559 octets en tout, mesurés contre le build de f2461b7 (master sans l'assistant), soit +120 octets ; 3 655 après les
+// correctifs de la revue (lien de menu promo, barre U-Labs : +96 octets).
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 940_000;

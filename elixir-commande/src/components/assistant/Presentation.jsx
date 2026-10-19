@@ -6,6 +6,10 @@
 // or clair ; « Essayer maintenant » pétrole (l'or reste à l'envoi de la commande, aux promos et au compteur du panier).
 // Accessibilité : role="dialog" aria-modal, titre et texte reliés (aria-labelledby, aria-describedby) ; focus sur
 // « Fermer » à l'ouverture et rendu à la fermeture (FocusFenetre) ; Tab gardé dans la fenêtre ; Échap = « Plus tard ».
+// Tab et Échap sont écoutés sur le document (phase de capture), pas sur la fenêtre : après un clic sur le voile, le focus
+// était sur <body> et Maj+Tab partait sur les boutons de quantité derrière la fenêtre (revue du 19/10/2026) ; un clic sur
+// le voile ne retire plus le focus des boutons.
+// Typographie : espaces insécables (\u00a0, &nbsp;) avant « ? » et « : » et dans les guillemets.
 // Props : mobile ; onEssayer (ouvre l'assistant), onPlusTard (Échap et « Fermer » aussi), onNePlusAfficher.
 import React, { useEffect, useRef } from "react";
 import { T, R, ui } from "../../theme.js";
@@ -17,13 +21,14 @@ import { focusSuivant } from "./presentation.js";
 const EXEMPLES = [
   ["document", "Duplicata d'une facture", "Retrouvée par sa date ou son numéro, en PDF."],
   ["calendrier", "Relevé de facturation", "Sur la période de votre choix, en PDF et Excel."],
-  ["camion", "Où en est ma commande ?", "Préparation, sortie d'entrepôt, quantités servies."],
+  ["camion", "Où en est ma commande\u00a0?", "Préparation, sortie d'entrepôt, quantités servies."],
   ["recommander", "Demande de retour ou réclamation", "Préparée avec vous, envoyée seulement après votre accord."],
 ];
 
 // Mobile (< 768 px) : tout tient sur un écran de 375 × 812 sans défiler — exemples sur une colonne, titres seuls (le
 // détail reste sur ordinateur), pas de sous-titre ; « Essayer maintenant » sur toute la largeur, « Plus tard » et « Ne plus
-// afficher » côte à côte dessous (cibles de 44 px au moins)
+// afficher » côte à côte dessous (cibles de 44 px au moins). Écran bas (≤ 700 px : iPhone SE, 8) : exemples resserrés,
+// marges réduites et ligne « Vous le retrouverez… » retirée, pour que tout tienne aussi sur 375 × 667 (revue du 19/10/2026)
 const CSS = `
 .ex-presentation__exemples { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
 .ex-presentation__exemple { display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; background: var(--surface);
@@ -39,6 +44,14 @@ const CSS = `
   .ex-presentation__actions > :first-child { grid-column: 1 / -1; }
   .ex-presentation__plus { margin-left: 0; }
 }
+@media (max-width: 767px) and (max-height: 700px) {
+  .ex-presentation__exemple { padding: 6px 10px; }
+  .ex-presentation__exemple > span:first-child { width: 32px !important; height: 32px !important; border-radius: 10px !important; }
+  .ex-presentation__retrouver { display: none !important; }
+  .ex-presentation__corps { padding-top: 12px !important; }
+  .ex-presentation__invite { margin: 10px 0 6px !important; }
+  .ex-presentation__actions { padding-top: 10px !important; padding-bottom: 12px !important; }
+}
 @media print { .ex-presentation { display: none !important; } }
 `;
 
@@ -53,18 +66,26 @@ export default function Presentation({ mobile, onEssayer, onPlusTard, onNePlusAf
     return () => { html.style.overflow = avant; };
   }, [mobile]);
 
-  // Échap = « Plus tard » ; Tab et Maj+Tab bouclent sur les boutons de la fenêtre
-  const auClavier = (e) => {
-    if (e.key === "Escape") { e.stopPropagation(); onPlusTard(); return; }
-    if (e.key !== "Tab") return;
-    const cible = focusSuivant([...(boite.current?.querySelectorAll("button:not([disabled])") || [])], document.activeElement, e.shiftKey);
-    if (cible) { e.preventDefault(); cible.focus(); }
-  };
+  // Échap = « Plus tard » ; Tab et Maj+Tab bouclent sur les boutons de la fenêtre, où que soit le focus (sur <body>
+  // après un clic ailleurs : il revient dans la fenêtre). Écoute sur le document, en capture : la fenêtre est au-dessus
+  // de tout (zIndex 2000), rien derrière elle ne reçoit ces touches.
+  useEffect(() => {
+    const auClavier = (e) => {
+      if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onPlusTard(); return; }
+      if (e.key !== "Tab") return;
+      const cible = focusSuivant([...(boite.current?.querySelectorAll("button:not([disabled])") || [])], document.activeElement, e.shiftKey);
+      if (cible) { e.preventDefault(); cible.focus(); }
+    };
+    document.addEventListener("keydown", auClavier, true);
+    return () => document.removeEventListener("keydown", auClavier, true);
+  }, [onPlusTard]);
 
   const bouton = { ...ui.btn("primaire", "l"), background: undefined, color: undefined };
   return (
     <div ref={boite} className="ex-presentation" role="dialog" aria-modal="true" aria-labelledby="presentation-assistant-titre"
-      aria-describedby="presentation-assistant-texte" onKeyDown={auClavier} style={{ ...ui.overlay, zIndex: 2000 }}>
+      aria-describedby="presentation-assistant-texte" style={{ ...ui.overlay, zIndex: 2000 }}
+      // clic sur le voile : le focus reste sur le bouton qui l'avait (sinon il passe sur <body>, hors de la fenêtre)
+      onMouseDown={(e) => { if (e.target === e.currentTarget) e.preventDefault(); }}>
       <style>{CSS}</style>
       <div style={{ background: T.paper, color: T.ink, borderRadius: R.l, width: "100%", maxWidth: 580, maxHeight: "calc(100vh - 32px)",
         overflow: "hidden", display: "flex", flexDirection: "column", boxShadow: T.shadow3, animation: "fadeIn .25s var(--ease)" }}>
@@ -76,7 +97,7 @@ export default function Presentation({ mobile, onEssayer, onPlusTard, onNePlusAf
           <CroixElixir taille={mobile ? 28 : 38} style={{ color: T.orClair }} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <h2 id="presentation-assistant-titre" style={{ margin: 0, fontSize: mobile ? 18 : 22, fontWeight: 640, letterSpacing: "-0.02em", lineHeight: 1.2, color: T.paper }}>
-              Nouveau : votre Assistant Elixir
+              Nouveau&nbsp;: votre Assistant Elixir
             </h2>
             <div className="ex-presentation__sous-titre" style={{ fontSize: 12, color: T.paperMute, marginTop: 4 }}>Factures · relevés · commandes · retours</div>
           </div>
@@ -84,12 +105,12 @@ export default function Presentation({ mobile, onEssayer, onPlusTard, onNePlusAf
             style={{ ...ui.rond(mobile ? 44 : 36), color: T.paper, alignSelf: "flex-start" }}><Icone nom="fermer" /></button>
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: mobile ? "16px 18px 4px" : "24px 28px 8px" }}>
+        <div className="ex-presentation__corps" style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: mobile ? "16px 18px 4px" : "24px 28px 8px" }}>
           <p id="presentation-assistant-texte" style={{ margin: 0, fontSize: mobile ? 14 : 15, lineHeight: 1.5, color: T.ink }}>
             Un assistant automatique consulte vos factures et vos commandes Elixir, celles de votre pharmacie uniquement, et vous répond
-            tout de suite. <b>Il ne voit jamais vos règlements.</b>
+            directement. <b>Il ne voit jamais vos règlements.</b>
           </p>
-          <p style={{ margin: mobile ? "14px 0 8px" : "18px 0 10px", fontSize: 13, fontWeight: 700, color: T.inkSoft }}>Demandez-lui par exemple :</p>
+          <p className="ex-presentation__invite" style={{ margin: mobile ? "14px 0 8px" : "18px 0 10px", fontSize: 13, fontWeight: 700, color: T.inkSoft }}>Demandez-lui par exemple&nbsp;:</p>
           <ul className="ex-presentation__exemples">
             {EXEMPLES.map(([icone, titre, detail]) => (
               <li key={titre} className="ex-presentation__exemple">
@@ -106,11 +127,13 @@ export default function Presentation({ mobile, onEssayer, onPlusTard, onNePlusAf
             <Icone nom="groupe" taille={18} style={{ color: T.teal }} />
             <span>Si besoin, il transmet votre demande à l'équipe Elixir.</span>
           </div>
-          <p style={{ margin: mobile ? "10px 0 0" : "14px 0 0", fontSize: 12, lineHeight: 1.45, color: T.inkMute, display: "flex", alignItems: "flex-start", gap: 6 }}>
+          {/* le lanceur flottant est une pastille « Une question ? » en haut de page sur ordinateur, une bulle sinon, et
+              s'efface quand il recouvrirait un bouton : on nomme la bulle, commune au lanceur et à l'en-tête */}
+          <p className="ex-presentation__retrouver" style={{ margin: mobile ? "10px 0 0" : "14px 0 0", fontSize: 12, lineHeight: 1.45, color: T.inkMute, display: "flex", alignItems: "flex-start", gap: 6 }}>
             <Icone nom="bulle" taille={14} style={{ marginTop: 1 }} />
             <span>
-              Vous le retrouverez à tout moment avec {mobile ? "la bulle" : "le bouton « Une question ? »"} en bas à droite de l'écran,
-              et dans le menu, rubrique « Aide ».
+              Vous le retrouverez à tout moment avec la bulle de discussion, en haut de l'écran ou en bas à droite, et dans le
+              menu, rubrique «&nbsp;Aide&nbsp;».
             </span>
           </p>
         </div>

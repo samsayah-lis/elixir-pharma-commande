@@ -3530,10 +3530,15 @@ export default function App() {
           onReconnecter={demanderReconnexion} />
       )}
       {/* Assistant Elixir : lanceur flottant (au-dessus du panier flottant) et fenêtre de présentation, une fois le catalogue
-          affiché, aux pharmacies seulement (jamais en saisie Elixir) ; chargés à la demande (Aide.jsx, Presentation.jsx) */}
+          affiché, aux pharmacies seulement (jamais en saisie Elixir, ni à l'arrivée par le lien d'un menu promo, comme
+          « Offres du moment ») ; chargés à la demande (Aide.jsx, Presentation.jsx). Lanceur masqué aussi tant que la barre
+          collante de confirmation U-Labs est affichée (quantités U-Labs saisies) : il recouvrait son encart « Conditions
+          non remplies » entre 768 et 1 300 px ; la bulle de l'en-tête reste. */}
       {assistantDispo && (
-        <CoucheAssistant identite={identiteAssistant} mobile={isMobile} presenter={!actingFor && assistant.mode === "complet"} pret={!productsLoading}
-          ouvert={assistantOuvert} cache={cartOpen || showAdmin || (sidebarOpen && !isDesktop)} pile={cartCount > 0} onOuvrir={ouvrirAssistant} />
+        <CoucheAssistant identite={identiteAssistant} mobile={isMobile} presenter={!actingFor && assistant.mode === "complet" && !menuViaLien.current} pret={!productsLoading}
+          ouvert={assistantOuvert} pile={cartCount > 0} onOuvrir={ouvrirAssistant}
+          cache={cartOpen || showAdmin || (sidebarOpen && !isDesktop)
+            || (activeTab === "ulabs" && Object.keys(quantities).some(k => k.startsWith("ulabs-") && (parseInt(quantities[k]) || 0) > 0))} />
       )}
 
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son
