@@ -255,7 +255,8 @@ const verifieFichier = (chemin, silencieux) => {
   }
   if (a == null) { ko(`${chemin} : ajouté`); return false; }
   if (b == null) { ko(`${chemin} : supprimé`); return false; }
-  if (a !== b && typeof permis === "string") { console.log(`  ~ ${chemin} : modifié (autorisé : ${permis})`); return true; }
+  // motif texte = correctif de sécurité : admis seulement tant que la référence ne le contient pas encore
+  if (a !== b && typeof permis === "string" && enAttente("securite")) { console.log(`  ~ ${chemin} : modifié (autorisé : ${permis})`); return true; }
   if (a !== b) { const d = premiereDifference(a, b); ko(`${chemin} : modifié, ligne ${d.i + 1}`); return false; }
   if (!silencieux) ok(chemin);
   return true;

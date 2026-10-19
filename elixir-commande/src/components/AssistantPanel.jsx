@@ -388,7 +388,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
             {!auth.admin && (
               <div className="ex-assistant__actions">
                 <button type="button" className="ex-btn-petrole ex-assistant__btn ex-assistant__btn--fort" onClick={onReconnecter}>
-                  <Icone nom="deconnexion" taille={18} />Me reconnecter
+                  <Icone nom="cadenas" taille={18} />Me reconnecter
                 </button>
               </div>
             )}
