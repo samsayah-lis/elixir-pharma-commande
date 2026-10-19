@@ -7,7 +7,8 @@
 //    stock dans la réponse ;
 //  • calcul : Odoo en lecture seule (read_group, read, search_read), courbe par jour de Paris ;
 //  • accueil-offres : 401 sans jeton (rien lu), 503 si Supabase Auth est en panne, 403 sans compte, 200 privé (60 s)
-//    pour une pharmacie et pour l'admin, calcul au premier appel sous verrou, échec → perime ;
+//    pour une pharmacie et pour l'admin, calcul au premier appel sous verrou, échec → perime et pause de 10 min,
+//    échéance de 7 s (Odoo qui ne répond pas) ;
 //  • accueil-offres-refresh : Odoo en panne → cache conservé, journal écrit.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
@@ -27,7 +28,10 @@ const eq = (label, got, exp) => { if (JSON.stringify(got) === JSON.stringify(exp
   const f = S.fenetre(Date.parse("2026-10-19T20:16:44Z"));
   eq("15 jours, aujourd'hui compris", [f.jours.length, f.jours[0], f.jours[14], f.aujourdhui], [15, "2026-10-05", "2026-10-19", "2026-10-19"]);
   eq("depuis = J−14 à minuit, heure de Paris (été)", new Date(f.depuis).toISOString(), "2026-10-04T22:00:00.000Z");
-  eq("période précédente : 15 jours avant", new Date(f.avant).toISOString(), "2026-09-19T22:00:00.000Z");
+  // période précédente de même durée exacte (J−14 00:00 → maintenant, puis la même durée juste avant)
+  eq("période précédente : même durée que la période en cours", [f.depuis - f.avant, new Date(f.avant).toISOString()], [Date.parse("2026-10-19T20:16:44Z") - f.depuis, "2026-09-19T23:43:16.000Z"]);
+  const matin = S.fenetre(Date.parse("2026-10-19T04:40:00Z"));   // 6 h 40 à Paris : premier passage planifié
+  eq("à 6 h 40 aussi : durées égales (plus de biais de −4,8 %)", matin.depuis - matin.avant, Date.parse("2026-10-19T04:40:00Z") - matin.depuis);
   eq("minuit de Paris après le passage à l'heure d'hiver", new Date(S.minuitParis("2026-10-26")).toISOString(), "2026-10-25T23:00:00.000Z");
   eq("23 h 30 UTC le 31/10 = 1er novembre à Paris", S.jourParis("2026-10-31T23:30:00Z"), "2026-11-01");
   eq("date Odoo", S.dateOdoo(Date.parse("2026-10-04T22:00:00Z")), "2026-10-04 22:00:00");
@@ -108,6 +112,14 @@ eq("Ventoline en 2e (après les exclusions)", sel.slides[1].famille, "VENTOLINE"
 const exclus = sel.journal.join(" | ");
 eq("motifs d'exclusion", ["rupture", "contingenté", "sur justificatif labo", "stupéfiant", "seuil", "prix anormal", "menu masqué", "précommande", "fiche inactive"].filter(m => !exclus.includes(m)), []);
 eq("tendance et « nouveau »", [sel.slides[0].tendance_pct, sel.slides[0].nouveau, sel.slides[1].tendance_pct, sel.slides[1].nouveau], [13, false, null, true]);
+{
+  // campagne active à identifiant propre (section = id de la campagne, onglet ajouté par App) : écartée comme les autres
+  const menusCamp = S.contexteMenus({ displayConfig: {}, campagnes: [{ id: "camp_rentree", active: true }] });
+  const cureesCamp = [...curees, { cip: C(13), section: "camp_rentree", name: "PRODUIT13", pv: 10, pn: 9 }];
+  eq("premier menu : campagne à identifiant propre reconnue", [S.premierMenu(C(13), cureesCamp, menusCamp).campagne, S.premierMenu(C(14), cureesCamp, menusCamp).key], [true, "saisie"]);
+  const selCamp = S.selectionner({ classement: [{ pid: 13, cmd: 100, ph: 50, qte: 5 }, { pid: 14, cmd: 90, ph: 50, qte: 5 }], fiches, catalogue, curees: cureesCamp, menus: menusCamp });
+  eq("produit de campagne écarté de la vitrine", [selCamp.slides.map(d => d.principal), /campagne/.test(selCamp.journal.join(" "))], [[C(14)], true]);
+}
 eq("départage : commandes puis pharmacies", S.selectionner({ classement: [{ pid: 13, cmd: 100, ph: 10, qte: 5 }, { pid: 14, cmd: 100, ph: 20, qte: 5 }], fiches, catalogue, curees, menus }).slides.map(d => d.principal), [C(14), C(13)]);
 
 // ── 5. Réponse publique ──
@@ -202,7 +214,22 @@ const appel = async (jeton, extra, methode) => { const r = await creerGet(deps(e
   kv.clear();
   r = await appel("jeton-a", { odoo: async () => { throw new Error("Odoo injoignable"); } });
   eq("cache absent, Odoo en panne → 200 perime, rien écrit", [r.statut, r.corps.perime, r.corps.slides.length, kv.has("accueil:offres")], [200, true, 0, false]);
+  eq("échec noté (accueil:echec)", kv.get("accueil:echec")?.at, new Date(maintenant).toISOString());
+  appelsOdoo.length = 0;
+  r = await appel("jeton-a");
+  eq("échec de moins de 10 min : aucun nouveau calcul (Odoo non appelé), perime", [r.statut, r.corps.perime, appelsOdoo.length], [200, true, 0]);
+  r = await appel("jeton-a", { maintenant: () => maintenant + 11 * 60e3 });
+  eq("échec de plus de 10 min : nouveau calcul", [r.statut, r.corps.slides.length, kv.has("accueil:offres")], [200, 12, true]);
+  // Odoo trop lent : réponse à l'échéance (7 s après le début de l'appel ; horloge simulée : 6,9 s déjà passées après la
+  // première lecture, il reste 100 ms), verrou rendu, échec noté
+  kv.clear();
+  const t0 = Date.now();
+  let verrouRendu = false, horloge = 0;
+  r = await appel("jeton-a", { maintenant: () => maintenant + (horloge++ ? 6900 : 0), odoo: () => new Promise(() => {}),
+    verrou: async (fn) => { try { return { resultat: await fn() }; } finally { verrouRendu = true; } } });
+  eq("Odoo qui ne répond pas : perime à l'échéance, verrou rendu, échec noté", [r.statut, r.corps.perime, verrouRendu, kv.has("accueil:echec"), Date.now() - t0 < 2000], [200, true, true, true, true]);
   // verrou pris par un autre appel : perime sans attendre
+  kv.clear();
   r = await appel("jeton-a", { verrou: async () => ({ occupe: true }) });
   eq("calcul déjà en cours ailleurs → perime", [r.statut, r.corps.perime], [200, true]);
   // cache ancien (> 36 h) : perime

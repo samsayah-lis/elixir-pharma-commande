@@ -29,6 +29,23 @@ export function useMedia(requete) {
   return v;
 }
 export const REDUIT = "(prefers-reduced-motion: reduce)";
+
+// Rangée à défilement horizontal : côtés qui débordent ("", "g", "d", "gd"), suivis au défilement et au redimensionnement
+// (posé en data-debord : fondu CSS du côté qui déborde, aucun élément coupé net)
+export function useDebord(ref, cle) {
+  const [debord, setDebord] = useState("");
+  useEffect(() => {
+    const l = ref.current;
+    if (!l) return undefined;
+    const maj = () => setDebord((l.scrollLeft > 1 ? "g" : "") + (l.scrollLeft + l.clientWidth < l.scrollWidth - 1 ? "d" : ""));
+    maj();
+    l.addEventListener("scroll", maj, { passive: true });
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(maj) : null;
+    ro?.observe(l);
+    return () => { l.removeEventListener("scroll", maj); ro?.disconnect(); };
+  }, [ref, cle]);
+  return debord;
+}
 export const POINTEUR_FIN = "(hover: hover) and (pointer: fine)";
 
 // Photos de la banque d'images (taille dans l'adresse : /media/thumbnail|medium|large/) ; autre adresse : telle quelle

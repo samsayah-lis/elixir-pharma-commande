@@ -125,8 +125,9 @@ const Presentation = React.lazy(() => chargerPresentation().catch(() => ({ defau
 // Props (App) : identite (compte, comme le panneau) ; mobile ; presenter (fenêtre permise : pharmacie connectée, assistant
 // complet, jamais en saisie Elixir ni à l'arrivée par le lien d'un menu promo) ; pret (catalogue affiché) ; ouvert
 // (panneau ouvert) ; cache (panier, admin, tiroir de menu mobile ou barre U-Labs affichés) ; pile (panier flottant
-// affiché) ; onOuvrir() (ouvre le panneau).
-export function CoucheAssistant({ identite, mobile, presenter, pret, ouvert, cache, pile, onOuvrir }) {
+// affiché) ; onOuvrir() (ouvre le panneau) ; differer (page d'accueil affichée : la fenêtre ne s'ouvre pas par-dessus la
+// vitrine, elle attend le premier menu ouvert ; rien n'est compté pendant ce temps).
+export function CoucheAssistant({ identite, mobile, presenter, pret, ouvert, cache, pile, onOuvrir, differer = false }) {
   const [aFaire, setAFaire] = useState(false);     // fenêtre encore à présenter dans cet onglet (presentation.js)
   const [affiche, setAffiche] = useState(false);
   const [appel, setAppel] = useState(false);       // signal discret sur le lanceur
@@ -153,7 +154,7 @@ export function CoucheAssistant({ identite, mobile, presenter, pret, ouvert, cac
   // sur mobile), onglet visible, aucun champ rempli en cours de saisie, puis DELAI_PRESENTATION de calme d'affilée (une
   // frappe, un clic ou un défilement relance l'attente). Morceau Presentation préchargé : affiché (et compté) seulement une
   // fois chargé ; introuvable → pas de fenêtre pour cette page, rien de compté, le lanceur reste (pasAttente).
-  const attend = aFaire && !!pret && !ouvert && !cache && !affiche;
+  const attend = aFaire && !!pret && !ouvert && !cache && !affiche && !differer;
   useEffect(() => {
     if (!attend) return;
     let calme = 0, charge = false, echec = false;

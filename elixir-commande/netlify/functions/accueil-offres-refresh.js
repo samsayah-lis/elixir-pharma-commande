@@ -7,7 +7,7 @@ import { creerSources, calculerClassement, CLE_CACHE, CLE_JOURNAL } from "./_acc
 
 export function creerHandler(deps = {}) {
   return async () => {
-    const src = creerSources(deps);
+    const src = creerSources(deps, { delaiOdoo: 8000 });   // 8 s par appel : le catch écrit le journal avant la limite de 30 s
     const journal = [];
     const debut = src.maintenant();
     try {

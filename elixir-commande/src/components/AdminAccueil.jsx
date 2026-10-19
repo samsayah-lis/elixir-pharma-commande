@@ -2,8 +2,12 @@
 // Réglages publiés dans display_config.accueil par saveDisplayConfig (inchangée) : masquer l'accueil (interrupteur
 // d'urgence), ouvrir le site sur l'accueil, défilement automatique sur ordinateur, produits exclus de la vitrine.
 // Aperçu en lecture seule du classement (GET accueil-offres, jeton admin) : « Exclure » / « Réintégrer » par ligne,
-// jamais de CIP à saisir. Une exclusion est filtrée par le navigateur : effet dès la publication, sans recalcul.
-import React, { useEffect, useState } from "react";
+// jamais de CIP à saisir. Une ligne = une famille (tous ses dosages) : l'exclusion retire toute la diapositive, même si le
+// dosage principal change ensuite. Une exclusion est filtrée par le navigateur : effet dès la publication, sans recalcul.
+// Produit sans photo au catalogue (boîte générée) : « Chercher les photos » lit la banque d'images de l'admin
+// (medipim-lookup, comme la fiche produit) pour chaque dosage et publie les adresses trouvées dans
+// display_config.accueil.photos (CIP → adresse) ; « Retirer les photos » revient à la boîte générée.
+import React, { useEffect, useRef, useState } from "react";
 import { T, R, fmtEur, ui } from "../theme.js";
 
 const Case = ({ coche, onChange, titre, texte }) => (
@@ -15,15 +19,49 @@ const Case = ({ coche, onChange, titre, texte }) => (
 
 export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFetch }) {
   const acc = displayConfig.accueil || {};
-  const maj = (patch) => saveDisplayConfig({ accueil: { ...acc, ...patch } });
+  // réglages les plus récents (une recherche de photos se termine après d'autres changements : rien n'est écrasé)
+  const accRef = useRef(acc); accRef.current = acc;
+  const maj = (patch) => saveDisplayConfig({ accueil: { ...accRef.current, ...patch } });
   const exclus = new Set(acc.exclus || []);
+  const photos = acc.photos || {};
+  const [recherche, setRecherche] = useState({});   // CIP principal → "…" (en cours) ou message
   const [apercu, setApercu] = useState(null);   // null : chargement ; { erreur } ; réponse du GET
   useEffect(() => {
     if (!adminFetch) return;
     adminFetch("/.netlify/functions/accueil-offres").then(r => (r.ok ? r.json() : { erreur: `HTTP ${r.status}` }))
       .then(setApercu).catch(e => setApercu({ erreur: e.message }));
   }, [adminFetch]);
-  const basculer = (cip) => { const n = new Set(exclus); if (n.has(cip)) n.delete(cip); else n.add(cip); maj({ exclus: [...n] }); };
+  const membres = (s) => [s.cip, ...(s.variantes || []).map(v => v.cip)].filter(Boolean);
+  const estExclue = (s) => membres(s).some(c => exclus.has(c));
+  // Exclure : le CIP principal ; Réintégrer : tous les CIP de la famille (une exclusion faite sur un ancien principal aussi)
+  const basculer = (s) => {
+    const n = new Set(accRef.current.exclus || []);
+    if (estExclue(s)) membres(s).forEach(c => n.delete(c)); else n.add(s.cip);
+    maj({ exclus: [...n] });
+  };
+  const chercherPhotos = async (s) => {
+    const cips = [...new Set([s, ...(s.variantes || [])].filter(o => o.cip && !o.image_url).map(o => o.cip))];
+    setRecherche(r => ({ ...r, [s.cip]: "…" }));
+    const trouvees = {};
+    let message = "";
+    for (const cip of cips) {
+      try {
+        const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(cip)}`);
+        if (r.status === 429 || r.status === 503) { message = "Base d'images saturée : réessayez dans une minute"; break; }
+        const j = r.ok ? await r.json() : null;
+        if (j?.image_url && /^https:\/\//.test(j.image_url)) trouvees[cip] = j.image_url;
+      } catch { message = "Base d'images injoignable"; break; }
+    }
+    const nb = Object.keys(trouvees).length;
+    if (nb) maj({ photos: { ...(accRef.current.photos || {}), ...trouvees } });
+    setRecherche(r => ({ ...r, [s.cip]: message || (nb ? `${nb} photo${nb > 1 ? "s" : ""} sur ${cips.length}` : "Aucune photo trouvée") }));
+  };
+  const retirerPhotos = (s) => {
+    const n = { ...(accRef.current.photos || {}) };
+    membres(s).forEach(c => { delete n[c]; });
+    maj({ photos: n });
+    setRecherche(r => ({ ...r, [s.cip]: "" }));
+  };
   const lignes = apercu?.slides ? [...apercu.slides, ...(apercu.reserves || [])] : [];
   return (
     <div style={{ background: T.surface, borderRadius: 14, padding: "20px 24px", marginBottom: 20, border: "1px solid var(--line)" }}>
@@ -41,16 +79,21 @@ export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFe
         : (
           <div style={{ border: "1px solid var(--line)", borderRadius: R.s, overflow: "hidden" }}>
             {lignes.map((s, i) => {
-              const ex = exclus.has(s.cip);
+              const ex = estExclue(s), plusieurs = (s.variantes?.length || 0) > 1;
+              const photoAdmin = !s.image_url && membres(s).some(c => photos[c]);
+              const etat = recherche[s.cip];
               return (
-                <div key={s.cip} className="ex-tr" style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr) auto auto auto", gap: 10, alignItems: "center", padding: "6px 10px", fontSize: 12, opacity: ex ? 0.5 : 1 }}>
+                <div key={s.cip} className="ex-tr" style={{ display: "grid", gridTemplateColumns: "28px minmax(0,1fr) auto auto auto auto", gap: 10, alignItems: "center", padding: "6px 10px", fontSize: 12, opacity: ex ? 0.5 : 1 }}>
                   <b style={{ color: i < 12 ? T.ink : T.inkMute }}>{i < 12 ? s.rang : "R"}</b>
                   <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.nom}>
-                    {s.nom_court}{s.variantes?.length ? ` (+${s.variantes.length - 1} dosage${s.variantes.length > 2 ? "s" : ""})` : ""} <span style={{ color: T.inkMute }}>· {s.menu?.label} · {s.image_url ? "photo" : "boîte générée"}</span>
+                    {s.nom_court}{plusieurs ? ` (+${s.variantes.length - 1} dosage${s.variantes.length > 2 ? "s" : ""})` : ""} <span style={{ color: T.inkMute }}>· {s.menu?.label} · {s.image_url ? "photo" : photoAdmin ? "photo choisie ici" : "boîte générée"}{etat && etat !== "…" ? ` · ${etat}` : ""}</span>
                   </span>
                   <span className="num" style={{ fontWeight: 700 }}>{fmtEur(s.pn)}</span>
                   <span className="num" style={{ color: T.inkMute }}>{s.lot ? `${s.lot.qte} × ${fmtEur(s.lot.pu)} = ${fmtEur(s.lot.total)}` : ""}</span>
-                  <button onClick={() => basculer(s.cip)} style={{ ...ui.btn("ligne", "s"), height: 28 }}>{ex ? "Réintégrer" : "Exclure"}</button>
+                  {s.image_url ? <span /> : photoAdmin
+                    ? <button onClick={() => retirerPhotos(s)} style={{ ...ui.btn("ligne", "s"), height: 28 }}>Retirer {plusieurs ? "les photos" : "la photo"}</button>
+                    : <button onClick={() => chercherPhotos(s)} disabled={etat === "…"} style={{ ...ui.btn("ligne", "s"), height: 28 }}>{etat === "…" ? "Recherche…" : plusieurs ? "Chercher les photos" : "Chercher la photo"}</button>}
+                  <button onClick={() => basculer(s)} style={{ ...ui.btn("ligne", "s"), height: 28 }}>{ex ? "Réintégrer" : plusieurs ? "Exclure (tous les dosages)" : "Exclure"}</button>
                 </div>
               );
             })}

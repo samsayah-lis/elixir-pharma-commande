@@ -4,7 +4,10 @@
 // Rotation automatique (ordinateur seulement) : 7 s par produit, un tour puis arrêt sur le n°1 ; pause tant que le
 // pointeur est sur la vitrine, l'onglet caché, la vitrine à moins de 50 % à l'écran ou un tiroir ouvert ; arrêt définitif
 // au focus clavier, à un clic (précédent, suivant, onglet), au choix d'un dosage, à un ajout, à un glissé ; seul « Lancer le
-// défilement » la relance. Région vivante muette pendant la rotation, polie après une action (précédent, suivant, glissé).
+// défilement » la relance. Pause aussi tant qu'une fenêtre modale est ouverte (aria-modal). Région vivante muette pendant la
+// rotation et à sa fin, polie seulement après une action (précédent, suivant, glissé).
+// Produit actif suivi par sa FAMILLE, pas par son rang : la liste peut raccourcir en cours de session (stock rafraîchi,
+// exclusion de l'admin, catalogue chargé tard) sans que la vitrine ne change de produit ni ne casse.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur } from "../../theme.js";
@@ -13,8 +16,9 @@ import Rouleau from "./Rouleau.jsx";
 import Pouls from "./Pouls.jsx";
 import Etiquette from "./Etiquette.jsx";
 import Gondole, { Visuel, Halo } from "./Gondole.jsx";
-import { RESSORT, EASE, anime, photo, periodeTexte, prixHT } from "./outils.js";
+import { RESSORT, EASE, anime, photo, periodeTexte, prixHT, useDebord } from "./outils.js";
 import { voler, rebondPanier } from "./vol.js";
+import { indexActif } from "./resolution.js";
 
 // mémoire de la page (aucune clé de stockage) : arrivée jouée, rotation arrêtée par l'utilisateur
 let arriveeJouee = false;
@@ -23,25 +27,37 @@ let rotationArretee = false;
 const nomLu = (s) => s.famille.charAt(0) + s.famille.slice(1).toLowerCase();
 const DUREE = 7000;
 
-export default function Vitrine({ slides, periode, isMobile, reduit, finPointer, reglages, pauseExterne, qteAuPanier, pret, onAjouter, onModifier, onOuvrirPanier, onVoir }) {
+export default function Vitrine({ slides, periode, isMobile, reduit, finPointer, reglages, pauseExterne, qteAuPanier, pret, onAjouter, onModifier, onOuvrirPanier, onVoir,
+  offres = [], onOffre }) {
   const n = slides.length;
-  const [actif, setActif] = useState(0);
+  // produit actif : sa famille ; disparue de la liste, la place qu'elle occupait (bornée au dernier produit)
+  const [famActive, setFamActive] = useState(() => slides[0]?.famille);
+  const placeActive = useRef(0);
+  const trouve = slides.findIndex(x => x.famille === famActive);
+  const actif = indexActif(slides, famActive, placeActive.current);
+  placeActive.current = actif;
+  const slidesRef = useRef(slides); slidesRef.current = slides;
+  const setActif = (j) => { const l = slidesRef.current; if (!l.length) return; const k = ((j % l.length) + l.length) % l.length; setFamActive(l[k].famille); };
+  useEffect(() => { if (trouve < 0 && slides[actif]) setFamActive(slides[actif].famille); }, [trouve, actif, slides]);
   const [choix, setChoix] = useState({});   // famille → CIP du dosage choisi
   const rotationPossible = !isMobile && finPointer && !reduit && reglages.auto !== false && n >= 3;
   const [rotation, setRotation] = useState(() => (rotationPossible && !rotationArretee ? "marche" : "arretee"));
   const [survol, setSurvol] = useState(false);
   const [cache, setCache] = useState(() => typeof document !== "undefined" && document.hidden);
   const [horsVue, setHorsVue] = useState(false);
+  const [modale, setModale] = useState(false);   // fenêtre modale ouverte (présentation, offres, photo agrandie…)
   const [live, setLive] = useState({ mode: "off", texte: "" });
   const arrivee = useRef(!arriveeJouee && !reduit);
-  const region = useRef(null), lineaire = useRef(null), piste = useRef(null), produit = useRef(null);
+  const region = useRef(null), lineaire = useRef(null), piste = useRef(null), produit = useRef(null), bandeau = useRef(null);
+  const debordBandeau = useDebord(bandeau, `${offres.map(o => o.id).join()}:${isMobile}`);
   const animRotation = useRef(null), tours = useRef(0);
   const enMarche = rotationPossible && rotation === "marche";
-  const enPause = survol || cache || horsVue || !!pauseExterne;
+  const enPause = survol || cache || horsVue || modale || !!pauseExterne;
   const enPauseRef = useRef(enPause); enPauseRef.current = enPause;
   useEffect(() => { arriveeJouee = true; }, []);
 
   const offreDe = (s) => s.variantes.find(v => v.cip === choix[s.famille]) || s.principal;
+  const dejaAuPanier = (s) => [s.principal, ...s.variantes].some(v => qteAuPanier[v.cip] > 0);   // un dosage de la famille au panier
   const annonce = (i) => { const s = slides[i]; setLive({ mode: "polite", texte: `${i + 1} sur ${n} : ${nomLu(s)}, ${prixHT(offreDe(s).pn)}` }); };
   const arreter = () => { if (rotation === "marche") { rotationArretee = true; setRotation("arretee"); } };
   const defilementProg = useRef(0);
@@ -69,15 +85,24 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
     if (!a) return undefined;
     animRotation.current = a;
     if (enPauseRef.current) a.pause();
+    // fin du tour : retour au n°1 sans annonce (la région vivante ne parle qu'après une action de l'utilisateur)
     a.onfinish = () => {
       tours.current += 1;
-      if (tours.current >= n) { tours.current = 0; setActif(0); setRotation("finie"); setLive({ mode: "polite", texte: `Fin du défilement. 1 sur ${n} : ${nomLu(slides[0])}, ${prixHT(offreDe(slides[0]).pn)}` }); }
-      else setActif(x => (x + 1) % n);
+      if (tours.current >= n) { tours.current = 0; setActif(0); setRotation("finie"); }
+      else setActif(actifRef.current + 1);
     };
     return () => { a.onfinish = null; a.cancel(); animRotation.current = null; };
   }, [enMarche, actif]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const a = animRotation.current; if (!a) return; if (enPause) a.pause(); else if (a.playState === "paused") a.play(); }, [enPause]);
   useEffect(() => { if (rotation === "marche") setLive(l => (l.mode === "off" ? l : { mode: "off", texte: "" })); }, [rotation]);
+  // fenêtre modale ouverte par-dessus la page (aria-modal) : pause, sondée tant que la rotation tourne
+  useEffect(() => {
+    if (!enMarche) { setModale(false); return undefined; }
+    const lire = () => setModale(!!document.querySelector('[role="dialog"][aria-modal="true"]'));
+    lire();
+    const t = setInterval(lire, 400);
+    return () => clearInterval(t);
+  }, [enMarche]);
   // onglet caché, vitrine à moins de 50 % à l'écran : pause
   useEffect(() => {
     const vis = () => setCache(document.hidden);
@@ -105,13 +130,15 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
     if (isMobile || reduit || !region.current) return;
     region.current.querySelectorAll([".acc-etiquette-tete", ".acc-rayon", ".acc-marque", ".acc-sous-ligne", ".acc-dosages", ".acc-faits"].map(c => `.acc-tete-gondole ${c}`).join(",")).forEach(el =>
       anime(el, [{ opacity: 0, transform: "translateY(6px)" }, { opacity: 1, transform: "none" }], { duration: 200, delay: 120, easing: EASE }));
-  }, [actif]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [famActive]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  // linéaire plus large que la vitrine : l'onglet actif reste visible (défilement horizontal du linéaire seul)
+  // linéaire plus large que la vitrine : l'onglet actif reste visible, hors des fondus des bords (défilement horizontal du
+  // linéaire seul ; position mesurée dans le linéaire, qui n'est pas le parent de positionnement des onglets)
   useEffect(() => {
     const c = lineaire.current, t = c?.children[actif];
     if (!c || !t || c.scrollWidth <= c.clientWidth) return;
-    const g = t.offsetLeft - 12, d = t.offsetLeft + t.offsetWidth - c.clientWidth + 12;
+    const gauche = t.getBoundingClientRect().left - c.getBoundingClientRect().left + c.scrollLeft;
+    const g = Math.max(0, gauche - 16), d = gauche + t.offsetWidth - c.clientWidth + 16;
     if (g < c.scrollLeft) c.scrollTo({ left: g, behavior: reduit ? "auto" : "smooth" });
     else if (d > c.scrollLeft) c.scrollTo({ left: d, behavior: reduit ? "auto" : "smooth" });
   }, [actif, reduit]);
@@ -144,22 +171,33 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
     const p = piste.current;
     if (!isMobile || !p) return undefined;
     let raf = 0, dernier = { x: p.scrollLeft, t: performance.now() }, fin = 0;
+    // toutes les lectures d'abord (positions dans la piste, sans getBoundingClientRect entre deux écritures), puis les
+    // écritures : --d / --da sur les cartes proches seulement (les lointaines, data-loin, restent en 2D statique, sans
+    // couche 3D), --v (inclinaison de vitesse) sur le produit de la carte centrale seulement (plus d'héritage depuis la
+    // piste, qui recalculait le style des 10 cartes à chaque image)
+    let incline = null;
     const calcule = () => {
       raf = 0;
-      const vue = p.getBoundingClientRect(), centre = vue.left + vue.width / 2;
+      const enfants = [...p.children], sl = p.scrollLeft, centre = sl + p.clientWidth / 2;
+      const ds = enfants.map(c => Math.max(-1, Math.min(1, (c.offsetLeft + c.offsetWidth / 2 - centre) / (c.offsetWidth || 1))));
       let meilleur = 0, dmin = Infinity;
-      [...p.children].forEach((c, i) => {
-        const r = c.getBoundingClientRect();
-        const d = Math.max(-1, Math.min(1, (r.left + r.width / 2 - centre) / (r.width || 1)));
-        if (!reduit) { c.style.setProperty("--d", d.toFixed(3)); c.style.setProperty("--da", Math.abs(d).toFixed(3)); }
-        if (Math.abs(d) < dmin) { dmin = Math.abs(d); meilleur = i; }
-      });
-      const t = performance.now(), v = (p.scrollLeft - dernier.x) / Math.max(1, t - dernier.t) * 1000;
-      dernier = { x: p.scrollLeft, t };
-      if (!reduit) p.style.setProperty("--v", `${Math.max(-4, Math.min(4, v * 0.02)).toFixed(2)}deg`);
+      ds.forEach((d, i) => { if (Math.abs(d) < dmin) { dmin = Math.abs(d); meilleur = i; } });
+      const t = performance.now(), v = (sl - dernier.x) / Math.max(1, t - dernier.t) * 1000;
+      dernier = { x: sl, t };
+      if (!reduit) {
+        enfants.forEach((c, i) => {
+          const a = Math.abs(ds[i]), loin = a >= 1;
+          if (loin !== c.hasAttribute("data-loin")) c.toggleAttribute("data-loin", loin);
+          if (!loin || c.__da !== 1) { c.style.setProperty("--d", ds[i].toFixed(3)); c.style.setProperty("--da", a.toFixed(3)); c.__da = loin ? 1 : a; }
+        });
+        const incl = enfants[meilleur]?.querySelector(".acc-produit-incl");
+        if (incline && incline !== incl) incline.style.removeProperty("--v");
+        incline = incl;
+        incl?.style.setProperty("--v", `${Math.max(-4, Math.min(4, v * 0.02)).toFixed(2)}deg`);
+      }
       if (Date.now() - defilementProg.current > 700 && meilleur !== actifRef.current) { actifRef.current = meilleur; setActif(meilleur); annonceRef.current(meilleur); }
     };
-    const finDefilement = () => { p.removeAttribute("data-defile"); p.style.setProperty("--v", "0deg"); };
+    const finDefilement = () => { p.removeAttribute("data-defile"); incline?.style.removeProperty("--v"); };
     const surDefilement = () => {
       p.setAttribute("data-defile", "");
       if (!raf) raf = requestAnimationFrame(calcule);
@@ -171,7 +209,8 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
     return () => { p.removeEventListener("scroll", surDefilement); p.removeEventListener("scrollend", finDefilement); cancelAnimationFrame(raf); clearTimeout(fin); };
   }, [isMobile, n, reduit]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const titreEyebrow = `Ces 15 derniers jours · ${periodeTexte(periode, isMobile)}`;
+  // mobile : titre sur une ligne (« Les plus commandés »), « par vos confrères » passe dans la ligne du dessus
+  const titreEyebrow = isMobile ? `Par vos confrères · ${periodeTexte(periode, true)}` : `Ces 15 derniers jours · ${periodeTexte(periode, false)}`;
   const s = slides[actif], o = offreDe(s);
   const etiquetteProps = (sl, of, i, inactif) => ({
     slide: sl, offre: of, position: i + 1, variantes: sl.variantes, choix: choix[sl.famille] || sl.principal.cip, onChoix: (cip) => choisir(sl, cip),
@@ -187,12 +226,26 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
       <div className="acc-entete">
         <div className="acc-entete-titres">
           <p className="acc-eyebrow acc-eyebrow--titre">{titreEyebrow}</p>
-          <h1 id="acc-titre" className="acc-h1">Les plus commandés par vos confrères</h1>
+          <h1 id="acc-titre" className="acc-h1">Les plus commandés{isMobile ? <span className="acc-vh"> par vos confrères</span> : " par vos confrères"}</h1>
         </div>
+        {/* grand écran : les menus promo en cours en bandeau, à côté du titre (au premier écran, sans fenêtre par-dessus) */}
+        {!isMobile && offres.length > 0 && onOffre && (
+          <nav className="acc-bandeau-offres" aria-label="Offres du moment">
+            <span className="acc-eyebrow" aria-hidden="true">Offres du moment</span>
+            <span ref={bandeau} className="acc-bandeau-offres-liste" data-debord={debordBandeau || undefined}>
+              {offres.map(ps => (
+                <button key={ps.id} type="button" className="acc-offre-puce" title={ps.name} style={ps.color ? { "--acc-teinte": ps.color } : undefined} onClick={() => onOffre(ps)}>
+                  <span className="acc-offre-puce-icone" aria-hidden="true">{ps.icon || <Icone nom="etiquette" taille={13} />}</span>
+                  <span className="acc-offre-puce-nom">{ps.name}</span>
+                </button>
+              ))}
+            </span>
+          </nav>
+        )}
         {!isMobile && (
           <div className="acc-controles">
             {rotationPossible && (
-              <button type="button" className="acc-rond acc-rond--pause" onClick={() => {
+              <button type="button" className="acc-rond acc-rond--pause" title={rotation === "marche" ? "Arrêter le défilement" : "Lancer le défilement"} onClick={() => {
                 if (rotation === "marche") { rotationArretee = true; setRotation("arretee"); }
                 else { rotationArretee = false; tours.current = 0; setRotation("marche"); }
               }}>
@@ -213,7 +266,7 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
             {slides.map((sl, i) => (
               <button key={sl.famille} type="button" role="tab" id={`acc-onglet-${i}`} aria-selected={i === actif} aria-controls={`acc-diapo-${i}`} tabIndex={i === actif ? 0 : -1}
                 className="acc-segment" onClick={() => aller(i, "onglet")} onKeyDown={toucheOnglet}>
-                <span className="acc-vh">{i + 1} : {nomLu(sl)}, {prixHT(sl.principal.pn)}{qteAuPanier[sl.principal.cip] ? ", déjà au panier" : ""}</span>
+                <span className="acc-vh">{i + 1} : {nomLu(sl)}, {prixHT(offreDe(sl).pn)}{dejaAuPanier(sl) ? ", déjà au panier" : ""}</span>
                 <span className="acc-segment-barre" aria-hidden="true" />
               </button>
             ))}
@@ -237,7 +290,7 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
       </>) : (<>
         <div ref={lineaire} role="tablist" aria-label="Choisir un produit du classement" className="acc-lineaire">
           {slides.map((sl, i) => {
-            const p = sl.principal, deja = !!qteAuPanier[p.cip];
+            const p = offreDe(sl), deja = dejaAuPanier(sl);   // dosage choisi (prix, boîte), pas seulement le principal
             return (
               <button key={sl.famille} type="button" role="tab" id={`acc-onglet-${i}`} aria-selected={i === actif} aria-controls="acc-diapo" tabIndex={i === actif ? 0 : -1}
                 className="acc-emplacement" onClick={() => aller(i, "onglet")} onKeyDown={toucheOnglet}
@@ -257,7 +310,7 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
           })}
         </div>
         <div role="tabpanel" id="acc-diapo" aria-roledescription="diapositive" aria-label={`${actif + 1} sur ${n} : ${nomLu(s)}`} className="acc-tete-gondole">
-          <Gondole offre={o} index={actif} position={actif + 1} arrivee={arrivee.current} reduit={reduit} finPointer={finPointer} teinte={s.teinte}
+          <Gondole offre={o} index={actif} cle={s.famille} position={actif + 1} arrivee={arrivee.current} reduit={reduit} finPointer={finPointer} teinte={s.teinte}
             refProduit={produit} onGlisse={(d) => aller(actif + d, "glisse")} />
           <Etiquette {...etiquetteProps(s, o, actif, false)} tracer={!reduit} delaiPouls={arrivee.current && actif === 0 && !changeVu.current ? 450 : 200} />
         </div>

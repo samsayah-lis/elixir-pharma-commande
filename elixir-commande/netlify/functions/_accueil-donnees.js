@@ -11,15 +11,18 @@ import { TOP_ODOO, VERSION, contexteMenus, dateOdoo, depuisOdoo, fenetre, jourPa
 export const CLE_CACHE = "accueil:offres";
 export const CLE_JOURNAL = "accueil:dernier_passage";
 export const CLE_VERROU = "accueil:verrou";
+export const CLE_ECHEC = "accueil:echec";   // dernier calcul au premier appel en échec (ou vide) : { at }
 const CTX = { allowed_company_ids: [COMPANY_ID], lang: "fr_FR" };
 const enc = encodeURIComponent;
 const liste = (arr) => `(${arr.map(v => `"${String(v).replace(/["\\]/g, "")}"`).join(",")})`;
 const parse = (v) => { if (typeof v !== "string") return v ?? null; try { return JSON.parse(v); } catch { return null; } };
 
 // deps : { odoo, sb, quotaProducts, justifs, kvGet, kvSet, verrou, verifierJeton, maintenant } (tout est facultatif)
-export function creerSources(deps = {}) {
+// delaiOdoo : délai maximal de chaque appel Odoo réel (ms ; 0 = aucun) — GET : court, la fonction entière est plafonnée
+// à 10 s par Netlify ; planifiée : une erreur (journal écrit) plutôt qu'un arrêt muet à 30 s
+export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
   return {
-    odoo: deps.odoo || odooReel,
+    odoo: deps.odoo || (delaiOdoo > 0 ? (m, me, a, k) => odooReel(m, me, a, k, { timeoutMs: delaiOdoo }) : odooReel),
     sb: deps.sb || sbReel,
     quotaProducts: deps.quotaProducts || quotasReels,
     // CIP sur justificatif labo (tous les labos, comme lab-justif?action=products)

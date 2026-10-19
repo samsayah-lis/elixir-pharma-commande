@@ -1,37 +1,30 @@
 // ── Page d'accueil « La Tête de gondole » (docs/accueil.md) : chunk chargé à la demande ──
-// Données : GET accueil-offres (classement des 15 derniers jours, préchargé par App), résolues ici avec le catalogue du
-// site (§ 8.3) : prix, paliers, menu et règle de quantité sont ceux du menu où l'ajout rangera la ligne — la vitrine ne
-// contredit jamais un menu ni le panier. Retirés : justificatif labo, exclusions de l'admin, rupture d'un produit de
-// menu, menu non ouvrable. 10 produits au plus (diapositives, puis réserves).
-// Sous la vitrine : mise à jour du classement, « Offres du moment » (menus promo actifs), « Accès rapides » (rien
-// n'est accessible uniquement par le carrousel). Pas de vitrine (session sans jeton, erreur, classement périmé) : la
-// page commence par ces deux rangées, sans message d'erreur.
-import React, { useEffect, useMemo, useState } from "react";
+// Données : GET accueil-offres (classement des 15 derniers jours, préchargé par App, relu toutes les 5 min), résolues avec
+// le catalogue du site (§ 8.3) : prix, paliers, menu et règle de quantité sont ceux du menu où l'ajout rangera la ligne —
+// la vitrine ne contredit jamais un menu ni le panier. Retirés : justificatif labo, campagne, exclusions de l'admin (toute
+// la famille), rupture d'un produit de menu, menu non ouvrable. 10 produits au plus (diapositives, puis réserves).
+// Sous la vitrine : mise à jour du classement, « Offres du moment » (menus promo actifs et pas échus ; aussi en bandeau
+// dans l'en-tête de la vitrine sur grand écran), suggestions de recommande, « Accès rapides » (rien n'est accessible
+// uniquement par le carrousel). Pas de vitrine (session sans jeton, erreur, classement périmé) : la page commence par ces
+// rangées, sans message d'erreur. Résolution des offres : resolution.js (testée hors ligne).
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./accueil.css";
 import { Icone } from "../../icons.jsx";
-import { applyTiers } from "../../tiers.jsx";
 import SqueletteAccueil from "./Squelette.jsx";
 import Vitrine, { SceneCarte } from "./Vitrine.jsx";
 import Etiquette from "./Etiquette.jsx";
+import { construireDiapos, promosEnCours, jourParis } from "./resolution.js";
 import { POINTEUR_FIN, REDUIT, majTexte, sansEmoji, useMedia } from "./outils.js";
 
-const NB = 10;
-const nombreTranche = (t) => parseInt(String(t || "").replace(/\D/g, ""), 10) || 0;
 const OUTILS = ["accueil", "saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"];
-// Produit du catalogue : PREMIER menu qui contient le CIP, dans l'ordre d'addItemToCart (c'est là que l'ajout range la
-// ligne, au prix de ce menu) → { catKey, p, label, accent } | null (produit hors menu : ligne « spéciale » de la Saisie)
-function produitDuCatalogue(catalogue, cip) {
-  for (const [catKey, c] of Object.entries(catalogue)) {
-    const p = (c.products || []).find(x => x.cip === cip);
-    if (p) return { catKey, p, label: c.label || catKey, accent: c.accent };
-  }
-  return null;
-}
+const RAFRAICHIR_MS = 5 * 60e3;   // prix et stock des produits hors menu : relus comme le stock des menus (5 min)
+const vitrineValide = (d) => !!(d && !d.perime && Array.isArray(d.slides) && d.slides.length > 0);
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
-  justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {}, pauseExterne,
-  promos: menusPromo = [], ouvrirMesCommandes, dateFin }) {
-  const promos = menusPromo.filter(p => p.active);
+  estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
+  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null }) {
+  // menus promo actifs et pas encore échus (une offre « jusqu'au 25 sept. » n'est plus mise en avant le 19 oct.)
+  const promos = promosEnCours(menusPromo, jourParis());
   const teinteDe = (k) => catalogue[k]?.accent || catalogue.saisie?.accent || "#2d9cbc";
   // accès rapides : Saisie de commande, Mes commandes, puis les 4 premiers menus du catalogue (ordre de l'admin)
   const saisie = catalogue.saisie ? { icone: iconeMenu("saisie", catalogue.saisie, 22), label: catalogue.saisie.label } : null;
@@ -41,60 +34,41 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   // catalogue chargé (products-get) : sans lui, un produit d'un menu partirait au mauvais prix → ajout désactivé
   const catalogueCharge = chargementFini && Object.values(catalogue).some(c => c.products?.length);
   const [donnees, setDonnees] = useState(undefined);   // undefined : chargement ; null : pas de vitrine
+  const signature = useRef("");
   useEffect(() => {
     let annule = false;
+    signature.current = "";
     if (!identite) { setDonnees(null); return undefined; }
     lireOffres().then(d => {
       if (annule) return;
-      const ok = d && !d.perime && Array.isArray(d.slides) && d.slides.length > 0;
+      const ok = vitrineValide(d);
       if (!ok && import.meta.env.DEV) console.info("[accueil] pas de vitrine :", d ? (d.perime ? "classement périmé" : "aucun produit") : "réponse refusée ou absente");
+      signature.current = ok ? JSON.stringify(d) : "";
       setDonnees(ok ? d : null);
     });
-    return () => { annule = true; };
+    // page laissée ouverte : prix et stock relus toutes les 5 min et au retour sur l'onglet (au plus une lecture par
+    // minute : lireOffres garde la réponse 60 s) ; réponse invalide ou identique → rien ne change
+    const relire = () => {
+      if (document.hidden) return;
+      lireOffres().then(d => {
+        if (annule || !vitrineValide(d)) return;
+        const sig = JSON.stringify(d);
+        if (sig !== signature.current) { signature.current = sig; setDonnees(d); }
+      });
+    };
+    const minuteur = setInterval(relire, RAFRAICHIR_MS);
+    document.addEventListener("visibilitychange", relire);
+    return () => { annule = true; clearInterval(minuteur); document.removeEventListener("visibilitychange", relire); };
   }, [identite]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const exclus = (reglages.exclus || []).join(",");
-  const slides = useMemo(() => {
-    if (!donnees) return [];
-    const sansAdmin = new Set(exclus ? exclus.split(",") : []);
-    const resoudre = (o) => {
-      if (!o?.cip || justifProducts[o.cip] || sansAdmin.has(o.cip)) return null;
-      let r = { ...o };
-      if (catalogueCharge) {
-        const t = produitDuCatalogue(catalogue, o.cip);
-        if (t) {
-          if (!menuOuvrable(t.catKey)) return null;
-          const st = stockData[o.cip];
-          if (st && (st.dispo === 0 || st.dispo === false)) return null;
-          const p = t.p;
-          if (!(Number(p.pn) > 0)) return null;
-          r = { ...r, pv: p.pv, pn: p.pn, pct: Number(p.pct) || 0, remise_eur: p.remise_eur ?? Math.round((p.pv - p.pn) * 100) / 100,
-            price_tiers: p.price_tiers || null, nom_panier: p.name, image_url: p.image_url || o.image_url || null, menu: { key: t.catKey, label: sansEmoji(t.label) }, teinte: t.accent };
-        } else r = { ...r, menu: { key: "saisie", label: "Saisie de commande" }, teinte: teinteDe("saisie") };
-        // règle de quantité de la Saisie (colis, minimum) ; lot = max(minimum, multiple, 1), montant = ce que le panier facture
-        const g = regleSaisie(o.cip);
-        r.regle = g ? { step: g.step, min: g.min, multiple: g.multiple } : { step: 1, min: 1, multiple: 1 };
-        const qte = Math.max(r.regle.min || 0, r.regle.multiple || 1, 1);
-        const pu = applyTiers(r.pn, r.price_tiers, qte).pn;
-        r.lot = { qte, pu, total: Math.round(pu * qte * 100) / 100 };
-      } else {
-        // catalogue pas encore chargé : prix du GET, ajout désactivé (« Chargement des prix… »)
-        r = { ...r, regle: o.regle_qte || { step: 1, min: 1, multiple: 1 }, teinte: teinteDe(o.menu?.key) || teinteDe("saisie") };
-      }
-      return r;
-    };
-    const out = [];
-    for (const s of [...donnees.slides, ...(donnees.reserves || [])]) {
-      if (out.length >= NB) break;
-      const vars = (s.variantes || []).map(v => { const r = resoudre(v); return r && { ...r, libelle: v.libelle, principal: !!v.principal }; }).filter(Boolean);
-      // dosage principal retiré : le plus commandé de ceux qui restent devient principal
-      const principal = resoudre(s) || [...vars].sort((a, b) => nombreTranche(b.popularite) - nombreTranche(a.popularite))[0];
-      if (!principal) continue;
-      out.push({ famille: s.famille, labo: s.labo, tendance_pct: s.tendance_pct, nouveau: !!s.nouveau, serie_15j: s.serie_15j || [],
-        principal, variantes: vars.length > 1 ? vars.map(v => ({ ...v, principal: v.cip === principal.cip })) : [], teinte: principal.teinte });
-    }
-    return out;
-  }, [donnees, catalogueCharge, catalogue, stockData, justifProducts, exclus]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // photos choisies dans l'admin (display_config.accueil.photos : CIP → adresse) pour les produits sans photo au catalogue ;
+  // réglages relus à chaque rendu d'App : clé texte, pour ne recalculer qu'à un vrai changement
+  const photos = JSON.stringify(reglages.photos || {});
+  const slides = useMemo(() => construireDiapos(donnees, {
+    catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
+    exclus: new Set(exclus ? exclus.split(",") : []),
+  }), [donnees, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // « Voir dans… », offres, accès rapides : changement de menu, puis haut de page (la vue suivante commence en haut)
   const aller = (ok) => { if (ok) window.scrollTo({ top: 0 }); };
@@ -107,7 +81,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
       {donnees !== undefined && slides.length === 0 && <h1 className="acc-vh">Accueil</h1>}
       {slides.length >= 3 && (
         <Vitrine slides={slides} periode={donnees.periode} isMobile={isMobile} reduit={reduit} finPointer={finPointer} reglages={reglages} pauseExterne={pauseExterne}
-          qteAuPanier={qteAuPanier} pret={catalogueCharge} onAjouter={onAjouter} onModifier={onModifier} onOuvrirPanier={onOuvrirPanier} onVoir={voir} />
+          qteAuPanier={qteAuPanier} pret={catalogueCharge} onAjouter={onAjouter} onModifier={onModifier} onOuvrirPanier={onOuvrirPanier} onVoir={voir}
+          offres={promos} onOffre={(ps) => aller(naviguer(`promo_${ps.id}`))} />
       )}
       {slides.length > 0 && slides.length < 3 && (
         <section className="acc-duo" aria-labelledby="acc-titre">
@@ -146,6 +121,9 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
           </div>
         </section>
       )}
+
+      {/* suggestions de recommande (App) : sous la vitrine et les offres, plus au-dessus de la vitrine */}
+      {suggestions}
 
       <section className="acc-section" aria-labelledby="acc-acces-titre">
         <h2 id="acc-acces-titre" className="acc-h2">Accès rapides</h2>

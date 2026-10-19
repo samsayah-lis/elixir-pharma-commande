@@ -36,11 +36,14 @@ export function minuitParis(jour) {
   const base = Date.parse(`${jour}T00:00:00Z`);
   return base - decalageParis(base - decalageParis(base));
 }
-// Fenêtre de 15 jours calendaires, aujourd'hui compris (le dernier jour est en cours) ; période précédente de même durée
+// Fenêtre de 15 jours calendaires, aujourd'hui compris (le dernier jour est en cours) ; période précédente de MÊME durée
+// exacte (J−14 00:00 → maintenant, puis la même durée juste avant) : la tendance ne compare plus 14,3 jours à 15 jours
+// pleins (biais de −4,8 % au passage de 6 h 40, face au seuil « En hausse » de 15 %)
 export function fenetre(maintenant = Date.now()) {
   const aujourdhui = jourParis(maintenant);
   const jours = Array.from({ length: 15 }, (_, i) => ajouteJours(aujourdhui, i - 14));
-  return { aujourdhui, jours, depuis: minuitParis(jours[0]), avant: minuitParis(ajouteJours(jours[0], -15)) };
+  const depuis = minuitParis(jours[0]);
+  return { aujourdhui, jours, depuis, avant: depuis - Math.max(0, maintenant - depuis) };
 }
 export const dateOdoo = (t) => new Date(t).toISOString().slice(0, 19).replace("T", " ");   // date_order Odoo (UTC)
 export const depuisOdoo = (s) => Date.parse(String(s).replace(" ", "T") + "Z");
@@ -186,12 +189,15 @@ export function contexteMenus({ displayConfig, promos, campagnes } = {}) {
     campagnes: new Set((Array.isArray(campagnes) ? campagnes : []).filter(c => c && c.active).map(c => String(c.id))),
   };
 }
-// Premier menu contenant le CIP (ordre d'App) : menu curaté, sinon menu promo actif, sinon Saisie de commande
+// Premier menu contenant le CIP (ordre d'App) : menu curaté, sinon campagne active à identifiant propre (onglet ajouté par
+// App après les menus : prix palier et UG du panier → écartée), sinon menu promo actif, sinon Saisie de commande
 export function premierMenu(cip, curees, menus) {
   for (const key of ORDRE_MENUS) {
     const p = (curees || []).find(r => r.cip === cip && r.section === key);
     if (p) return { key, label: menus.libelle(key), p, source: "cure", cache: menus.caches.has(key), campagne: menus.campagnes.has(key) };
   }
+  const camp = (curees || []).find(r => r.cip === cip && menus.campagnes.has(String(r.section)));
+  if (camp) return { key: String(camp.section), label: menus.libelle(String(camp.section)), p: camp, source: "cure", cache: menus.caches.has(String(camp.section)), campagne: true };
   for (const ps of menus.promos) {
     const p = ps.produits.find(x => String(x?.cip || "") === cip);
     if (p) return { key: ps.key, label: ps.label, p, source: "promo", cache: menus.caches.has(ps.key), sansStock: ps.sansStock };

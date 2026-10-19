@@ -1334,16 +1334,21 @@ export default function App() {
     if (ligne) setItemQty(ligne, n);
   };
   // Changement de menu par l'utilisateur (barre latérale, logo, accueil) : même enchaînement que le clic d'un menu —
-  // confirmation d'une commande groupée non confirmée, entrée d'historique, recherche du menu (terme), tiroir fermé
-  const naviguerVers = (key, { terme = "" } = {}) => {
+  // confirmation d'une commande groupée non confirmée, entrée d'historique, recherche du menu (terme), tiroir fermé.
+  // cip : « Voir dans la Saisie de commande » de l'accueil pré-remplit la Saisie ; tout autre changement de menu la
+  // rend vide (le CIP ne reste plus d'un passage à l'autre ; un clic sur le menu déjà ouvert ne la vide pas)
+  const naviguerVers = (key, { terme = "", cip = "" } = {}) => {
     if (gpDirty && key !== activeTab && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées. Quitter quand même ?")) return false;
+    if (cip || key !== activeTab) setInitialProductQuery(cip);
     setGpDirty(false); navParClic.current = true; menuDemande.current = ""; setActiveTab(key); setSearch(terme || ""); setSidebarOpen(false);
     return true;
   };
   const allerAccueil = () => { if (CATALOG_WITH_ADMIN.accueil) naviguerVers("accueil"); };
-  // « Offres du moment » : la rangée de l'accueil remplace la fenêtre ; ouverte (connexion) alors que l'accueil est affiché,
-  // elle est refermée aussitôt, pour ne pas surgir en quittant l'accueil (déclencheurs de l'identification inchangés)
-  useEffect(() => { if (promoPopupOpen && activeTab === "accueil") setPromoPopupOpen(false); }, [promoPopupOpen, activeTab]);
+  // « Offres du moment » : la fenêtre ne s'ouvre pas par-dessus l'accueil (bandeau sur grand écran et rangée sous la
+  // vitrine) ; ouverte à la connexion alors que l'accueil est affiché, elle attend le premier menu ouvert (condition
+  // d'affichage activeTab !== "accueil") : les menus promo gardent leur exposition à la connexion.
+  // Campagne (UG, prix palier du panier) : écartée de la vitrine, comme côté serveur
+  const estCampagne = (k) => !!getCampaign(k) || !!CATALOG_WITH_ADMIN[k]?.isCampaign;
   // Préchargement : sur l'accueil, GET des offres dès l'identité connue, en parallèle de products-get et du chunk (que
   // React.lazy charge au premier rendu) : pas de cascade chunk → données
   const identiteAccueil = actingFor ? `a${actingFor.odoo_id}` : (onboardingDone && pharmacyEmail ? `p${pharmacyEmail}:${jetonVersion}` : "");
@@ -2079,10 +2084,55 @@ export default function App() {
       {globalSearch && <button className="ex-icone-entete ex-icone-pastille ex-cible" onClick={() => setGlobalSearch("")} aria-label="Effacer la recherche" style={{ ...btnEntete, width: 28, height: 28, position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)" }}><Icone nom="fermer" taille={14} /></button>}
     </div>
   );
-  // panier flottant affiché (panier fermé et non vide) : main réserve sa place en bas
-  const panierFlottant = !cartOpen && cartCount > 0;
+  // panier flottant affiché (panier fermé et non vide) : main réserve sa place en bas. Jamais sur l'accueil : il recouvrait
+  // le « + » du sélecteur de la vitrine (toujours près du bas de l'écran sur téléphone) ; le compteur or de l'en-tête
+  // collant reste, et c'est la cible du vol vers le panier
+  const panierFlottant = !cartOpen && cartCount > 0 && activeTab !== "accueil";
   // message flash : un « ⚠ » en tête décide du ton (avertissement), sinon confirmation
   const tonFlash = tone(flashMsg.startsWith("⚠") ? "warn" : "ok");
+
+  // Suggestions de recommande (ML) — lot 7 : carte paper à filet (plus de dégradé violet), vignettes blanches. En tête de
+  // chaque vue ; sur l'accueil, rendues sous la vitrine (elles repoussaient « Ajouter » sous la ligne de flottaison)
+  const blocSuggestions = showReorder && reorderSuggestions.length > 0 && (
+    <section aria-labelledby="suggestions-titre" style={{ background:T.paper, borderRadius:R.m, padding:"14px 18px", marginBottom:20, border:`1px solid ${T.line}` }}>
+      <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:10 }}>
+        {/* paragraphe (plus un h2) : le bloc est rendu avant le h1 des autres vues ; il reste une région nommée (section) */}
+        <p id="suggestions-titre" className="num" style={{ margin:0, fontWeight:700, fontSize:14, color:T.ink, display:"flex", alignItems:"center", gap:8 }}>
+          <Icone nom="ampoule" taille={18} style={{ color:T.teal }} />
+          Suggestions de recommande — {reorderSuggestions.length} produit(s) à recommander
+        </p>
+        <button className="ex-btn-discret ex-cible" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions de recommande" title="Masquer"
+          style={ui.rond(30)}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
+      </div>
+      <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
+        {reorderSuggestions.map(s => (
+          <div key={s.cip} className="ex-carte" style={{
+            background:T.surface, borderRadius:R.s, padding:"10px 14px", minWidth:180, flexShrink:0,
+            cursor:"pointer",
+          }} onClick={() => {
+            // Cherche le produit dans le catalogue et ajoute 1
+            let added = false;
+            Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
+              if (added) return;
+              const idx = (c.products || []).findIndex(p => p.cip === s.cip);
+              if (idx >= 0) {
+                setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: s.suggested_qty || 1 }));
+                added = true;
+              }
+            });
+            if (added) flash(`✓ ${s.suggested_qty || 1}x ${s.name} ajouté`);
+          }}>
+            <div style={{ fontWeight:600, fontSize:12, color:T.ink, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
+            <div style={{ fontSize:11, color:T.inkMute, fontFamily:T.mono }}>CIP {s.cip}</div>
+            <div className="num" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
+              <span style={{ fontSize:12, color:T.ink, fontWeight:700 }}>×{s.suggested_qty}</span>
+              <span style={{ fontSize:11, color:T.warn, fontWeight:600 }}>il y a {s.days_since_last} j</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 
   return (
     <div className="ex-app" style={{ fontFamily: "inherit", minHeight: "100vh", background: T.cream, color: T.ink, display: "flex", flexDirection: "column", paddingLeft: isDesktop ? 248 : 0, transition: "padding-left 0.2s ease" }}>
@@ -2308,47 +2358,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Suggestions de recommande (ML) — lot 7 : carte paper à filet (plus de dégradé violet), vignettes blanches */}
-          {showReorder && reorderSuggestions.length > 0 && (
-            <section aria-labelledby="suggestions-titre" style={{ background:T.paper, borderRadius:R.m, padding:"14px 18px", marginBottom:20, border:`1px solid ${T.line}` }}>
-              <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", gap:12, marginBottom:10 }}>
-                {/* paragraphe (plus un h2) : le bloc est rendu avant le h1 de la vue ; il reste une région nommée (section) */}
-                <p id="suggestions-titre" className="num" style={{ margin:0, fontWeight:700, fontSize:14, color:T.ink, display:"flex", alignItems:"center", gap:8 }}>
-                  <Icone nom="ampoule" taille={18} style={{ color:T.teal }} />
-                  Suggestions de recommande — {reorderSuggestions.length} produit(s) à recommander
-                </p>
-                <button className="ex-btn-discret ex-cible" onClick={() => setShowReorder(false)} aria-label="Masquer les suggestions de recommande" title="Masquer"
-                  style={ui.rond(30)}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
-              </div>
-              <div style={{ display:"flex", gap:10, overflowX:"auto", paddingBottom:6 }}>
-                {reorderSuggestions.map(s => (
-                  <div key={s.cip} className="ex-carte" style={{
-                    background:T.surface, borderRadius:R.s, padding:"10px 14px", minWidth:180, flexShrink:0,
-                    cursor:"pointer",
-                  }} onClick={() => {
-                    // Cherche le produit dans le catalogue et ajoute 1
-                    let added = false;
-                    Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
-                      if (added) return;
-                      const idx = (c.products || []).findIndex(p => p.cip === s.cip);
-                      if (idx >= 0) {
-                        setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: s.suggested_qty || 1 }));
-                        added = true;
-                      }
-                    });
-                    if (added) flash(`✓ ${s.suggested_qty || 1}x ${s.name} ajouté`);
-                  }}>
-                    <div style={{ fontWeight:600, fontSize:12, color:T.ink, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
-                    <div style={{ fontSize:11, color:T.inkMute, fontFamily:T.mono }}>CIP {s.cip}</div>
-                    <div className="num" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
-                      <span style={{ fontSize:12, color:T.ink, fontWeight:700 }}>×{s.suggested_qty}</span>
-                      <span style={{ fontSize:11, color:T.warn, fontWeight:600 }}>il y a {s.days_since_last} j</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          {/* Suggestions de recommande (ML) : en tête de chaque vue ; sur l'accueil, sous la vitrine et les offres (Accueil.jsx) */}
+          {activeTab !== "accueil" && blocSuggestions}
 
           {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
           {globalSearch.trim().length >= 2 && (
@@ -2448,6 +2459,7 @@ export default function App() {
                 iconeMenu={iconeMenu}
                 regleSaisie={regleSaisie}
                 menuOuvrable={menuOuvrable}
+                estCampagne={estCampagne}
                 justifProducts={justifProducts}
                 stockData={stockData}
                 qteAuPanier={cartTotalsByCip}
@@ -2455,12 +2467,13 @@ export default function App() {
                 onModifier={modifierQte}
                 onOuvrirPanier={() => setCartOpen(true)}
                 naviguer={naviguerVers}
-                voirDansSaisie={(cip) => { setInitialProductQuery(cip); return naviguerVers("saisie"); }}
+                voirDansSaisie={(cip) => naviguerVers("saisie", { cip })}
                 reglages={getDisplayConfig().accueil || {}}
                 pauseExterne={cartOpen || showMyOrders || assistantOuvert}
                 promos={promoSections}
                 ouvrirMesCommandes={pharmacyCip && pharmacyCip !== "0" ? () => { setShowMyOrders(true); fetchMyOrders(); } : null}
                 dateFin={dateFin}
+                suggestions={blocSuggestions}
               />
             </React.Suspense>
           )}
@@ -3608,14 +3621,14 @@ export default function App() {
           non remplies » entre 768 et 1 300 px ; la bulle de l'en-tête reste. */}
       {assistantDispo && (
         <CoucheAssistant identite={identiteAssistant} mobile={isMobile} presenter={!actingFor && assistant.mode === "complet" && !menuViaLien.current} pret={!productsLoading}
-          ouvert={assistantOuvert} pile={cartCount > 0} onOuvrir={ouvrirAssistant}
+          ouvert={assistantOuvert} pile={panierFlottant} onOuvrir={ouvrirAssistant} differer={activeTab === "accueil"}
           cache={cartOpen || showAdmin || (sidebarOpen && !isDesktop)
             || (activeTab === "ulabs" && Object.keys(quantities).some(k => k.startsWith("ulabs-") && (parseInt(quantities[k]) || 0) > 0))} />
       )}
 
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son
           zIndex (290) le laissait seul au-dessus du voile du menu (140) (lot 9) ; masqué aussi pendant que l'assistant est ouvert */}
-      {!cartOpen && cartCount > 0 && !(sidebarOpen && !isDesktop) && !assistantOuvert && (
+      {panierFlottant && !(sidebarOpen && !isDesktop) && !assistantOuvert && (
         <button data-cible-panier className="ex-panier-flottant" onClick={() => setCartOpen(true)} aria-label={`Ouvrir le panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}`} style={{
           position: "fixed", bottom: 24, right: 24, zIndex: 290,   // sous le voile du panier (300)
           color: T.paper, border: "none", borderRadius: R.pill, width: 60, height: 60,   // fond pétrole : classe (survol)

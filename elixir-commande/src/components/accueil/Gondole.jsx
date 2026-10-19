@@ -22,17 +22,19 @@ export function Visuel({ offre, mode, taille, priorite = false, teinte }) {
   return <Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode={mode} taille={taille} />;
 }
 
+// halo teinté du rayon derrière une boîte générée : assez dense (0,24) pour que la boîte claire se détache du fond sable
 export function Halo({ offre, teinte }) {
-  const t = alpha(teinte, 0.14);
+  const t = alpha(teinte, 0.24);
   return offre.image_url
     ? <span className="acc-halo" aria-hidden="true"><img src={photo(offre.image_url, "thumbnail")} alt="" draggable={false} decoding="async" /></span>
     : <span className="acc-halo acc-halo--boite" aria-hidden="true" style={typeof t === "string" && t.startsWith("rgba(") ? { "--acc-halo": t } : undefined} />;
 }
 
-export default function Gondole({ offre, index, position, arrivee, reduit, finPointer, teinte, refProduit, onGlisse }) {
+// cle : famille du produit (un changement de rang de la même famille, liste raccourcie, n'est pas un changement de produit)
+export default function Gondole({ offre, index, cle = index, position, arrivee, reduit, finPointer, teinte, refProduit, onGlisse }) {
   const scene = useRef(null), vol = useRef(null), sortantRef = useRef(null);
   const anims = useRef([]);
-  const prec = useRef({ index, offre });
+  const prec = useRef({ cle, offre });
   const [sortant, setSortant] = useState(null);
   const [rang, setRang] = useState(arrivee && !reduit ? "00" : String(position).padStart(2, "0"));
   const mode = finPointer && !reduit ? "3d" : "25d";
@@ -47,9 +49,9 @@ export default function Gondole({ offre, index, position, arrivee, reduit, finPo
 
   // arrivée et changement de produit : FLIP depuis l'emplacement du linéaire ; le produit sortant s'efface
   useLayoutEffect(() => {
-    const change = prec.current.index !== index;
+    const change = prec.current.cle !== cle;
     const premier = !prec.current.vu;
-    prec.current = { index, offre, vu: true, ancien: change ? prec.current.offre : null };
+    prec.current = { cle, offre, vu: true, ancien: change ? prec.current.offre : null };
     if (!change && !premier) return;
     anims.current.forEach(a => a?.finish?.());   // changements rapides : seul le dernier produit vole
     anims.current = [];
@@ -68,7 +70,7 @@ export default function Gondole({ offre, index, position, arrivee, reduit, finPo
     } else anims.current.push(anime(vol.current, [{ transform: "scale(.6)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: duree, delay: debut, easing: RESSORT }));
     if (premier) anims.current.push(anime(scene.current?.querySelector(".acc-projecteur"), [{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE }));
     anims.current.push(anime(scene.current?.querySelector(".acc-halo"), [{ opacity: 0 }, { opacity: 1 }], { duration: 400, easing: EASE }));
-  }, [index, offre, reduit]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [cle, offre, reduit]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // produit sortant : 200 ms (opacité, glissé à gauche, léger pivot), puis retiré
   useLayoutEffect(() => {
