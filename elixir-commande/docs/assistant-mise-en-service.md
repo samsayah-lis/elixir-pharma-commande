@@ -290,4 +290,4 @@ Le suivi se fait dans l'onglet **Coûts**.
 - `npm run lint` : aucune erreur, de même pour les fonctions `chat*` et le lot 0 ;
 - `npm run zones` (contre `master` local, et `npm run zones -- --ref origin/master`) : « aucun écart » ; bundle des pharmacies à 888 833 octets pour un budget de 940 000.
 
-**Lecture réelle d'Odoo, en lecture seule** (`node scripts/chat-essai-odoo.mjs`, fiches 595 et 5007) : 29 contrôles réussis, 0 échec, 163 appels Odoo conformes (société 2 et filtre de la fiche à chaque appel). Le relevé de la fiche 595 pour 09/2026 est exact : HT 89 041,89 €, TVA 2 488,65 €, TTC 91 530,54 €.
+**Lecture réelle d'Odoo, en lecture seule** (`node scripts/chat-essai-odoo.mjs`, fiches 595 et 5007) : 28 contrôles réussis, 0 échec, 163 appels Odoo conformes (société 2 et filtre de la fiche à chaque appel). Le relevé de la fiche 595 pour 09/2026 est exact : HT 89 041,89 €, TVA 2 488,65 €, TTC 91 530,54 €.
