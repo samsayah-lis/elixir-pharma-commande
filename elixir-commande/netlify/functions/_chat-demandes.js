@@ -86,6 +86,11 @@ const tableLignes = (lignes) => `<table style="border-collapse:collapse;width:10
 const fiche = (ctx) => `${esc(ctx.nom || "Pharmacie")} (fiche Odoo n° ${esc(ctx.odooId)}${ctx.cip ? `, CIP ${esc(ctx.cip)}` : ""})`;
 const coordonnees = (r) => `${esc(r.telephone)} (${esc(r.horaires)})`;
 
+// Envoi à l'outil entrepôt en échec. Délai dépassé : la fiche a pu être créée sans que la réponse arrive — l'équipe vérifie
+// d'abord dans l'outil entrepôt (un renvoi avec la même clé d'idempotence ne crée jamais de doublon côté entrepôt).
+const avisEchec = (echec, action) => !echec ? "" : /délai dépassé/.test(echec)
+  ? `<p><b>L'outil entrepôt n'a pas répondu à temps</b> : la demande y est peut-être déjà enregistrée. Vérifiez d'abord dans Réclamations ou Tickets (fiche « Assistant Elixir » de cette pharmacie) avant de ${action === "saisir" ? "la saisir à la main" : "la prendre en charge à partir de cet e-mail"}.</p>`
+  : `<p><b>Envoi à l'outil entrepôt impossible</b> (${esc(echec)}) : ${action === "saisir" ? "saisissez cette demande à la main" : "prenez cette demande en charge à partir de cet e-mail"}.</p>`;
 const REPRISE = "<p><b>Envoi repris automatiquement</b> après une interruption : la pharmacie n'a peut-être pas reçu de récapitulatif par e-mail.</p>";
 function mailEquipeRetour({ d, b, ctx, simulation, echec, maintenant, reprise = false }) {
   return {
@@ -93,7 +98,7 @@ function mailEquipeRetour({ d, b, ctx, simulation, echec, maintenant, reprise = 
     html: `<div style="${STYLE}">
 ${reprise ? REPRISE : ""}
 ${simulation ? "<p><b>Mode simulation (pilote)</b> : rien n'a été créé dans l'outil entrepôt. Traitez cette demande à la main.</p>" : ""}
-${echec ? `<p><b>Envoi à l'outil entrepôt impossible</b> (${esc(echec)}) : saisissez cette demande à la main.</p>` : ""}
+${avisEchec(echec, "saisir")}
 <p>Demande de retour <b>${esc(d.numero)}</b> confirmée par la pharmacie le ${esc(dateFrParis(maintenant))} dans l'Assistant Elixir${ctx.admin ? ` (saisie Elixir par ${esc(ctx.admin)})` : ""}.</p>
 <p>Pharmacie : ${fiche(ctx)}<br>
 Document : ${esc(b.document.numero || b.reference_document || "–")}${b.document.date_sortie ? `, sorti de l'entrepôt le ${esc(jourFr(b.document.date_sortie))}` : ""}<br>
@@ -120,7 +125,7 @@ function mailEquipeTransmission({ d, t, ctx, simulation, echec, maintenant, repr
     subject: `${simulation ? "[SIMULATION] " : ""}${prefixeTransmission(t)}${t.categorie === "reglement" ? "[Règlement] " : ""}Transmission ${d.numero} — ${CATEGORIES[t.categorie] || CATEGORIES.autre} — ${String(ctx.nom || "pharmacie").slice(0, 80)}`,
     html: `<div style="${STYLE}">
 ${reprise ? REPRISE : ""}
-${echec ? `<p><b>Envoi à l'outil entrepôt impossible</b> (${esc(echec)}) : prenez cette demande en charge à partir de cet e-mail.</p>` : ""}
+${avisEchec(echec, "prendre")}
 <p>Demande transmise par l'Assistant Elixir le ${esc(dateFrParis(maintenant))}${ctx.admin ? ` (saisie Elixir par ${esc(ctx.admin)})` : ""} : n° <b>${esc(d.numero)}</b>.</p>
 <p>Pharmacie : ${fiche(ctx)}<br>Catégorie : ${esc(CATEGORIES[t.categorie] || CATEGORIES.autre)}<br>Urgence : ${t.urgence === "urgente" ? "<b>urgente</b>" : "normale"}<br>
 Référence citée : ${esc(t.reference || "–")}<br>Préférence de réponse : ${esc(RAPPELS[t.rappel])}</p>
@@ -189,7 +194,11 @@ export function creerDemandes(deps = {}) {
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) return { ok: false, raison: `outil entrepôt : HTTP ${res.status}` };
-      return { ok: true, reference: String(j?.reference || j?.numero_qualite || j?.ticket || "").slice(0, 60) || "entrepot" };
+      // une fonction absente de l'outil entrepôt répond 200 avec la page du site (HTML) : seule une vraie référence
+      // EN-601-… (réclamation) ou TK-… (ticket) vaut réception
+      const reference = String(j?.reference || "");
+      if (!/^(EN-601|TK)-\d{4}-\d+$/.test(reference)) return { ok: false, raison: "outil entrepôt : réponse inattendue (aucune référence EN-601 ou TK)" };
+      return { ok: true, reference };
     } catch (e) {
       return { ok: false, raison: e?.name === "TimeoutError" ? "outil entrepôt : délai dépassé" : "outil entrepôt injoignable" };
     }

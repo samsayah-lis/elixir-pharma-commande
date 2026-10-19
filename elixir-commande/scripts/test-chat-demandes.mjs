@@ -133,7 +133,7 @@ const stock = creerStock({ url: "https://supabase.test", cle: "cle-service-test"
 const mails = [];
 const envoyerMail = async (m) => { mails.push(m); return { sent: true, id: `mail-${mails.length}` }; };
 const entrepot = [];
-let reponseEntrepot = () => new Response(JSON.stringify({ reference: "RECLA-2026-0042" }), { status: 201 });
+let reponseEntrepot = () => new Response(JSON.stringify({ reference: "EN-601-2026-00042" }), { status: 201 });
 const fetchEntrepot = async (url, opts) => { entrepot.push({ url, opts }); return reponseEntrepot(); };
 let revalidation = (ctx, b) => ({ ok: true, brouillon: { ...b, lignes: b.lignes.map(l => ({ ...l, quantite_max: 3 })) } });
 const revaliderRetour = async (ctx, b) => revalidation(ctx, b);
@@ -267,7 +267,7 @@ eq("entrepôt : contenu (fiche Odoo, CIP13, lot, péremption, facture/BL, motif)
   ["chatbot", "retour", 777, "3400930000001", "AB123", "2028-04-30", "EP/OUT/01234", "retour_erreur_pharmacie"]);
 const l11 = db.tables.chat_demandes.find(x => x.id === b11.demande_id);
 eq("entrepôt : demande transmise, référence de l'entrepôt gardée, pas d'e-mail à l'équipe", [l11.statut, l11.cible_ref, !!l11.transmise_at, mails.filter(m => m.to.includes("equipe@elixir.test")).length],
-  ["transmise", "RECLA-2026-0042", true, 0]);
+  ["transmise", "EN-601-2026-00042", true, 0]);
 reponseEntrepot = () => new Response(JSON.stringify({ error: "panne" }), { status: 500 });
 mails.length = 0;
 const b12 = await de.creerBrouillon(ctxB, BROUILLON);
@@ -281,7 +281,21 @@ const b13 = await dv.creerBrouillon(ctxB, BROUILLON);
 await dv.confirmer(ctxB, { demande_id: b13.demande_id, decision: "confirmer", conversation_id: convB.id });
 const l13 = db.tables.chat_demandes.find(x => x.id === b13.demande_id);
 eq("entrepôt sans adresse : aucun POST, repli e-mail, demande en échec visible dans l'admin", [entrepot.length - nb, l13.statut, l13.cible_ref], [0, "echec", "email"]);
-reponseEntrepot = () => new Response(JSON.stringify({ reference: "RECLA-2026-0042" }), { status: 201 });
+// fonction absente de l'outil entrepôt : Netlify répond 200 avec la page du site → pas une réception, repli e-mail
+reponseEntrepot = () => new Response("<!DOCTYPE html><html><title>Elixir</title></html>", { status: 200, headers: { "Content-Type": "text/html" } });
+mails.length = 0;
+// (quota de 5 retours par jour déjà atteint par la pharmacie B dans ce script : réglage élargi pour ces deux cas)
+const deLarge = demandesPour(convB.id, R({ demandes: "entrepot", entrepot_url: "https://entrepot.test/api/chatbot-intake", quotas: { retours_jour: 50 } }));
+const bHtml = await deLarge.creerBrouillon(ctxB, BROUILLON);
+await deLarge.confirmer(ctxB, { demande_id: bHtml.demande_id, decision: "confirmer", conversation_id: convB.id });
+const lHtml = db.tables.chat_demandes.find(x => x.id === bHtml.demande_id);
+eq("entrepôt qui répond 200 sans référence (page HTML) : échec, e-mail à l'équipe", [lHtml.statut, /réponse inattendue/.test(lHtml.erreur), mails[0]?.to, mails[0]?.html.includes("Envoi à l'outil entrepôt impossible")],
+  ["echec", true, ["equipe@elixir.test"], true]);
+reponseEntrepot = () => new Response(JSON.stringify({ reference: "TK-2026-00007", deja: true }), { status: 200 });
+const bDeja = await deLarge.creerBrouillon(ctxB, BROUILLON);
+await deLarge.confirmer(ctxB, { demande_id: bDeja.demande_id, decision: "confirmer", conversation_id: convB.id });
+eq("entrepôt : renvoi reconnu (200, deja) accepté avec sa référence", db.tables.chat_demandes.find(x => x.id === bDeja.demande_id).cible_ref, "TK-2026-00007");
+reponseEntrepot = () => new Response(JSON.stringify({ reference: "EN-601-2026-00042" }), { status: 201 });
 
 // ════════ Transmissions ════════
 mails.length = 0;
@@ -382,6 +396,7 @@ r = await dlent.confirmer(ctxE, { demande_id: b20.demande_id, decision: "confirm
 const l20 = db.tables.chat_demandes.find(x => x.id === b20.demande_id);
 eq("entrepôt muet : abandonné au délai, repli e-mail, demande en échec", [r.http, l20.statut, /délai dépassé/.test(l20.erreur), mails[0]?.to, Date.now() - t0 < 2000],
   [200, "echec", true, ["equipe@elixir.test"], true]);
+eq("entrepôt muet : l'e-mail demande de vérifier dans l'outil entrepôt avant de saisir", [mails[0]?.html.includes("peut-être déjà enregistrée"), mails[0]?.html.includes("saisissez cette demande à la main")], [true, false]);
 mails.length = 0;
 const dmuet = creerDemandes({ stock, reglages: R({ demandes: "email" }), conversationId: convE.id, envoyerMail: () => new Promise(() => {}), fetch: fetchEntrepot, secret: SECRET,
   maintenant, revaliderRetour, journal: () => {}, delaiMailMs: 50 });
