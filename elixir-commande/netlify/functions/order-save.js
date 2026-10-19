@@ -1,6 +1,6 @@
 import { rateLimit } from "./rate-limit.js";
 import { getCors } from "./cors.js";
-import { verifyTokenAsync } from "./auth.js";
+import { verifierJeton, reponseIndisponible } from "./auth.js";
 import { validCip } from "./_pharmacies.js";
 import { lireConfig, indexProduits } from "./_lab-justif.js";
 // Sauvegarde une commande dans Supabase + décrémentation stock (non-bloquante)
@@ -16,7 +16,11 @@ import { lireConfig, indexProduits } from "./_lab-justif.js";
 //    adresse admin qui commande comme pharmacie reste à la synchro manuelle, comme avant.
 // POST { verifier: true } : contrôle de la session juste avant un envoi, RIEN n'est écrit → { success, admin }.
 // Sans jeton valide → 401 { error: "reconnexion" } ; compte sans pharmacie → 403 { error: "fiche" } ;
-// enteredByAdmin sans session admin → 403 (inchangé).
+// enteredByAdmin sans session admin → 403 (inchangé) ; Supabase Auth en panne → 503 { error: "indisponible" } (le site
+// dit « réessayez dans un instant », sans demander de reconnexion ; rien n'est écrit).
+// Même numéro déjà enregistré (le site renvoie la commande avec le même numéro quand la réponse s'est perdue) : succès
+// { deja: true } sans rien réécrire, si c'est bien la même commande (même compte, même source, mêmes lignes) ;
+// sinon 409 { error: "numero" } (le site reprend un autre numéro).
 // Transition : pages ouvertes avant la mise en ligne (sans jeton ni en-tête X-Elixir-Session) → QUARANTAINE (plus bas).
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -40,10 +44,15 @@ const idCommande = (id) => {
   if (typeof n === "string") { const x = parseInt(n.replace(/\D/g, "")); n = x > 0 ? x : Date.now(); }
   return Number.isSafeInteger(n) && n > 0 ? n : Date.now();
 };
+// Ligne « sur justificatif » : justificatif gardé, nettoyé (attestation, renouvellement, identifiants des ordonnances
+// déposées) — Elixir retrouve l'ordonnance, que menageOrdonnances garde tant que la commande « a_verifier » est à traiter.
+const justifNettoye = (j) => ({ attestation: !!j.attestation, renouvellement: !!j.renouvellement,
+  rx: (Array.isArray(j.rx) ? j.rx : []).map(String).filter(x => /^[0-9a-f-]{36}$/i.test(x)).slice(0, 5) });
 async function quarantaine(order, json) {
   const source = texte(order.source || "catalogue", 40);
   const items = order.items.slice(0, 500).map(i => ({ cip: texte(i?.cip, 20) || null, name: texte(i?.name, 200),
-    qty: Number.isFinite(Number(i?.qty)) ? Number(i.qty) : 0, pn: Number(i?.pn) || 0, total: Number(i?.total) || 0 }));
+    qty: Number.isFinite(Number(i?.qty)) ? Number(i.qty) : 0, pn: Number(i?.pn) || 0, total: Number(i?.total) || 0,
+    ...(i?.justif && typeof i.justif === "object" ? { justif: justifNettoye(i.justif) } : {}) }));
   const row = {
     id: idCommande(order.id), date: new Date().toISOString(),
     pharmacy_name: texte(`⚠ NON VÉRIFIÉE${source !== "catalogue" ? ` (${source})` : ""} — ${texte(order.pharmacyName, 120) || "?"} · ${texte(order.pharmacyEmail, 120) || "?"} · CIP ${texte(order.pharmacyCip, 20) || "?"}`, 300),
@@ -78,6 +87,21 @@ async function controleJustificatif(items) {
   return null;
 }
 
+// Commande déjà enregistrée sous row.id : la même (même compte, même source, mêmes lignes : CIP et quantités — le relais
+// ajoute ses marques d'envoi aux lignes) → true ; une autre → false ; lecture impossible → null
+async function memeCommande(row) {
+  try {
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${row.id}&select=pharmacy_email,source,items&limit=1`, { headers: SB });
+    const rows = r.ok ? await r.json() : null;
+    if (!Array.isArray(rows)) return null;
+    const [o] = rows;
+    if (!o) return false;
+    const lignes = (its) => JSON.stringify((typeof its === "string" ? JSON.parse(its) : its || []).map(i => [String(i?.cip ?? ""), Number(i?.qty) || 0]));
+    const mail = (m) => String(m || "").trim().toLowerCase();
+    return mail(o.pharmacy_email) === mail(row.pharmacy_email) && o.source === row.source && lignes(o.items) === lignes(row.items);
+  } catch { return null; }
+}
+
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -92,7 +116,9 @@ export const handler = async (event) => {
 
   // ── Identité : jeton vérifié côté serveur ──
   const token = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
-  const user = token ? await verifyTokenAsync(token) : null;
+  let user = null;
+  try { user = token ? await verifierJeton(token) : null; }
+  catch { return reponseIndisponible(cors); }   // Supabase Auth en panne : rien d'écrit, le site propose de réessayer
   if (!user) {
     const h = event.headers || {};
     const siteAJour = !!(h["x-elixir-session"] || h["X-Elixir-Session"]);
@@ -159,14 +185,21 @@ export const handler = async (event) => {
       body: JSON.stringify(r)
     });
     let res = await post(row);
+    let err = res.ok ? "" : await res.text();
     // colonne entered_by pas encore créée (sql/orders-entered-by.sql) : la commande passe quand même
-    if (!res.ok && row.entered_by) {
-      const t = await res.clone().text();
-      if (/entered_by/.test(t)) { const { entered_by, ...rest } = row; res = await post(rest); }
+    if (!res.ok && row.entered_by && /entered_by/.test(err)) {
+      const { entered_by, ...rest } = row; res = await post(rest); err = res.ok ? "" : await res.text();
     }
 
     if (!res.ok) {
-      const err = await res.text();
+      // numéro déjà enregistré : nouvel essai du site après une réponse perdue → succès, sans doublon ni second
+      // décompte du stock ; autre commande sous ce numéro → 409, le site en reprend un autre
+      if (/23505|duplicate key/.test(err)) {
+        const deja = await memeCommande(row);
+        if (deja === null) return json(500, { success: false, error: "Enregistrement à vérifier : réessayez dans un instant" });
+        return deja ? json(200, { success: true, id: orderId, deja: true })
+          : json(409, { success: false, error: "numero", message: "Numéro de commande déjà pris : renvoyez la commande" });
+      }
       console.error("[order-save] Supabase error:", err);
       return json(500, { success: false, error: err });
     }

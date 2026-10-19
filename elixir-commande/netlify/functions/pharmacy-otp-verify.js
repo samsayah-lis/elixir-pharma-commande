@@ -7,8 +7,13 @@
 // puis effacé s'il réussit (ou si Supabase ne répond pas) : seuls les codes faux restent. Un nouveau code
 // (pharmacy-otp-send) efface les essais erronés de l'adresse. Au-delà → 429 { success: false, error } (affiché par
 // l'écran du code). kv_store injoignable : limite par instance seulement (la connexion n'est pas bloquée).
+// La connexion qui a demandé le code en cours (noterDemandeur, pharmacy-otp-send) a ses 5 essais à elle (adresse ×
+// connexion) au lieu des 5 de l'adresse : les codes faux d'un tiers ne la bloquent plus (avant, un tiers qui
+// connaissait l'adresse empêchait la pharmacie de se connecter, même avec le bon code). Devinette inchangée : au plus
+// 5 essais pour les tiers et 5 pour la demandeuse par code ; pour devenir demandeur, un tiers doit lui-même demander un
+// code, qui part dans la boîte de la pharmacie (et remplace le précédent).
 import { getCors } from "./cors.js";
-import { rateLimit, limiteDurable, cleIp } from "./rate-limit.js";
+import { rateLimit, limiteDurable, cleIp, estDemandeur } from "./rate-limit.js";
 
 const ESSAIS_ADRESSE = 5, ESSAIS_IP = 20, FENETRE = 900;   // 15 min
 
@@ -32,14 +37,16 @@ export const handler = async (event) => {
   // Codes erronés : limite durable, avant la vérification
   let liberer = async () => {};
   try {
+    const ip = cleIp(event);
+    const demandeur = await estDemandeur(email, ip);
     const limite = await limiteDurable([
-      { nom: "otp-essai", valeur: email, max: ESSAIS_ADRESSE },
-      { nom: "otp-essai-ip", valeur: cleIp(event), max: ESSAIS_IP },
+      demandeur ? { nom: "otp-essai-dem", valeur: `${email}|${ip}`, max: ESSAIS_ADRESSE } : { nom: "otp-essai", valeur: email, max: ESSAIS_ADRESSE },
+      { nom: "otp-essai-ip", valeur: ip, max: ESSAIS_IP },
     ], FENETRE);
     if (limite.refus) {
       const min = Math.max(1, Math.ceil(limite.refus.retryAfter / 60));
       return { statusCode: 429, headers: { ...cors, "Retry-After": String(limite.refus.retryAfter) }, body: JSON.stringify({ success: false,
-        error: limite.refus.compteur === "otp-essai"
+        error: limite.refus.compteur !== "otp-essai-ip"
           ? `Trop de codes erronés pour cette adresse : demandez un nouveau code (« ← Changer d'e-mail », puis « Continuer ») ou réessayez dans ${min} min.`
           : `Trop de codes erronés depuis cette connexion : réessayez dans ${min} min, ou appelez Elixir Pharma au 01 86 04 39 95.` }) };
     }

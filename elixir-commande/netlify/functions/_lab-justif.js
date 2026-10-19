@@ -651,7 +651,9 @@ export async function envoisDus(cfg0, { budgetMs = 600000 } = {}) {
   return journal;
 }
 
-// Ordonnances : effacées 90 jours après leur dépôt ; dépôts jamais rattachés à une demande : 2 jours
+// Ordonnances : effacées 90 jours après leur dépôt ; dépôts jamais rattachés à une demande : 2 jours — sauf ceux d'une
+// commande « a_verifier » non traitée (page ouverte avant le correctif de sécurité du 19/10/2026, mise en quarantaine par
+// order-save avec ses justificatifs) : Elixir les retrouve en la saisissant, après l'appel de confirmation.
 export async function menageOrdonnances() {
   const limite = new Date(Date.now() - RX_JOURS * 86400e3).toISOString();
   await sb(`kv_store?key=like.lj:rx:*&updated_at=lt.${enc(limite)}`, { method: "DELETE" });
@@ -659,6 +661,12 @@ export async function menageOrdonnances() {
   const vieux = (await sb(`kv_store?key=like.lj:rx:*&updated_at=lt.${enc(orphelins)}&select=key&limit=500`)) || [];
   if (!vieux.length) return;
   const utilisees = new Set((await kvList("lj:req:")).flatMap(r => (r.value.rx || []).map(x => `lj:rx:${x.id}`)));
+  // commandes en quarantaine à traiter : lecture impossible → exception, rien n'est effacé (lab-justif-cron la journalise)
+  const aVerifier = (await sb("elixir_orders?source=eq.a_verifier&processed=eq.false&select=items&limit=1000")) || [];
+  for (const o of aVerifier) {
+    const its = typeof o.items === "string" ? parse(o.items) : o.items;
+    for (const i of Array.isArray(its) ? its : []) for (const id of Array.isArray(i?.justif?.rx) ? i.justif.rx : []) utilisees.add(`lj:rx:${id}`);
+  }
   for (const { key } of vieux) if (!utilisees.has(key)) await kvDel(key).catch(() => {});
 }
 

@@ -2,9 +2,10 @@
 // GET /order-list                         → admin : toutes ; pharmacie : les siennes (CIP du jeton)
 // GET /order-list?source=ulabs            → filtre par source campagne (pharmacie : parmi les siennes seulement)
 // GET /order-list?pharmacy_cip=XXX        → admin en saisie pour une pharmacie : ses commandes ; ignoré pour une pharmacie
-// Sans jeton valide → 401 { error: "reconnexion" } ; jeton pharmacie sans CIP → 403 { error: "fiche" }.
+// Sans jeton valide → 401 { error: "reconnexion" } ; jeton pharmacie sans CIP → 403 { error: "fiche" } ;
+// Supabase Auth en panne → 503 { error: "indisponible" } (« Mes commandes » : erreur de lecture, pas de reconnexion).
 // L'ancien accès sans jeton (?pharmacy_cip=, ?source= : commandes de toutes les pharmacies) est fermé.
-import { verifyTokenAsync } from "./auth.js";
+import { verifierJeton, reponseIndisponible } from "./auth.js";
 import { frise, etatCommandeDemande } from "./_lab-justif.js";
 import { resumeTache } from "./_relais.js";
 import { validCip } from "./_pharmacies.js";
@@ -21,7 +22,9 @@ export const handler = async (event) => {
   // Identité = jeton vérifié côté serveur (admin, ou pharmacie dont le CIP vient de l'e-mail vérifié du jeton)
   const authHeader = event.headers?.authorization || event.headers?.Authorization || "";
   const token = authHeader.replace(/^Bearer\s+/i, "");
-  const user = token ? await verifyTokenAsync(token) : null;
+  let user = null;
+  try { user = token ? await verifierJeton(token) : null; }
+  catch { return reponseIndisponible(cors); }
   if (!user) return json(401, { error: "reconnexion", message: "Session expirée : reconnectez-vous pour voir vos commandes." });
   const isAdmin = user.isAdmin === true;
   if (!isAdmin && !validCip(user.cip)) return json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." });

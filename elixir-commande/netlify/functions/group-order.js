@@ -1,5 +1,5 @@
 import { getCors } from "./cors.js";
-import { verifyTokenAsync } from "./auth.js";
+import { verifierJeton, reponseIndisponible } from "./auth.js";
 import { validCip } from "./_pharmacies.js";
 import crypto from "node:crypto";
 // Commandes groupées U-Labs
@@ -11,7 +11,8 @@ import crypto from "node:crypto";
 // POST /group-order  { cip, qty }                 → pharmacie : sa ligne (CIP du jeton, nom de sa fiche) ;
 //                                                    admin (saisie pour une pharmacie) : + pharmacy_cip, pharmacy_name
 // DELETE /group-order?fournisseur=ulabs            → pharmacie : vide son panier ; admin : + &pharmacy_cip=XXX
-// Sans jeton valide → 401 { error: "reconnexion" } ; compte sans CIP → 403 { error: "fiche" }.
+// Sans jeton valide → 401 { error: "reconnexion" } ; compte sans CIP → 403 { error: "fiche" } ;
+// Supabase Auth en panne → 503 { error: "indisponible" } (rien lu ni écrit, pas de reconnexion demandée).
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = {
@@ -23,10 +24,12 @@ const H = {
 const SECRET = process.env.GP_KEY_SECRET || process.env.CRON_SECRET || process.env.SUPABASE_KEY || "gp";
 const anonyme = (fournisseur, cip) => `anonyme-${crypto.createHmac("sha256", SECRET).update(`group-order:${fournisseur}:${cip}`).digest("hex").slice(0, 12)}`;
 
-// Appelant → { admin: true } | { admin: false, cip, email } | { erreur: réponse 401/403 }
-async function appelant(event, json) {
+// Appelant → { admin: true } | { admin: false, cip, email } | { erreur: réponse 401/403/503 }
+async function appelant(event, json, cors) {
   const token = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
-  const user = token ? await verifyTokenAsync(token) : null;
+  let user = null;
+  try { user = token ? await verifierJeton(token) : null; }
+  catch { return { erreur: reponseIndisponible(cors) }; }
   if (!user) return { erreur: json(401, { error: "reconnexion", message: "Session expirée : reconnectez-vous avec le code reçu par e-mail." }) };
   if (user.isAdmin === true) return { admin: true };
   if (!validCip(user.cip)) return { erreur: json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." }) };
@@ -43,7 +46,7 @@ export const handler = async (event) => {
   if (!/^[\w-]{1,40}$/.test(fournisseur)) return json(400, { error: "fournisseur invalide" });
   if (!["GET", "POST", "DELETE"].includes(event.httpMethod)) return { statusCode: 405, headers: cors, body: "Method not allowed" };
 
-  const qui = await appelant(event, json);
+  const qui = await appelant(event, json, cors);
   if (qui.erreur) return qui.erreur;
 
   // ── GET : lignes du groupement (identité des autres pharmacies masquée) ──

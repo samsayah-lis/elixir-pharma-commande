@@ -7,11 +7,12 @@ import { rateLimit } from "./rate-limit.js";
 //  • jeton pharmacie joint (e-mail de commande du site) : adresse et nom de la pharmacie = ceux de l'e-mail VÉRIFIÉ du
 //    jeton ; jeton admin (saisie Elixir pour une pharmacie) : paramètres inchangés ;
 //  • jeton joint mais invalide ou expiré → 401 { error: "reconnexion" } : RIEN n'est envoyé (le site renouvelle le jeton) ;
+//    Supabase Auth en panne → 503 { error: "indisponible" } : rien n'est envoyé non plus (ni reconnexion demandée) ;
 //  • sans jeton (demande d'accès « nouveau client », page ouverte avant la mise en ligne, ou appel hors du site) :
 //    l'e-mail part, le nom précédé de « ⚠ IDENTITÉ NON VÉRIFIÉE — » (Origin et Referer se falsifient hors navigateur) :
 //    une commande reçue ainsi se confirme par téléphone avec la pharmacie avant d'être saisie.
 import { getCors } from "./cors.js";
-import { verifyTokenAsync } from "./auth.js";
+import { verifierJeton, reponseIndisponible } from "./auth.js";
 
 const EMAILJS_SERVICE_ID  = process.env.EMAILJS_SERVICE_ID  || "service_jbnqhnv";
 const EMAILJS_TEMPLATE_ID = process.env.EMAILJS_TEMPLATE_ID || "template_hcu9i7q";
@@ -44,7 +45,9 @@ export const handler = async (event) => {
 
   // ── Expéditeur : jeton vérifié côté serveur ──
   const token = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
-  const user = token ? await verifyTokenAsync(token) : null;
+  let user = null;
+  try { user = token ? await verifierJeton(token) : null; }
+  catch { return reponseIndisponible(cors); }
   if (token && !user) return { statusCode: 401, headers: cors, body: JSON.stringify({ success: false, error: "reconnexion",
     message: "Session expirée : reconnectez-vous avec le code reçu par e-mail pour envoyer votre commande." }) };
   const params = { ...template_params, to_email: DESTINATAIRE };

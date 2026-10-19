@@ -1,7 +1,7 @@
 // ── Commandes groupées : aides communes aux fonctions gp-* ────────────────
 // Une pharmacie est identifiée par sa fiche client Odoo Elixir (fiche commerciale,
 // colonne pharmacy_id), jamais par son CIP : la plupart des fiches ont un CIP vide ou « 0 ».
-import { verifyTokenAsync } from "./auth.js";
+import { verifierJeton } from "./auth.js";
 import crypto from "node:crypto";
 import { priceOrder, objectiveProgress, parisToday, allocateFree, freeBySlot, slotOrder, packIssues, isElixir, IMMEDIATE_SLOT } from "../../src/gp-pricing.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
@@ -65,9 +65,11 @@ export async function productInfo(cips) {
 // désigne plus aucune pharmacie). Pharmacie : compte de l'e-mail VÉRIFIÉ du jeton, le CIP de la session est ignoré ;
 // admin (saisie pour une pharmacie) : compte de l'adresse envoyée par l'écran (elixir_pharmacies ne contient que
 // des clients Elixir, voir pharmacy-sync-now). Appelant du jeton → { id, email, isAdmin, cip } ou null.
+// Supabase Auth en panne : exception { status: 503 } (aucun accès ; gp-pharmacy répond 503, quota-status 502,
+// gp-upload 500 — jamais 401, qui ferait demander une reconnexion).
 export async function jetonVerifie(event) {
   const tok = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
-  return tok ? await verifyTokenAsync(tok).catch(() => null) : null;
+  return tok ? await verifierJeton(tok) : null;
 }
 // user : appelant déjà vérifié par jetonVerifie (sinon le jeton de la requête est vérifié ici).
 // Renvoie { id, cip, name, email } ou null (sans jeton valide, ou compte sans fiche Odoo).

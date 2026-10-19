@@ -14,6 +14,14 @@
 //  • order-save (relecture) : quarantaine bornée des pages d'avant le correctif ; entered_by pour la saisie Elixir
 //    seulement ; source et lignes « justificatif » contrôlées pour une pharmacie ;
 //  • send-email : destinataire fixé, adresse du jeton, « identité non vérifiée » sans jeton, 401 si jeton invalide.
+// Relecture finale (même jour) :
+//  • site (code de src/App.jsx rejoué) : commande enregistrée AVANT l'e-mail ; enregistrement refusé → rien ne part,
+//    panier intact ; même numéro d'un essai à l'autre et réponse perdue → pas de doublon ; e-mail en échec → commande
+//    gardée ; quantités de commande groupée refusées (401) → reconnexion demandée, renvoyées après ;
+//  • order-save : même numéro déjà enregistré → { deja } si c'est la même commande, 409 sinon ;
+//  • pharmacy-otp-verify : la connexion qui a demandé le code n'est pas bloquée par les codes faux d'un tiers ;
+//  • quarantaine : justificatif nettoyé gardé ; menageOrdonnances garde les ordonnances des commandes « a_verifier » ;
+//  • Supabase Auth en panne : 503 « indisponible » (jamais 401), aucun accès, rien lu ni écrit.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
 process.env.ODOO_URL = "https://odoo.test";
@@ -46,6 +54,11 @@ const GROUPE = [
 let odooPartenaire = null;   // fiche renvoyée par res.partner search_read (pharmacy-otp-send, adresse hors cache)
 const dernierCode = new Map(); // Supabase Auth simulé : adresse → heure du dernier code envoyé
 let verifyEnPanne = false;
+let authEnPanne = null;      // Supabase Auth /user : null, statut HTTP (503, 504, 429) ou "reseau"
+let baseCommandes = null;    // elixir_orders simulée (Map id → ligne) : doublons refusés en 409 comme Postgres ; null = 201 toujours
+let commandesEnPanne = false;
+let emailEnPanne = false;
+let site = null;             // fonctions du site (/.netlify/functions/…), partie « site » plus bas
 const kv = new Map();        // kv_store simulé : clé → { value, updated_at }
 let kvEnPanne = false;
 
@@ -55,11 +68,14 @@ const q = (url) => Object.fromEntries(new URL(url).searchParams);
 const val = (v) => String(v ?? "").replace(/^eq\./, "");
 globalThis.fetch = async (url, opts = {}) => {
   url = String(url);
+  if (site && url.startsWith("/.netlify/functions/")) return site(url, opts);
   const methode = opts.method || "GET";
   appels.push({ url, methode, corps: opts.body || null });
   const rep = (corps, status = 200) => new Response(status === 204 ? null : JSON.stringify(corps), { status });
   const p = url.startsWith("https://supabase.test/") ? q(url) : {};
   if (url.startsWith("https://supabase.test/auth/v1/user")) {
+    if (authEnPanne === "reseau") throw new TypeError("fetch failed");
+    if (authEnPanne) return rep({ msg: "upstream request timeout" }, authEnPanne);
     const t = String(opts.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
     return JETONS[t] ? rep(JETONS[t]) : rep({ msg: "jeton invalide" }, 401);
   }
@@ -75,14 +91,24 @@ globalThis.fetch = async (url, opts = {}) => {
     const b = JSON.parse(opts.body);
     return b.token === "123456" ? rep({ access_token: "jeton-a", refresh_token: "r-a", expires_in: 3600 }) : rep({ msg: "Token has expired or is invalid" }, 403);
   }
-  if (url === "https://api.emailjs.com/api/v1.0/email/send") return rep("OK");
+  if (url === "https://api.emailjs.com/api/v1.0/email/send") return emailEnPanne ? rep("EmailJS KO", 500) : rep("OK");
   if (url.startsWith("https://supabase.test/rest/v1/elixir_pharmacies")) {
     if (methode === "POST") return rep(null, 201);
     const champs = String(p.select || "*").split(",");
     const lignes = PHARMACIES.filter(r => (!p.email || r.email === val(p.email)) && (!p.odoo_id || String(r.odoo_id) === val(p.odoo_id)));
     return rep(lignes.slice(0, p.limit ? +p.limit : 99).map(r => champs[0] === "*" ? r : Object.fromEntries(champs.map(c => [c, r[c] ?? null]))));
   }
-  if (url.startsWith("https://supabase.test/rest/v1/elixir_orders")) return methode === "POST" ? rep(null, 201) : rep([]);
+  if (url.startsWith("https://supabase.test/rest/v1/elixir_orders")) {
+    if (commandesEnPanne) return rep({ message: "base indisponible" }, 500);
+    if (!baseCommandes) return methode === "POST" ? rep(null, 201) : rep([]);
+    if (methode === "POST") {
+      const b = JSON.parse(opts.body);
+      if (baseCommandes.has(b.id)) return rep({ code: "23505", message: 'duplicate key value violates unique constraint "elixir_orders_pkey"' }, 409);
+      baseCommandes.set(b.id, b); return rep(null, 201);
+    }
+    return rep([...baseCommandes.values()].filter(o => (!p.id || String(o.id) === val(p.id)) && (!p.source || o.source === val(p.source))
+      && (!p.processed || String(o.processed) === val(p.processed))));
+  }
   if (url.startsWith("https://supabase.test/rest/v1/rpc/decrement_stock")) return rep(null, 204);
   if (url.startsWith("https://supabase.test/rest/v1/ec_notifications")) return rep(null, 201);
   if (url.startsWith("https://supabase.test/rest/v1/gp_access")) return rep(["11"].includes(val(p.pharmacy_id)) || val(p.pharmacy_id) === "12" ? [{ pharmacy_id: val(p.pharmacy_id) }] : []);
@@ -205,8 +231,15 @@ eq("order-save quarantaine : ni stock, ni notification, ni entered_by", [appelsV
 eq("order-save quarantaine : lignes gardées (cip, nom, quantité, prix)", ligne?.items, [{ cip: "3400000000011", name: "Produit 11", qty: 2, pn: 2.5, total: 5 }]);
 r = await sauve({ ancienne: true, corps: { ...COMMANDE, source: "justificatif", pharmacyName: "x".repeat(400), items: Array.from({ length: 600 }, (_, i) => ({ cip: String(i), name: "y".repeat(500), qty: 1, justif: { rx: ["z"] } })) } });
 ligne = ecrite();
-eq("order-save quarantaine : source d'origine dans le nom, lignes et textes bornés", [r.statut, /^⚠ NON VÉRIFIÉE \(justificatif\) — x+/.test(ligne?.pharmacy_name), ligne?.pharmacy_name.length <= 300, ligne?.items.length, ligne?.items[0].name.length, "justif" in ligne.items[0]],
-  [200, true, true, 500, 200, false]);
+eq("order-save quarantaine : source d'origine dans le nom, lignes et textes bornés, justificatif nettoyé", [r.statut, /^⚠ NON VÉRIFIÉE \(justificatif\) — x+/.test(ligne?.pharmacy_name), ligne?.pharmacy_name.length <= 300, ligne?.items.length, ligne?.items[0].name.length, ligne.items[0].justif],
+  [200, true, true, 500, 200, { attestation: false, renouvellement: false, rx: [] }]);
+{
+  const RX = ["0f8e2c1a-1111-4a2b-8c3d-000000000001", "0f8e2c1a-1111-4a2b-8c3d-000000000002"];
+  r = await sauve({ ancienne: true, corps: { ...COMMANDE, source: "justificatif", items: [{ cip: "3400930177006", name: "LORVIQUA", qty: 1, pn: 100, total: 100,
+    justif: { attestation: "oui", renouvellement: 0, rx: [RX[0], "../../etc", { id: "x" }, RX[1], RX[0], RX[1], RX[0], RX[1]], autre: "<script>" } }] } });
+  eq("order-save quarantaine : justificatif gardé (attestation, renouvellement, 5 ordonnances au plus, identifiants seulement)", ecrite()?.items[0].justif,
+    { attestation: true, renouvellement: false, rx: [RX[0], RX[1], RX[0], RX[1], RX[0]] });
+}
 r = await sauve({ ancienne: true, corps: { verifier: true } });
 eq("order-save page ancienne { verifier } (sans ligne) → 401, rien écrit", [r.statut, appelsVers("elixir_orders").length], [401, 0]);
 r = await sauve({ ancienne: true, jeton: "jeton-perime", corps: COMMANDE });
@@ -412,7 +445,9 @@ eq("otp-send : no-store", r.entetes["Cache-Control"], "no-store");
 r = await envoi("inconnue@nulle-part.test", "10.4.0.1");
 eq("otp-send adresse inconnue → parcours « nouveau client » inchangé (404 unknown), aucun code", [r.statut, r.corps.unknown, codesEnvoyes()], [404, true, 0]);
 eq("otp-send : ni adresse ni IP en clair dans kv_store", [...kv.keys()].some(k => k.includes("pharmacie-a") || k.includes("nulle-part") || k.includes("10.4.0.1")), false);
-eq("otp-send : clés de la limite rl:otp-…", [...kv.keys()].every(k => /^rl:otp-(ip|adresse-ip):[0-9a-f]{24}:\d{4}-\d\d-\d\dT[\d:.]+Z:[0-9a-f]{8}$/.test(k)), true);
+eq("otp-send : clés de la limite rl:otp-… et de la connexion demandeuse (empreintes seulement)", [...kv.keys()].every(k => /^rl:otp-(ip|adresse-ip):[0-9a-f]{24}:\d{4}-\d\d-\d\dT[\d:.]+Z:[0-9a-f]{8}$/.test(k)
+  || /^rl:otp-demandeur:[0-9a-f]{24}:[0-9a-f]{24}$/.test(k)), true);
+eq("otp-send : connexion demandeuse enregistrée pour le code envoyé (une seule clé)", [...kv.keys()].filter(k => k.startsWith("rl:otp-demandeur:")).length, 1);
 
 // par adresse ET connexion : 5 par heure ; un tiers ne bloque pas la pharmacie (aucun plafond par adresse seule)
 kv.clear();
@@ -505,6 +540,36 @@ eq("limiteDurable : place libérée → nouveau passage accepté", (await limite
   r = await essai(MAIL_A, "123456", "10.12.0.2");
   kvEnPanne = false;
   eq("otp-verify : kv_store en panne → la connexion passe", [r.statut, r.corps.success], [200, true]);
+
+  // Relecture finale : un tiers qui connaît l'adresse ne bloque plus la connexion qui a demandé le code en cours
+  const PHARMA = "86.1.2.3", TIERS = "203.0.113.50";
+  kv.clear(); dernierCode.clear(); avance(61);
+  r = lit(await otp(ev("POST", { corps: { email: MAIL_A }, ip: PHARMA })));
+  eq("otp-send : la pharmacie demande un code depuis sa connexion", r.corps.success, true);
+  const tiers = [];
+  for (let i = 0; i < 6; i++) tiers.push((await essai(MAIL_A, `11111${i}`, TIERS)).statut);
+  eq("otp-verify : un tiers (autre connexion) → 5 codes faux comptés, le 6e refusé (devinette toujours bridée)", tiers, [200, 200, 200, 200, 200, 429]);
+  r = await essai(MAIL_A, "123456", PHARMA);
+  eq("otp-verify : la pharmacie, depuis la connexion qui a demandé le code, saisit le bon code → 200 avec un jeton", [r.statut, r.corps.success, r.corps.token], [200, true, "jeton-a"]);
+  r = await essai(MAIL_A, "123456", "203.0.113.51");
+  eq("otp-verify : une autre connexion reste soumise au plafond de l'adresse (même avec le bon code)", r.statut, 429);
+  avance(61);
+  await otp(ev("POST", { corps: { email: MAIL_A }, ip: PHARMA }));
+  const dem = [];
+  for (let i = 0; i < 5; i++) dem.push((await essai(MAIL_A, `22222${i}`, PHARMA)).statut);
+  r = await essai(MAIL_A, "123456", PHARMA);
+  eq("otp-verify : la connexion demandeuse a ses 5 essais à elle, puis 429 (même le bon code)", [dem, r.statut, /pour cette adresse/.test(r.corps.error)],
+    [[200, 200, 200, 200, 200], 429, true]);
+  avance(61);
+  await otp(ev("POST", { corps: { email: MAIL_A }, ip: PHARMA }));
+  r = await essai(MAIL_A, "123456", PHARMA);
+  eq("otp-verify : nouveau code demandé → essais de la demandeuse remis à zéro, connexion réussie", [r.statut, r.corps.success], [200, true]);
+  avance(61);
+  await otp(ev("POST", { corps: { email: MAIL_A }, ip: TIERS }));
+  eq("otp-send : une seule connexion demandeuse par adresse (la dernière à avoir demandé un code)", [...kv.keys()].filter(k => k.startsWith("rl:otp-demandeur:")).length, 1);
+  const parTiers = [];
+  for (let i = 0; i < 6; i++) parTiers.push((await essai(MAIL_A, `33333${i}`, TIERS)).statut);
+  eq("otp-verify : un tiers devenu demandeur (en faisant envoyer un code à la pharmacie) n'a que 5 essais lui aussi", parTiers, [200, 200, 200, 200, 200, 429]);
 }
 
 // kv_store injoignable : la connexion n'est pas bloquée (limite par instance seulement)
@@ -516,6 +581,271 @@ const passagesAvant = kv.size;
 r = lit(await otp(ev("POST", { corps: { email: "pas-une-adresse" }, ip: "10.7.0.2" })));
 eq("otp-send adresse invalide → 400, rien compté", [r.statut, kv.size], [400, passagesAvant]);
 Date.now = dateReelle;
+
+// ════════════════════════ Supabase Auth en panne : 503, jamais 401, aucun accès ════════════════════════
+{
+  const { handler: mail } = await import("../netlify/functions/send-email.js");
+  const { handler: liste } = await import("../netlify/functions/order-list.js");
+  const { handler: majCommande } = await import("../netlify/functions/order-update.js");
+  const { handler: alertes } = await import("../netlify/functions/restock-alert.js");
+  let n = 0;
+  const appel = async (h, methode, o) => { appels = []; return lit(await h(ev(methode, { ip: `10.30.0.${++n}`, entetes: SITE, ...o }))); };
+  for (const panne of [503, 504, 429, "reseau"]) {
+    authEnPanne = panne;
+    r = await appel(orderSave, "POST", { jeton: "jeton-a", corps: COMMANDE });
+    eq(`Auth en panne (${panne}) : order-save → 503 indisponible, rien écrit`, [r.statut, r.corps.error, appelsVers("elixir_orders").length, appelsVers("decrement_stock").length], [503, "indisponible", 0, 0]);
+  }
+  authEnPanne = 503;
+  r = await appel(orderSave, "POST", { jeton: "jeton-a", corps: { verifier: true } });
+  eq("Auth en panne : order-save { verifier } → 503 (le site dit « réessayez », pas « reconnectez-vous »), Retry-After, CORS, no-store",
+    [r.statut, r.corps.error, Number(r.entetes["Retry-After"]) > 0, ...corsEtNoStore(r)], [503, "indisponible", true, ORIGINE, "no-store"]);
+  r = await appel(orderSave, "POST", { ancienne: true, jeton: "jeton-a", corps: COMMANDE });
+  eq("Auth en panne : jeton joint → jamais de quarantaine", [r.statut, appelsVers("elixir_orders").length], [503, 0]);
+  r = await appel(mail, "POST", { jeton: "jeton-a", corps: { template_params: { pharmacy_name: "Pharmacie A" } } });
+  eq("Auth en panne : send-email → 503, rien envoyé", [r.statut, r.corps.error, appelsVers("api.emailjs.com").length], [503, "indisponible", 0]);
+  r = await appel(groupe, "GET", { jeton: "jeton-a", q: { fournisseur: "ulabs" } });
+  eq("Auth en panne : group-order GET → 503, rien lu", [r.statut, appelsVers("elixir_group_orders").length], [503, 0]);
+  r = await appel(groupe, "POST", { jeton: "jeton-a", corps: { cip: "3400000000011", qty: 6 } });
+  eq("Auth en panne : group-order POST → 503, rien écrit", [r.statut, appelsVers("elixir_group_orders").length], [503, 0]);
+  r = await appel(liste, "GET", { jeton: "jeton-a" });
+  eq("Auth en panne : order-list → 503, rien lu", [r.statut, appelsVers("elixir_orders").length], [503, 0]);
+  r = await appel(gpPharmacie, "POST", { jeton: "jeton-a", corps: { action: "access" } });
+  eq("Auth en panne : gp-pharmacy → 503 (le menu n'invite pas à se reconnecter), accès non lu", [r.statut, appelsVers("gp_access").length], [503, 0]);
+  r = await appel(quota, "POST", { jeton: "jeton-a", corps: {} });
+  eq("Auth en panne : quota-status → refus (5xx, pas 401), ni Odoo ni commandes lus", [r.statut >= 500, appelsVers("odoo.test").length, appelsVers("elixir_orders").length], [true, 0, 0]);
+  r = await appel(gpDepot, "POST", { jeton: "jeton-a", corps: { action: "status", job: "x" } });
+  eq("Auth en panne : gp-upload → refus (5xx, pas 401), kv_store non lu", [r.statut >= 500, appelsVers("kv_store").length], [true, 0]);
+  r = await appel(majCommande, "POST", { jeton: "jeton-admin", corps: { id: 1, action: "delete" } });
+  eq("Auth en panne : fonction admin (verifyAdmin) → 503 (l'admin n'est plus déconnecté par le renouvellement), rien modifié",
+    [r.statut, appelsVers("elixir_orders").length], [503, 0]);
+  r = await appel(ml, "GET", { jeton: "jeton-a", q: { mode: "reorder" } });
+  eq("Auth en panne : appelants de verifyTokenAsync (ml-recommend) → refus, aucune donnée lue", [r.statut, motifLu()], [401, []]);
+  r = await appel(alertes, "GET", { jeton: "jeton-a" });
+  eq("Auth en panne : restock-alert → refus, rien lu", [r.statut, appelsVers("restock").length], [401, 0]);
+  authEnPanne = null;
+  r = await appel(orderSave, "POST", { jeton: "jeton-perime", corps: { verifier: true } });
+  eq("Auth disponible : jeton invalide → toujours 401 reconnexion", [r.statut, r.corps.error], [401, "reconnexion"]);
+}
+
+// ════════════════════════ order-save : même numéro (nouvel essai du site) ════════════════════════
+{
+  baseCommandes = new Map();
+  const C = { ...COMMANDE, id: 1792000000001 };
+  r = await sauve({ jeton: "jeton-a", corps: C });
+  eq("order-save : première fois → 200, enregistrée, stock décrémenté", [r.statut, r.corps.success, r.corps.deja, baseCommandes.size, appelsVers("decrement_stock").length], [200, true, undefined, 1, 1]);
+  r = await sauve({ jeton: "jeton-a", corps: C });
+  eq("order-save : même commande renvoyée (réponse perdue) → 200 { deja }, aucun doublon, ni stock ni notification en double",
+    [r.statut, r.corps.success, r.corps.deja, r.corps.id, baseCommandes.size, appelsVers("decrement_stock").length, appelsVers("ec_notifications").length], [200, true, true, C.id, 1, 0, 0]);
+  baseCommandes.get(C.id).items = baseCommandes.get(C.id).items.map(i => ({ ...i, synced_at: "2026-10-19T10:00:00Z", synced_ref: "R1" }));
+  r = await sauve({ jeton: "jeton-a", corps: C });
+  eq("order-save : même commande déjà marquée par le relais → toujours reconnue", [r.statut, r.corps.deja], [200, true]);
+  r = await sauve({ jeton: "jeton-a", corps: { ...C, items: [{ ...C.items[0], qty: 3 }] } });
+  eq("order-save : même numéro, autres lignes → 409 numero, rien réécrit", [r.statut, r.corps.error, baseCommandes.get(C.id).items[0].qty], [409, "numero", 2]);
+  r = await sauve({ jeton: "jeton-b", corps: C });
+  eq("order-save : même numéro, autre pharmacie → 409 numero (jamais « déjà enregistrée » pour une autre)", [r.statut, r.corps.error], [409, "numero"]);
+  r = await sauve({ jeton: "jeton-a", corps: { ...C, source: "ulabs" } });
+  eq("order-save : même numéro, autre source → 409", r.statut, 409);
+  // numéro pris par une commande en quarantaine (sans jeton) : jamais confondue avec celle de la pharmacie
+  r = await sauve({ ancienne: true, corps: { ...C, id: 1792000000002 } });
+  r = await sauve({ jeton: "jeton-a", corps: { ...C, id: 1792000000002 } });
+  eq("order-save : numéro d'une commande en quarantaine → 409", r.statut, 409);
+  commandesEnPanne = true;
+  r = await sauve({ jeton: "jeton-a", corps: C });
+  commandesEnPanne = false;
+  eq("order-save : base en panne → 500 (le site garde le panier et le numéro)", [r.statut, r.corps.success], [500, false]);
+  baseCommandes = null;
+}
+
+// ════════════════════════ ordonnances des commandes en quarantaine ════════════════════════
+{
+  const { menageOrdonnances } = await import("../netlify/functions/_lab-justif.js");
+  const RX_GARDEE = "0f8e2c1a-2222-4a2b-8c3d-000000000001", RX_ORPHELINE = "0f8e2c1a-2222-4a2b-8c3d-000000000002", RX_DEMANDE = "0f8e2c1a-2222-4a2b-8c3d-000000000003";
+  const ilYa = (j) => new Date(Date.now() - j * 86400e3).toISOString();
+  const prepare = () => {
+    kv.clear();
+    for (const id of [RX_GARDEE, RX_ORPHELINE, RX_DEMANDE]) kv.set(`lj:rx:${id}`, { value: JSON.stringify({ owner: "11", name: "ordonnance.pdf" }), updated_at: ilYa(3) });
+    kv.set("lj:req:s-1-pfizer", { value: JSON.stringify({ id: "s-1-pfizer", rx: [{ id: RX_DEMANDE }] }), updated_at: ilYa(3) });
+    baseCommandes = new Map([[1792000000010, { id: 1792000000010, source: "a_verifier", processed: false,
+      items: [{ cip: "3400930177006", qty: 1, justif: { attestation: true, renouvellement: false, rx: [RX_GARDEE] } }] }]]);
+  };
+  prepare();
+  await menageOrdonnances();
+  eq("menageOrdonnances : ordonnance d'une commande « a_verifier » non traitée gardée, celle d'une demande gardée, l'orpheline effacée",
+    [kv.has(`lj:rx:${RX_GARDEE}`), kv.has(`lj:rx:${RX_DEMANDE}`), kv.has(`lj:rx:${RX_ORPHELINE}`)], [true, true, false]);
+  prepare();
+  baseCommandes.get(1792000000010).processed = true;
+  await menageOrdonnances();
+  eq("menageOrdonnances : commande « a_verifier » traitée → son ordonnance n'est plus protégée", kv.has(`lj:rx:${RX_GARDEE}`), false);
+  prepare(); commandesEnPanne = true;
+  const erreur = await menageOrdonnances().then(() => null, e => e.message);
+  commandesEnPanne = false;
+  eq("menageOrdonnances : commandes illisibles → erreur, aucune ordonnance effacée", [!!erreur, kv.has(`lj:rx:${RX_GARDEE}`), kv.has(`lj:rx:${RX_ORPHELINE}`)], [true, true, true]);
+  kv.clear(); baseCommandes = null;
+}
+
+// ════════════════════════ site : envoi d'une commande et commandes groupées (code de src/App.jsx rejoué) ════════════════════════
+// Le code du site est extrait tel quel de src/App.jsx (appelAuthentifie, sessionPourEnvoi, envoi, groupement) et rejoué
+// contre les vraies fonctions order-save, send-email et group-order.
+{
+  const { readFileSync } = await import("node:fs");
+  const { handler: mail } = await import("../netlify/functions/send-email.js");
+  const src = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+  const entre = (debut, fin) => { const i = src.indexOf(debut), j = src.indexOf(fin, i + 1); if (i < 0 || j < 0) throw new Error(`extrait de App.jsx introuvable : ${debut}`); return src.slice(i, j); };
+  const code = `import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip } from ${JSON.stringify(new URL("../src/lab-justif-client.js", import.meta.url).href)};
+const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
+${entre("const quotaOver = (quota, items) => {", "const quotaDay")}
+${entre("const MESSAGE_ENVOI_BLOQUE = {", "class ErrorBoundary")}
+export function fabrique(ctx) {
+  const { actingFor, cartItems, justifInfo, pharmacyName, pharmacyEmail, pharmacyCip, isClient, quantities, CATALOG_WITH_ADMIN, getCampaign, setTimeout } = ctx;
+  let { justifProducts } = ctx;
+  const { flash, setSendStatus, setEnvoiBloque, setJustifProducts, setCartOpen, setQuantities, setSpecialItems, setJustifInfo, setUlabsError, fetchGroupOrders } = ctx;
+  const jetonVersion = 0, useCallback = (f) => f, useRef = (v) => ({ current: v });
+  const cartTotal = cartItems.reduce((s, i) => s + i.total, 0), cartCount = cartItems.reduce((s, i) => s + i.qty, 0);
+  const expandSupplierGroups = async (items) => items;
+  const loadQuota = async () => null;
+${entre("  const appelAuthentifie = useCallback(", "  const [groupOrders, setGroupOrders]")}
+${entre("  const sessionPourEnvoi = async () => {", "  // Reconnexion par code sans quitter")}
+${entre("  const groupeARenvoyer = useRef(", "  useEffect(() => { if (jetonVersion) renvoyerGroupe(); }")}
+${entre("  const sendingRef = useRef(false);", "  // ── ONBOARDING SCREEN")}
+  return { handleSend, syncGroupe, renvoyerGroupe };
+}`;
+  const { fabrique } = await import("data:text/javascript," + encodeURIComponent(code));
+
+  const LS = new Map();
+  globalThis.localStorage = { getItem: k => (LS.has(k) ? LS.get(k) : null), setItem: (k, v) => LS.set(k, String(v)), removeItem: k => LS.delete(k) };
+  let monde = null, ipSite = 0;
+  const repSite = (c, s = 200) => new Response(JSON.stringify(c), { status: s });
+  const versHandler = async (h, url, o, nom) => {
+    const headers = { origin: ORIGINE, "x-nf-client-connection-ip": `10.40.0.${ipSite}` };
+    for (const [k, v] of Object.entries(o.headers || {})) headers[k.toLowerCase()] = v;
+    const r = await h({ httpMethod: o.method || "GET", headers, body: o.body ?? null, queryStringParameters: Object.fromEntries(new URL(url, "https://site.test").searchParams) });
+    monde.journal.push(`${nom}${o.body && JSON.parse(o.body).verifier ? "(verifier)" : ""}:${r.statusCode}`);
+    return new Response(r.body ?? null, { status: r.statusCode });
+  };
+  site = async (url, o = {}) => {
+    const nom = url.match(/^\/\.netlify\/functions\/([\w-]+)/)[1];
+    if (nom === "order-save") {
+      const corps = JSON.parse(o.body || "{}");
+      if (!corps.verifier) monde.avantEnregistrement?.(corps);
+      const rep = await versHandler(orderSave, url, o, nom);
+      if (!corps.verifier && monde.reponsePerdue) { monde.reponsePerdue = false; throw new TypeError("Failed to fetch"); }   // enregistrée, réponse perdue
+      return rep;
+    }
+    if (nom === "send-email") return versHandler(mail, url, o, nom);
+    if (nom === "group-order") return versHandler(groupe, url, o, nom);
+    monde.journal.push(nom);
+    if (nom === "admin-refresh") return repSite({ success: false });
+    if (nom === "lab-justif") {
+      if ((o.method || "GET") === "GET") return repSite({ products: { [LORVIQUA]: { lab: "pfizer", labNom: "Pfizer", maxCommande: 1, dispo: 0, ordonnance: "facultative" } } });
+      monde.justif.push(JSON.parse(o.body).order_id); return repSite({ demandes: [] });
+    }
+    if (nom === "submit-order") { monde.relais.push(JSON.parse(o.body).orderId); return repSite({ queued: true, lignes: 1, reference: "R" }); }
+    throw new Error(`fonction du site non simulée : ${nom}`);
+  };
+  const DOLIPRANE = { cip: "3400000000011", name: "Doliprane", qty: 2, pn: 1.5, total: 3 };
+  const LIGNE_LORVIQUA = { cip: LORVIQUA, name: "LORVIQUA", qty: 1, pn: 100, total: 100 };
+  const PRODUITS_ULABS = [{ cip: "3400000000011", name: "U 11" }, { cip: "3400000000028", name: "U 28" }];
+  const nouvelle = ({ jeton = "jeton-a", items = [DOLIPRANE], quantities = {} } = {}) => {
+    LS.clear(); if (jeton) LS.set("pharmacy_token", jeton);
+    const ev = { statuts: [], bloque: [], flashes: [], ulabs: [], panierVide: false, minuteries: [] };
+    const f = fabrique({ actingFor: null, cartItems: items, justifProducts: {}, justifInfo: { [LORVIQUA]: { attestation: true } },
+      pharmacyName: "Pharmacie A", pharmacyEmail: MAIL_A, pharmacyCip: CIP_A, isClient: true, quantities,
+      CATALOG_WITH_ADMIN: { ulabs: { products: PRODUITS_ULABS } }, getCampaign: (m) => (m === "ulabs" ? {} : null),
+      setTimeout: (fn) => ev.minuteries.push(fn), flash: (m) => ev.flashes.push(m), setSendStatus: (s) => ev.statuts.push(s),
+      setEnvoiBloque: (b) => ev.bloque.push(b), setJustifProducts: () => {}, setCartOpen: () => {},
+      setQuantities: (q) => { if (typeof q !== "function") ev.panierVide = true; }, setSpecialItems: () => {}, setJustifInfo: () => {},
+      setUlabsError: (u) => ev.ulabs.push(typeof u === "function" ? u(ev.ulabs.at(-1) ?? null) : u), fetchGroupOrders: () => {} });
+    return { f, ev };
+  };
+  const envoie = async ({ f, ev }) => {
+    ipSite++;
+    monde.journal.length = 0;
+    await f.handleSend();
+    await new Promise(r => setTimeout(r, 20));   // relais : non attendu par le site
+    ev.minuteries.splice(0).forEach(fn => fn());
+    // statut affiché : « success » (puis remis à zéro 3 s après), sinon le dernier (null = bouton rendu, rien d'envoyé)
+    return { statut: ev.statuts.includes("success") ? "success" : ev.statuts.at(-1) ?? null, bloque: ev.bloque.filter(Boolean).at(-1) || null, panierVide: ev.panierVide };
+  };
+  const mails = () => appels.filter(a => a.url.includes("api.emailjs.com")).length;
+  const neuf = (o = {}) => { baseCommandes = new Map(); appels = []; monde = { journal: [], relais: [], justif: [], ...o }; };
+
+  // nominal : enregistrement, puis e-mail, puis relais
+  neuf();
+  let s1 = nouvelle(), x = await envoie(s1);
+  const ordre = monde.journal.map(j => j.split(":")[0]);
+  eq("site : envoi nominal → commande enregistrée, e-mail, relais, panier vidé", [x.statut, baseCommandes.size, mails(), monde.relais.length, x.panierVide], ["success", 1, 1, 1, true]);
+  eq("site : la commande est enregistrée AVANT l'e-mail", ordre.indexOf("order-save") >= 0 && ordre.indexOf("order-save") < ordre.indexOf("send-email"), true);
+  eq("site : relais avec le numéro enregistré", monde.relais[0], [...baseCommandes.keys()][0]);
+  x = await envoie(s1);
+  eq("site : même panier renvoyé APRÈS un envoi réussi → nouvelle commande (jamais prise pour un doublon)", [x.statut, baseCommandes.size, new Set(monde.relais).size], ["success", 2, 2]);
+
+  // enregistrement en panne : rien ne part
+  neuf(); commandesEnPanne = true;
+  x = await envoie(nouvelle());
+  commandesEnPanne = false;
+  eq("site : enregistrement en panne → ni e-mail ni relais, panier intact, « réessayez »", [x.statut, x.bloque, mails(), monde.relais.length, x.panierVide], [null, "erreur", 0, 0, false]);
+
+  // session expirée entre le contrôle et l'enregistrement : rien ne part, reconnexion demandée
+  neuf({ avantEnregistrement: () => { delete JETONS["jeton-ephemere"]; } });
+  JETONS["jeton-ephemere"] = { id: "u-a", email: MAIL_A };
+  x = await envoie(nouvelle({ jeton: "jeton-ephemere" }));
+  eq("site : session refusée à l'enregistrement (401) → ni e-mail ni relais, panier intact, reconnexion", [x.statut, x.bloque, mails(), monde.relais.length, x.panierVide], [null, "reconnexion", 0, 0, false]);
+
+  // Supabase Auth en panne à l'enregistrement : « réessayez », pas de reconnexion ni de renouvellement
+  neuf({ avantEnregistrement: () => { authEnPanne = 504; } });
+  x = await envoie(nouvelle());
+  authEnPanne = null;
+  eq("site : Auth en panne à l'enregistrement (503) → rien ne part, panier intact, motif « erreur » (pas de reconnexion)", [x.statut, x.bloque, mails(), monde.relais.length, x.panierVide], [null, "erreur", 0, 0, false]);
+  eq("site : Auth en panne → aucun renouvellement de jeton tenté", monde.journal.includes("admin-refresh"), false);
+
+  // réponse perdue : enregistrée mais le site ne le sait pas ; le nouvel essai garde le numéro → pas de doublon
+  neuf({ reponsePerdue: true });
+  const s5 = nouvelle();
+  x = await envoie(s5);
+  eq("site : réponse de l'enregistrement perdue → rien d'autre ne part, panier intact", [x.statut, x.bloque, mails(), monde.relais.length, x.panierVide, baseCommandes.size], [null, "erreur", 0, 0, false, 1]);
+  x = await envoie(s5);
+  eq("site : nouvel essai → même numéro reconnu ({ deja }), une seule commande, un e-mail, un relais", [x.statut, baseCommandes.size, mails(), monde.relais.length, monde.relais[0] === [...baseCommandes.keys()][0], x.panierVide],
+    ["success", 1, 1, 1, true, true]);
+
+  // e-mail en échec APRÈS l'enregistrement : la commande est gardée et relayée
+  neuf(); emailEnPanne = true;
+  x = await envoie(nouvelle());
+  emailEnPanne = false;
+  eq("site : e-mail en échec après l'enregistrement → commande en base et relayée, envoi réussi", [x.statut, baseCommandes.size, monde.relais.length, x.panierVide], ["success", 1, 1, true]);
+
+  // lignes « sur justificatif » : deux commandes enregistrées avant l'e-mail ; seule la normale part au relais
+  neuf();
+  x = await envoie(nouvelle({ items: [DOLIPRANE, LIGNE_LORVIQUA] }));
+  eq("site : panier avec justificatif → 2 commandes, 1 e-mail, relais de la normale, demande labo", [x.statut, [...baseCommandes.values()].map(o => o.source), mails(), monde.relais.length, monde.justif.length],
+    ["success", ["catalogue", "justificatif"], 1, 1, 1]);
+  neuf(); commandesEnPanne = true;
+  x = await envoie(nouvelle({ items: [LIGNE_LORVIQUA] }));
+  commandesEnPanne = false;
+  eq("site : justificatif seul non enregistré → rien ne part, panier intact", [x.statut, x.bloque, mails(), monde.justif.length, x.panierVide], [null, "erreur", 0, 0, false]);
+
+  // commandes groupées : quantité refusée faute de session → reconnexion demandée, renvoyée après
+  neuf();
+  const g = nouvelle({ jeton: null, quantities: { "ulabs-0": 6, "ulabs-1": 0 } });
+  await g.f.syncGroupe("ulabs", "3400000000011", 6);
+  await g.f.syncGroupe("ulabs", "3400000000028", 0);
+  eq("site : groupement sans session (401) → reconnexion demandée, message, rien écrit", [g.ev.bloque.at(-1), g.ev.flashes.length > 0, /Quantités non comptées/.test(g.ev.ulabs.at(-1) || ""), appelsVers("elixir_group_orders").length],
+    ["reconnexion", true, true, 0]);
+  LS.set("pharmacy_token", "jeton-a"); appels = [];
+  await g.f.renvoyerGroupe();
+  eq("site : après la reconnexion → quantités renvoyées au groupement (6 écrite, remise à zéro supprimée), message retiré",
+    [appelsVers("elixir_group_orders", "POST").map(a => JSON.parse(a.corps)).map(b => [b.cip, b.qty, b.pharmacy_cip]), appelsVers("elixir_group_orders", "DELETE").length, g.ev.ulabs.at(-1)],
+    [[["3400000000011", 6, CIP_A]], 1, null]);
+  appels = [];
+  await g.f.renvoyerGroupe();
+  eq("site : rien à renvoyer ensuite", appelsVers("group-order").length + appelsVers("elixir_group_orders").length, 0);
+  // reconnexion après une confirmation U-Labs refusée, page rechargée (aucun refus mémorisé) : le panier U-Labs est renvoyé
+  const g2 = nouvelle({ quantities: { "ulabs-0": 4, "ulabs-1": 12 } });
+  authEnPanne = 503; appels = [];
+  await g2.f.syncGroupe("ulabs", "3400000000011", 4);
+  authEnPanne = null;
+  eq("site : groupement en panne d'Auth (503) → pas de demande de reconnexion", [g2.ev.bloque.length, appelsVers("elixir_group_orders").length], [0, 0]);
+  site = null; baseCommandes = null; delete globalThis.localStorage;
+}
 
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);   // rate-limit.js garde un minuteur de nettoyage : sortie explicite

@@ -4,7 +4,7 @@
 // ne fonctionne que par instance (reset à chaque cold start).
 // Limite durable (kv_store, commune à toutes les instances) : limiteDurable, plus bas.
 import { createHmac, randomUUID } from "node:crypto";
-import { kvSet, kvDel, kvByPrefix, kvDeleteOlder } from "./_kv.js";
+import { kvSet, kvDel, kvByPrefix, kvDeleteOlder, kvExists } from "./_kv.js";
 
 const store = new Map(); // IP → { count, resetAt }
 
@@ -116,3 +116,11 @@ export async function effacerCompteur(nom, valeur) {
   const lignes = (await kvByPrefix(prefixe, 1000)).map(l => l.key).filter(k => k.startsWith(prefixe));
   await Promise.all(lignes.map(k => kvDel(k).catch(() => {})));
 }
+// Connexion qui a demandé le code en cours d'une adresse (pharmacy-otp-send l'enregistre, pharmacy-otp-verify la
+// reconnaît) : une seule clé par adresse, rl:otp-demandeur:<empreinte adresse>:<empreinte connexion> (ni adresse ni
+// IP en clair ; ménage général des clés rl: de plus d'un jour). kv_store injoignable : exception.
+export async function noterDemandeur(email, ip) {
+  await effacerCompteur("otp-demandeur", email);
+  await kvSet(`rl:otp-demandeur:${empreinte(email)}:${empreinte(ip)}`, 1);
+}
+export const estDemandeur = (email, ip) => kvExists(`rl:otp-demandeur:${empreinte(email)}:${empreinte(ip)}`);

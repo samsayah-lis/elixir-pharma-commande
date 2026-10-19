@@ -10,9 +10,10 @@
 // pharmacie en demandant des codes à sa place (rafales d'e-mails : Supabase n'envoie qu'un code par adresse et par
 // minute). Un code que Supabase n'envoie pas (moins d'une minute après le précédent, panne) ne compte pas.
 // Au-delà → 429 { success: false, error } (message affiché par l'écran de connexion), sans rien lire.
-// Un code envoyé remet à zéro les essais de code erronés de l'adresse (pharmacy-otp-verify).
+// Un code envoyé remet à zéro les essais de code erronés de l'adresse (pharmacy-otp-verify) et enregistre la connexion
+// qui l'a demandé (noterDemandeur) : un tiers ne peut pas l'empêcher de saisir ce code (pharmacy-otp-verify).
 import { getCors } from "./cors.js";
-import { rateLimit, limiteDurable, effacerCompteur, cleIp } from "./rate-limit.js";
+import { rateLimit, limiteDurable, effacerCompteur, cleIp, noterDemandeur } from "./rate-limit.js";
 import { findElixirPharmacy } from "./_pharmacies.js";
 
 const PAR_IP = 10, PAR_ADRESSE_ET_IP = 5, FENETRE = 3600;   // par heure
@@ -100,8 +101,11 @@ export const handler = async (event) => {
       await liberer().catch(() => {});   // code non envoyé (Supabase : un code par minute et par adresse) : ne compte pas
       return { statusCode: 200, headers: cors, body: JSON.stringify({ success: false, error: err.msg || err.error_description || `Envoi du code impossible (HTTP ${res.status})` }) };
     }
-    // nouveau code : les essais erronés du code précédent ne comptent plus (pharmacy-otp-verify)
-    await effacerCompteur("otp-essai", email).catch(() => {});
+    // nouveau code : les essais erronés du code précédent ne comptent plus, et la connexion qui l'a demandé en devient
+    // la « demandeuse » (ses essais comptés à part : pharmacy-otp-verify)
+    const ip = cleIp(event);
+    await Promise.all([effacerCompteur("otp-essai", email), effacerCompteur("otp-essai-dem", `${email}|${ip}`), noterDemandeur(email, ip)]
+      .map(p => p.catch(e => console.warn("[otp-send] kv_store :", e.message))));
     return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
   } catch (e) {
     await liberer().catch(() => {});
