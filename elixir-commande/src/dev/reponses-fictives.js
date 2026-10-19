@@ -31,7 +31,8 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
     case "gp-pharmacy":         return b.action === "access" ? { allowed: true } : b.action === "list" ? { operations: [] } : { success: true };
     // envoi d'une commande : e-mail, enregistrement, relais PharmaML
     case "send-email":          return { success: true };
-    case "order-save":          return { success: true, id: b.id ?? Date.now() };
+    // contrôle de session avant envoi ({ verifier: true }) : accepté (admin seulement si la connexion admin l'est)
+    case "order-save":          return b.verifier ? { success: true, admin: !!admin } : { success: true, id: b.id ?? Date.now() };
     case "submit-order":        return { queued: false, error: "essai à blanc : rien n'est transmis à PharmaML" };
     case "search-track":        return { ok: true };
     case "lab-justif":

@@ -26,11 +26,12 @@ export default function AdminSearchML({ adminFetch }) {
 
   const loadMLData = async () => {
     try {
+      // admin seulement depuis le correctif de sécurité du 19/10/2026 (segments : CIP, nom et CA de toutes les pharmacies)
       const [ruptRes, segRes] = await Promise.all([
-        fetch("/.netlify/functions/ml-recommend?mode=ruptures"),
-        fetch("/.netlify/functions/ml-recommend?mode=segments"),
+        adminFetch("/.netlify/functions/ml-recommend?mode=ruptures"),
+        adminFetch("/.netlify/functions/ml-recommend?mode=segments"),
       ]);
-      const [rupt, seg] = await Promise.all([ruptRes.json(), segRes.json()]);
+      const [rupt, seg] = await Promise.all([ruptRes.json().catch(() => ({})), segRes.json().catch(() => ({}))]);
       setMlRuptures(rupt.predictions || []);
       setMlSegments(seg.segments || []);
     } catch {}

@@ -21,8 +21,7 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 // (src/styles/tokens.css, « Saisie de commande ») : sous 768 px, la ligne passe en pile par @media — le composant
 // ne reçoit pas isMobile. Atomes en bas de fichier.
 
-// fetchAuth : appel authentifié d'App (jeton pharmacie renouvelé, ou admin_token en saisie) ; restock-alert exige un jeton (lot 0)
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, initialQuery, justifProducts = {}, icone, couleur, fetchAuth = fetch }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
@@ -32,7 +31,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [quantities, setQuantities] = useState({});
   const [alerts, setAlerts] = useState({});
   const [alertSaving, setAlertSaving] = useState({});
-  const [alertErreur, setAlertErreur] = useState({});   // cip → message (alerte non enregistrée)
+  const [alertErreur, setAlertErreur] = useState({});   // CIP → message quand le serveur refuse l'alerte (jeton absent ou expiré…)
   const [stockOnly, setStockOnly] = useState(false);
   const debounceRef = useRef(null);
 
@@ -46,9 +45,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         if (!cancelled) setInfoLue(true);
         if (pharmacyCip) {
           try {
-            // ?pharmacy_cip= sert à l'admin en saisie ; pour une pharmacie, le serveur prend le CIP de son jeton
+            // ?pharmacy_cip ne sert qu'à l'admin : pour une pharmacie, le serveur prend le CIP de son jeton
             const alertRes = await fetchAuth(`/.netlify/functions/restock-alert?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
-            const alertData = alertRes.ok ? await alertRes.json() : [];
+            const alertData = await alertRes.json();
             const map = {};
             (Array.isArray(alertData) ? alertData : []).forEach(a => { map[a.cip] = true; });
             if (!cancelled) setAlerts(map);
@@ -85,26 +84,22 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   }, [query, stockOnly]);
 
   // ── Alerte retour en stock ────────────────────────────────────────────
-  // l'état affiché ne change que si le serveur a enregistré (sinon message sous le bouton)
   const toggleAlert = async (product) => {
     const cip = product.cip;
     setAlertSaving(prev => ({ ...prev, [cip]: true }));
     setAlertErreur(prev => { const n = { ...prev }; delete n[cip]; return n; });
-    let res = null;
+    const activer = !alerts[cip];   // action réellement envoyée (la lecture initiale des alertes peut arriver pendant l'envoi)
     try {
-      res = alerts[cip]
+      const res = !activer
         ? await fetchAuth(`/.netlify/functions/restock-alert?pharmacy_cip=${encodeURIComponent(pharmacyCip)}&cip=${encodeURIComponent(cip)}`, { method: "DELETE" })
         : await fetchAuth("/.netlify/functions/restock-alert", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ pharmacy_cip: pharmacyCip, pharmacy_email: pharmacyEmail, cip, product_name: product.name }),
-        });
-    } catch { /* réseau : message ci-dessous */ }
-    if (res?.ok) {
-      if (alerts[cip]) setAlerts(prev => { const n = { ...prev }; delete n[cip]; return n; });
-      else setAlerts(prev => ({ ...prev, [cip]: true }));
-    } else {
-      setAlertErreur(prev => ({ ...prev, [cip]: res?.status === 401 ? "Reconnectez-vous pour gérer vos alertes." : "Alerte non enregistrée, réessayez." }));
-    }
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pharmacy_cip: pharmacyCip, pharmacy_email: pharmacyEmail, cip, product_name: product.name }),
+          });
+      // l'alerte ne change d'état que si le serveur l'a enregistrée
+      if (res.ok) setAlerts(prev => { const n = { ...prev }; if (activer) n[cip] = true; else delete n[cip]; return n; });
+      else setAlertErreur(prev => ({ ...prev, [cip]: res.status === 401 ? "Reconnectez-vous pour gérer vos alertes" : "Alerte non enregistrée, réessayez" }));
+    } catch { setAlertErreur(prev => ({ ...prev, [cip]: "Alerte non enregistrée, réessayez" })); }
     setAlertSaving(prev => ({ ...prev, [cip]: false }));
   };
 
@@ -268,13 +263,10 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                         <Icone nom="panier" taille={15} />Ajouter {fmt(tiered.pn * qty)}{tiered.tier ? " ★" : ""}
                       </button>
                     </>) : (
-                      <>
-                        <button className={isAlert ? "ex-saisie-alerte" : "ex-btn-ligne ex-saisie-alerte"} onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
-                          style={{ ...alerteStyle, ...(isAlert ? alerteActive : {}), opacity: alertSaving[p.cip] ? 0.5 : 1 }}>
-                          <Icone nom={isAlert ? "coche" : "cloche"} taille={15} />{isAlert ? "Alerte activée" : "M’avertir du retour"}
-                        </button>
-                        {alertErreur[p.cip] && <span role="alert" style={{ fontSize: 12, color: T.danger, lineHeight: 1.3 }}>{alertErreur[p.cip]}</span>}
-                      </>
+                      <button className={isAlert ? "ex-saisie-alerte" : "ex-btn-ligne ex-saisie-alerte"} onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
+                        style={{ ...alerteStyle, ...(isAlert ? alerteActive : {}), opacity: alertSaving[p.cip] ? 0.5 : 1 }}>
+                        <Icone nom={isAlert ? "coche" : "cloche"} taille={15} />{alertErreur[p.cip] || (isAlert ? "Alerte activée" : "M’avertir du retour")}
+                      </button>
                     )}
                   </div>
                 </div>

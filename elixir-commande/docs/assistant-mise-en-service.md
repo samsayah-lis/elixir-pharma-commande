@@ -92,7 +92,7 @@ Sur l'aperçu, ceci ne fonctionne pas, et c'est normal :
 
 ### Étape 4 : fusionner, puis essayer vous-même en production
 
-La fusion vers `master` met en ligne les changements du **lot 0** (§ 5). Ces changements sont visibles des pharmacies même si l'assistant reste éteint.
+Les changements du **lot 0** (§ 5) sont **déjà en ligne** : ils sont partis avec les correctifs de sécurité du 19/10/2026 (`master`), fusionnés dans cette branche le 19/10/2026. La fusion de l'assistant n'ajoute donc, côté pharmacies, que la bulle et ses entrées, invisibles tant que l'assistant reste éteint.
 
 1. Ouvrez l'admin, onglet « 💬 Assistant », sous-onglet **Réglages**. Si les réglages ne se lisent pas, l'étape 1 ou l'étape 2 est incomplète.
 2. Cochez **Assistant actif**. Laissez **Ouvert à toutes les pharmacies** décoché, la **liste du pilote vide** et l'acheminement sur **« Simulation (pilote) »**. Cliquez sur **Enregistrer les réglages**.
@@ -211,18 +211,18 @@ Destination conseillée dans l'outil entrepôt :
 
 ---
 
-## 5. Changements que les pharmacies peuvent remarquer dès la fusion (lot 0)
+## 5. Changements déjà en ligne (lot 0, correctifs de sécurité du 19/10/2026)
 
-Ces corrections ferment des accès sans connexion aux données d'autres pharmacies :
+Ces corrections ferment des accès sans connexion aux données d'autres pharmacies. Elles sont en ligne depuis les correctifs de sécurité du 19/10/2026 (`master`) ; la branche de l'assistant les reprend telles quelles (fusion du 19/10/2026) :
 
 | Où | Avant | Maintenant |
 |---|---|---|
 | **Mes commandes** | Fonctionnait sans connexion par code | Exige la connexion par code. Une session ancienne (avant le 07/07/2026, jamais reconnectée) voit « Reconnectez-vous » et le bouton **Se reconnecter**. Le panier est gardé ; une seule reconnexion suffit. |
-| **Alertes de retour en stock** (saisie de commande) | Sans connexion | Même règle. Message « Reconnectez-vous pour gérer vos alertes. » L'alerte n'apparaît cochée que si elle a été enregistrée. |
-| **Barre de progression des campagnes** (U-Labs…) | Sans connexion | Une session sans code ne la voit plus avancer. Aucun message d'erreur. |
+| **Alertes de retour en stock** (saisie de commande) | Sans connexion | Même règle. Message « Reconnectez-vous pour gérer vos alertes ». L'alerte n'apparaît cochée que si elle a été enregistrée. |
+| **Barre de progression des campagnes** (U-Labs…) | Sans connexion, commandes de toutes les pharmacies lues | Exige la connexion par code. Les commandes validées comptées sont celles de la pharmacie ; les autres pharmacies comptent par le groupement (`group-order`, identité masquée). |
 | **Écran de connexion** | Si le mode de connexion était illisible, retour à l'ancien mode sans code | Connexion **par code** dans tous les cas. La recherche d'une pharmacie par e-mail (ancien mode) est limitée à 5 essais par minute et ne renvoie plus ni rue ni téléphone. |
 
-Si une pharmacie appelle parce que « Mes commandes » lui demande de se reconnecter, c'est normal.
+Si une pharmacie appelle parce que « Mes commandes » lui demande de se reconnecter, c'est normal. Le bouton « Me reconnecter » de l'assistant mène à la même reconnexion par code que le reste du site (panier gardé).
 
 ---
 
@@ -278,7 +278,8 @@ Le suivi se fait dans l'onglet **Coûts**.
 | `test-chat-moteur` | 80 OK, 0 échec |
 | `test-chat-outils` | 103 OK, 0 échec |
 | `test-chat-perimetre` | 82 OK, 0 échec |
-| `test-lot0` | 65 OK, 0 échec |
+| `test-lot0` | 61 OK, 0 échec |
+| `test-securite-2` | 188 OK, 0 échec |
 | `test-quota` | 17 OK, 0 échec |
 | `test-gp-pricing` | 71 OK, 0 échec |
 | `test-labo` | 27 OK, 0 échec |
@@ -287,6 +288,6 @@ Le suivi se fait dans l'onglet **Coûts**.
 **Construction, vérifications et poids du code :**
 - `npm run build` : réussite ;
 - `npm run lint` : aucune erreur, de même pour les fonctions `chat*` et le lot 0 ;
-- `npm run zones` : « aucun écart » ; bundle des pharmacies à 883 312 octets pour un budget de 940 000.
+- `npm run zones` (contre `master` local, et `npm run zones -- --ref origin/master`) : « aucun écart » ; bundle des pharmacies à 888 833 octets pour un budget de 940 000.
 
-**Lecture réelle d'Odoo, en lecture seule** (`node scripts/chat-essai-odoo.mjs`, fiches 595 et 5007) : 29 contrôles réussis, 0 échec, 161 appels Odoo conformes (société 2 et filtre de la fiche à chaque appel). Le relevé de la fiche 595 pour 09/2026 est exact : HT 89 041,89 €, TVA 2 488,65 €, TTC 91 530,54 €.
+**Lecture réelle d'Odoo, en lecture seule** (`node scripts/chat-essai-odoo.mjs`, fiches 595 et 5007) : 29 contrôles réussis, 0 échec, 163 appels Odoo conformes (société 2 et filtre de la fiche à chaque appel). Le relevé de la fiche 595 pour 09/2026 est exact : HT 89 041,89 €, TVA 2 488,65 €, TTC 91 530,54 €.

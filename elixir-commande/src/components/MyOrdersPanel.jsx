@@ -22,17 +22,7 @@ const btnFilet = { ...ui.btn("ligne", "m"), background:undefined, color:T.petrol
 
 // onQuestion(order) (facultatif) : « Une question sur cette commande ? » ouvre l'Assistant Elixir sur cette commande
 // (App ne le passe que si l'assistant est disponible pour la pharmacie)
-// erreur (lot 0, order-list exige un jeton) : null | "reconnexion" (401) | "fiche" (403) | "lecture" ; onReconnecter :
-// retour à la connexion par code, panier gardé (absent en saisie pour une pharmacie)
-const ERREURS = {
-  reconnexion: ["Reconnectez-vous", "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail."],
-  fiche: ["Pharmacie introuvable", "Aucune pharmacie n'est rattachée à ce compte : contactez Elixir Pharma."],
-  lecture: ["Lecture impossible", "Vos commandes n'ont pas pu être lues. Réessayez dans un instant."],
-};
 export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder, onQuestion, erreur = null, onReconnecter = null }) {
-  // saisie pour une pharmacie (pas de onReconnecter) : c'est la session d'administration qui a expiré
-  const [titreErreur, texteErreur] = erreur === "reconnexion" && !onReconnecter
-    ? ["Session expirée", "Votre session d'administration a expiré : reconnectez-vous depuis l'admin."] : ERREURS[erreur] || ERREURS.lecture;
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="mes-commandes-titre" style={{ ...ui.overlay, zIndex:400, padding:16 }}
       onClick={onClose}>
@@ -54,8 +44,13 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px", background:T.cream }}>
           {/* chargement, aucune commande : composants communs (lot 8) ; « 0 commande » n'est plus annoncé pendant la lecture */}
           {loading && <Chargement texte="Chargement de vos commandes…" />}
+          {/* lecture refusée (jeton absent ou expiré, compte sans pharmacie) ou en échec : jamais « Aucune commande » */}
           {!loading && erreur && (
-            <EtatVide icone="commandes" erreur titre={titreErreur} texte={texteErreur}
+            <EtatVide icone="commandes" erreur
+              titre={erreur === "reconnexion" ? "Reconnectez-vous" : erreur === "fiche" ? "Pharmacie introuvable" : "Lecture impossible"}
+              texte={erreur === "reconnexion" ? (onReconnecter ? "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail." : "Session admin expirée : reconnectez-vous à l'admin, puis reprenez la saisie pour cette pharmacie.")
+                : erreur === "fiche" ? "Aucune pharmacie n'est rattachée à ce compte : contactez Elixir Pharma."
+                : "Vos commandes n'ont pas pu être lues. Réessayez dans un instant."}
               actions={erreur === "reconnexion" && onReconnecter ? <ActionEtat principal onClick={onReconnecter}>Se reconnecter</ActionEtat> : null} />
           )}
           {!loading && !erreur && orders.length === 0 && (

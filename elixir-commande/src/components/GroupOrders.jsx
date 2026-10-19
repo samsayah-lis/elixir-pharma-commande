@@ -35,7 +35,9 @@ const hasQty = (grid) => Object.values(grid || {}).some(s => Object.values(s || 
 // admin = { call(body) → réponse gp-admin, opId, participantId, onSaved } : même écran utilisé par
 // l'admin pour saisir la commande d'une participante (Elixir pour son stock, ou une pharmacie).
 // icone, couleur : icône et couleur du menu (App), pour l'en-tête de vue (pharmacie seulement)
-export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange, admin = null, icone, couleur }) {
+// fetchAuth : appel avec le jeton de la pharmacie, renouvelé s'il a expiré (appelAuthentifie d'App ; correctif de sécurité
+// du 19/10/2026 : gp-pharmacy et gp-upload exigent un jeton, l'adresse e-mail envoyée ne désigne plus la pharmacie)
+export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange, admin = null, icone, couleur, fetchAuth = fetch }) {
   const [ops, setOps] = useState(null);
   const [selId, setSelId] = useState(null);
   const [view, setView] = useState(null);
@@ -57,14 +59,14 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
   }, [dirty, onDirtyChange]);
   useEffect(() => () => onDirtyChange?.(false), [onDirtyChange]);
 
-  const headers = useMemo(() => { const t = localStorage.getItem("pharmacy_token"); return t ? { Authorization: `Bearer ${t}` } : {}; }, []);
   const call = useCallback(async (fn, body) => {
-    const r = await fetch(`/.netlify/functions/${fn}`, { method: "POST", headers: { "Content-Type": "application/json", ...headers },
+    const r = await fetchAuth(`/.netlify/functions/${fn}`, { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...body }) });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
+    // session expirée ou compte sans fiche : le serveur donne un message lisible (« reconnexion », « fiche » sont des codes)
+    if (!r.ok) throw new Error(j.message || j.error || `Erreur ${r.status}`);
     return j;
-  }, [headers, pharmacyCip, pharmacyEmail]);
+  }, [fetchAuth, pharmacyCip, pharmacyEmail]);
   const adminCall = admin?.call, adminOp = admin?.opId, adminPart = admin?.participantId;
   const api = useCallback((body) => adminCall
     ? adminCall({ ...body, action: body.action === "save" ? "participant_save" : "participant_view", id: adminOp, pharmacy_id: adminPart })

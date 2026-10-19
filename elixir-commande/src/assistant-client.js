@@ -5,27 +5,22 @@
 // Identité : jeton du code reçu par e-mail pour une pharmacie ; admin_token + pour_odoo_id en mode « Commander pour
 // une pharmacie ». Jamais d'autre identifiant envoyé par le navigateur (le serveur ne le lirait pas).
 import { freshPharmacyToken } from "./lab-justif-client.js";
+import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 
 // auth = { admin: false } (pharmacie) ou { admin: true, odooId } (saisie Elixir pour une pharmacie)
 export const authAssistant = (actingFor) => actingFor ? { admin: true, odooId: actingFor.odoo_id } : { admin: false };
 
 export const jetonCourant = (auth) => (auth.admin ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token")) || "";
 
-// Jeton expiré (une heure) : un seul renouvellement à la fois par sorte de jeton, partagé par les appels simultanés (le
-// jeton de renouvellement change à chaque usage) ; pharmacie comme admin en saisie Elixir (même fonction admin-refresh).
+// Jeton expiré (une heure) : renouvelé par l'échange partagé avec les appels authentifiés d'App (src/jetons.js : un seul
+// à la fois par sorte de jeton, le jeton de renouvellement change à chaque usage) ; pharmacie comme admin en saisie Elixir.
 // Sans jeton de renouvellement (ancien mode) : rien à tenter. → jeton (pharmacie : l'actuel si le renouvellement échoue) ou null
-const renouvelleAdmin = () => fetch("/.netlify/functions/admin-refresh", { method: "POST", headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ refresh_token: localStorage.getItem("admin_refresh_token") }) }).then((r) => r.json()).then((j) => {
-  if (!j?.success || !j.token) return null;
-  localStorage.setItem("admin_token", j.token);
-  if (j.refresh_token) localStorage.setItem("admin_refresh_token", j.refresh_token);
-  return j.token;
-}).catch(() => null);
-const renouvellements = {};
 export function renouvelleJeton(auth = { admin: false }) {
-  const admin = !!auth?.admin;
-  if (!(admin ? localStorage.getItem("admin_refresh_token") : localStorage.getItem("pharmacy_refresh_token"))) return Promise.resolve(null);
-  return (renouvellements[admin] ||= (admin ? renouvelleAdmin() : freshPharmacyToken()).finally(() => { renouvellements[admin] = null; }));
+  if (auth?.admin) {
+    const rt = localStorage.getItem("admin_refresh_token");
+    return rt ? renouvelerUneFois("admin", () => renouvelleAdmin(rt)) : Promise.resolve(null);
+  }
+  return localStorage.getItem("pharmacy_refresh_token") ? renouvelerUneFois("pharmacie", freshPharmacyToken) : Promise.resolve(null);
 }
 
 // Bouton de l'assistant : état gardé pour la session de la page, par identité, s'il est franc (disponible, éteint, hors

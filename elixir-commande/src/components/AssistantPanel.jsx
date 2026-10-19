@@ -7,8 +7,8 @@
 // demande » (action « confirmer », sans passer par le modèle).
 // Props : identite (clé de la conversation gardée pour l'onglet), auth (assistant-client.js), mobile, pharmacyName,
 // acting (actingFor d'App, { name, … }, en mode « Commander pour une pharmacie »), contexte ({ commande_site_id, date }
-// depuis Mes commandes : pastille « Commande du 14 octobre, 10 h 32 »), onClose, onReconnecter (déconnexion de l'app,
-// puis code par e-mail), onInfos(infos).
+// depuis Mes commandes : pastille « Commande du 14 octobre, 10 h 32 »), onClose, onReconnecter (reconnexion par code
+// reçu par e-mail sans quitter la session, panier gardé : demanderReconnexion d'App), onInfos(infos).
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { T, ui } from "../theme.js";
 import { Icone, CroixElixir } from "../icons.jsx";

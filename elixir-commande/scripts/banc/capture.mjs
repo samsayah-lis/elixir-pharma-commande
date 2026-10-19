@@ -24,8 +24,8 @@ const DEMANDES = [
   "odoo-catalog?count=1",
   "odoo-catalog?expiry_months=4",
   "restock-alert?action=expiry_discounts",
-  "group-order?fournisseur=ulabs",
-  // order-list?source= n'est plus capturé : il exige un jeton depuis le lot 0 (le banc calcule sa réponse, plugin.mjs)
+  // group-order n'est plus capturé : il exige un jeton depuis le second correctif du 19/10/2026 ; la réponse
+  // calculée du banc (plugin.mjs, « group-order ») prend le relais
   ...RECHERCHES.map(q => `odoo-catalog?q=${encodeURIComponent(q)}&limit=200`),
 ];
 
@@ -56,6 +56,8 @@ async function main() {
       index.entrees[chemin] = { fichier, statut, octets: JSON.stringify(propre).length, capture: new Date().toISOString() };
       console.log(`${statut === 200 ? "✓" : "⚠"} ${statut} ${chemin.slice(0, 90)} → ${fichier} (${ms} ms)`);
       if (statut !== 200) echecs++;
+      // order-list?source=<campagne> n'est plus capturé : il exige un jeton depuis le correctif du 19/10/2026 ;
+      // la réponse calculée du banc (plugin.mjs, « order-list ») prend le relais
     } catch (e) {
       echecs++;
       console.log(`✗ ${chemin.slice(0, 90)} : ${e.message}`);

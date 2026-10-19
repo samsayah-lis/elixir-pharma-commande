@@ -12,6 +12,8 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
+// Renouvellement des jetons (un seul échange à la fois, partagé avec l'Assistant Elixir) : src/jetons.js
+import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
@@ -21,13 +23,26 @@ import CipCell from "./components/ui/CipCell.jsx";
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
 // Assistant Elixir (docs/assistant-conception.md § 1) : panneau chargé à la demande, seuls le bouton et l'état d'ouverture ici
 import { PanneauAssistant, GroupeAide } from "./components/assistant/Entree.jsx";
-import { authAssistant, etatAssistant, jetonCourant, renouvelleJeton } from "./assistant-client.js";
+import { authAssistant, etatAssistant } from "./assistant-client.js";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
 const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ default: AdminIndisponible })));
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
+// Envoi d'une commande refusé AVANT tout envoi (correctif de sécurité du 19/10/2026 : session vérifiée d'abord) :
+// message par motif ; dans tous les cas rien n'est parti et le panier reste tel quel
+const MESSAGE_ENVOI_BLOQUE = {
+  reconnexion: "Reconnexion nécessaire : pour envoyer votre commande, reconnectez-vous avec le code reçu par e-mail. Rien n'est parti, votre panier est conservé.",
+  fiche: "Aucune pharmacie n'est rattachée à ce compte : la commande ne peut pas partir. Contactez Elixir Pharma au 01 86 04 39 95 (votre panier est conservé).",
+  admin: "Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande",
+  erreur: "Envoi impossible pour le moment (serveur injoignable) : rien n'est parti, votre panier est conservé. Réessayez dans un instant.",
+  // annoncé avant tout envoi : session sans aucun jeton (ouverte avant la connexion par code, ou sans code)
+  sansJeton: "Pour envoyer votre commande, confirmez votre session avec le code reçu par e-mail (session ouverte sans code). Votre panier est conservé.",
+};
+// Délai d'un appel : AbortSignal.timeout n'existe pas avant Safari 16 (iPad iOS 15, Mac Safari 15), Chrome 103, Firefox 100 ;
+// sans lui, l'appel part sans délai (comme product-groups.js) au lieu d'échouer avant même d'être envoyé
+const delai = (ms) => (typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function" ? { signal: AbortSignal.timeout(ms) } : {});
 
 class ErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { hasError: false }; }
@@ -317,20 +332,46 @@ export default function App() {
   const [pharmacyName, setPharmacyName] = useState(() => actingFor ? actingFor.name : (localStorage.getItem("session_name") || ""));
   const [pharmacyEmail, setPharmacyEmail] = useState(() => actingFor ? (actingFor.email || "") : (localStorage.getItem("session_email") || ""));
   const [pharmacyCip, setPharmacyCip] = useState(() => actingFor ? (actingFor.cip || "") : (localStorage.getItem("session_cip") || ""));
+  // Appel authentifié (correctifs de sécurité du 19/10/2026 : order-list, restock-alert, order-save, quota-status,
+  // gp-pharmacy, gp-upload, group-order et les suggestions ml-recommend exigent un jeton) :
+  // admin_token en saisie pour une pharmacie, sinon jeton pharmacie ; l'un comme l'autre renouvelé une fois s'il a expiré
+  // (un seul renouvellement à la fois : renouvelerUneFois).
+  // jetonVersion change après une reconnexion par code : les lectures faites avec appelAuthentifie sont refaites
+  // (menu « Commandes groupées », suggestions, contingentement) sans recharger la page
+  const [jetonVersion, setJetonVersion] = useState(0);
+  // X-Elixir-Session : page à jour (order-save ne met en quarantaine que les commandes des pages d'avant le correctif)
+  const appelAuthentifie = useCallback(async (url, options = {}) => {
+    const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), "X-Elixir-Session": "jeton", ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
+    if (actingFor) {
+      let res = await envoi(localStorage.getItem("admin_token"));
+      const rt = localStorage.getItem("admin_refresh_token");
+      if (res.status === 401 && rt) {   // même renouvellement qu'adminFetch (AdminPanel.jsx)
+        const jeton = await renouvelerUneFois("admin", () => renouvelleAdmin(rt));
+        if (jeton) res = await envoi(jeton);
+      }
+      return res;
+    }
+    let res = await envoi(localStorage.getItem("pharmacy_token"));
+    if (res.status === 401 && localStorage.getItem("pharmacy_refresh_token")) res = await envoi(await renouvelerUneFois("pharmacie", freshPharmacyToken));
+    return res;
+  }, [actingFor, jetonVersion]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   // Commandes groupées (nouveau module) : null = vérification en cours
-  const [gpAllowed, setGpAllowed] = useState(null);
+  const [gpAllowed, setGpAllowed] = useState(null);   // null | true | false | "reconnexion" (session à confirmer par code)
   const [gpDirty, setGpDirty] = useState(false);   // saisie de commande groupée non confirmée
   useEffect(() => {
     if (!pharmacyEmail) { setGpAllowed(false); return; }   // identité = compte (e-mail) → fiche Odoo, le CIP peut manquer
     let cancelled = false;
-    const tok = localStorage.getItem("pharmacy_token");
-    fetch("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json", ...(tok ? { Authorization: `Bearer ${tok}` } : {}) },
+    // jeton pharmacie (saisie Elixir : jeton admin + adresse de la pharmacie servie). Sans jeton valide (401) : menu
+    // « Commandes groupées » gardé, qui invite à se reconnecter (gpAllowed = "reconnexion") — avant, il disparaissait
+    // sans rien dire à une pharmacie inscrite à une opération en cours ; saisie Elixir : pas de menu, comme avant
+    appelAuthentifie("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "access", cip: pharmacyCip, email: pharmacyEmail }) })
-      .then(r => r.ok ? r.json() : { allowed: false }).then(j => { if (!cancelled) setGpAllowed(!!j.allowed); })
+      .then(r => r.status === 401 && !actingFor ? { allowed: "reconnexion" } : r.ok ? r.json() : { allowed: false })
+      .then(j => { if (!cancelled) setGpAllowed(j.allowed === "reconnexion" ? "reconnexion" : !!j.allowed); })
       .catch(() => { if (!cancelled) setGpAllowed(false); });
     return () => { cancelled = true; };
-  }, [pharmacyCip, pharmacyEmail]);
+  }, [pharmacyCip, pharmacyEmail, appelAuthentifie]);
   const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: cip[]} commandes déjà validées
   const [groupSaving, setGroupSaving] = useState({});
   const [ulabsConfirming, setUlabsConfirming] = useState(false);
@@ -383,22 +424,12 @@ export default function App() {
   const [myOrdersLoading, setMyOrdersLoading] = useState(false);
   const [myOrdersErreur, setMyOrdersErreur] = useState(null);   // null | "reconnexion" | "fiche" | "lecture"
 
-  // Appel authentifié (lot 0 : order-list et restock-alert exigent un jeton) : admin_token en saisie pour une pharmacie,
-  // sinon jeton pharmacie ; l'un ou l'autre renouvelé une fois s'il a expiré (renouvellement partagé avec l'assistant,
-  // assistant-client.js)
-  const appelAuthentifie = useCallback(async (url, options = {}) => {
-    const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
-    let res = await envoi(jetonCourant(authAssistant(actingFor)));
-    if (res.status === 401) { const t = await renouvelleJeton(authAssistant(actingFor)); if (t) res = await envoi(t); }
-    return res;
-  }, [actingFor]);
-
   const fetchMyOrders = useCallback(async () => {
     if (!pharmacyCip || pharmacyCip === "0") return;
     setMyOrdersLoading(true);
-    setMyOrdersErreur(null);
     try {
-      // ?pharmacy_cip= sert à l'admin en saisie ; pour une pharmacie, le serveur prend le CIP de son jeton
+      setMyOrdersErreur(null);
+      // ?pharmacy_cip ne sert qu'à l'admin : pour une pharmacie, le serveur prend le CIP de son jeton
       const res = await appelAuthentifie(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
       const data = await res.json().catch(() => ({}));
       if (res.ok) setMyOrders(data.orders || []);
@@ -411,8 +442,9 @@ export default function App() {
     setUlabsConfirmed(false); setUlabsError(null);
     if (!pharmacyCip || pharmacyCip === "0") return;
     let cancelled = false;
-    fetch(`/.netlify/functions/ml-recommend?mode=reorder&pharmacy_cip=${encodeURIComponent(pharmacyCip)}&limit=10`)
-      .then(r => r.json())
+    // ?pharmacy_cip ne sert qu'à l'admin en saisie : pour une pharmacie, le serveur prend le CIP de son jeton
+    appelAuthentifie(`/.netlify/functions/ml-recommend?mode=reorder&pharmacy_cip=${encodeURIComponent(pharmacyCip)}&limit=10`)
+      .then(r => r.ok ? r.json() : {})
       .then(data => {
         if (cancelled) return;
         const due = (data.suggestions || []).filter(s => s.should_reorder && s.name);
@@ -420,7 +452,7 @@ export default function App() {
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [pharmacyCip]);
+  }, [pharmacyCip, appelAuthentifie]);
 
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalResults, setGlobalResults] = useState([]);
@@ -542,9 +574,8 @@ export default function App() {
 
   // ── Charger la config partagée depuis Supabase (source de vérité) ────
   const [configLoaded, setConfigLoaded] = useState(false);
-  // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode ; connexion par code par défaut (lot 0) : l'ancien mode (sans code)
-  // ne sert que si la configuration le déclare, jamais quand elle n'est pas encore chargée ou illisible
-  const [authMode, setAuthMode] = useState("otp");
+  // Connexion par code par défaut : l'ancien mode (sans code) ne sert que si config-get le déclare explicitement
+  const [authMode, setAuthMode] = useState("otp"); // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode
   useEffect(() => {
     (async () => {
       try {
@@ -555,7 +586,7 @@ export default function App() {
         ]);
         const dcJson = await dcRes.json();
         const promoJson = await promoRes.json();
-        try { const amJson = await amRes.json(); if (amJson.value) setAuthMode(amJson.value === "otp" ? "otp" : "legacy"); } catch {}
+        try { const amJson = await amRes.json(); if (amJson.value) setAuthMode(amJson.value === "legacy" ? "legacy" : "otp"); } catch {}   // comme pharmacy-lookup : seul « legacy » exact ouvre l'ancien mode
         if (dcJson.value) {
           localStorage.setItem("display_config", JSON.stringify(dcJson.value));
         }
@@ -592,23 +623,28 @@ export default function App() {
   // Stock : chargement et actualisation manuelle
   const [stockLoading, setStockLoading] = useState(false);
   const [stockRefreshing, setStockRefreshing] = useState(false); // true = refresh Odoo en cours
-  // Charger commandes groupées U-Labs
+  // Charger commandes groupées U-Labs : vos lignes, et celles des autres pharmacies sans leur identité (repère anonyme)
   const fetchGroupOrders = useCallback(async () => {
     try {
-      const res = await fetch("/.netlify/functions/group-order?fournisseur=ulabs");
-      const rows = await res.json();
+      const res = await appelAuthentifie("/.netlify/functions/group-order?fournisseur=ulabs");
+      const rows = res.ok ? await res.json() : [];
       setGroupOrders(Array.isArray(rows) ? rows : []);
     } catch(e) { console.error(e); }
-  }, []);
+  }, [appelAuthentifie]);
   useEffect(() => {
     if (activeTab === "ulabs") fetchGroupOrders();
     const _camp = getCampaign(activeTab);
     if (_camp && pharmacyCip) {
-      // Références des commandes validées de la campagne, toutes pharmacies (palier) : agrégat seul, jeton exigé (lot 0)
-      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}&agrege=1`)
-        .then(r => r.ok ? r.json() : { cips: [] })
-        .then(j => setValidatedCampOrders(prev => ({...prev, [activeTab]: Array.isArray(j?.cips) ? j.cips : []})))
-        .catch(() => {});
+      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
+        .then(r => r.ok ? r.json() : { orders: [] })
+        .then(orders => {
+          // Commandes validées de la campagne : les vôtres (l'admin en saisie : toutes) ; les autres pharmacies comptent via group-order
+          const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
+            .filter(o => o.source === activeTab);
+          const cipArr = [];
+          campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip && !cipArr.includes(it.cip)) cipArr.push(it.cip); }); });
+          setValidatedCampOrders(prev => ({...prev, [activeTab]: cipArr}));
+        }).catch(() => {});
     }
   }, [activeTab, fetchGroupOrders, appelAuthentifie]);
 
@@ -638,7 +674,7 @@ export default function App() {
   const fetchStock = useCallback(async () => {
     setStockLoading(true);
     try {
-      const res = await fetch("/.netlify/functions/stock-get", { signal: AbortSignal.timeout(20000) });
+      const res = await fetch("/.netlify/functions/stock-get", { ...delai(20000) });
       const data = await res.json();
       if (data.error) console.warn("[stock] Erreur Odoo:", data.error);
       if (data.stocks) {
@@ -777,9 +813,10 @@ export default function App() {
         };
       });
     }
-    // Commandes groupées : onglet visible uniquement des pharmacies autorisées
+    // Commandes groupées : onglet visible uniquement des pharmacies autorisées ; session sans jeton valide : onglet qui
+    // invite à se reconnecter (l'accès ne se vérifie qu'avec un jeton)
     if (gpAllowed) {
-      merged.groupees = { label: "Commandes groupées", subtitle: "Achats groupés et précommandes aux conditions négociées",
+      merged.groupees = { label: "Commandes groupées", subtitle: gpAllowed === "reconnexion" ? "Reconnectez-vous pour y accéder" : "Achats groupés et précommandes aux conditions négociées",
         color: "#0f2d3d", accent: "#2d9cbc", icon: "🤝", columns: [], specialView: "groupPurchases", products: [] };
     }
     return merged;
@@ -787,6 +824,17 @@ export default function App() {
 
   // Onboarding
   const [onboardingDone, setOnboardingDone] = useState(() => !!localStorage.getItem("session_email"));
+  // Reconnexion par code demandée depuis la session (demanderReconnexion) : l'écran de connexion le dit et permet de
+  // revenir au catalogue ; une fois le code validé, nouveau jeton et lectures authentifiées refaites
+  const [reconnexion, setReconnexion] = useState(false);
+  // Session sans aucun jeton (ouverte avant la connexion par code, ou par l'ancien mode sans code) : order-save refusera
+  // la commande ; le panier l'annonce dès son ouverture, avant tout envoi, avec « Se connecter par code »
+  const [sansJeton, setSansJeton] = useState(false);
+  useEffect(() => {
+    if (!onboardingDone) return;
+    setSansJeton(!localStorage.getItem("pharmacy_token") && !localStorage.getItem("pharmacy_refresh_token"));
+    if (reconnexion) { setReconnexion(false); setJetonVersion(v => v + 1); }
+  }, [onboardingDone]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Onboarding flow: "email" | "confirm" | "new_client"
   const [obStep, setObStep] = useState("email");
   const [emailInput, setEmailInput] = useState("");
@@ -814,16 +862,88 @@ export default function App() {
     setJustifInfo({});
     setCartOpen(false);
   };
-  // Jeton expiré ou session de l'ancien mode (sans code) : retour à l'écran de connexion, adresse préremplie, panier gardé
-  // (handleLogout, lui, le vide) ; après le code reçu par e-mail, handleVerifyOtp réécrit la session et les jetons
-  const reconnecter = () => {
-    setShowMyOrders(false);
-    setOnboardingDone(false);
-    setObStep("email");
-    setEmailInput(pharmacyEmail);
-    setOtpInput("");
-    setOnboardingError("");
+
+  // ── Envoi d'une commande : session vérifiée AVANT tout envoi (correctif de sécurité du 19/10/2026) ──
+  // order-save n'enregistre plus de commande sans jeton. Avant l'e-mail à Elixir, l'enregistrement et le relais PharmaML,
+  // le serveur confirme la session (order-save { verifier: true } : rien n'est écrit). Jeton expiré : renouvelé par
+  // appelAuthentifie. Renouvellement impossible — session ouverte avant la connexion par code (aucun jeton), ou trop
+  // ancienne — : rien ne part, le panier reste intact, et la pharmacie se reconnecte par code (demanderReconnexion).
+  // Saisie Elixir : la session doit être celle d'un admin (sinon commande sans mention ni trace admin).
+  const [envoiBloque, setEnvoiBloque] = useState(null);   // null | "reconnexion" | "fiche" | "admin" | "erreur" (MESSAGE_ENVOI_BLOQUE)
+  useEffect(() => { setEnvoiBloque(null); }, [pharmacyEmail, actingFor]);   // autre pharmacie, saisie Elixir, déconnexion
+  const sessionPourEnvoi = async () => {
+    setEnvoiBloque(null);
+    let res = null, j = {};
+    try {
+      res = await appelAuthentifie("/.netlify/functions/order-save", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ verifier: true }), ...delai(15000) });
+      j = await res.json().catch(() => ({}));
+    } catch { res = null; }
+    if (res?.ok && j.success && (!actingFor || j.admin === true)) return true;
+    const motif = actingFor ? (res && (res.ok || res.status === 401 || res.status === 403) ? "admin" : "erreur")
+      : res?.status === 401 ? "reconnexion" : res?.status === 403 ? "fiche" : "erreur";
+    setEnvoiBloque(motif);
+    flash(`⚠ ${MESSAGE_ENVOI_BLOQUE[motif]}`, 8000);
+    return false;
   };
+  // Reconnexion par code sans quitter la session : panier, menu ouvert et saisie restent en place (le panier se
+  // retrouve tel quel après le code). Toujours par code, même si l'ancien mode sans code est déclaré.
+  const demanderReconnexion = () => {
+    // l'écran de connexion démonte « Commandes groupées » : une saisie non confirmée serait perdue sans avertissement
+    if (gpDirty && !window.confirm("Vos quantités de commande groupée ne sont pas confirmées : elles seront perdues. Vous reconnecter quand même ?")) return;
+    setGpDirty(false);
+    setReconnexion(true);
+    setShowMyOrders(false); setEnvoiBloque(null);
+    setAuthMode("otp"); setEmailInput(pharmacyEmail); setOtpInput(""); setOnboardingError("");
+    setObStep("email"); setOnboardingDone(false);
+  };
+  // « Revenir au catalogue » depuis l'écran de reconnexion : session et panier inchangés (l'envoi redemandera le code)
+  const annulerReconnexion = () => {
+    setReconnexion(false); setOnboardingError(""); setObStep("email"); setOnboardingDone(true);
+  };
+  // ── Commandes groupées U-Labs / campagnes : quantités envoyées au groupement à chaque changement ──
+  // jeton (pharmacie, ou admin en saisie) : le serveur prend le CIP du jeton pour une pharmacie. Refus faute de session
+  // (401) : invitation à se reconnecter, et après la reconnexion (jetonVersion) les quantités sont renvoyées — avant, le
+  // refus passait inaperçu (quantités absentes du groupement, compteur de pharmacies et palier faux pour toutes).
+  const groupeARenvoyer = useRef(new Map());   // `${menu}|${cip}` → { menu, cip } : quantités refusées (401)
+  const groupeAResynchroniser = useRef(false);   // un refus 401 (groupement ou confirmation U-Labs) : tout renvoyer
+  const syncGroupe = (menu, cip, qty) => {
+    if (!getCampaign(menu) || !cip) return Promise.resolve();
+    return appelAuthentifie("/.netlify/functions/group-order", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fournisseur: menu, cip, pharmacy_cip: pharmacyCip, pharmacy_name: pharmacyName, qty }),
+    }).then(r => {
+      if (r.status === 401) {
+        groupeARenvoyer.current.set(`${menu}|${cip}`, { menu, cip }); groupeAResynchroniser.current = true;
+        if (!actingFor) setEnvoiBloque("reconnexion");
+        const msg = actingFor ? MESSAGE_ENVOI_BLOQUE.admin
+          : "Quantités non comptées dans la commande groupée : session expirée. Reconnectez-vous avec le code reçu par e-mail, elles seront renvoyées.";
+        flash(`⚠ ${msg}`, 8000);
+        if (menu === "ulabs") setUlabsError(`⚠️ Quantités non comptées dans la commande groupée\n${actingFor ? MESSAGE_ENVOI_BLOQUE.admin : "Reconnectez-vous avec le code reçu par e-mail : vos quantités sont conservées et seront renvoyées."}`);
+        return;
+      }
+      groupeARenvoyer.current.delete(`${menu}|${cip}`);
+      if (r.ok && menu === "ulabs") setUlabsError(e => (e?.startsWith("⚠️ Quantités non comptées") ? null : e));
+      fetchGroupOrders();
+    }).catch(() => {});
+  };
+  // Après une reconnexion par code : quantités refusées (y compris les remises à zéro) et toutes celles du panier dans
+  // les menus campagne (une page rechargée entre-temps a oublié les refus), renvoyées au groupement
+  const renvoyerGroupe = () => {
+    if (!groupeAResynchroniser.current) return Promise.resolve();
+    groupeAResynchroniser.current = false;
+    const aEnvoyer = new Map(groupeARenvoyer.current);
+    groupeARenvoyer.current.clear();
+    const qte = {};   // `${menu}|${cip}` → quantité du panier
+    for (const [k, q] of Object.entries(quantities)) {
+      const i = k.lastIndexOf("-"), menu = k.slice(0, i), p = CATALOG_WITH_ADMIN[menu]?.products?.[Number(k.slice(i + 1))];
+      if (!p?.cip || !getCampaign(menu)) continue;
+      qte[`${menu}|${p.cip}`] = (qte[`${menu}|${p.cip}`] || 0) + (Number(q) || 0);
+      if (Number(q) > 0) aEnvoyer.set(`${menu}|${p.cip}`, { menu, cip: p.cip });
+    }
+    return Promise.all([...aEnvoyer].map(([k, { menu, cip }]) => syncGroupe(menu, cip, qte[k] || 0)));
+  };
+  useEffect(() => { if (jetonVersion) renvoyerGroupe(); }, [jetonVersion]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [isClient, setIsClient] = useState(() => actingFor ? true : null);
   const startActing = (ph) => {
     // chaque pharmacie servie a son propre panier ; celui de votre session reste de côté, intact
@@ -1038,16 +1158,16 @@ export default function App() {
   const loadQuota = useCallback(async () => {
     if (!pharmacyEmail && !actingFor) return null;
     try {
-      const t = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
-      const r = await fetch("/.netlify/functions/quota-status", { method: "POST",
-        headers: { "Content-Type": "application/json", ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-        body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...(actingFor ? { odoo_id: actingFor.odoo_id } : {}) }), signal: AbortSignal.timeout(12000) });
+      // jeton pharmacie (saisie Elixir : jeton admin), renouvelé s'il a expiré (quota-status exige un jeton)
+      const r = await appelAuthentifie("/.netlify/functions/quota-status", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...(actingFor ? { odoo_id: actingFor.odoo_id } : {}) }), ...delai(12000) });
       if (!r.ok) { setQuota(null); return null; }
       const j = await r.json();
       setQuota(j);
       return j;
     } catch { setQuota(null); return null; }   // Odoo indisponible : on ne bloque pas la commande (Odoo contrôle aussi)
-  }, [pharmacyEmail, pharmacyCip, actingFor]);
+  }, [pharmacyEmail, pharmacyCip, actingFor, appelAuthentifie]);
   useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip, actingFor]);   // autre pharmacie / déconnexion
   useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
   const quotaCheck = useMemo(() => quotaOver(quota, cartItems), [quota, cartItems]);
@@ -1434,7 +1554,8 @@ export default function App() {
       localStorage.setItem("session_cip", cip);
       setPharmacyName(name); setPharmacyEmail(email); setPharmacyCip(cip);
       setOnboardingDone(true);
-      if (promoSections.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);
+      // reconnexion demandée depuis la session (envoi du panier…) : retour direct au panier, sans « Offres du moment »
+      if (!reconnexion && promoSections.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);
     } catch (err) {
       setOnboardingError("Erreur de connexion. Veuillez réessayer.");
     } finally { setOtpBusy(false); }
@@ -1509,6 +1630,9 @@ export default function App() {
 
   // un seul envoi à la fois, y compris pendant l'écran « Commande envoyée » (sinon commande et demande labo en double)
   const sendingRef = useRef(false);
+  // numéro de chaque commande (clé : identité, source, lignes) tant qu'elle n'est pas enregistrée : un nouvel essai garde
+  // le même, order-save reconnaît alors une commande déjà enregistrée dont la réponse s'est perdue (pas de doublon)
+  const idsEnvoi = useRef({});
   const handleSend = async () => {
     if (sendingRef.current || cartItems.length === 0) return;
     sendingRef.current = true;
@@ -1522,12 +1646,9 @@ export default function App() {
     const jIssues = justifIssues(cartItems, justifProducts, justifInfo);
     if (jIssues.length) { flash(`⚠ ${jIssues[0].name} : ${jIssues[0].msg}`); return false; }
     setSendStatus("sending");
-    // Saisie Elixir : la session admin doit être valide AVANT tout envoi (sinon commande sans mention ni trace admin)
-    if (actingFor) {
-      const ok = await fetch("/.netlify/functions/admin-pharmacy-find?q=", { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` } })
-        .then(r => r.ok).catch(() => false);
-      if (!ok) { setSendStatus(null); flash("⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande"); return false; }
-    }
+    // Session valide AVANT tout envoi (e-mail, enregistrement, PharmaML) : jeton pharmacie renouvelé si besoin, sinon
+    // reconnexion par code, panier intact ; saisie Elixir : session admin (sinon commande sans mention ni trace admin)
+    if (!(await sessionPourEnvoi())) { setSendStatus(null); return false; }
     // Stock d'Elixir du moment : il décide quelles lignes passent par le labo (justificatif)
     const jp = (await loadJustifProducts({ fresh: true })) || justifProducts;
     if (jp !== justifProducts) setJustifProducts(jp);
@@ -1549,7 +1670,7 @@ export default function App() {
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
     const totalsSend = qtyByCip(sendItems);
     const isJustif = (i) => needsJustif(i, jp, totalsSend);
-    const lignes = sendItems.map(i =>
+    const lignesMail = (arr) => arr.map(i =>
       `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
 
@@ -1568,145 +1689,171 @@ export default function App() {
     });
     const csvContent = csvLines.join("\n");
 
-    const templateParams = {
+    // E-mail de commande : lignes enregistrées seulement (lignes « justificatif » refusées : laissées au panier, hors e-mail)
+    const paramsMail = (arr, total, unites) => ({
       to_email:      DEFAULT_RECIPIENT,
       pharmacy_name: actingFor ? `${pharmacyName} — saisie par Elixir` : pharmacyName,
       pharmacy_email: pharmacyEmail || "—",
       is_client:     isClient ? "Oui" : "Non (nouveau client – RIB joint)",
       order_date:    date,
-      order_lines:   lignes,
-      total_ht:      cartTotal.toFixed(2).replace(".", ",") + " €",
-      nb_lignes:     sendItems.length,
-      nb_unites:     cartCount,
+      order_lines:   lignesMail(arr),
+      total_ht:      total.toFixed(2).replace(".", ",") + " €",
+      nb_lignes:     arr.length,
+      nb_unites:     unites,
+    });
+
+    // ── 1. Enregistrement AVANT l'e-mail et le relais (correctif de sécurité du 19/10/2026) ──
+    // Avant, un enregistrement refusé APRÈS l'e-mail (session expirée, panne) perdait la commande — ni admin, ni
+    // PharmaML — alors que le site affichait « Commande envoyée ». Désormais : enregistrement refusé → rien ne part,
+    // panier intact, motif affiché ; nouvel essai sans risque. Numéro de commande stable d'un essai à l'autre pour les
+    // mêmes lignes (idsEnvoi) : si un enregistrement réussi n'a pas reçu sa réponse, order-save reconnaît le nouvel
+    // essai ({ deja }) au lieu de créer un doublon. Lignes « sur justificatif labo » : commande à part (source
+    // « justificatif »), jamais transmise automatiquement à PharmaML (Elixir commande au labo, puis synchronise à réception).
+    const normalItems = sendItems.filter(i => !isJustif(i));
+    const justifLines = sendItems.filter(isJustif);
+    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));
+    const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
+    const enregistrer = async (o) => {   // → { ok: true, id } | { ok: false, status, error }
+      const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items]);
+      idsEnvoi.current[cle] ??= o.id;
+      for (let essai = 0; essai < 2; essai++) {
+        const corps = { ...o, id: idsEnvoi.current[cle] };
+        let res = null, j = {};
+        try {
+          res = await appelAuthentifie("/.netlify/functions/order-save", {   // jeton pharmacie, ou admin en saisie
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(actingFor ? { ...corps, enteredByAdmin: true } : corps),
+            ...delai(20000),
+          });
+          j = await res.json().catch(() => ({}));
+        } catch { res = null; }
+        if (res?.ok && j.success) { delete idsEnvoi.current[cle]; return { ok: true, id: j.id || corps.id }; }
+        if (res?.status === 409 && j.error === "numero") { idsEnvoi.current[cle] = Date.now() + 2; continue; }   // numéro pris par une autre commande
+        console.warn("[order-save] ✗", res?.status, j.error);
+        return { ok: false, status: res?.status || 0, error: j.message || j.error || "serveur injoignable" };
+      }
+      return { ok: false, status: 409, error: "numéro de commande déjà pris" };
+    };
+    // enregistrement refusé : rien n'est parti, le panier reste tel quel
+    const bloquer = (r) => {
+      setSendStatus(null);
+      if (r.status === 400) { flash(`⚠ Commande non enregistrée : ${r.error}. Rien n'est parti, votre panier est conservé.`, 8000); return false; }
+      const motif = r.status === 401 ? (actingFor ? "admin" : "reconnexion") : r.status === 403 ? (actingFor ? "admin" : "fiche") : "erreur";
+      setEnvoiBloque(motif); flash(`⚠ ${MESSAGE_ENVOI_BLOQUE[motif]}`, 8000);
+      return false;
     };
 
+    const baseId = Date.now();
+    let order = null, saveNormal = null;
+    if (normalItems.length) {
+      order = {
+        id: baseId,
+        date: new Date().toISOString(),
+        pharmacyName,
+        pharmacyEmail,
+        pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
+        isClient,
+        items: toItems(normalItems),
+        totalHt: justifLines.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,
+        nbLignes: normalItems.length,
+        csv: justifLines.length ? csvOf(normalItems) : csvContent,
+        processed: false,
+        source: "catalogue",
+      };
+      saveNormal = await enregistrer(order);
+      if (!saveNormal.ok) return bloquer(saveNormal);
+      console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
+    }
+    // Commande « sur justificatif » APRÈS la commande normale (celle-ci part sans attendre le labo)
+    let jSave = null;
+    let keepJustif = null;   // lignes non enregistrées : laissées au panier pour être renvoyées
+    if (justifLines.length) {
+      const jOrder = {
+        id: normalItems.length ? baseId + 1 : baseId,
+        date: new Date().toISOString(),
+        pharmacyName, pharmacyEmail,
+        pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
+        isClient,
+        // justificatif gardé dans la ligne : une reprise par l'admin le retrouve si la transmission échoue
+        items: justifLines.map(i => ({ ...toItems([i])[0], justif: { attestation: !!justifInfo[i.cip]?.attestation,
+          renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) } })),
+        totalHt: justifLines.reduce((t, i) => t + (i.total || 0), 0),
+        nbLignes: justifLines.length,
+        csv: csvOf(justifLines),
+        processed: false,
+        source: "justificatif",
+      };
+      jSave = await enregistrer(jOrder);
+      if (!jSave.ok) {
+        if (!saveNormal) return bloquer(jSave);   // rien d'enregistré : rien ne part
+        keepJustif = new Set(justifLines.map(i => i.cip));
+        flash(`⚠ Lignes sur justificatif labo NON enregistrées (${jSave.error}) : elles restent dans votre panier, renvoyez-les`);
+      }
+    }
+
+    // ── 2. E-mail à Elixir : la commande est enregistrée, un e-mail refusé ou perdu ne la perd plus ──
     try {
-      await fetch("/.netlify/functions/send-email", {
+      // jeton joint (send-email : adresse de la pharmacie vérifiée)
+      const mail = await appelAuthentifie("/.netlify/functions/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_params: templateParams }),
+        body: JSON.stringify({ template_params: keepJustif
+          ? paramsMail(normalItems, normalItems.reduce((t, i) => t + (i.total || 0), 0), normalItems.reduce((n, i) => n + (i.qty || 0), 0))
+          : paramsMail(sendItems, cartTotal, cartCount) }),
       });
-      setSendStatus("success");
-      // Save order to Supabase via Netlify Function
-      // Lignes « sur justificatif labo » : commande à part (source « justificatif »), jamais transmise
-      // automatiquement à PharmaML (Elixir commande au labo, puis synchronise à réception)
-      const normalItems = sendItems.filter(i => !isJustif(i));
-      const justifLines = sendItems.filter(isJustif);
-      const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));
-      const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
-      const atok = actingFor ? localStorage.getItem("admin_token") : null;
-      const saveOrder = (o) => fetch("/.netlify/functions/order-save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
-        body: JSON.stringify(actingFor ? { ...o, enteredByAdmin: true } : o),
-      }).then(r => r.json()).catch(e => ({ success: false, error: e.message }));
-      const baseId = Date.now();
-      if (normalItems.length) try {
-        const order = {
-          id: baseId,
-          date: new Date().toISOString(),
-          pharmacyName,
-          pharmacyEmail,
-          pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
-          isClient,
-          items: toItems(normalItems),
-          totalHt: justifLines.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,
-          nbLignes: normalItems.length,
-          csv: justifLines.length ? csvOf(normalItems) : csvContent,
-          processed: false,
-          source: "catalogue",
-        };
+      if (!mail.ok) console.warn("[send-email] e-mail non envoyé (commande enregistrée) :", mail.status);
+    } catch (err) { console.warn("[send-email] e-mail non envoyé (commande enregistrée) :", err.message); }
+    setSendStatus("success");
 
-        // Sauvegarde dans Supabase (await pour détecter les erreurs)
-        const atok = actingFor ? localStorage.getItem("admin_token") : null;
-        const saveRes = await fetch("/.netlify/functions/order-save", {
+    // ── 3. Envoi automatique vers PharmaML (relais), commande normale enregistrée seulement ──
+    // Le serveur relit la commande enregistrée, vérifie la pharmacie (jeton) et met les lignes EN STOCK dans
+    // la file du relais, que l'agent du Mac du bureau envoie à PharmaML ; le reste attend la synchro manuelle.
+    if (saveNormal?.ok) (async () => {
+      if (actingFor && !(pharmacyCip && pharmacyCip !== "0")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin
+      try {
+        const ptok = actingFor ? localStorage.getItem("admin_token") : await freshPharmacyToken();
+        const res = await fetch("/.netlify/functions/submit-order", {
           method: "POST",
-          headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
-          body: JSON.stringify(actingFor ? { ...order, enteredByAdmin: true } : order),
+          headers: ptok ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` } : { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderId: saveNormal.id, pharmacyName, via: "auto" }),
+          ...delai(20000),
         });
-        const saveJson = await saveRes.json();
-        if (saveJson.success) console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
-        else console.warn("[order-save] ✗", saveJson.error);
+        const json = await res.json().catch(() => ({}));
+        if (json.queued) console.log(`[PharmaML] ✓ ${json.lignes} ligne(s) en file d'envoi (réf. ${json.reference})${json.retenues ? `, ${json.retenues} à synchroniser par Elixir` : ""}`);
+        else console.log("[PharmaML] synchro par Elixir :", json.error || res.status);
+      } catch (err) { console.warn("[PharmaML] envoi automatique non demandé :", err.message); }
+    })();
 
-        // ── Envoi automatique vers PharmaML (relais) ──
-        // Le serveur relit la commande enregistrée, vérifie la pharmacie (jeton) et met les lignes EN STOCK dans
-        // la file du relais, que l'agent du Mac du bureau envoie à PharmaML ; le reste attend la synchro manuelle.
-        (async () => {
-          if (!saveJson.success) return;                                     // pas en base : rien ne part
-          if (actingFor && !(pharmacyCip && pharmacyCip !== "0")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin
-          try {
-            const ptok = actingFor ? localStorage.getItem("admin_token") : await freshPharmacyToken();
-            const res = await fetch("/.netlify/functions/submit-order", {
-              method: "POST",
-              headers: ptok ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` } : { "Content-Type": "application/json" },
-              body: JSON.stringify({ orderId: order.id, pharmacyName, via: "auto" }),
-              signal: AbortSignal.timeout(20000),
-            });
-            const json = await res.json().catch(() => ({}));
-            if (json.queued) console.log(`[PharmaML] ✓ ${json.lignes} ligne(s) en file d'envoi (réf. ${json.reference})${json.retenues ? `, ${json.retenues} à synchroniser par Elixir` : ""}`);
-            else console.log("[PharmaML] synchro par Elixir :", json.error || res.status);
-          } catch (err) { console.warn("[PharmaML] envoi automatique non demandé :", err.message); }
-        })();
-
-      } catch(e) { console.error("Order save error", e); }
-
-      // Commande « sur justificatif » APRÈS la commande normale (celle-ci part sans attendre le labo)
-      let keepJustif = null;   // lignes non enregistrées : laissées au panier pour être renvoyées
-      if (justifLines.length) {
-        const jOrder = {
-          id: normalItems.length ? baseId + 1 : baseId,
-          date: new Date().toISOString(),
-          pharmacyName, pharmacyEmail,
-          pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
-          isClient,
-          // justificatif gardé dans la ligne : une reprise par l'admin le retrouve si la transmission échoue
-          items: justifLines.map(i => ({ ...toItems([i])[0], justif: { attestation: !!justifInfo[i.cip]?.attestation,
-            renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) } })),
-          totalHt: justifLines.reduce((t, i) => t + (i.total || 0), 0),
-          nbLignes: justifLines.length,
-          csv: csvOf(justifLines),
-          processed: false,
-          source: "justificatif",
-        };
-        const jSave = await saveOrder(jOrder);
-        if (!jSave.success) {
-          keepJustif = new Set(justifLines.map(i => i.cip));
-          flash(`⚠ Lignes sur justificatif labo NON enregistrées (${jSave.error || "erreur"}) : elles restent dans votre panier, renvoyez-les`);
-        } else {
-          try {
-            const auth = actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken };
-            await submitJustif(jSave.id || jOrder.id, justifLines.map(i => ({ cip: i.cip, attestation: !!justifInfo[i.cip]?.attestation,
-              renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) })), auth);
-          } catch (e) {
-            console.warn("[justificatif labo]", e.message);
-            flash(`⚠ Commande enregistrée ; sa transmission au laboratoire sera faite par Elixir (${e.message})`);
-          }
-        }
+    // ── 4. Lignes « justificatif » enregistrées : demandes au laboratoire ──
+    if (jSave?.ok) {
+      try {
+        const auth = actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken };
+        await submitJustif(jSave.id, justifLines.map(i => ({ cip: i.cip, attestation: !!justifInfo[i.cip]?.attestation,
+          renouvellement: !!justifInfo[i.cip]?.renouvellement, rx: (justifInfo[i.cip]?.rx || []).map(x => x.id).filter(Boolean) })), auth);
+      } catch (e) {
+        console.warn("[justificatif labo]", e.message);
+        flash(`⚠ Commande enregistrée ; sa transmission au laboratoire sera faite par Elixir (${e.message})`);
       }
-      setTimeout(() => {
-        setSendStatus(null);
-        if (keepJustif) {
-          // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)
-          setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {
-            const i = k.lastIndexOf("-"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];
-            return p && keepJustif.has(p.cip);
-          })));
-          setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));
-          setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));
-        } else {
-          setQuantities({});
-          setSpecialItems([]);
-          setJustifInfo({});
-          setCartOpen(false);
-        }
-      }, 3000);
-      return true;
-    } catch (err) {
-      console.error("[send-email] error:", err);
-      setSendStatus("error");
-      setTimeout(() => setSendStatus(null), 5000);
-      return false;
     }
+    setTimeout(() => {
+      setSendStatus(null);
+      if (keepJustif) {
+        // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)
+        setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {
+          const i = k.lastIndexOf("-"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];
+          return p && keepJustif.has(p.cip);
+        })));
+        setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));
+        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));
+      } else {
+        setQuantities({});
+        setSpecialItems([]);
+        setJustifInfo({});
+        setCartOpen(false);
+      }
+    }, 3000);
+    return true;
   };
 
   // ── ONBOARDING SCREEN ──────────────────────────────────────────────
@@ -1775,8 +1922,11 @@ export default function App() {
       {obStep === "email" && (
         <div style={obCard}>
           {obLogo}
-          <h1 style={obTitre}>Bienvenue</h1>
-          <div style={{ ...obTexte, marginBottom:28 }}>Saisissez votre adresse e-mail pour accéder au catalogue</div>
+          {/* reconnexion demandée depuis la session (envoi, Mes commandes) : panier conservé, retour possible */}
+          <h1 style={obTitre}>{reconnexion ? "Reconnexion" : "Bienvenue"}</h1>
+          <div style={{ ...obTexte, marginBottom:28 }}>{reconnexion
+            ? "Votre session doit être confirmée : saisissez votre adresse e-mail pour recevoir un code à 6 chiffres. Votre panier est conservé."
+            : "Saisissez votre adresse e-mail pour accéder au catalogue"}</div>
           <label htmlFor="ident-email" style={obLabel}>Adresse e-mail</label>
           <input
             id="ident-email" type="email" autoComplete="email" value={emailInput}
@@ -1788,6 +1938,7 @@ export default function App() {
           />
           {obErreur}
           <button className="ex-btn-petrole" onClick={handleEmailLookup} style={obBtn}>Continuer →</button>
+          {reconnexion && <button onClick={annulerReconnexion} style={{ ...obLien, marginTop:8 }}>← Revenir au catalogue sans me reconnecter</button>}
           {obFooter}
         </div>
       )}
@@ -2246,12 +2397,12 @@ export default function App() {
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
             <OrderEntry
               justifProducts={justifProducts}
-              fetchAuth={appelAuthentifie}
               pharmacyCip={pharmacyCip}
               pharmacyName={pharmacyName}
               pharmacyEmail={pharmacyEmail}
               onAddToCart={ajouterDepuisSaisie}
               regleQuantite={regleSaisie}
+              fetchAuth={appelAuthentifie}
               initialQuery={initialProductQuery}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
               couleur={CATALOG_WITH_ADMIN[activeTab].accent}
@@ -2261,7 +2412,11 @@ export default function App() {
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (
             actingFor
               ? <div style={{ ...ui.card, fontSize: 14, color: T.inkSoft }}>En saisie pour une pharmacie, les commandes groupées se passent depuis l'admin : opération → « 🛒 Saisir une commande ».</div>
-              : <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty}
+              : gpAllowed === "reconnexion"
+              ? <EtatVide cadre icone="cadenas" titre="Commandes groupées : reconnectez-vous"
+                  texte="Votre session doit être confirmée avec le code reçu par e-mail. Si votre pharmacie participe à une commande groupée, vous la retrouverez ici après la reconnexion."
+                  actions={<ActionEtat principal icone="cadenas" onClick={demanderReconnexion}>Se reconnecter</ActionEtat>} />
+              : <GroupOrders pharmacyCip={pharmacyCip} pharmacyEmail={pharmacyEmail} onDirtyChange={setGpDirty} fetchAuth={appelAuthentifie}
                   icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)} couleur={CATALOG_WITH_ADMIN[activeTab].accent} />
           )}
 
@@ -2298,6 +2453,7 @@ export default function App() {
           {pharmacyCip && (
             <ReorderSuggestion
               pharmacyCip={pharmacyCip}
+              fetchAuth={appelAuthentifie}
               onApply={(cart) => {
                 // Cherche l'index de chaque CIP dans le catalogue et pré-remplit
                 Object.entries(cart).forEach(([cip, qty]) => {
@@ -2668,12 +2824,7 @@ export default function App() {
                           ) : null}
                           {(() => {
                             const m = multiple > 1 ? multiple : 1;
-                            const syncGroup = (nq) => {
-                              if (getCampaign(activeTab)) fetch("/.netlify/functions/group-order", {
-                                method:"POST", headers:{"Content-Type":"application/json"},
-                                body: JSON.stringify({fournisseur:activeTab, cip:p.cip, pharmacy_cip:pharmacyCip, pharmacy_name:pharmacyName, qty:nq})
-                              }).then(() => fetchGroupOrders());
-                            };
+                            const syncGroup = (nq) => syncGroupe(activeTab, p.cip, nq);
                             const applyQty = (raw) => {
                               const final = m > 1 ? Math.round(raw/m)*m : raw;
                               const finalWithMin = final > 0 && stepMin > 0 ? Math.max(stepMin, final) : final;
@@ -3028,17 +3179,23 @@ export default function App() {
                 ...items.map(i => `${i.cip};${i.name};${i.qty};${(i.pn||0).toFixed(2)};${(i.total||0).toFixed(2)}`)
               ].join("\n");
               try {
-                const atok = actingFor ? localStorage.getItem("admin_token") : null;   // saisie Elixir pour une pharmacie
-                await fetch("/.netlify/functions/order-save", {
-                  method: "POST", headers: { "Content-Type": "application/json", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },
+                // jeton pharmacie, ou admin en saisie Elixir pour une pharmacie ; confirmée seulement si enregistrée
+                const res = await appelAuthentifie("/.netlify/functions/order-save", {
+                  method: "POST", headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
                     id: orderId, pharmacyName, pharmacyEmail, pharmacyCip,
                     isClient: true, items, totalHt: myTotal, nbLignes: items.length, csv,
                     source: "ulabs", ...(actingFor ? { enteredByAdmin: true } : {})
                   })
                 });
-                setUlabsConfirmed(true);
-              } catch(e) { console.error(e); }
+                if (res.ok) setUlabsConfirmed(true);
+                else {
+                  if (res.status === 401 && !actingFor) { setEnvoiBloque("reconnexion"); groupeAResynchroniser.current = true; }   // quantités renvoyées au groupement après la reconnexion
+                  setUlabsError(res.status === 401 ? `⚠️ Commande non enregistrée : session expirée\n${actingFor ? MESSAGE_ENVOI_BLOQUE.admin : "Reconnectez-vous avec le code reçu par e-mail, puis confirmez à nouveau : vos quantités sont conservées."}`
+                    : res.status === 403 ? `⚠️ Commande non enregistrée\n${actingFor ? MESSAGE_ENVOI_BLOQUE.admin : MESSAGE_ENVOI_BLOQUE.fiche}`
+                    : "⚠️ Commande non enregistrée\nRéessayez dans un instant : vos quantités sont conservées.");
+                }
+              } catch(e) { console.error(e); setUlabsError("⚠️ Commande non enregistrée\nRéessayez dans un instant : vos quantités sont conservées."); }
               setUlabsConfirming(false);
             };
             // Barre collante de confirmation (lot 9, habillage seulement : calculs, confirmOrder, onClick et disabled
@@ -3053,7 +3210,10 @@ export default function App() {
                 {ulabsError && (
                   <div role="alert" style={{ ...ui.encart("danger"), boxShadow: T.shadow2, padding: "10px 18px", marginBottom: 8, maxWidth: 480, textAlign: "left", display: "flex", alignItems: "flex-start", gap: 8 }}>
                     <Icone nom="alerte" taille={16} style={{ marginTop: 1 }} />
-                    <div>{ulabsError.replace(/^⚠️\s*/, "").split("\n").map((line, i) => <div key={i} style={{ fontSize: i === 0 ? 13 : 12, fontWeight: i === 0 ? 700 : 500, lineHeight: 1.45 }}>{line}</div>)}</div>
+                    <div>{ulabsError.replace(/^⚠️\s*/, "").split("\n").map((line, i) => <div key={i} style={{ fontSize: i === 0 ? 13 : 12, fontWeight: i === 0 ? 700 : 500, lineHeight: 1.45 }}>{line}</div>)}
+                      {/* commande non enregistrée faute de session (correctif de sécurité du 19/10/2026) : reconnexion par code, quantités gardées */}
+                      {envoiBloque === "reconnexion" && !actingFor && <ActionEtat principal icone="cadenas" onClick={() => { setUlabsError(null); demanderReconnexion(); }} style={{ marginTop: 8 }}>Se reconnecter</ActionEtat>}
+                    </div>
                   </div>
                 )}
                 <div className="ex-on-dark" style={{ background: T.petrol, color: T.paper, borderRadius: R.m, boxShadow: T.shadow3, display: "flex", alignItems: "center",
@@ -3086,11 +3246,10 @@ export default function App() {
           <MyOrdersPanel
             orders={myOrders}
             loading={myOrdersLoading}
+            erreur={myOrdersErreur}
+            onReconnecter={actingFor ? null : demanderReconnexion}
             pharmacyName={pharmacyName}
             onClose={() => setShowMyOrders(false)}
-            // lecture refusée (jeton expiré, compte sans fiche) : message et, pour une pharmacie, « Se reconnecter »
-            erreur={myOrdersErreur}
-            onReconnecter={actingFor ? null : reconnecter}
             // Assistant Elixir : « Une question sur cette commande ? » — seule la référence du site part (revérifiée par le serveur)
             onQuestion={assistantDispo ? (order) => ouvrirAssistant({ commande_site_id: String(order.id), date: order.date }) : undefined}
             onReorder={async (items) => {
@@ -3301,6 +3460,25 @@ export default function App() {
                       <span>Commande sur justificatif labo : {justifCheck.map(o => `${o.name} — ${o.msg}`).join(" ; ")}.</span>
                     </div>
                   )}
+                  {/* envoi refusé avant tout envoi (session à refaire, compte sans pharmacie, serveur injoignable) : rien n'est
+                      parti, le panier reste tel quel ; « Se reconnecter » ouvre la connexion par code sans vider le panier.
+                      Session sans aucun jeton (avant la connexion par code) : annoncé dès l'ouverture du panier, avant l'envoi */}
+                  {(() => {
+                    const motif = envoiBloque || (!actingFor && sansJeton ? "sansJeton" : null);
+                    if (!motif) return null;
+                    const reconnecter = !actingFor && (motif === "reconnexion" || motif === "sansJeton");
+                    return (
+                      <div role={motif === "sansJeton" ? "status" : "alert"} style={{ ...encart(motif === "sansJeton" ? "info" : motif === "erreur" ? "warn" : "danger"), ...ligneEncart, gap: 8, marginTop: 0, marginBottom: 10 }}>
+                        <Icone nom={reconnecter ? "cadenas" : "alerte"} taille={16} style={{ marginTop: 1 }} />
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 600 }}>{MESSAGE_ENVOI_BLOQUE[motif]}</div>
+                          {reconnecter && (
+                            <ActionEtat principal icone="cadenas" onClick={demanderReconnexion} style={{ marginTop: 8 }}>{motif === "sansJeton" ? "Se connecter par code" : "Se reconnecter"}</ActionEtat>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {/* Envoi : pastille or + encre (5,82:1, au lieu de blanc sur bleu à 2,77:1) ; succès ok + blanc (7,68:1),
                       erreur danger + blanc ; bloqué (contingentement, justificatif) : sable. onClick et disabled inchangés */}
                   <button
@@ -3347,7 +3525,8 @@ export default function App() {
         <PanneauAssistant key={identiteAssistant} identite={identiteAssistant} auth={authAssistant(actingFor)} mobile={isMobile}
           pharmacyName={pharmacyName} acting={actingFor} contexte={assistantContexte}
           onClose={() => setAssistantOuvert(false)} onInfos={(infos) => setAssistant(a => ({ ...a, infos }))}
-          onReconnecter={() => { setAssistantOuvert(false); reconnecter(); }} />
+          // reconnexion par code sans quitter la session (panier gardé) ; le panneau se ferme avec l'identité (identiteAssistant)
+          onReconnecter={demanderReconnexion} />
       )}
 
       {/* Floating cart button when closed — masqué pendant que le tiroir de menu (mobile, tablette) est ouvert : son

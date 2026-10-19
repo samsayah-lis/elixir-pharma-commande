@@ -29,10 +29,11 @@ Conception détaillée : `docs/assistant-conception.md` (copie de l'étude du 16
 
 | Fichier | Propriétaire |
 |---|---|
-| `netlify/functions/order-list.js`, `pharmacy-lookup.js`, `restock-alert.js` | Lot 0 (sécurité de l'existant) |
+| `netlify/functions/order-list.js`, `pharmacy-lookup.js`, `restock-alert.js` | Lot 0 (sécurité de l'existant) — en ligne sur `master` depuis les correctifs de sécurité du 19/10/2026, version de `master` reprise à la fusion (l'agrégat de campagne `?agrege=1` est retiré : les autres pharmacies comptent par `group-order`) |
 | `netlify/functions/_chat-perimetre.js`, `_chat-outils.js` (+ `_chat-outils-liste.js` : définitions seules, sans dépendance), `_chat-releve.js`, `chat-fichier.js`, `scripts/test-chat-perimetre.mjs`, `scripts/test-chat-outils.mjs`, `scripts/chat-essai-odoo.mjs` | Lot 1 (Odoo, outils, fichiers) |
 | `netlify/functions/_chat-stock.js`, `_chat-config.js`, `_chat-systeme.js`, `_chat-moteur.js`, `_chat-demandes.js`, `chat.js`, `chat-tour-background.js`, `chat-purge.js`, `chat-admin.js`, `sql/chat-schema.sql`, `scripts/test-chat-moteur.mjs`, `scripts/test-chat-api.mjs`, `scripts/test-chat-demandes.mjs`, `scripts/eval-chat.mjs` | Lot 2-3-5 (moteur, API, demandes, stockage) |
 | `src/components/AssistantPanel.jsx`, `src/components/assistant/*`, `src/assistant-client.js`, entrées dans `src/App.jsx` et `src/components/MyOrdersPanel.jsx`, cas `chat` de `src/dev/reponses-fictives.js` et du banc `scripts/banc/*` | Lot 4 (interface) |
+| `src/jetons.js` (renouvellement des jetons, un seul échange à la fois, partagé par `appelAuthentifie` d'App et `assistant-client.js`) | Correctifs de sécurité du 19/10/2026 (repris d'App.jsx à la fusion) |
 | `src/components/AdminAssistant.jsx` + son onglet dans l'admin | Lot 7 (admin) |
 | `package.json` / `package-lock.json` | Lot 1 seulement (ajout éventuel de `pdf-lib`) |
 | `scripts/test-chat-integration.mjs` (vrais modules branchés entre eux, doublures aux extrémités seulement) | Intégration |

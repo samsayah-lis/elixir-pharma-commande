@@ -305,8 +305,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const fetchGroupCampaignOrders = async (fournisseur) => {
     setGcOrdersLoading(true);
     try {
-      const res = await fetch(`/.netlify/functions/group-order?fournisseur=${fournisseur}`);
-      const rows = await res.json();
+      // jeton admin : toutes les lignes (CIP et nom des pharmacies) — correctif de sécurité du 19/10/2026
+      const res = await adminFetch(`/.netlify/functions/group-order?fournisseur=${encodeURIComponent(fournisseur)}`);
+      const rows = await res.json().catch(() => []);
       setGcOrders(Array.isArray(rows) ? rows : []);
     } catch(e) { console.error(e); }
     setGcOrdersLoading(false);
@@ -669,7 +670,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   // « Sync toutes » : commandes en attente SANS envoi partiel — le reste d'une commande partielle
   // (précommandes retenues) ne part que par son propre bouton « Sync le reste »
   // Commandes « sur justificatif labo » : jamais dans « Sync toutes » — à synchroniser une par une, à réception du labo
-  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && !(o.items || []).some(lineDone)
+  // Commandes « a_verifier » (page d'avant le correctif de sécurité du 19/10/2026, sans jeton) : jamais en masse non plus
+  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && o.source !== "a_verifier" && !(o.items || []).some(lineDone)
     && !(o.relais || []).some(t => ["a_envoyer", "prise", "incertaine"].includes(t.etat))   // en cours ou à vérifier : pas en masse
     && o.avisAuto?.code !== "double");                                                       // possible doublon : une par une, après vérification
   const syncAllPending = async () => {
@@ -1335,6 +1337,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                       <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
                         <span style={{fontWeight:700,fontSize:14,color:T.petrol}}>{o.pharmacyName}</span>
                         {o.avisAuto?.code === "double" && !o.processed && <span title={o.avisAuto.error} style={{background:T.dangerBg,color:T.danger,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>⚠ POSSIBLE DOUBLON{o.avisAuto.doubleDe ? ` de n° ${o.avisAuto.doubleDe}` : ""} : à vérifier</span>}
+                        {o.source === "a_verifier" && <span title="Envoyée sans connexion par une page ouverte avant le correctif de sécurité du 19/10/2026 : identité NON vérifiée. Confirmez par téléphone avec la pharmacie avant de la saisir (Commander pour une pharmacie)." style={{background:T.dangerBg,color:T.danger,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>⚠ À VÉRIFIER PAR TÉLÉPHONE</span>}
                         {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:tone("acting").bg,color:tone("acting").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
                         {o.source === "justificatif" && <span title={`Commande sur justificatif labo : à synchroniser à réception de la marchandise.${(o.justif||[]).map(j => ` ${j.lab} : ${j.statut}${j.poNom ? ` (${j.poNom})` : ""}${j.motif ? ` — ${j.motif}` : ""}`).join(" ;")}`}
                           style={{background:tone("labo").bg,color:tone("labo").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
@@ -1517,7 +1520,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   if(!confirm(`Vider toutes les commandes de la campagne "${selectedCampaign}" ?`)) return;
                   const pharmacies = [...new Set(gcOrders.map(r=>r.pharmacy_cip))];
                   for(const pc of pharmacies){
-                    await fetch(`/.netlify/functions/group-order?fournisseur=${selectedCampaign}&pharmacy_cip=${pc}`,{method:"DELETE"});
+                    await adminFetch(`/.netlify/functions/group-order?fournisseur=${encodeURIComponent(selectedCampaign)}&pharmacy_cip=${encodeURIComponent(pc)}`,{method:"DELETE"});
                   }
                   fetchGroupCampaignOrders(selectedCampaign);
                 }} style={{background:T.danger,color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>

@@ -115,7 +115,6 @@ function getCalcule(fn, q) {
       return { status: "ok" };
     }
     case "order-list":
-      if (q.agrege) return { cips: [] };   // barre de campagne : références validées, toutes pharmacies
       if (q.source) return { orders: [] };
       if (q.pharmacy_cip && q.pharmacy_cip === banc.cip) return { orders: commandesFictives(banc.cip) };
       return { orders: commandesDuBanc.slice().reverse() };

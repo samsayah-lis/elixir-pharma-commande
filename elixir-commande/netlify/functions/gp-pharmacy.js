@@ -1,8 +1,10 @@
 // ── Commandes groupées : côté pharmacie ─────────────────────────────────
 // POST { action: access | list | get | save, cip, email, ... }
-// Identité : jeton de connexion (Authorization) ou e-mail du compte pharmacie de la session.
+// Identité (correctif de sécurité du 19/10/2026) : jeton de connexion obligatoire. Pharmacie : compte de l'e-mail
+// vérifié du jeton (cip et email du corps ignorés) ; admin (saisie pour une pharmacie) : compte de l'email du corps.
+// Sans jeton valide → 401 { error: "reconnexion" } (le menu « Commandes groupées » ne s'affiche pas).
 import { getCors } from "./cors.js";
-import { json, sb, sbAll, eq, identifyPharmacy, loadOperation, saveOrder, fail, slotIds } from "./_gp.js";
+import { json, sb, sbAll, eq, identifyPharmacy, jetonVerifie, loadOperation, saveOrder, fail, slotIds } from "./_gp.js";
 import { view, publicOp, isOpenNow } from "./_gp-view.js";
 import { sendMail, confirmationEmail, cancellationEmail, ADMIN_MAIL } from "./_gp-mail.js";
 import { rateLimit } from "./rate-limit.js";
@@ -15,8 +17,10 @@ export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   if (event.httpMethod !== "POST") return json(cors, 405, { error: "Méthode non autorisée" });
   try {
-    const b = JSON.parse(event.body || "{}");
-    const ph = await identifyPharmacy(event, b.cip, b.email);
+    const b = JSON.parse(event.body || "{}") || {};
+    const user = await jetonVerifie(event);
+    if (!user) return json(cors, 401, { error: "reconnexion", message: "Session expirée : reconnectez-vous avec le code reçu par e-mail pour accéder à vos commandes groupées." });
+    const ph = await identifyPharmacy(event, b.cip, b.email, user);
     const [acc] = ph ? await sb(`gp_access?pharmacy_id=${eq(ph.id)}&limit=1`) : [];
     if (!ph || !acc) return b.action === "access" ? json(cors, 200, { allowed: false }) : json(cors, 403, { error: "Accès aux commandes groupées non activé pour ce compte" });
     switch (b.action) {
