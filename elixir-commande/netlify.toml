@@ -49,3 +49,8 @@
 # Assistant Elixir : purge des conversations (90 jours), brouillons expirés, alertes budget et pannes (≈ 4 h, heure de Paris)
 [functions."chat-purge"]
   schedule = "15 2 * * *"
+
+# Accueil « La Tête de gondole » : classement des produits les plus commandés (commandes servies, 15 jours), toutes
+# les 3 h de 6 h 40 à 21 h 40 heure de Paris en hiver (après les synchros de stock), lecture Odoo seule (docs/accueil.md)
+[functions."accueil-offres-refresh"]
+  schedule = "40 5-20/3 * * *"

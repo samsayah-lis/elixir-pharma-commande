@@ -4,7 +4,7 @@
 // sans ce garde-fou, une commande passée sur un aperçu partirait réellement (e-mail, Supabase, relais PharmaML).
 // Toute requête autre que GET/HEAD vers /.netlify/functions/ reçoit une fausse réponse 200 (rien ne part) ;
 // les lectures (GET) restent réelles pour montrer le vrai catalogue. Bandeau fixe en bas à gauche.
-import { reponseFictive } from "./reponses-fictives.js";
+import { reponseFictive, accueilFictif } from "./reponses-fictives.js";
 
 const FONCTIONS = "/.netlify/functions/";
 export const TEXTE_BANDEAU = "Aperçu : aucune commande ne part";
@@ -26,6 +26,13 @@ export function installe() {
     let url;
     try { url = new URL(req ? req.url : String(entree), window.location.href); } catch { return fetchReel(entree, options); }
     const methode = String(options.method || req?.method || "GET").toUpperCase();
+    // page d'accueil : le jeton d'essai (connexion simulée) ne lit pas le vrai classement (401) → classement fictif
+    if (url.pathname === `${FONCTIONS}accueil-offres` && (methode === "GET" || methode === "HEAD")) {
+      const r = await fetchReel(entree, options).catch(() => null);
+      if (r && r.ok) return r;
+      console.info("[essai à blanc] GET accueil-offres : classement fictif (jeton d'essai)");
+      return new Response(JSON.stringify(accueilFictif()), { status: 200, headers: { "Content-Type": "application/json", "X-Essai-A-Blanc": "1" } });
+    }
     if (!aNeutraliser(url, methode)) return fetchReel(entree, options);
     const fn = url.pathname.slice(FONCTIONS.length).split("/")[0];
     const corps = lireCorps(options.body !== undefined ? options.body : (req ? await req.clone().text() : null));

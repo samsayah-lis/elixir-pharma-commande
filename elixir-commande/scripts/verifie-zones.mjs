@@ -148,7 +148,9 @@ const FICHIERS_AUTORISES = {
 // Projet « Assistant Elixir » (branche assistant-elixir, docs/assistant-contrat.md), en attente de fusion dans master :
 // fonctions ajoutées sous netlify/functions (chat*.js, _chat-*.js), admises tant qu'elles n'existent pas dans la référence.
 // Empreinte d'un fichier de FICHIERS_AUTORISES : node scripts/verifie-zones.mjs --empreintes
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*)\.js$/;
+// Page d'accueil « La Tête de gondole » (branche accueil-offres, docs/accueil.md) : fonctions NOUVELLES seulement
+// (accueil-offres.js, accueil-offres-refresh.js, _accueil-*.js) ; aucune fonction existante n'est modifiée.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -276,7 +278,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, Assistant Elixir : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) admis` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) (Assistant Elixir, accueil) et ${assistant.modifies} modifié(s) (Assistant Elixir)` : ""}`);
 }
 
 // 3. clés de stockage

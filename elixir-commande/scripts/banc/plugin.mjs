@@ -2,6 +2,7 @@
 // Répond lui-même à /.netlify/functions/* : rien n'est jamais relayé vers la production.
 //  • GET  : données figées de dev-fixtures/get/ (npm run banc:capture), sinon données calculées à partir
 //           d'elles (recherche locale, « Mes commandes » et suggestions de la pharmacie du banc), sinon 404.
+//           Page d'accueil (accueil-offres) : dev-fixtures/accueil-offres.json (scripts/banc/fixture-accueil.mjs).
 //  • autres méthodes : réponse « succès » (src/dev/reponses-fictives.js, ou dev-fixtures/post/<fn>[.<action>].json
 //           si présent) ; le corps reçu est journalisé dans dev-fixtures/_envois/<jour>/ (jetons jamais écrits).
 //  • Assistant Elixir (fonctions chat et chat-fichier) : réponses écrites d'avance (src/dev/reponses-fictives.js, cas
@@ -14,8 +15,8 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
-import { DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
-import { reponseFictive, FICHIERS_FICTIFS } from "../../src/dev/reponses-fictives.js";
+import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
+import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
 
 // Pharmacie du banc (identité renvoyée à l'identification) ; remplaçable par dev-fixtures/pharmacie.json
 const PHARMACIE_BANC = { name: "PHARMACIE DU BANC D'ESSAI", cip: "9999999", email: "" };
@@ -122,6 +123,9 @@ function getCalcule(fn, q) {
     case "group-order": return [];
     case "lab-justif": return { products: {} };
     case "supplier-code-refs": return { refs: {}, byCip: {} };
+    // page d'accueil : vrai classement des 15 jours figé (dev-fixtures/accueil-offres.json, écrit par
+    // scripts/banc/fixture-accueil.mjs depuis la fixture produit de l'étude), sinon le classement fictif des aperçus
+    case "accueil-offres": return litJson(resolve(DOSSIER_FIXTURES, "accueil-offres.json")) ?? accueilFictif();
     default: return undefined;
   }
 }
