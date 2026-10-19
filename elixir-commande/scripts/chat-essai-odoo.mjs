@@ -123,8 +123,11 @@ for (const fiche of (process.argv.slice(2).length ? process.argv.slice(2) : ["59
     const [fc, tFc] = await ms(() => outil("rechercher_factures", { date_debut: null, date_fin: null, type_document: "tous", recherche: cipVu, page: 1 }));
     const [cc, tCc] = await ms(() => outil("rechercher_commandes", { date_debut: null, date_fin: null, etat: "toutes", recherche: cipVu, page: 1 }));
     verifier(`recherche par CIP13 : ${fc.contenu.total} pièce(s) (${tFc} ms), ${cc.contenu.total} commande(s) (${tCc} ms)`, cc.contenu.total > 0);
-    const [c7] = await ms(() => outil("rechercher_commandes", { date_debut: null, date_fin: null, etat: "toutes", recherche: cipVu.slice(5, 12), page: 1 }));
-    verifier(`recherche par CIP7 : ${c7.contenu.total} commande(s)`, c7.contenu.total >= cc.contenu.total);
+    // CIP7 : seulement pour un vrai CIP13 (34009 + CIP7 + clé) ; un code EAN de parapharmacie (3389…) n'a pas de CIP7
+    if (/^34009\d{8}$/.test(cipVu)) {
+      const [c7] = await ms(() => outil("rechercher_commandes", { date_debut: null, date_fin: null, etat: "toutes", recherche: cipVu.slice(5, 12), page: 1 }));
+      verifier(`recherche par CIP7 : ${c7.contenu.total} commande(s)`, c7.contenu.total >= cc.contenu.total);
+    } else log("recherche par CIP7 : sans objet (code produit EAN, pas un CIP13)");
   }
   const [av] = await ms(() => outil("rechercher_factures", { date_debut: "2024-10-20", date_fin: null, type_document: "avoirs", recherche: null, page: 1 }));
   const dernierAvoir = av.contenu.documents?.[0]?.numero;

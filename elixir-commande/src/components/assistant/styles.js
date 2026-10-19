@@ -37,6 +37,11 @@ export const CSS = `
 .ex-assistant__carte { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-1);
   padding: 14px 16px; margin-top: 8px; font-size: 13px; line-height: 1.45; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .ex-assistant__carte summary { cursor: pointer; font-weight: 600; color: var(--teal); padding: 6px 0; min-height: 32px; }
+/* cibles de 44 px sous 768 px (conception § 1.7) : volets repliables des cartes (le marqueur ▸ est gardé), « Vos données » */
+@media (max-width: 767px) {
+  .ex-assistant__carte summary { min-height: 44px; box-sizing: border-box; padding: 12px 0; }
+  .ex-assistant__lien { min-height: 44px; }
+}
 .ex-app .ex-assistant table.ex-assistant__table { width: 100%; border-collapse: collapse; font-size: 12px !important; }
 .ex-app .ex-assistant .ex-assistant__table th, .ex-app .ex-assistant .ex-assistant__table td { padding: 5px 4px !important; text-align: right;
   border-bottom: 1px solid var(--line-soft); vertical-align: top; }

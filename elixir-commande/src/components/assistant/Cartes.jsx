@@ -189,6 +189,13 @@ function CarteCommande({ a, outils }) {
 }
 
 // ── Récapitulatif d'une demande de retour : rien ne part sans « Confirmer la demande » ──
+// état (outils.etatDemande, d'après la réponse du serveur) : envoi | confirmee | non_enregistree | annulee | expiree | remplacee
+const TEXTE_ETAT = {
+  confirmee: "Demande confirmée : voir ci-dessous.", non_enregistree: "Demande non enregistrée : voir ci-dessous.",
+  annulee: "Demande annulée : rien n'a été envoyé.", expiree: "Ce récapitulatif a expiré : demandez à l'assistant de le préparer à nouveau.",
+  remplacee: "Remplacé par le récapitulatif plus récent ci-dessous.",
+};
+const ICONE_ETAT = { confirmee: "coche", non_enregistree: "alerte", expiree: "horloge", remplacee: "actualiser" };
 function CarteRecap({ a, outils }) {
   const lignes = Array.isArray(a.lignes) ? a.lignes : [];
   const expireeLocale = a.expire_at && Date.parse(a.expire_at) < Date.now();
@@ -243,10 +250,9 @@ function CarteRecap({ a, outils }) {
           </div>
         </>
       ) : (
-        <div role="status" style={encartCarte(etat === "expiree" ? "warn" : "neutral")}>
-          <Icone nom={etat === "expiree" ? "horloge" : etat === "confirmee" ? "coche" : "fermer"} taille={16} style={{ marginTop: 1 }} />
-          <span>{etat === "expiree" ? "Ce récapitulatif a expiré : demandez à l'assistant de le préparer à nouveau."
-            : etat === "confirmee" ? "Demande confirmée : voir ci-dessous." : "Demande annulée : rien n'a été envoyé."}</span>
+        <div style={encartCarte(etat === "expiree" || etat === "non_enregistree" ? "warn" : "neutral")}>
+          <Icone nom={ICONE_ETAT[etat] || "fermer"} taille={16} style={{ marginTop: 1 }} />
+          <span>{TEXTE_ETAT[etat] || TEXTE_ETAT.annulee}</span>
         </div>
       )}
     </div>

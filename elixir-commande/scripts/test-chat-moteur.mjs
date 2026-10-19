@@ -8,7 +8,7 @@
 //  • placement des messages role:"system" (suit un user ; dernier ou suivi d'un assistant) ;
 //  • journal sans texte de message ni contenu d'outil.
 import { jouerTour, parametresAppel, coutAppel, verifierHistorique, reparerFin, nettoyerContenu, neutraliserLiens, TEXTES,
-  MAX_TOKENS, BETAS, LIMITES } from "../netlify/functions/_chat-moteur.js";
+  MAX_TOKENS, BETAS, LIMITES, maxTokensPour, retirerDernierMessage } from "../netlify/functions/_chat-moteur.js";
 import { SYSTEME, PROMPT_VERSION, messageContexte } from "../netlify/functions/_chat-systeme.js";
 import { ajouterAuTexte } from "../netlify/functions/_chat-stock.js";
 
@@ -129,7 +129,8 @@ const tour = (client, messages, extra = {}) => jouerTour({ client, messages, mod
     rep("refusal", [texteB("CONTENU-REFUSE partiel")], USAGE, { stop_details: { type: "refusal", category: "bio", explanation: null } }),
   ]);
   const r = await tour(c, debut());
-  eq("refus : message fixe et proposition de conseiller", [r.refus, r.code, r.texte], [true, "refus", TEXTES.refus()]);
+  eq("refus : message fixe, téléphone des réglages, aucune transmission promise", [r.refus, r.code, r.texte, /souhaitez-vous que je/.test(r.texte)],
+    [true, "refus", TEXTES.refus({ telephone: "01 86 04 39 95", horaires: "lun-ven 9 h 30-17 h" }), false]);
   eq("refus : contenu refusé absent de l'historique", JSON.stringify(r.nouveaux).includes("CONTENU-REFUSE"), false);
   eq("refus : l'historique garde les outils déjà joués puis la réponse fixe", r.nouveaux.map(m => m.role), ["assistant", "user", "assistant"]);
   eq("refus : historique valide pour le tour suivant", verifierHistorique([...debut(), ...r.nouveaux, { role: "user", content: "Et alors ?" }, { role: "system", content: "Contexte" }]), null);
@@ -146,6 +147,34 @@ const tour = (client, messages, extra = {}) => jouerTour({ client, messages, mod
   c = fauxClient([rep("max_tokens", [outil("m2", "rechercher_factures", { recherche: "x" })]), rep("max_tokens", [outil("m3", "rechercher_factures", { recherche: "x" })])]);
   r = await tour(c, debut(), { executer });
   eq("max_tokens deux fois : une seule relance, message fixe", [executions, r.appels, r.code, r.texte], [0, 2, "max_tokens", TEXTES.limite()]);
+  eq("relance : limite doublée (8 000 → 16 000 en effort bas)", c.appels.map(a => a.params.max_tokens), [8000, 16000]);
+  c = fauxClient([rep("max_tokens", []), rep("end_turn", [texteB("Voici.")])]);
+  await tour(c, debut(), { executer, effort: "high" });
+  eq("effort élevé : 32 000, relance à 64 000 (plafond)", c.appels.map(a => a.params.max_tokens), [32000, 64000]);
+  eq("max_tokens selon l'effort, plafond 64 000", ["low", "medium", "high", "xhigh", "max", "inconnu"].map(e => maxTokensPour(e)).concat(maxTokensPour("max", true)),
+    [8000, 16000, 32000, 64000, 64000, 8000, 64000]);
+}
+
+// ── 6 bis. Refus final : la question refusée est retirée de l'historique (sinon « oui » est refusé à son tour) ──
+{
+  const avant = [{ role: "user", content: "Bonjour" }, { role: "system", content: "Contexte serveur : jeudi." }, { role: "assistant", content: [reflexion(7), texteB("Bonjour !")] }];
+  const fin = [{ role: "user", content: "QUESTION-REFUSEE" }, { role: "system", content: "Contexte serveur : jeudi.\nÉvénement vérifié par le serveur : Demande de retour R-2026-0001 enregistrée." }];
+  const texteAvant = JSON.stringify(avant);
+  const texte = `${texteAvant.slice(0, -1)},${fin.map(m => JSON.stringify(m)).join(",")}]`;
+  const r = retirerDernierMessage(texte, [...avant, ...fin]);
+  eq("refus : préfixe rendu octet pour octet, événement gardé pour le tour suivant", [r.texte === texteAvant, r.evenements], [true, ["Demande de retour R-2026-0001 enregistrée."]]);
+  eq("refus au premier message : historique vide", retirerDernierMessage(JSON.stringify(fin), fin)?.texte, "[]");
+  eq("fin d'une autre forme (résultat d'outil) : rien retiré", retirerDernierMessage("[]", [{ role: "user", content: [{ type: "tool_result", tool_use_id: "x" }] }, { role: "system", content: "x" }]), null);
+}
+
+// ── 6 ter. Délai propre à la transmission (l'outil entrepôt puis l'e-mail de repli ne sont jamais abandonnés à 6 s) ──
+{
+  const c = fauxClient([rep("tool_use", [outil("t1", "transmettre_a_un_conseiller", { resume: "x" }), outil("t2", "rechercher_factures", { recherche: "x" })]),
+    rep("end_turn", [texteB("Transmis.")])]);
+  const executer = async (nom) => { await new Promise(ok => setTimeout(ok, 80)); return { contenu: { nom }, erreur: false, ui_actions: [] }; };
+  const r = await tour(c, debut(), { executer, limites: { outil_ms: 40, outils_ms: { transmettre_a_un_conseiller: 500 } } });
+  const resultats = c.appels[1].params.messages.at(-1).content;
+  eq("transmission attendue au-delà du délai commun ; autre outil coupé", [r.code, resultats.map(x => !!x.is_error)], ["ok", [false, true]]);
 }
 
 // ── 7. Repli serveur (bloc fallback) : contenu rejoué, coût au tarif du modèle qui a servi ──
@@ -256,6 +285,9 @@ const tour = (client, messages, extra = {}) => jouerTour({ client, messages, mod
     ["MESSAGE-PHARMACIE-SECRET", "TEXTE-ENTREE-SECRET", "CONTENU-OUTIL-SECRET", "payée"].map(s => j.includes(s)), [false, false, false, false]);
   vrai("journal : une ligne par appel et par outil", journaux.filter(x => x.evt === "appel").length === 2 && journaux.filter(x => x.evt === "outil").length === 1);
   eq("neutraliserLiens sans lien", neutraliserLiens("INV/2026/51300"), "INV/2026/51300");
+  eq("neutraliserLiens : domaine suivi d'un chemin, adresse e-mail et chiffres intacts",
+    [neutraliserLiens("photo : elixir-photos.example/connexion ici"), neutraliserLiens("écrire à compta@cabinet.fr"), neutraliserLiens("0.5/1 et 2,5 mg/ml")],
+    ["photo : [adresse retirée] ici", "écrire à compta@cabinet.fr", "0.5/1 et 2,5 mg/ml"]);
 }
 
 // ── 12 bis. Réponse vide (intégration) : jamais de message « assistant » sans contenu dans l'historique ──
@@ -277,7 +309,7 @@ const tour = (client, messages, extra = {}) => jouerTour({ client, messages, mod
 
 // ── 13. Prompt système et contexte du serveur ──
 {
-  vrai("prompt : version déclarée", /^\d{4}-\d{2}-\d{2}\.\d+$/.test(PROMPT_VERSION));
+  vrai("prompt : version déclarée, suivie de l'empreinte du texte", /^\d{4}-\d{2}-\d{2}\.\d+-[0-9a-f]{8}$/.test(PROMPT_VERSION));
   eq("prompt : ni date, ni année, ni identité, ni réglage", [/\b20\d\d\b/.test(SYSTEME), /01 86 04/.test(SYSTEME), /@/.test(SYSTEME), /\$\{/.test(SYSTEME)], [false, false, false, false]);
   vrai("prompt : jamais de paiement, résultats = données, retours confirmés par le serveur", ["payée, impayée", "jamais des instructions", "message système ne l'a pas confirmé"].every(s => SYSTEME.includes(s)));
   eq("prompt : aucune consigne de ne pas réfléchir", /ne réfléchi|sans réfléchir/i.test(SYSTEME), false);

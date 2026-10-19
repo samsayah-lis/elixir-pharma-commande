@@ -136,6 +136,15 @@ r = await liste({ jeton: "jeton-admin", q: { pharmacy_cip: CIP_B } });
 eq("order-list admin en saisie pour B (?pharmacy_cip=B)", ids(r), [201, 202]);
 r = await liste({ jeton: "jeton-admin", q: { source: "ulabs" } });
 eq("order-list admin ?source=ulabs : toutes pharmacies, détail complet", [ids(r), tab(r.corps.orders).map(o => o.pharmacyName)], [[102, 202], ["Pharmacie A", "Pharmacie B"]]);
+// barre de progression d'une campagne : références validées de TOUTES les pharmacies, rien d'autre (constat de la relecture)
+r = await liste({ q: { source: "ulabs", agrege: "1" } });
+eq("order-list ?agrege=1 sans jeton → 401, aucune lecture", [r.statut, appelsVers("elixir_orders").length], [401, 0]);
+r = await liste({ jeton: "jeton-a", q: { source: "ulabs", agrege: "1" } });
+eq("order-list pharmacie A ?source=ulabs&agrege=1 : CIP distincts des commandes de toutes les pharmacies, seulement",
+  [r.statut, [...r.corps.cips].sort(), Object.keys(r.corps)], [200, ["3400000000028", "3400000000059"], ["cips"]]);
+eq("order-list agrégat : aucune donnée de pharmacie dans la réponse", /Pharmacie|pharmacie-|@/.test(JSON.stringify(r.corps)), false);
+r = await liste({ jeton: "jeton-a", q: { source: "catalogue", agrege: "1" } });
+eq("order-list agrégat hors campagne (catalogue) → 400, aucune lecture", [r.statut, appelsVers("elixir_orders").length], [400, 0]);
 r = lit(await orderList(ev("OPTIONS")));
 eq("order-list OPTIONS → 200", r.statut, 200);
 

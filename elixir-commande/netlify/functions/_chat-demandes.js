@@ -7,13 +7,18 @@
 //  - « email » : e-mail à l'équipe + récapitulatif aux adresses du compte de la pharmacie ;
 //  - « entrepot » : POST signé HMAC-SHA256 vers entrepot_url (clé d'idempotence = id de la demande) ; adresse vide,
 //    secret absent ou échec → e-mail à l'équipe (rien ne se perd), demande en « échec » visible dans l'admin.
+// Envoi borné (outil entrepôt 4 s, e-mails 4 s, et au plus jusqu'à l'échéance de la requête) : une fonction coupée
+// entre « confirmée » et l'envoi laisse une demande confirmée sans cible, reprise au clic suivant (après 20 s) ou par
+// relancerEnvois (après chaque tour et chaque nuit, après 5 min) ; la clé d'idempotence reste l'id de la demande.
 // Transmission : demandée explicitement par la pharmacie, donc sans carte de confirmation, mais bornée : une
-// transmission ouverte par conversation (la même est renvoyée), un nombre par 24 h et par fiche.
+// transmission ouverte par conversation ET par catégorie (une alerte qualité n'est jamais rattachée à une demande d'une
+// autre catégorie) ; une nouvelle précision de même catégorie part en « complément » (e-mail « Complément à T-… ») ;
+// un nombre de transmissions par 24 h et par fiche.
 // Destinataires : adresses du compte de la fiche (ctx.comptes) et adresses des réglages, JAMAIS une adresse écrite
-// dans la conversation. Tout texte libre est échappé. Journal sans contenu.
+// dans la conversation. Tout texte libre est échappé, et ses adresses web neutralisées. Journal sans contenu.
 import crypto from "node:crypto";
 import { sendMail, ADMIN_MAIL } from "./_gp-mail.js";
-import { lireReglages, emailValide, erreurPublique, journalJson, jourParis, dateFrParis } from "./_chat-config.js";
+import { lireReglages, emailValide, erreurPublique, journalJson, jourParis, dateFrParis, neutraliserLiens } from "./_chat-config.js";
 
 export const BROUILLON_MIN = 30;
 export const MOTIFS = {
@@ -33,6 +38,8 @@ export const CATEGORIES = {
 export const RAPPELS = { email: "par e-mail", telephone: "par téléphone", indifferent: "indifférent" };
 const ENREGISTREES = new Set(["confirmee", "transmise", "echec", "traitee", "rejetee"]);
 const OUVERTES = ["confirmee", "transmise", "echec"];
+const MAX_COMPLEMENTS = 5;                    // compléments par transmission (chacun envoie un e-mail)
+const REPRISE_CLIC_MS = 20_000, REPRISE_AUTO_MS = 5 * 60e3;   // envoi interrompu : repris au clic, ou automatiquement
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ADMIN_URL = "https://elixir-commande.expepharma.com/#admin";
 
@@ -63,7 +70,7 @@ export function nettoyerBrouillon(b = {}) {
     })),
     motif: MOTIFS[b.motif] ? b.motif : "autre",
     souhait: SOUHAITS[b.souhait] ? b.souhait : "non_precise",
-    commentaire: b.commentaire == null ? null : String(b.commentaire).trim().slice(0, 1000) || null,
+    commentaire: b.commentaire == null ? null : neutraliserLiens(String(b.commentaire).trim().slice(0, 1000)) || null,
     hors_delai: !!b.hors_delai,
     limite_retour: texte(b.limite_retour, 10),
   };
@@ -79,10 +86,12 @@ const tableLignes = (lignes) => `<table style="border-collapse:collapse;width:10
 const fiche = (ctx) => `${esc(ctx.nom || "Pharmacie")} (fiche Odoo n° ${esc(ctx.odooId)}${ctx.cip ? `, CIP ${esc(ctx.cip)}` : ""})`;
 const coordonnees = (r) => `${esc(r.telephone)} (${esc(r.horaires)})`;
 
-function mailEquipeRetour({ d, b, ctx, simulation, echec, maintenant }) {
+const REPRISE = "<p><b>Envoi repris automatiquement</b> après une interruption : la pharmacie n'a peut-être pas reçu de récapitulatif par e-mail.</p>";
+function mailEquipeRetour({ d, b, ctx, simulation, echec, maintenant, reprise = false }) {
   return {
     subject: `${simulation ? "[SIMULATION] " : ""}Demande de retour ${d.numero} — ${String(ctx.nom || "pharmacie").slice(0, 80)}`,
     html: `<div style="${STYLE}">
+${reprise ? REPRISE : ""}
 ${simulation ? "<p><b>Mode simulation (pilote)</b> : rien n'a été créé dans l'outil entrepôt. Traitez cette demande à la main.</p>" : ""}
 ${echec ? `<p><b>Envoi à l'outil entrepôt impossible</b> (${esc(echec)}) : saisissez cette demande à la main.</p>` : ""}
 <p>Demande de retour <b>${esc(d.numero)}</b> confirmée par la pharmacie le ${esc(dateFrParis(maintenant))} dans l'Assistant Elixir${ctx.admin ? ` (saisie Elixir par ${esc(ctx.admin)})` : ""}.</p>
@@ -105,17 +114,29 @@ ${tableLignes(b.lignes)}
 <p>Pour toute question : ${coordonnees(r)}.</p><p>L'équipe Elixir Pharma</p></div>`,
   };
 }
-function mailEquipeTransmission({ d, t, ctx, simulation, echec, maintenant }) {
-  const prefixe = t.categorie === "qualite" ? "URGENT – Qualité – " : t.urgence === "urgente" ? "URGENT – " : "";
+const prefixeTransmission = (t) => (t.categorie === "qualite" ? "URGENT – Qualité – " : t.urgence === "urgente" ? "URGENT – " : "");
+function mailEquipeTransmission({ d, t, ctx, simulation, echec, maintenant, reprise = false }) {
   return {
-    subject: `${simulation ? "[SIMULATION] " : ""}${prefixe}${t.categorie === "reglement" ? "[Règlement] " : ""}Transmission ${d.numero} — ${CATEGORIES[t.categorie]} — ${String(ctx.nom || "pharmacie").slice(0, 80)}`,
+    subject: `${simulation ? "[SIMULATION] " : ""}${prefixeTransmission(t)}${t.categorie === "reglement" ? "[Règlement] " : ""}Transmission ${d.numero} — ${CATEGORIES[t.categorie] || CATEGORIES.autre} — ${String(ctx.nom || "pharmacie").slice(0, 80)}`,
     html: `<div style="${STYLE}">
+${reprise ? REPRISE : ""}
 ${echec ? `<p><b>Envoi à l'outil entrepôt impossible</b> (${esc(echec)}) : prenez cette demande en charge à partir de cet e-mail.</p>` : ""}
 <p>Demande transmise par l'Assistant Elixir le ${esc(dateFrParis(maintenant))}${ctx.admin ? ` (saisie Elixir par ${esc(ctx.admin)})` : ""} : n° <b>${esc(d.numero)}</b>.</p>
-<p>Pharmacie : ${fiche(ctx)}<br>Catégorie : ${esc(CATEGORIES[t.categorie])}<br>Urgence : ${t.urgence === "urgente" ? "<b>urgente</b>" : "normale"}<br>
+<p>Pharmacie : ${fiche(ctx)}<br>Catégorie : ${esc(CATEGORIES[t.categorie] || CATEGORIES.autre)}<br>Urgence : ${t.urgence === "urgente" ? "<b>urgente</b>" : "normale"}<br>
 Référence citée : ${esc(t.reference || "–")}<br>Préférence de réponse : ${esc(RAPPELS[t.rappel])}</p>
 <p>Résumé (rédigé par l'assistant) :<br>${esc(t.resume || "–").replace(/\n/g, "<br>")}</p>
 <p style="font-size:12px;color:#546e7a">Conversation complète : admin du site de commande, onglet « Assistant » (${esc(ADMIN_URL)}). Coordonnées de la pharmacie : fiche Odoo.</p></div>`,
+  };
+}
+// nouvelle précision de la pharmacie sur une transmission déjà ouverte (même conversation, même catégorie)
+function mailEquipeComplement({ d, t, ctx, simulation, maintenant, entrepot }) {
+  return {
+    subject: `${simulation ? "[SIMULATION] " : ""}${prefixeTransmission(t)}Complément à la transmission ${d.numero} — ${CATEGORIES[t.categorie] || CATEGORIES.autre} — ${String(ctx.nom || "pharmacie").slice(0, 80)}`,
+    html: `<div style="${STYLE}">
+<p>Nouvelle précision de la pharmacie le ${esc(dateFrParis(maintenant))}${ctx.admin ? ` (saisie Elixir par ${esc(ctx.admin)})` : ""}, à joindre à la demande n° <b>${esc(d.numero)}</b>${entrepot ? ` (outil entrepôt : ${esc(entrepot)})` : ""}.</p>
+<p>Pharmacie : ${fiche(ctx)}<br>Urgence : ${t.urgence === "urgente" ? "<b>urgente</b>" : "normale"}<br>Référence citée : ${esc(t.reference || "–")}</p>
+<p>Complément (rédigé par l'assistant) :<br>${esc(t.resume || "–").replace(/\n/g, "<br>")}</p>
+<p style="font-size:12px;color:#546e7a">Conversation complète : admin du site de commande, onglet « Assistant » (${esc(ADMIN_URL)}).</p></div>`,
   };
 }
 function mailPharmacieTransmission({ d, t, r }) {
@@ -128,13 +149,21 @@ function mailPharmacieTransmission({ d, t, r }) {
   };
 }
 
-// deps : { stock, reglages?, conversationId?, envoyerMail?, fetch?, secret?, maintenant?, journal?, revaliderRetour?, perimetre? }
+// deps : { stock, reglages?, conversationId?, envoyerMail?, fetch?, secret?, maintenant?, journal?, revaliderRetour?, perimetre?,
+//   delaiEntrepotMs? (4 000), delaiMailMs? (4 000), echeance? (heure réelle, en ms, à ne pas dépasser : requête synchrone) }
 // conversationId : conversation du tour en cours (la demande y est rattachée) ; perimetre : deps passées à revaliderRetour
 export function creerDemandes(deps = {}) {
   const stock = deps.stock;
   if (!stock) throw new Error("creerDemandes : stock manquant");
   const maintenant = deps.maintenant || (() => new Date());
-  const envoyerMail = deps.envoyerMail || sendMail;
+  // délai d'un appel extérieur : son défaut, et jamais au-delà de l'échéance de la requête (plafond de 10 s d'une fonction)
+  const delai = (defaut) => Math.max(1000, Math.min(defaut, deps.echeance ? deps.echeance - Date.now() - 300 : defaut));
+  const envoi = deps.envoyerMail || sendMail;
+  // e-mail borné : passé le délai, compté comme non envoyé (l'erreur est notée sur la demande, visible dans l'admin)
+  const envoyerMail = (m) => new Promise((ok) => {
+    const t = setTimeout(() => ok({ sent: false, reason: "délai dépassé" }), delai(deps.delaiMailMs ?? 4000));
+    Promise.resolve().then(() => envoi(m)).then((v) => { clearTimeout(t); ok(v); }, (e) => { clearTimeout(t); ok({ sent: false, reason: String(e?.message || e).slice(0, 80) }); });
+  });
   const http = deps.fetch || ((...a) => fetch(...a));
   const secret = deps.secret !== undefined ? deps.secret : process.env.CHATBOT_INTAKE_SECRET;
   const journal = deps.journal || journalJson;
@@ -155,7 +184,7 @@ export function creerDemandes(deps = {}) {
     const signature = crypto.createHmac("sha256", secret).update(`${horodatage}.${corps}`).digest("hex");
     try {
       const res = await http(r.entrepot_url, {
-        method: "POST", body: corps, signal: AbortSignal.timeout(8_000),
+        method: "POST", body: corps, signal: AbortSignal.timeout(delai(deps.delaiEntrepotMs ?? 4000)),
         headers: { "Content-Type": "application/json", "X-Elixir-Horodatage": horodatage, "X-Elixir-Signature": `sha256=${signature}`, "Idempotency-Key": cle },
       });
       const j = await res.json().catch(() => ({}));
@@ -171,7 +200,7 @@ export function creerDemandes(deps = {}) {
   });
 
   // Envoi d'une demande déjà passée en « confirmée » (une seule fois) → { statut, cible_ref, erreur, destinataires }
-  async function envoyer(type, d, ctx, r, { mailEquipe, mailPharmacie, prevenir, contenu }) {
+  async function envoyer(type, d, ctx, r, { mailEquipe, mailPharmacie, prevenir, contenu, reprise = false }) {
     const simulation = r.demandes === "simulation";
     let statut = "confirmee", cible_ref = null, erreur = null;
     if (r.demandes === "entrepot") {
@@ -194,7 +223,7 @@ export function creerDemandes(deps = {}) {
       }
     }
     await stock.demandes.passer(d.id, "confirmee", statut, { cible_ref, erreur, ...(statut === "transmise" ? { transmise_at: iso() } : {}) });
-    journal({ evt: "demande", type, code: statut, mode: r.demandes, demande: d.id });
+    journal({ evt: "demande", type, code: statut, mode: r.demandes, demande: d.id, ...(reprise ? { reprise: true } : {}) });
     return { statut, cible_ref, erreur, destinataires };
   }
 
@@ -207,12 +236,16 @@ export function creerDemandes(deps = {}) {
     })).catch(e => journal({ evt: "demande", code: "conversation_non_notee", demande: d.id, erreur: String(e?.message || e).slice(0, 80) }));
   }
   const messageAffiche = (id, texteMsg, ui_actions = []) => ({ id, role: "assistant", texte: texteMsg, ui_actions, at: iso() });
-  const carteEnregistree = (d, r, ctx) => {
+  // envoyes : adresses qui viennent de recevoir le récapitulatif ; à la relecture (double clic), l'adresse n'est indiquée que
+  // si l'envoi a eu lieu (cible connue) sans échec du récapitulatif, et jamais en saisie Elixir (case « Prévenir » inconnue)
+  const carteEnregistree = (d, r, ctx, envoyes = null) => {
     const simulation = d.cible_ref === "simulation";
-    const comptes = comptesDe(ctx);
+    const recu = envoyes ? envoyes[0] : !ctx.admin && d.cible_ref && !simulation && !/récapitulatif/.test(String(d.erreur || "")) ? comptesDe(ctx)[0] : null;
     return { type: "demande_enregistree", numero: d.numero, date: jourParis(d.confirmee_at || maintenant()), delai: r.delai_annonce,
-      email_masque: !simulation && comptes.length && !(ctx.admin && d.prevenu === false) ? masquerEmail(comptes[0]) : null, simulation };
+      email_masque: recu ? masquerEmail(recu) : null, simulation };
   };
+  // envoi interrompu : confirmée sans cible depuis un moment (la fonction a été coupée avant la fin de l'envoi)
+  const interrompu = (d, ms) => d.statut === "confirmee" && !d.cible_ref && Date.parse(d.updated_at || d.confirmee_at) < maintenant().getTime() - ms;
   const texteEnregistre = (d) => `Votre demande de retour ${d.numero} est enregistrée. Merci d'attendre l'accord d'Elixir avant tout renvoi de produit.`;
 
   // ── Brouillon (appelé par l'outil preparer_demande_retour) ──
@@ -256,8 +289,14 @@ export function creerDemandes(deps = {}) {
       return { http: 200, message: messageAffiche(`d-${d.id}`, "Demande annulée : rien n'a été envoyé.") };
     }
 
-    // double clic, onglet rejoué : même réponse, aucun nouvel envoi
-    if (ENREGISTREES.has(d.statut)) return { http: 200, message: messageAffiche(`d-${d.id}`, texteEnregistre(d), [carteEnregistree(d, r, ctx)]) };
+    // double clic, onglet rejoué : même réponse, aucun nouvel envoi ; envoi interrompu (fonction coupée) : repris ici
+    if (ENREGISTREES.has(d.statut)) {
+      if (interrompu(d, REPRISE_CLIC_MS)) {
+        const c = await stock.demandes.reprendre(d.id, d.updated_at);
+        if (c) return envoyerRetour(c, nettoyerBrouillon(c.brouillon), ctx, r, prevenir, true);
+      }
+      return { http: 200, message: messageAffiche(`d-${d.id}`, texteEnregistre(d), [carteEnregistree(d, r, ctx)]) };
+    }
     if (d.statut !== "brouillon") return { http: 410, error: "expiree" };
     if (!(Date.parse(d.expire_at) > maintenant().getTime())) {
       await stock.demandes.passer(d.id, "brouillon", "expiree");
@@ -279,8 +318,9 @@ export function creerDemandes(deps = {}) {
     if (!v?.ok) {
       const raison = String(v?.raison || "Cette demande ne correspond plus à votre livraison.").slice(0, 300);
       if (await stock.demandes.passer(d.id, "brouillon", "annulee", { erreur: raison })) {
-        const message = messageAffiche(`d-${d.id}`, `${raison} Rien n'a été envoyé.`, [{ type: "erreur", texte: raison }]);
-        await noter(d, ctx, `La demande de retour n'a pas été enregistrée après recontrôle : ${raison}`, message);
+        // la raison (libellés d'Odoo compris) reste dans la carte ; l'événement dit au modèle n'est fait que de texte fixe
+        const message = messageAffiche(`d-${d.id}`, "Demande non enregistrée : rien n'a été envoyé.", [{ type: "erreur", texte: raison }]);
+        await noter(d, ctx, `La demande de retour ${d.numero} n'a pas été enregistrée après recontrôle (quantité, lot ou document modifié). Rien n'a été envoyé.`, message);
         return { http: 200, message };
       }
       return { http: 410, error: "expiree" };
@@ -292,55 +332,121 @@ export function creerDemandes(deps = {}) {
       if (d2 && ENREGISTREES.has(d2.statut)) return { http: 200, message: messageAffiche(`d-${d.id}`, texteEnregistre(d2), [carteEnregistree(d2, r, ctx)]) };
       return { http: 410, error: "expiree" };
     }
+    return envoyerRetour(conf, b, ctx, r, prevenir);
+  }
+  // envoi d'un retour passé en « confirmée » (ou repris), puis carte « Demande enregistrée » et événement pour le modèle
+  async function envoyerRetour(conf, b, ctx, r, prevenir, reprise = false) {
     const prevenirPharmacie = !ctx.admin || prevenir !== false;
     const t = maintenant();
     const envoi = await envoyer("retour", conf, ctx, r, {
-      prevenir: prevenirPharmacie, contenu: b,
+      prevenir: prevenirPharmacie, contenu: b, reprise,
       mailEquipe: ({ simulation, echec }) => ({ to: [r.email_equipe], ...mailEquipeRetour({ d: conf, b, ctx, simulation, echec, maintenant: t }) }),
       mailPharmacie: () => mailPharmacieRetour({ d: conf, b, r, maintenant: t }),
     });
-    const fin = { ...conf, cible_ref: envoi.cible_ref, statut: envoi.statut, prevenu: envoi.destinataires.length > 0 };
-    const carte = { ...carteEnregistree(fin, r, ctx), email_masque: envoi.destinataires.length ? masquerEmail(envoi.destinataires[0]) : null };
-    const message = messageAffiche(`d-${d.id}`, texteEnregistre(fin), [carte]);
-    await noter(d, ctx, `Demande de retour ${conf.numero} enregistrée le ${dateFrParis(t)} après confirmation de la pharmacie. Délai annoncé : ${r.delai_annonce}`, message);
+    const fin = { ...conf, cible_ref: envoi.cible_ref, statut: envoi.statut };
+    const message = messageAffiche(`d-${conf.id}`, texteEnregistre(fin), [carteEnregistree(fin, r, ctx, envoi.destinataires)]);
+    await noter(conf, ctx, `Demande de retour ${conf.numero} enregistrée le ${dateFrParis(t)} après confirmation de la pharmacie. Délai annoncé : ${r.delai_annonce}`, message);
     return { http: 200, message };
   }
 
-  // ── Transmission à un conseiller (outil transmettre_a_un_conseiller) → { numero, delai, telephone, horaires } ──
+  // ── Transmission à un conseiller (outil transmettre_a_un_conseiller) → { numero, delai, telephone, horaires,
+  //    deja_transmise?, complement?, complement_envoye? } ──
+  const categorieDe = (d) => d.categorie || d.brouillon?.categorie || "autre";
+  const pareil = (a, b) => String(a || "").replace(/\s+/g, " ").trim().toLowerCase() === String(b || "").replace(/\s+/g, " ").trim().toLowerCase();
   async function transmettre(ctx, entree = {}) {
     const r = await reglages();
     const conversationId = UUID.test(String(deps.conversationId || "")) ? deps.conversationId : (UUID.test(String(entree.conversation_id || "")) ? entree.conversation_id : null);
     const categorie = CATEGORIES[entree.categorie] ? entree.categorie : "autre";
+    // textes rédigés par le modèle à partir des messages de la pharmacie : adresses web neutralisées (e-mails, entrepôt)
     const t = {
       categorie, urgence: entree.urgence === "urgente" || categorie === "qualite" ? "urgente" : "normale",
-      rappel: RAPPELS[entree.rappel] ? entree.rappel : "indifferent", reference: texte(entree.reference, 80),
-      resume: String(entree.resume || "").trim().slice(0, 1500) || null,
+      rappel: RAPPELS[entree.rappel] ? entree.rappel : "indifferent", reference: texte(neutraliserLiens(entree.reference), 80),
+      resume: neutraliserLiens(String(entree.resume || "").trim().slice(0, 1500)) || null,
     };
-    const reponse = (d, deja = false) => ({ numero: d.numero, delai: r.delai_annonce, telephone: r.telephone, horaires: r.horaires, ...(deja ? { deja_transmise: true } : {}) });
+    const reponse = (d, extra = {}) => ({ numero: d.numero, delai: r.delai_annonce, telephone: r.telephone, horaires: r.horaires, ...extra });
+    // transmission ouverte de la MÊME catégorie dans cette conversation (une demande qualité n'est jamais rattachée à une autre)
     const ouverte = async () => conversationId
-      ? (await stock.demandes.lister({ conversation_id: conversationId, type: "transmission", statut: OUVERTES, limite: 5 })).find(x => Number(x.odoo_id) === Number(ctx.odooId))
+      ? (await stock.demandes.lister({ conversation_id: conversationId, type: "transmission", statut: OUVERTES, limite: 20 }))
+        .find(x => Number(x.odoo_id) === Number(ctx.odooId) && categorieDe(x) === categorie)
       : null;
-    // dédoublonnage : une transmission ouverte par conversation
     const deja = await ouverte();
-    if (deja) return reponse(deja, true);
+    if (deja) { const c = await completer(deja, t, ctx, r); if (c) return reponse(deja, c); }
     // quota par 24 h ; la qualité pharmaceutique garde une marge (jamais bloquée par les autres demandes du jour)
     const faites = await stock.compter.demandes(ctx.odooId, "transmission", il24h());
     if (faites >= r.quotas.transmissions_jour + (categorie === "qualite" ? 3 : 0)) {
       throw erreurPublique(`Plusieurs demandes ont déjà été transmises aujourd'hui pour cette pharmacie. Pour une urgence : ${r.telephone} (${r.horaires}).`, "quota");
     }
-    const d = await stock.demandes.creer({ type: "transmission", statut: "confirmee", conversation_id: conversationId, odoo_id: ctx.odooId,
+    const d = await stock.demandes.creer({ type: "transmission", statut: "confirmee", categorie, conversation_id: conversationId, odoo_id: ctx.odooId,
       pharmacie: ctx.nom, admin_email: ctx.admin || null, brouillon: t, resume: t.resume, confirmee_at: iso() });
-    if (d.doublon) { const autre = await ouverte(); if (autre) return reponse(autre, true); throw new Error("transmission en double"); }
-    const now = maintenant();
-    await envoyer("transmission", d, ctx, r, {
-      prevenir: t.rappel === "email" && (!ctx.admin || entree.prevenir !== false), contenu: t,
-      mailEquipe: ({ simulation, echec }) => ({ to: [categorie === "qualite" ? r.email_qualite : r.email_equipe], ...mailEquipeTransmission({ d, t, ctx, simulation, echec, maintenant: now }) }),
-      mailPharmacie: () => mailPharmacieTransmission({ d, t, r }),
-    });
+    if (d.doublon) {   // même catégorie créée en même temps (deux appels du même tour) : complément, ou rien de nouveau
+      const autre = await ouverte();
+      if (autre) return reponse(autre, (await completer(autre, t, ctx, r)) || { deja_transmise: true, complement: false });
+      throw new Error("transmission en double");
+    }
+    await envoyerTransmission(d, t, ctx, r, { prevenir: t.rappel === "email" && (!ctx.admin || entree.prevenir !== false) });
     return reponse(d);
   }
+  async function envoyerTransmission(d, t, ctx, r, { prevenir = false, reprise = false } = {}) {
+    const now = maintenant();
+    return envoyer("transmission", d, ctx, r, {
+      prevenir, contenu: t, reprise,
+      mailEquipe: ({ simulation, echec }) => ({ to: [t.categorie === "qualite" ? r.email_qualite : r.email_equipe], ...mailEquipeTransmission({ d, t, ctx, simulation, echec, maintenant: now, reprise }) }),
+      mailPharmacie: () => mailPharmacieTransmission({ d, t, r }),
+    });
+  }
+  // Nouvelle précision sur une transmission ouverte de même catégorie : ajoutée à la demande et envoyée à l'équipe
+  // (« Complément à T-… » ; qualité : adresse qualité, « URGENT ») ; même texte qu'avant : rien n'est renvoyé.
+  // → { deja_transmise, complement, complement_envoye? }, ou null si la demande vient d'être close (une nouvelle part)
+  async function completer(d, t, ctx, r) {
+    const b = d.brouillon && typeof d.brouillon === "object" ? d.brouillon : {};
+    const complements = Array.isArray(b.complements) ? b.complements : [];
+    if (!t.resume || [b.resume, d.resume, ...complements.map(c => c?.resume)].some(x => pareil(x, t.resume))) return { deja_transmise: true, complement: false };
+    if (complements.length >= MAX_COMPLEMENTS) {
+      throw erreurPublique(`Plusieurs précisions ont déjà été ajoutées à la demande n° ${d.numero}. Pour la suite : ${r.telephone} (${r.horaires}).`, "quota");
+    }
+    const urgence = t.urgence === "urgente" || b.urgence === "urgente" ? "urgente" : "normale";
+    const now = maintenant();
+    const maj = await stock.demandes.passer(d.id, d.statut, d.statut, {
+      brouillon: { ...b, urgence, complements: [...complements, { at: iso(), resume: t.resume, reference: t.reference, urgence: t.urgence, rappel: t.rappel }] },
+      resume: `${d.resume || b.resume || ""}\n\nComplément du ${dateFrParis(now)} : ${t.resume}`.slice(0, 2000),
+    });
+    if (!maj) return null;
+    const tc = { ...t, categorie: categorieDe(d), urgence };
+    const m = mailEquipeComplement({ d, t: tc, ctx, simulation: r.demandes === "simulation", maintenant: now, entrepot: r.demandes === "entrepot" ? d.cible_ref : null });
+    const s = await envoyerMail({ to: [tc.categorie === "qualite" ? r.email_qualite : r.email_equipe], subject: m.subject, html: m.html });
+    if (!s?.sent) {
+      await stock.demandes.passer(d.id, maj.statut, maj.statut, { erreur: [maj.erreur, `complément non envoyé par e-mail (${String(s?.reason || "raison inconnue").slice(0, 80)})`].filter(Boolean).join(" ; ").slice(0, 500) }).catch(() => {});
+    }
+    journal({ evt: "demande", type: "transmission", code: "complement", envoye: !!s?.sent, demande: d.id });
+    return { deja_transmise: true, complement: true, complement_envoye: !!s?.sent };
+  }
 
-  return { creerBrouillon, confirmer, transmettre };
+  // ── Envois interrompus (fonction coupée entre « confirmée » et l'envoi) : repris après REPRISE_AUTO_MS, un seul
+  // repreneur par demande. Identité relue de la demande (fiche, nom, admin) : l'équipe est prévenue, la pharmacie non
+  // (ses adresses ne sont pas gardées avec la demande). → nombre de demandes reprises ──
+  async function relancerEnvois({ limite = 10 } = {}) {
+    const r = await reglages();
+    const avant = new Date(maintenant().getTime() - REPRISE_AUTO_MS).toISOString();
+    let n = 0;
+    for (const d of await stock.demandes.lister({ statut: "confirmee", sans_cible: true, confirmee_avant: avant, limite })) {
+      if (!interrompu(d, REPRISE_AUTO_MS)) continue;
+      const c = await stock.demandes.reprendre(d.id, d.updated_at);
+      if (!c) continue;
+      const ctx = { odooId: c.odoo_id, nom: c.pharmacie, cip: null, comptes: [], admin: c.admin_email || null, mode: "complet" };
+      const b = c.brouillon && typeof c.brouillon === "object" ? c.brouillon : {};
+      if (c.type === "retour") {
+        const br = nettoyerBrouillon(b), t = maintenant();
+        await envoyer("retour", c, ctx, r, { prevenir: false, contenu: br, reprise: true,
+          mailEquipe: ({ simulation, echec }) => ({ to: [r.email_equipe], ...mailEquipeRetour({ d: c, b: br, ctx, simulation, echec, maintenant: t, reprise: true }) }) });
+      } else {
+        await envoyerTransmission(c, { ...b, categorie: categorieDe(c) }, ctx, r, { reprise: true });
+      }
+      n++;
+    }
+    return n;
+  }
+
+  return { creerBrouillon, confirmer, transmettre, relancerEnvois };
 }
 
 // ── Surveillance (après chaque tour et chaque jour) : budget du jour à 80 % et 100 %, pannes répétées ──

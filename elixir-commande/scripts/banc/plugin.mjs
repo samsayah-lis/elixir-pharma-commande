@@ -8,8 +8,9 @@
 //           « chat »), attente de la réponse rejouée (GET ?tour=, étape puis réponse), PDF et Excel d'essai ; « #401 »,
 //           « #409 », « #429 », « #503 » ou « #erreur » dans un message essaient les écrans d'erreur.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>,
-// BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (l'assistant
-// répond 401 « reconnexion » à l'ouverture : encart « Me reconnecter »).
+// BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
+// valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
+// « Me reconnecter »).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
@@ -114,6 +115,7 @@ function getCalcule(fn, q) {
       return { status: "ok" };
     }
     case "order-list":
+      if (q.agrege) return { cips: [] };   // barre de campagne : références validées, toutes pharmacies
       if (q.source) return { orders: [] };
       if (q.pharmacy_cip && q.pharmacy_cip === banc.cip) return { orders: commandesFictives(banc.cip) };
       return { orders: commandesDuBanc.slice().reverse() };
@@ -189,11 +191,15 @@ const ETAPES_FICTIVES = {
 const toursDuBanc = new Map();   // tour_id → { message, erreur, etape, appels }
 const ERREURS_CHAT = {
   "#401": [401, { error: "reconnexion" }], "#409": [409, { error: "tour_en_cours" }],
+  "#410": [410, { error: "conversation_fermee", message: "Banc d'essai : conversation fermée ailleurs (exemple) : une nouvelle conversation s'ouvre." }],
   "#429": [429, { error: "quota", message: "Banc d'essai : quota de messages atteint (exemple), réessayez dans une heure." }],
   "#503": [503, { error: "indisponible", message: "Banc d'essai : l'assistant est momentanément indisponible (exemple)." }],
 };
 function reponseChatBanc(corps) {
-  if (process.env.BANC_CHAT === "reconnexion" && corps.action !== "etat") return { statut: 401, corps: { error: "reconnexion" }, source: "fictif" };
+  if (process.env.BANC_CHAT === "reconnexion") {   // le vrai parcours : etat → bouton + encart, ouverture → 401
+    return corps.action === "etat" ? { statut: 200, corps: { disponible: false, mode: null, raison: "reconnexion", ouvert: true }, source: "fictif" }
+      : { statut: 401, corps: { error: "reconnexion" }, source: "fictif" };
+  }
   const texte = String(corps.texte || "");
   const essai = corps.action === "message" && Object.keys(ERREURS_CHAT).find((k) => texte.includes(k));
   if (essai) { const [statut, c] = ERREURS_CHAT[essai]; return { statut, corps: c, source: "fictif" }; }

@@ -137,6 +137,18 @@ e = await essaiErreur(409, { error: "tour_en_cours", message: "<b>texte du serve
 eq("409", [e.code, /patientez/.test(e.message)], ["tour_en_cours", true]);
 e = await essaiErreur(403, { error: "fiche" });
 eq("403", e.code, "fiche");
+e = await essaiErreur(409, { error: "tour_en_cours", tour_id: "t-en-cours" });
+eq("409 : tour en cours transmis (le panneau le suit)", [e.code, e.tourId], ["tour_en_cours", "t-en-cours"]);
+e = await essaiErreur(410, { error: "conversation_fermee", message: "texte du serveur" });
+eq("410 conversation fermée (autre poste, mise à jour) : code propre, texte du panneau (pas celui des liens expirés)",
+  [e.code, /fermée/.test(e.message), /téléchargement/.test(e.message)], ["conversation", true, false]);
+// saisie Elixir : jeton admin expiré renouvelé (admin-refresh), puis l'appel rejoué
+reinit(); globalThis.localStorage.setItem("admin_token", "vieux-admin"); globalThis.localStorage.setItem("admin_refresh_token", "rta");
+repondre = (a) => a.url.includes("admin-refresh") ? json(200, { success: true, token: "neuf-admin", refresh_token: "rta2" })
+  : a.entetes.Authorization === "Bearer neuf-admin" ? json(200, { conversation_id: "c2", messages: [] }) : json(401, { error: "reconnexion" });
+const oa = await api.ouvrir(authAssistant({ odoo_id: 595 }), null);
+eq("saisie Elixir, 401 → jeton admin renouvelé (et gardé), appel rejoué", [oa.conversation_id, appels[1].corps, globalThis.localStorage.getItem("admin_token"), globalThis.localStorage.getItem("admin_refresh_token")],
+  ["c2", { refresh_token: "rta" }, "neuf-admin", "rta2"]);
 reinit(); repondre = () => json(410, { error: "expiree" });
 e = await api.decider(authAssistant(null), "c", "d", "confirmer").catch(x => x);
 eq("410 : récapitulatif expiré", e.code, "expiree");
@@ -166,6 +178,8 @@ eq("attente : étapes puis réponse", [etapes, r.message.id, r.erreur], [[null, 
 vrai("attente : GET ?tour=&conversation_id=", appels.every(a => a.methode === "GET" && /chat\?tour=t1&conversation_id=c$/.test(a.url)), appels[0]?.url);
 reinit(); repondre = () => json(200, { statut: "erreur", etape: null, message: null });
 eq("tour en erreur", await api.attendreReponse({ auth: authAssistant(null), tourId: "t", conversationId: "c" }), { message: null, erreur: true });
+reinit(); repondre = (a, n) => n === 1 ? json(503, { error: "indisponible" }) : json(200, { statut: "termine", etape: null, message });
+eq("attente : 503 passager (Odoo ou Supabase lent), nouvel essai, réponse reçue", (await api.attendreReponse({ auth: authAssistant(null), tourId: "t", conversationId: "c" })).message?.id, "m1");
 reinit(); repondre = () => json(401, { error: "reconnexion" });
 e = await api.attendreReponse({ auth: authAssistant(null), tourId: "t", conversationId: "c" }).catch(x => x);
 eq("attente : 401 → reconnexion", e.code, "reconnexion");
@@ -198,6 +212,10 @@ const e4 = await etatAssistant(authAssistant(null), "p-test-4");
 eq("état : jeton expiré renouvelé, puis relu", [e4.disponible, appels.map(a => a.url.replace("/.netlify/functions/", ""))], [true, ["chat", "admin-refresh", "chat"]]);
 reinit(); repondre = () => { throw new TypeError("Failed to fetch"); };
 eq("état : coupure réseau → bouton masqué", (await etatAssistant(authAssistant(null), "p-test-5")).disponible, false);
+reinit(); globalThis.localStorage.setItem("pharmacy_token", "j");
+repondre = (a, n) => json(200, n === 1 ? { disponible: false, mode: null, raison: null } : { disponible: true, mode: "complet", raison: null });
+await etatAssistant(authAssistant(null), "p-test-6"); await new Promise(ok => setTimeout(ok, 0));
+eq("état : échec passager du serveur (raison vide) non gardé, relu ensuite", (await etatAssistant(authAssistant(null), "p-test-6")).disponible, true);
 
 // conversation gardée pour l'onglet, par identité
 reinit();
@@ -248,6 +266,12 @@ vrai("récapitulatif : case « Prévenir la pharmacie » en saisie Elixir seulem
   && !html("recap_retour").includes("Prévenir la pharmacie"));
 vrai("récapitulatif confirmé : plus de bouton", !html("recap_retour", { ...outils, etatDemande: () => "confirmee" }).includes("Confirmer la demande"));
 vrai("récapitulatif expiré", html("recap_retour", { ...outils, etatDemande: () => "expiree" }).includes("a expiré"));
+{
+  const remplace = html("recap_retour", { ...outils, etatDemande: () => "remplacee" });
+  vrai("récapitulatif remplacé par un plus récent : plus de bouton, encart neutre", !remplace.includes("Confirmer la demande") && remplace.includes("Remplacé par le récapitulatif plus récent"), remplace);
+  const refuse = html("recap_retour", { ...outils, etatDemande: () => "non_enregistree" });
+  vrai("récapitulatif refusé au recontrôle : « non enregistrée », jamais « confirmée »", refuse.includes("Demande non enregistrée") && !refuse.includes("Demande confirmée"), refuse);
+}
 vrai("transmission : « Appeler » en tel:", /href="tel:0186043995"/.test(html("transmission")));
 vrai("demande enregistrée : mention de la phase pilote", html("demande_enregistree").includes("Phase pilote"));
 vrai("commande : frise et lots", html("commande").includes("Suivi de la commande") && html("commande").includes("Lots et péremptions"));

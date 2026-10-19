@@ -7,16 +7,27 @@
 // Règles :
 //  - historique rejoué octet pour octet, blocs de réflexion compris ; le tour n'ajoute que des messages à la fin ;
 //  - tool_use → tous les outils en parallèle (6 s chacun), puis UN message « user » avec tous les tool_result ;
-//  - max_tokens → rien n'est exécuté, une seule relance ; refus → message fixe et proposition de conseiller, la
-//    réponse refusée n'est pas ajoutée ; au plus 8 appels et 90 s par tour ;
+//  - max_tokens → rien n'est exécuté, une seule relance avec une limite doublée ; refus → message fixe, la réponse refusée
+//    n'est pas ajoutée (chat-tour-background retire aussi le message refusé de l'historique) ; au plus 8 appels et 90 s
+//    par tour ;
 //  - un tour se termine toujours par une réponse « assistant » dans l'historique (texte du modèle ou message fixe) :
 //    le message suivant de la pharmacie, et le message système qui le suit, restent ainsi bien placés.
 // Journal : une ligne JSON par appel et par outil (jetons, durée, codes), jamais de texte ni de montant.
-import { journalJson } from "./_chat-config.js";
+import { journalJson, neutraliserLiens } from "./_chat-config.js";
 
-export const MAX_TOKENS = 8000;                        // réflexion comprise (elle compte dans max_tokens)
+// max_tokens selon l'effort : la réflexion, toujours active sur Opus 5.5, compte dedans ; une réponse coupée est
+// relancée une fois avec la limite doublée (plafond MAX_TOKENS_PLAFOND). Appel sans flux, borné par le temps du tour.
+export const MAX_TOKENS_EFFORT = Object.freeze({ low: 8000, medium: 16000, high: 32000, xhigh: 64000, max: 64000 });
+export const MAX_TOKENS = MAX_TOKENS_EFFORT.low;
+export const MAX_TOKENS_PLAFOND = 64000;
+export const maxTokensPour = (effort, relance = false) => {
+  const base = MAX_TOKENS_EFFORT[effort] || MAX_TOKENS;
+  return relance ? Math.min(2 * base, MAX_TOKENS_PLAFOND) : base;
+};
 export const BETAS = ["server-side-fallback-2026-07-01"]; // en-tête de la forme fallbacks: "default" (la forme tableau prend -06-01)
-export const LIMITES = { appels: 8, tour_ms: 90_000, outil_ms: 6_000, marge_ms: 3_000 };
+// outils_ms : délai propre à un outil (la transmission attend l'outil entrepôt puis l'e-mail de repli : jamais abandonnée
+// à mi-chemin, sinon le modèle annoncerait un échec alors que la demande part)
+export const LIMITES = { appels: 8, tour_ms: 90_000, outil_ms: 6_000, outils_ms: { transmettre_a_un_conseiller: 15_000 }, marge_ms: 3_000 };
 export const TAUX_EUR = 0.9;                            // 1 $ = 0,90 € (prudent, conception § 4)
 // $ par million de jetons : [entrée, écriture du cache 5 min, écriture du cache 1 h, lecture du cache, sortie]
 // (skill claude-api 2.1.299). Haiku 5.5 : écriture 1 h non publiée, comptée au double de l'entrée.
@@ -33,12 +44,15 @@ const TARIF_INCONNU = TARIFS["claude-opus-5"];          // modèle non répertor
 export const ETAPE_DEFAUT = "Je consulte vos informations…";
 // Messages fixes (le téléphone et les horaires viennent des réglages, jamais écrits ici)
 export const TEXTES = {
-  refus: () => "Je ne peux pas traiter cette demande ici. Je peux la transmettre à un conseiller de l'équipe Elixir : souhaitez-vous que je le fasse ?",
+  // refus : le message refusé est retiré de l'historique (chat-tour-background) ; aucune suite pilotée par le modèle n'est promise
+  refus: (i = {}) => `Je ne peux pas traiter cette demande ici. Reformulez-la${i.telephone ? `, appelez le service client au ${i.telephone}${i.horaires ? ` (${i.horaires})` : ""}` : ""} ou demandez à parler à un conseiller.`,
   limite: () => "Je n'ai pas pu terminer cette recherche. Je peux transmettre votre demande à un conseiller de l'équipe Elixir : souhaitez-vous que je le fasse ?",
   erreur: (i = {}) => `L'assistant rencontre un problème technique. Réessayez dans quelques minutes${i.telephone ? ` ou appelez le service client au ${i.telephone}${i.horaires ? ` (${i.horaires})` : ""}` : ""}.`,
   longue: () => "Cette conversation est devenue trop longue. Ouvrez une nouvelle conversation pour continuer.",
   interrompu: () => "La réponse précédente a été interrompue. Vous pouvez reposer votre question.",
   vide: () => "Pouvez-vous préciser votre demande ?",
+  // requête refusée par l'API (400 : historique devenu illisible pour le modèle) : la conversation est close
+  bloquee: () => "Cette conversation ne peut pas se poursuivre. Renvoyez votre question : une nouvelle conversation s'ouvrira.",
   cartes: () => "Le résultat s'affiche ci-dessous.",
 };
 
@@ -47,10 +61,10 @@ const assistantTexte = (texte) => ({ role: "assistant", content: [{ type: "text"
 const arrondi = (n) => Math.round(n * 1e6) / 1e6;
 
 // ── Paramètres de l'appel (préfixe outils + système identique pour toutes les pharmacies) ──
-export function parametresAppel({ modele, effort = "low", systeme, outils, messages }) {
+export function parametresAppel({ modele, effort = "low", systeme, outils, messages, maxTokens = maxTokensPour(effort) }) {
   return {
     model: modele,                       // figé par conversation (la réflexion est liée au modèle)
-    max_tokens: MAX_TOKENS,
+    max_tokens: maxTokens,
     betas: BETAS,
     fallbacks: "default",                // repli serveur en cas de refus de sécurité
     output_config: { effort },
@@ -121,6 +135,26 @@ export function reparerFin(messages, texte = TEXTES.interrompu()) {
   }
   return [assistantTexte(texte)];
 }
+// Refus final : la question refusée ne reste pas dans l'historique de l'API (sinon chaque message suivant, « oui » compris,
+// est refusé à son tour). Retire le dernier message de la pharmacie et le message système qui le suit (la fin de
+// l'historique, après tout bloc de réflexion : le préfixe ne change pas, octet pour octet). → { texte, evenements } (les
+// événements vérifiés de ce message système, à redire au tour suivant), ou null si la fin n'a pas cette forme.
+const PREFIXE_EVENEMENT = "Événement vérifié par le serveur : ";
+export function retirerDernierMessage(texte, messages) {
+  const n = Array.isArray(messages) ? messages.length : 0;
+  const u = messages?.[n - 2], sys = messages?.[n - 1];
+  if (n < 2 || u?.role !== "user" || sys?.role !== "system" || blocs(u).some(b => b?.type === "tool_result")) return null;
+  const fin = `${JSON.stringify(u)},${JSON.stringify(sys)}]`;
+  const t = String(texte ?? "");
+  let reste;
+  if (n === 2 && t === `[${fin}`) reste = "[]";
+  else if (t.endsWith(`,${fin}`)) reste = `${t.slice(0, -(fin.length + 1))}]`;
+  else return null;
+  const evenements = String(typeof sys.content === "string" ? sys.content : "").split("\n")
+    .filter(l => l.startsWith(PREFIXE_EVENEMENT)).map(l => l.slice(PREFIXE_EVENEMENT.length));
+  return { texte: reste, evenements };
+}
+
 // Réponse d'un repli : blocs internes produits avant le dernier bloc « fallback » retirés (doc Claude, « Echoing
 // fallback turns back ») ; sans flux, l'API ne les renvoie déjà pas : le contenu reste alors inchangé.
 export function nettoyerContenu(content) {
@@ -132,8 +166,7 @@ export function nettoyerContenu(content) {
 }
 
 // ── Texte affiché ──
-const RE_LIEN = /\b(?:https?:\/\/|www\.)[^\s<>"')\]]+/gi;
-export const neutraliserLiens = (t) => String(t ?? "").replace(RE_LIEN, "[adresse retirée]");
+export { neutraliserLiens };   // défini dans _chat-config.js (aussi appliqué aux demandes, sans charger le moteur)
 // contrôle « paiement » (journalisé et compté par l'évaluation, sans réécriture en v1)
 export const RE_PAIEMENT = /\b(?:pay[ée]e?s?|impay[ée]e?s?|non pay[ée]e?s?|r[ée]gl[ée]e?s?|sold[ée]e?s?|reste à payer|en retard de paiement|échéance dépassée|encours)\b/i;
 const texteVisible = (contenu) => contenu.filter(b => b?.type === "text" && typeof b.text === "string").map(b => b.text.trim()).filter(Boolean).join("\n\n");
@@ -158,6 +191,7 @@ const avecDelai = (promesse, ms) => new Promise((ok, ko) => {
 
 // Un outil → { resultat (tool_result), ui (cartes), code }. Ne lève jamais.
 async function executerBloc(b, { executer, noms, ms, journal }) {
+  if (typeof ms === "function") ms = ms(b.name);
   const debut = Date.now();
   let code = "ok";
   const resultat = (contenu, erreur) => ({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(contenu ?? {}), ...(erreur ? { is_error: true } : {}) });
@@ -209,7 +243,8 @@ export async function jouerTour({
       let r;
       const signal = AbortSignal.timeout(Math.max(1, restant));
       try {
-        r = await client.beta.messages.create(parametresAppel({ modele, effort, systeme, outils, messages: hist }), { signal, timeout: Math.max(1000, restant) });
+        r = await client.beta.messages.create(parametresAppel({ modele, effort, systeme, outils, messages: hist, maxTokens: maxTokensPour(effort, relance) }),
+          { signal, timeout: Math.max(1000, restant) });
       } catch (e) {
         const code = codeErreurApi(e, signal.aborted);
         log({ evt: "appel", appel: res.appels, code, latence_ms: horloge() - t0 });
@@ -224,7 +259,7 @@ export async function jouerTour({
 
       // refus (après repli éventuel) : message fixe, la réponse refusée n'entre pas dans l'historique
       if (r.stop_reason === "refusal") { res.refus = true; fin("refus", TEXTES.refus(infos)); break; }
-      // réponse coupée : rien n'est exécuté ni ajouté, une seule relance
+      // réponse coupée : rien n'est exécuté ni ajouté, une seule relance, avec une limite doublée
       if (r.stop_reason === "max_tokens") {
         if (!relance) { relance = true; continue; }
         fin("max_tokens", TEXTES.limite(infos));
@@ -235,7 +270,8 @@ export async function jouerTour({
       if (r.stop_reason === "tool_use" && demandes.length) {
         if (res.appels >= L.appels) { fin("limite_appels", TEXTES.limite(infos)); break; }   // plus d'appel pour lire les résultats
         if (surEtape) await Promise.resolve(surEtape(etapes[demandes[0].name] || ETAPE_DEFAUT)).catch(() => {});
-        const faits = await Promise.all(demandes.map(b => executerBloc(b, { executer, noms, ms: L.outil_ms, journal: log })));
+        const msOutil = (nom) => Math.min(L.outils_ms?.[nom] || L.outil_ms, Math.max(L.outil_ms, L.tour_ms - (horloge() - debut) - L.marge_ms));
+        const faits = await Promise.all(demandes.map(b => executerBloc(b, { executer, noms, ms: msOutil, journal: log })));
         res.outils.push(...demandes.map(b => b.name));
         for (const f of faits) for (const a of f.ui) { const k = JSON.stringify(a); if (!vus.has(k)) { vus.add(k); res.ui_actions.push(a); } }
         ajouter({ role: "assistant", content: contenu }, { role: "user", content: faits.map(f => f.resultat) });

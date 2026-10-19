@@ -66,7 +66,7 @@ export const OUTILS = gel([
             lot: { anyOf: [{ type: "string" }, { type: "null" }], description: "Seulement si la pharmacie l'indique (plusieurs lots livrés)" } } } },
         commentaire: { anyOf: [{ type: "string" }, { type: "null" }] } } } },
   { name: "transmettre_a_un_conseiller", strict: true,
-    description: "Transmet la demande à l'équipe Elixir avec un résumé (accès à la conversation). À appeler si la pharmacie le demande, si aucun outil ne convient, après deux échecs, pour règlement/encours/prix, pour un avoir sans PDF, et TOUJOURS immédiatement pour un défaut de qualité, un rappel de lot, une suspicion de falsification ou un effet indésirable (categorie qualite, urgence urgente).",
+    description: "Transmet la demande à l'équipe Elixir avec un résumé (accès à la conversation) : un e-mail part aussitôt. N'appeler qu'avec l'accord explicite de la pharmacie (elle le demande, ou répond oui à votre proposition). Exception, immédiatement et sans question : défaut de qualité, rappel de lot, suspicion de falsification, effet indésirable (categorie qualite, urgence urgente).",
     input_schema: { type: "object", additionalProperties: false, required: ["categorie", "resume", "reference", "urgence", "rappel"],
       properties: {
         categorie: { type: "string", enum: CATEGORIES },

@@ -1,5 +1,5 @@
 // ── Assistant Elixir : panneau de conversation (docs/assistant-conception.md § 1, docs/assistant-contrat.md) ──
-// Chargé à la demande (React.lazy, src/components/assistant/Entree.jsx) : rien de ce fichier n'entre dans le bundle des
+// Chargé à la demande (React.lazy, src/components/assistant/Aide.jsx) : rien de ce fichier n'entre dans le bundle des
 // pharmacies. Tiroir à droite (420 px sur ordinateur, 400 px sur tablette, <aside> sans voile) ; feuille plein écran
 // sous 768 px (role="dialog", focus gardé dans la feuille, Retour du navigateur = fermer, clavier iOS suivi par
 // visualViewport). Exclusif avec le panier (App). Le texte du modèle passe par l'afficheur sûr (TexteSur) ; chiffres
@@ -52,14 +52,20 @@ function useEcranVisible(actif) {
   return actif ? vv : null;
 }
 
-// Récapitulatifs déjà traités dans l'historique rejoué (rouverture) : la réponse du serveur à « Confirmer » ou
-// « Annuler » porte l'identifiant « d-<demande_id> » (chat.js, _chat-demandes.js) ; avec une carte « Demande
-// enregistrée », la demande est confirmée, sinon rien n'est parti (annulée, ou refusée au recontrôle).
+// Issue d'un récapitulatif d'après la réponse du serveur à « Confirmer » ou « Annuler » (message « d-<demande_id> »,
+// chat.js, _chat-demandes.js) : carte « Demande enregistrée » = confirmée ; carte d'erreur = non enregistrée (refusée au
+// recontrôle) ; sinon annulée. Jamais d'après le bouton cliqué : le serveur peut refuser une confirmation.
+const issue = (m) => ((m?.ui_actions || []).some((a) => a?.type === "demande_enregistree") ? "confirmee"
+  : (m?.ui_actions || []).some((a) => a?.type === "erreur") ? "non_enregistree" : "annulee");
+// Récapitulatifs déjà traités dans l'historique rejoué (rouverture), et récapitulatifs remplacés par un plus récent (le
+// serveur annule le précédent quand l'assistant en prépare un nouveau : ses boutons ne feraient plus rien)
 function demandesFermees(messages) {
   const fermees = {};
+  let dernier = null;
   for (const m of messages) {
     const id = /^d-(.+)$/.exec(String(m?.id || ""))?.[1];
-    if (id) fermees[id] = (m.ui_actions || []).some((a) => a?.type === "demande_enregistree") ? "confirmee" : "annulee";
+    if (id) fermees[id] = issue(m);
+    for (const a of m?.ui_actions || []) if (a?.type === "recap_retour" && a.demande_id) { if (dernier && !fermees[dernier]) fermees[dernier] = "remplacee"; dernier = a.demande_id; }
   }
   return fermees;
 }
@@ -94,14 +100,17 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
   // nouvelle question depuis « Mes commandes » pendant que le panneau est ouvert
   useEffect(() => { if (contexte) setCtx(contexte); }, [contexte]);
 
-  // ── erreurs : identité (vue dédiée) ou avis au-dessus de la saisie ──
-  const urgence = () => (infos?.telephone ? ` Pour une demande urgente : ${infos.telephone}${infos.horaires ? ` (${infos.horaires})` : ""}.` : "");
+  // ── erreurs : identité (vue dédiée) ou avis au-dessus de la saisie ; téléphone ajouté seulement s'il n'y est pas déjà
+  // (plusieurs messages du serveur le donnent) ──
+  const urgence = (texte) => (infos?.telephone && !String(texte).includes(infos.telephone)
+    ? ` Pour une demande urgente : ${infos.telephone}${infos.horaires ? ` (${infos.horaires})` : ""}.` : "");
   const echec = (e, ouverture = false) => {
     if (!monte.current) return;
     if (e?.code === "reconnexion") { suivi.current?.abort(); setAttente(null); setPhase("reconnexion"); return; }
     if (e?.code === "fiche") { setPhase("fiche"); return; }
     if (ouverture) { setPhase("erreur"); setAvis({ ton: "danger", texte: e?.message || "L'assistant n'a pas pu s'ouvrir." }); return; }
-    setAvis({ ton: "warn", texte: `${e?.message || "Une erreur est survenue."}${["quota", "indisponible"].includes(e?.code) ? urgence() : ""}` });
+    const texteErreur = e?.message || "Une erreur est survenue.";
+    setAvis({ ton: "warn", texte: `${texteErreur}${["quota", "indisponible"].includes(e?.code) ? urgence(texteErreur) : ""}` });
   };
 
   const ajoute = (m) => { if (m && m.id) setMessages((ms) => (ms.some((x) => x.id === m.id) ? ms : [...ms, m])); };
@@ -159,11 +168,35 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
     return () => { monte.current = false; ac.abort(); suivi.current?.abort(); };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps -- identité fixe : App remonte le panneau (key) si elle change
 
+  // ── resynchronisation sur le serveur (réponse abandonnée, 409, envoi dont la réponse s'est perdue, conversation fermée
+  // ailleurs) : affichage relu, réponse en cours suivie. sansId : la conversation ouverte (ou une nouvelle) plutôt que
+  // celle-ci. → true si le message `texteEnvoye` a bien été enregistré (un message de la pharmacie de plus qu'avant,
+  // le dernier étant ce texte), sinon false ──
+  const resynchroniser = async (texteEnvoye = null, sansId = false) => {
+    const avant = messages.filter((m) => m.role === "pharmacie" && !String(m.id).startsWith("local-")).length;
+    let r;
+    try { r = await ouvrir(auth, sansId ? null : conv?.id); } catch (e) { echec(e); return false; }
+    if (!monte.current) return false;
+    applique(r);
+    if (r.tour_en_cours) suivreTour(r.tour_en_cours, r.conversation_id);
+    const siennes = (r.messages || []).filter((m) => m.role === "pharmacie");
+    return !!texteEnvoye && r.conversation_id === conv?.id && siennes.length > avant && siennes.at(-1)?.texte === texteEnvoye;
+  };
+
   // ── envoi d'un message ──
   const envoyerTexte = async (brut) => {
     const t = String(brut ?? "").trim();
     if (!t || occupe || !conv) return;
     if (t.length > LONGUEUR_MAX) { setAvis({ ton: "warn", texte: `Votre message dépasse ${LONGUEUR_MAX.toLocaleString("fr-FR")} caractères : raccourcissez-le.` }); return; }
+    // réponse précédente abandonnée (coupure) : elle a pu arriver entre-temps ; on relit d'abord, le texte reste à envoyer
+    if (avis?.reprendre) {
+      setAvis(null); setTexte(t); setEnvoi(true);
+      await resynchroniser();
+      if (!monte.current) return;
+      setEnvoi(false);
+      setAvis({ ton: "info", texte: "La conversation a été mise à jour ci-dessus. Votre message n'est pas encore parti : renvoyez-le." });
+      return;
+    }
     setAvis(null);
     const local = { id: `local-${Date.now()}`, role: "pharmacie", texte: t, ui_actions: [], at: new Date().toISOString() };
     setMessages((ms) => [...ms, local]);
@@ -177,9 +210,25 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
       else if (r.tour_id) suivreTour(r.tour_id, conv.id);
     } catch (e) {
       if (!monte.current) return;
-      setMessages((ms) => ms.filter((m) => m.id !== local.id));   // message non enregistré : rendu à la saisie
-      setTexte((cur) => cur || t);
-      echec(e);
+      setMessages((ms) => ms.filter((m) => m.id !== local.id));
+      if (e.code === "conversation") {   // fermée ailleurs ou assistant mis à jour : nouvelle conversation, texte gardé
+        setTexte((cur) => cur || t);
+        await resynchroniser(null, true);
+        if (monte.current) setAvis({ ton: "info", texte: e.message });
+      } else if (e.code === "tour_en_cours") {
+        // réponse en préparation (autre onglet, envoi précédent) : elle est affichée et suivie ; ce message n'est pas parti
+        setTexte((cur) => cur || t);
+        await resynchroniser();
+      } else if (e.code === "reseau" || e.code === "http") {
+        // réponse perdue : le serveur a pu enregistrer le message ; l'affichage est relu et la réponse en cours suivie, le
+        // texte n'est rendu à la saisie que s'il n'a pas été enregistré
+        const enregistre = await resynchroniser(t);
+        if (!monte.current) return;
+        if (!enregistre) { setTexte((cur) => cur || t); echec(e); }
+      } else {
+        setTexte((cur) => cur || t);   // message refusé (quota, indisponible) : rendu à la saisie
+        echec(e);
+      }
     } finally { if (monte.current) setEnvoi(false); }
   };
 
@@ -197,7 +246,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
     try {
       const r = await decider(auth, conv.id, demandeId, decision, options);
       if (!monte.current) return;
-      setDemandes((d) => ({ ...d, [demandeId]: decision === "confirmer" ? "confirmee" : "annulee" }));
+      setDemandes((d) => ({ ...d, [demandeId]: issue(r.message) }));   // d'après la réponse du serveur, pas du bouton
       if (r.message) ajoute(r.message);
     } catch (e) {
       if (!monte.current) return;
@@ -379,7 +428,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
             </div>
             <div style={{ ...ui.encart("neutral"), fontSize: 12, marginTop: 16 }}>
               Assistant automatique. Il consulte vos factures et commandes Elixir ; il ne voit pas vos règlements. Aucune demande n'est envoyée sans votre confirmation.{" "}
-              <button type="button" onClick={() => setVoirDonnees((v) => !v)} aria-expanded={voirDonnees}
+              <button type="button" className="ex-assistant__lien" onClick={() => setVoirDonnees((v) => !v)} aria-expanded={voirDonnees}
                 style={{ background: "none", border: "none", padding: "4px 0", font: "inherit", fontWeight: 600, color: T.teal, textDecoration: "underline", textUnderlineOffset: 3, cursor: "pointer" }}>
                 Vos données
               </button>
@@ -409,12 +458,12 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
         })}
       </div>
 
-      {/* Ligne d'état : texte du serveur (outil en cours), jamais du modèle */}
-      {attente && (
-        <div role="status" style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", fontSize: 13, color: T.inkSoft, borderTop: `1px solid ${T.lineSoft}`, background: T.paper }}>
-          <Icone nom="horloge" taille={16} style={{ color: T.teal }} />{attente.etape || "Je prépare la réponse…"}
-        </div>
-      )}
+      {/* Ligne d'état : texte du serveur (outil en cours), jamais du modèle ; zone annoncée toujours présente (une zone
+          insérée déjà remplie n'est pas lue par les lecteurs d'écran), masquée quand elle est vide */}
+      <div role="status" aria-live="polite" style={attente ? { flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", fontSize: 13,
+        color: T.inkSoft, borderTop: `1px solid ${T.lineSoft}`, background: T.paper } : masque}>
+        {attente && <Icone nom="horloge" taille={16} style={{ color: T.teal }} />}{attente ? attente.etape || "Je prépare la réponse…" : ""}
+      </div>
       {avis && phase !== "erreur" && (
         <div role="alert" style={{ ...ui.encart(avis.ton), borderRadius: 0, borderWidth: "1px 0 0", display: "flex", alignItems: "flex-start", gap: 8, flexShrink: 0 }}>
           <Icone nom="alerte" taille={16} style={{ marginTop: 2 }} />

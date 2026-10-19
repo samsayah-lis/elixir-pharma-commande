@@ -1,6 +1,6 @@
 -- ── Assistant Elixir (chatbot service client) : tables du serveur ─────────────────────────────
 -- Contrat : docs/assistant-contrat.md (« Stockage ») ; conception : docs/assistant-conception.md § 2.10.
--- À exécuter par Zineb dans l'éditeur SQL de Supabase. Rejouable sans effet (IF NOT EXISTS partout).
+-- À exécuter par Zineb dans l'éditeur SQL de Supabase. Rejouable sans effet (IF [NOT] EXISTS partout).
 --
 -- Sécurité : RLS ACTIVÉ et AUCUNE policy. Ces tables sont donc illisibles et non modifiables avec la clé anon
 -- (SUPABASE_KEY, présente dans le navigateur) : les conversations contiennent numéros de factures et montants.
@@ -80,6 +80,7 @@ create table if not exists chat_demandes (
   seq              bigint generated always as identity,  -- n° lisible : R-2026-0412, T-2026-0187
   numero           text,
   type             text not null check (type in ('retour', 'transmission')),
+  categorie        text,                                 -- transmission : catégorie (documents, qualite, reglement…)
   statut           text not null check (statut in ('brouillon', 'confirmee', 'transmise', 'echec', 'expiree', 'annulee', 'traitee', 'rejetee')),
   conversation_id  uuid references chat_conversations (id) on delete set null,
   odoo_id          int not null,
@@ -99,9 +100,13 @@ create index if not exists chat_demandes_odoo_created on chat_demandes (odoo_id,
 create index if not exists chat_demandes_statut_created on chat_demandes (statut, created_at);
 create index if not exists chat_demandes_conversation on chat_demandes (conversation_id);
 create unique index if not exists chat_demandes_numero on chat_demandes (numero) where numero is not null;
--- une seule transmission ouverte par conversation (dédoublonnage, même pour deux appels simultanés)
-create unique index if not exists chat_demandes_une_transmission
-  on chat_demandes (conversation_id) where type = 'transmission' and statut in ('confirmee', 'transmise', 'echec');
+-- colonne ajoutée après la première version du schéma (19/10/2026) : ajoutée ici si la table existait déjà
+alter table chat_demandes add column if not exists categorie text;
+-- une seule transmission ouverte par conversation ET par catégorie (dédoublonnage, même pour deux appels simultanés) :
+-- une alerte qualité n'est jamais rattachée à une demande d'une autre catégorie (première version : par conversation seule)
+drop index if exists chat_demandes_une_transmission;
+create unique index if not exists chat_demandes_une_transmission_categorie
+  on chat_demandes (conversation_id, coalesce(categorie, '')) where type = 'transmission' and statut in ('confirmee', 'transmise', 'echec');
 
 -- Autorisations de téléchargement (duplicata, relevé) : 128 bits aléatoires, 15 min, 3 usages.
 create table if not exists chat_fichiers (

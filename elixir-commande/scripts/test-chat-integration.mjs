@@ -325,7 +325,7 @@ eq("admin conversation : outils appelés par réponse, jamais de réflexion ni d
   [a.corps.messages.filter(m => m.role === "assistant" && m.outils?.length).map(m => m.outils[0]), /"(thinking|tool_use|tool_result|signature)"/.test(JSON.stringify(a.corps))],
   [["duplicata_facture", "releve_facturation", "preparer_demande_retour", "transmettre_a_un_conseiller", "preparer_demande_retour"], false]);
 a = lit(await admin(ev("GET", { jeton: "jeton-admin", q: { vue: "reglages" } })));
-eq("admin réglages : modèles acceptés, noms du pilote", [a.corps.modeles, a.corps.pilote_fiches], [["claude-opus-5-5", "claude-sonnet-5-5"], [{ odoo_id: 100, nom: "Fiche 100", ville: null }]]);
+eq("admin réglages : modèles acceptés, noms du pilote", [a.corps.modeles, a.corps.pilote_fiches], [["claude-opus-5-5"], [{ odoo_id: 100, nom: "Fiche 100", ville: null }]]);
 a = lit(await admin(ev("GET", { jeton: "jeton-admin", q: { vue: "couts", jours: "1" } })));
 eq("admin coûts du jour : tours comptés, coût > 0", [a.corps.jours[0].tours, a.corps.jours[0].cout_eur > 0], [db.tables.chat_tours.length, true]);
 

@@ -1,7 +1,9 @@
 // ── Assistant Elixir : API de la conversation (docs/assistant-contrat.md, « API HTTP ») ──
-// POST { action: "etat" }                                   → { disponible, mode, raison, infos? } (jamais 401)
+// POST { action: "etat" }                                   → { disponible, mode, raison, infos?, ouvert? } (jamais 401)
 // POST { action: "ouvrir", conversation_id? }               → conversation ouverte (reprise ou créée) et son affichage
 // POST { action: "message", conversation_id, texte, contexte?: { commande_site_id } } → 202 { tour_id }
+//      · 409 { error: "tour_en_cours", tour_id } · 410 { error: "conversation_fermee", message } (fermée ailleurs, ou
+//      assistant mis à jour : le panneau en ouvre une nouvelle) · 429 quota (messages, coût du jour de la fiche) · 503
 // GET  ?tour=<id>&conversation_id=<id>                      → attente (≤ 8 s) : { statut, etape, message }
 // POST { action: "confirmer", conversation_id, demande_id, decision: "confirmer" | "annuler" } → { message } (sans IA)
 // POST { action: "nouvelle", conversation_id? }             → ferme la conversation ouverte, en ouvre une autre
@@ -9,12 +11,15 @@
 // pour_odoo_id, revalidé dans Odoo. Aucun autre identifiant venu du navigateur n'est lu.
 // Le tour (appels au modèle et outils) tourne dans chat-tour-background (lancé comme gp-upload → gp-extract-background,
 // avec x-cron-secret) ; un seul tour actif par conversation (index unique, sinon 409).
-// Quotas comptés en base (chat_tours), budget du jour, interrupteur des réglages. Hôte d'aperçu : réponses fictives,
+// Quotas comptés en base (chat_tours), budget du jour (global et par fiche), interrupteur des réglages. Limite de débit
+// par IP et par famille d'actions (l'attente d'un tour interroge souvent) ; identité gardée 60 s par jeton pour l'attente
+// et l'état (lectures seules : ni Odoo ni Supabase Auth à chaque interrogation). Hôte d'aperçu : réponses fictives,
 // aucun appel au modèle, aucune écriture, aucun e-mail. Réponses : CORS de cors.js, no-store, JSON, y compris les erreurs.
+import { createHash } from "node:crypto";
 import { getCors } from "./cors.js";
-import { rateLimit } from "./rate-limit.js";
+import { clientIp } from "./rate-limit.js";
 import { creerStock, ajouterAuTexte } from "./_chat-stock.js";
-import { REGLAGES_DEFAUT, lireReglages, raisonFermeture, journalJson, jourParis } from "./_chat-config.js";
+import { REGLAGES_DEFAUT, lireReglages, raisonFermeture, journalJson, jourParis, debutJourParisIso } from "./_chat-config.js";
 import { PROMPT_VERSION, messageContexte } from "./_chat-systeme.js";
 import { reparerFin, TEXTES } from "./_chat-moteur.js";
 import { creerDemandes } from "./_chat-demandes.js";
@@ -29,6 +34,35 @@ const ATTENTE_MAX_MS = 8_000, PAS_MS = 500;
 // au-delà, un tour non terminé est considéré comme perdu (tour borné à 90 s ; lancement en quelques secondes)
 const PERIME_ATTENTE_MS = 90_000, PERIME_COURS_MS = 150_000;
 const HEURE = 3600e3, JOUR = 86400e3;
+// requête synchrone : plafond de 10 s d'une fonction Netlify ; lancement du tour et envois bornés à cette échéance
+const ECHEANCE_MS = 8_500;
+const FERMEE = "Cette conversation est terminée (nouvelle conversation ouverte ailleurs, ou assistant mis à jour) : une nouvelle conversation s'ouvre.";
+
+// Limite de débit par instance, par IP et par famille d'actions : [requêtes, fenêtre en secondes]. Une officine partage
+// souvent une IP entre plusieurs postes : l'attente (long-poll, ~1 requête toutes les 1 à 8 s par panneau ouvert) a la sienne.
+const DEBITS = { attendre: [150, 60], etat: [40, 60], autre: [30, 60] };
+function limiteDebit(compteurs, event, famille) {
+  const [max, fenetre] = DEBITS[famille] || DEBITS.autre;
+  const cle = `${famille}|${clientIp(event)}`, t = Date.now();
+  let e = compteurs.get(cle);
+  if (!e || t > e.fin) {
+    if (compteurs.size > 5000) for (const [k, v] of compteurs) if (t > v.fin) compteurs.delete(k);
+    e = { n: 0, fin: t + fenetre * 1000 };
+    compteurs.set(cle, e);
+  }
+  if (++e.n <= max) return null;
+  return { statusCode: 429, headers: { "Retry-After": String(Math.ceil((e.fin - t) / 1000)) },
+    body: JSON.stringify({ error: "quota", message: "Trop de requêtes en peu de temps : réessayez dans quelques secondes." }) };
+}
+
+// Identité gardée 60 s par empreinte du jeton (et fiche demandée par un admin) pour l'attente et l'état : lectures seules,
+// répétées pendant un tour. Les actions qui écrivent (message, confirmation, ouverture) revérifient toujours l'identité.
+const IDENTITE_MS = 60_000;
+const cleIdentite = (event, pour) => {
+  const h = event?.headers || {};
+  const jeton = String(h.authorization || h.Authorization || "").replace(/^Bearer\s+/i, "").trim();
+  return jeton ? `${createHash("sha256").update(jeton).digest("hex")}|${pour ?? ""}` : null;
+};
 
 export const estApercu = (event) => APERCU.test(String(event?.headers?.host || event?.headers?.Host || "").toLowerCase());
 const json = (cors, statusCode, corps) => ({ statusCode, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify(corps) });
@@ -40,13 +74,14 @@ const affichable = (m) => ({ id: String(m.id), role: m.role === "pharmacie" ? "p
 // textes des réglages affichés par le panneau (contact, délai, durée de conservation annoncée dans « Vos données »)
 const infosDe = (r) => ({ delai_annonce: r.delai_annonce, telephone: r.telephone, horaires: r.horaires, conservation_jours: r.conservation_jours });
 
-// Lancement de la fonction d'arrière-plan → null si elle est partie, sinon la raison de l'échec
-async function lancerTour(event, tourId) {
+// Lancement de la fonction d'arrière-plan → null si elle est partie, sinon la raison de l'échec ; ms : temps restant
+// avant l'échéance de la requête (la réponse 202 doit parvenir au navigateur)
+async function lancerTour(event, tourId, ms = 8_000) {
   if (!process.env.CRON_SECRET) return "CRON_SECRET absent";
   try {
     const r = await fetch(`${siteBase(event)}/.netlify/functions/chat-tour-background`, {
       method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": process.env.CRON_SECRET },
-      body: JSON.stringify({ tour: tourId }), signal: AbortSignal.timeout(8_000),
+      body: JSON.stringify({ tour: tourId }), signal: AbortSignal.timeout(Math.max(1000, Math.min(8_000, ms))),
     });
     return r.ok || r.status === 202 ? null : `HTTP ${r.status}`;
   } catch (e) {
@@ -76,7 +111,7 @@ function apercu(cors, action, body) {
 }
 
 // deps (doublures des tests) : stock, identifier, versionOutils, lancer, maintenant, attendre, creerDemandes,
-// perimetre (deps de _chat-perimetre), limiteIp, journal
+// perimetre (deps de _chat-perimetre), limiteIp(event, famille), journal, horloge (heure réelle, ms : échéances)
 export function creerHandler(deps = {}) {
   let stockDefaut = null;   // un stock par instance : le cache des réglages (60 s) sert d'un appel à l'autre
   const stockDe = () => deps.stock || (stockDefaut ||= creerStock());
@@ -87,9 +122,12 @@ export function creerHandler(deps = {}) {
   // définitions seules (_chat-outils-liste.js, sans Zod ni relevé) : le paquet de chat.js reste léger
   const versionOutils = async () => deps.versionOutils ?? (await import("./_chat-outils-liste.js")).VERSION_OUTILS;
   const lancer = deps.lancer || lancerTour;
+  const horloge = deps.horloge || Date.now;
+  const compteurs = new Map(), identites = new Map();   // par instance de la fonction (débit par IP, identités gardées 60 s)
 
   return async (event) => {
     const debut = maintenant().getTime();   // l'attente d'un tour compte depuis le début de la requête (plafond Netlify de 10 s)
+    const echeance = horloge() + ECHEANCE_MS;   // heure réelle : lancement du tour, envois d'une confirmation
     const cors = getCors(event);
     if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: { ...cors, "Cache-Control": "no-store" }, body: "" };
     if (event.httpMethod !== "GET" && event.httpMethod !== "POST") return json(cors, 405, { error: "methode" });
@@ -102,19 +140,34 @@ export function creerHandler(deps = {}) {
     const action = event.httpMethod === "GET" ? "attendre" : String(body.action || "");
     if (action !== "attendre" && !ACTIONS.has(action)) return json(cors, 400, { error: "action" });
     if (estApercu(event)) return apercu(cors, action, body);
-    if (event.httpMethod === "POST" && action !== "etat") {
-      const limite = (deps.limiteIp || rateLimit)(event, 30, 60);
-      if (limite) return { ...limite, headers: { ...cors, ...(limite.headers || {}), "Cache-Control": "no-store" } };
-    }
+    const famille = action === "attendre" || action === "etat" ? action : "autre";
+    const limite = deps.limiteIp ? deps.limiteIp(event, famille) : limiteDebit(compteurs, event, famille);
+    if (limite) return { ...limite, headers: { ...cors, ...(limite.headers || {}), "Content-Type": "application/json", "Cache-Control": "no-store" } };
 
     // ── Identité : seul pour_odoo_id (admin) est transmis, jamais un autre identifiant du navigateur ──
     let ctx;
+    const pour = body.pour_odoo_id ?? q.pour_odoo_id ?? null;
+    const cle = action === "attendre" || action === "etat" ? cleIdentite(event, pour) : null;
+    const garde = cle && identites.get(cle);
     try {
-      ctx = await identifier(event, { pour_odoo_id: body.pour_odoo_id ?? q.pour_odoo_id ?? null }, deps.perimetre || {});
+      if (garde && garde.fin > horloge()) ctx = garde.ctx;
+      else {
+        ctx = await identifier(event, { pour_odoo_id: pour }, deps.perimetre || {});
+        if (cle) {
+          if (identites.size > 2000) for (const [k, v] of identites) if (v.fin <= horloge()) identites.delete(k);
+          identites.set(cle, { ctx, fin: horloge() + IDENTITE_MS });
+        }
+      }
     } catch (e) {
       const statut = e?.status === 401 ? 401 : e?.status === 403 ? 403 : 503;
       journal({ evt: "http", action, code: e?.code || `identite_${statut}` });
-      if (action === "etat") return json(cors, 200, { disponible: false, mode: null, raison: statut === 401 ? "reconnexion" : null });
+      if (action === "etat") {
+        // session sans jeton valide (ancien mode, renouvellement impossible) : « reconnexion » ; ouvert : l'assistant est
+        // ouvert à toutes les pharmacies, le bouton s'affiche alors avec l'encart « Me reconnecter » (pendant le pilote, non)
+        let ouvert = false;
+        if (statut === 401) { try { const r = await lireReglages({ stock: stockDe(), maintenant }); ouvert = r.actif && r.ouvert_a_tous; } catch { /* réglages illisibles */ } }
+        return json(cors, 200, { disponible: false, mode: null, raison: statut === 401 ? "reconnexion" : null, ...(ouvert ? { ouvert: true } : {}) });
+      }
       if (statut === 401) return json(cors, 401, { error: "reconnexion" });
       if (statut === 403) return json(cors, 403, { error: "fiche" });
       return json(cors, 503, { error: "indisponible", message: "Vérification de votre compte impossible pour le moment : réessayez dans quelques minutes." });
@@ -183,11 +236,12 @@ export function creerHandler(deps = {}) {
           if (fermee) return indisponible(fermee);
           if (await budgetAtteint()) return indisponible("budget");
           const c = UUID.test(String(body.conversation_id || "")) ? await conversationDe(body.conversation_id) : null;
-          if (!c) return json(cors, 404, { error: "conversation" });
+          // conversation fermée (nouvelle conversation ouverte sur un autre poste, purge) ou inconnue : le panneau en rouvre une
+          if (!c) return json(cors, 410, { error: "conversation_fermee", message: FERMEE });
           // prompt ou outils changés depuis l'ouverture : l'historique ne peut pas être rejoué avec le nouveau préfixe
           if (c.prompt_version !== `${PROMPT_VERSION}+${await versionOutils()}`) {
             await stock.conversations.fermer(c.id, ctx.odooId);
-            return json(cors, 503, { error: "indisponible", message: "L'assistant vient d'être mis à jour : ouvrez une nouvelle conversation pour continuer." });
+            return json(cors, 410, { error: "conversation_fermee", message: "L'assistant vient d'être mis à jour : une nouvelle conversation s'ouvre." });
           }
           if ((c.nb_messages || 0) >= MAX_MESSAGES_CONVERSATION) return json(cors, 429, { error: "quota", message: "Cette conversation est longue : ouvrez une nouvelle conversation pour continuer." });
           // quotas durables
@@ -204,9 +258,18 @@ export function creerHandler(deps = {}) {
               return json(cors, 429, { error: "quota", message: `Limite atteinte : ${r.quotas.messages_jour} messages par 24 heures. Pour une demande urgente : ${r.telephone}.` });
             }
           }
-          // un seul tour à la fois ; un tour perdu ne bloque pas la conversation
+          // coût du jour de la fiche (ou de l'admin en saisie Elixir, trois fois le plafond) : une pharmacie ne peut pas
+          // épuiser à elle seule le budget de toutes
+          if (r.budget_fiche_jour_eur > 0) {
+            const depuisJour = debutJourParisIso(jourParis(maintenant()));
+            const cout = ctx.admin ? await stock.compter.coutAdmin(ctx.admin, depuisJour) : await stock.compter.coutFiche(ctx.odooId, depuisJour);
+            if (cout >= r.budget_fiche_jour_eur * (ctx.admin ? 3 : 1)) {
+              return json(cors, 429, { error: "quota", message: `L'assistant a beaucoup servi aujourd'hui pour ${ctx.admin ? "votre saisie" : "votre pharmacie"} : il sera de nouveau disponible demain. Pour votre demande : ${r.telephone} (${r.horaires}).` });
+            }
+          }
+          // un seul tour à la fois ; un tour perdu ne bloque pas la conversation ; 409 avec le tour en cours (le panneau le suit)
           for (const tr of await stock.tours.enCours(c.id)) {
-            if (!perime(tr)) return json(cors, 409, { error: "tour_en_cours" });
+            if (!perime(tr)) return json(cors, 409, { error: "tour_en_cours", tour_id: tr.id });
             await clorePerime(tr);
           }
           if (!deps.lancer && !process.env.CRON_SECRET) {
@@ -214,7 +277,10 @@ export function creerHandler(deps = {}) {
             return json(cors, 503, { error: "indisponible", message: "L'assistant est momentanément indisponible : configuration du serveur incomplète." });
           }
           const tour = await stock.tours.creer(c, ctx);
-          if (!tour) return json(cors, 409, { error: "tour_en_cours" });
+          if (!tour) {   // tour créé au même instant par un autre onglet
+            const autre = (await stock.tours.enCours(c.id).catch(() => []))[0];
+            return json(cors, 409, { error: "tour_en_cours", ...(autre ? { tour_id: autre.id } : {}) });
+          }
           // historique : message de la pharmacie puis contexte du serveur (date, identité au premier message, événements)
           const ref = String(body.contexte?.commande_site_id ?? "");
           const commandeSite = /^\d{6,20}$/.test(ref) ? ref : null;
@@ -234,7 +300,7 @@ export function creerHandler(deps = {}) {
             await stock.tours.erreur(tour.id, "stockage").catch(() => {});
             throw e;
           }
-          const pourquoi = await lancer(event, tour.id);
+          const pourquoi = await lancer(event, tour.id, Math.max(1000, echeance - horloge()));
           if (pourquoi) {
             journal({ evt: "http", action, conv: c.id, tour: tour.id, code: "lancement_impossible", raison: pourquoi });
             if (await stock.tours.erreur(tour.id, "lancement", { texte: TEXTES.erreur(r) })) await reparer(c.id, ctx.odooId, TEXTES.erreur(r), tour.id);
@@ -267,7 +333,7 @@ export function creerHandler(deps = {}) {
           if (body.decision !== "confirmer" && body.decision !== "annuler") return json(cors, 400, { error: "decision" });
           const c = UUID.test(String(body.conversation_id || "")) ? await stock.conversations.lire(body.conversation_id, ctx.odooId) : null;
           if (!c || (c.admin_email || null) !== (ctx.admin || null)) return json(cors, 404, { error: "introuvable" });
-          const demandes = (deps.creerDemandes || creerDemandes)({ stock, reglages: r, conversationId: c.id, maintenant, perimetre: deps.perimetre || {}, journal });
+          const demandes = (deps.creerDemandes || creerDemandes)({ stock, reglages: r, conversationId: c.id, maintenant, perimetre: deps.perimetre || {}, journal, echeance });
           const res = await demandes.confirmer(ctx, { demande_id: body.demande_id, decision: body.decision, conversation_id: c.id, prevenir: body.prevenir_pharmacie !== false });
           journal({ evt: "http", action, conv: c.id, code: res.http === 200 ? "ok" : res.error });
           return res.http === 200 ? json(cors, 200, { message: res.message })

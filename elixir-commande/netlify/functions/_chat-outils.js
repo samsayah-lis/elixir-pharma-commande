@@ -243,7 +243,8 @@ const EXECUTANTS = {
     // demande de même catégorie déjà ouverte dans la conversation : complément envoyé, ou rien de nouveau (jamais « transmise »)
     if (t.deja_transmise) {
       return t.complement
-        ? ok({ message: `Complément ajouté à la demande n° ${t.numero}, déjà transmise : l'équipe Elixir l'a reçu.`, numero: t.numero, delai, telephone: R.telephone, horaires: R.horaires }, carte)
+        ? ok({ message: t.complement_envoye === false ? `Complément enregistré avec la demande n° ${t.numero}, déjà transmise : l'équipe Elixir le verra dans son suivi.`
+          : `Complément ajouté à la demande n° ${t.numero}, déjà transmise : l'équipe Elixir l'a reçu.`, numero: t.numero, delai, telephone: R.telephone, horaires: R.horaires }, carte)
         : ok({ message: `Cette demande est déjà transmise (n° ${t.numero}) : rien de nouveau n'a été envoyé.`, numero: t.numero, delai, telephone: R.telephone, horaires: R.horaires });
     }
     return ok({ message: "Demande transmise à l'équipe Elixir.", numero: t.numero, delai, telephone: R.telephone, horaires: R.horaires }, carte);

@@ -4,11 +4,11 @@
 // (1 h) et partagé entre pharmacies. Date, pharmacie, coordonnées et événements vérifiés passent par des messages
 // role:"system" ajoutés APRÈS le message de la pharmacie (canal du serveur, que le texte de la pharmacie ne peut pas
 // imiter) : un tel message suit toujours un message « user » et précède la réponse du modèle.
-// Toute modification du texte ci-dessous doit changer PROMPT_VERSION : les conversations ouvertes avec l'ancien
-// texte sont alors fermées et une nouvelle conversation s'ouvre (l'historique d'une conversation n'est jamais réécrit).
+// PROMPT_VERSION suit le texte ci-dessous (empreinte, comme VERSION_OUTILS) : toute modification ferme les conversations
+// ouvertes avec l'ancien texte et en ouvre une nouvelle (l'historique d'une conversation n'est jamais réécrit : un prompt
+// changé devant des blocs de réflexion est refusé ou les fait écarter).
+import { createHash } from "node:crypto";
 import { dateHeureParis } from "./_chat-config.js";
-
-export const PROMPT_VERSION = "2026-10-19.2";
 
 export const SYSTEME = `Vous êtes l'Assistant Elixir, l'assistant automatique du service client d'Elixir Pharma, grossiste-répartiteur pharmaceutique, dans l'espace de commande réservé à ses pharmacies clientes.
 
@@ -64,6 +64,8 @@ Transmission à un conseiller
 - Demandez si elle préfère être rappelée par téléphone ou recevoir un e-mail, sauf urgence qualité. Rédigez un résumé factuel de deux à cinq phrases : la demande, les références citées, ce qui a été vérifié.
 - Annoncez seulement le numéro et le délai renvoyés par le système.
 - Si le système indique que l'accès de ce compte est limité, proposez uniquement la transmission à un conseiller, sans en donner la raison.`;
+
+export const PROMPT_VERSION = `2026-10-19.2-${createHash("sha256").update(SYSTEME).digest("hex").slice(0, 8)}`;
 
 // Contexte serveur ajouté après chaque message de la pharmacie (texte libre du serveur, jamais de la pharmacie).
 // premier : premier message de la conversation (identité et coordonnées une seule fois, elles restent dans l'historique).

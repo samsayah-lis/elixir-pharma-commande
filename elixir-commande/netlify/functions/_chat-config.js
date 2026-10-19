@@ -9,6 +9,7 @@ export const REGLAGES_DEFAUT = {
   modele: "claude-opus-5-5",
   effort: "low",
   budget_jour_eur: 8,
+  budget_fiche_jour_eur: 1.5,   // plafond de coût par pharmacie et par jour (saisie Elixir : trois fois, par admin) ; 0 = sans plafond
   demandes: "simulation",       // "simulation" | "email" | "entrepot"
   entrepot_url: "",             // URL de l'API chatbot-intake de l'outil entrepôt (vide = non branché)
   email_equipe: "pharmacien@elixirpharma.fr",
@@ -21,10 +22,12 @@ export const REGLAGES_DEFAUT = {
   profondeur: { factures_mois: 24, releve_mois: 12, commandes_mois: 6 },
 };
 
-// Modèles acceptés. Haiku 5.5 n'est pas proposé : le contexte serveur (date, pharmacie, événements vérifiés)
-// passe par des messages role:"system" en cours de conversation, que la documentation ne donne pas pour Haiku 5.5,
-// et Haiku n'a pas de repli serveur en cas de refus.
-export const MODELES = ["claude-opus-5-5", "claude-sonnet-5-5"];
+// Modèles acceptés. Le contexte serveur (date, pharmacie, événements vérifiés) passe par des messages role:"system" en
+// cours de conversation, et la requête repliée (fallbacks: "default") doit rester valable pour le modèle de repli.
+// Haiku 5.5 : pas de repli serveur. Sonnet 5.5 : son repli (refus « cyber » et « frontier_llm ») tourne sur Claude
+// Sonnet 5, qui refuse les messages role:"system" en cours de conversation (skill claude-api, model-migration.md) :
+// retiré tant que ce repli n'est pas vérifié par un essai réel. Opus 5.5 se replie sur Opus 5 ou Opus 4.8, qui les prennent.
+export const MODELES = ["claude-opus-5-5"];
 export const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 export const MODES_DEMANDES = ["simulation", "email", "entrepot"];
 const RE_EMAIL = /^[^\s@,;<>"]+@[^\s@,;<>"]+\.[a-z]{2,}$/i;
@@ -43,8 +46,7 @@ export function fusionnerReglages(v) {
   if (Array.isArray(s.pilote)) out.pilote = [...new Set(s.pilote.map(entier).filter(n => Number.isInteger(n) && n > 0))];
   if (MODELES.includes(s.modele)) out.modele = s.modele;
   if (EFFORTS.includes(s.effort)) out.effort = s.effort;
-  const budget = entier(s.budget_jour_eur);
-  if (Number.isFinite(budget) && budget >= 0) out.budget_jour_eur = budget;
+  for (const k of ["budget_jour_eur", "budget_fiche_jour_eur"]) { const b = entier(s[k]); if (Number.isFinite(b) && b >= 0) out[k] = b; }
   if (MODES_DEMANDES.includes(s.demandes)) out.demandes = s.demandes;
   if (typeof s.entrepot_url === "string" && (s.entrepot_url === "" || /^https:\/\/\S+$/i.test(s.entrepot_url.trim()))) out.entrepot_url = s.entrepot_url.trim();
   for (const k of ["email_equipe", "email_qualite"]) if (emailValide(String(s[k] || "").trim())) out[k] = String(s[k]).trim();
@@ -68,6 +70,7 @@ export function verifierReglages(v) {
   if (v.effort !== undefined && !EFFORTS.includes(v.effort)) erreurs.push("Effort inconnu.");
   if (v.demandes !== undefined && !MODES_DEMANDES.includes(v.demandes)) erreurs.push("Destination des demandes inconnue.");
   if (!pareil("budget_jour_eur")) erreurs.push("Budget du jour : montant positif attendu.");
+  if (!pareil("budget_fiche_jour_eur")) erreurs.push("Plafond par pharmacie : montant positif attendu.");
   if (!pareil("conservation_jours")) erreurs.push("Conservation : nombre de jours entier (1 au moins).");
   if (v.entrepot_url !== undefined && String(v.entrepot_url).trim() !== valeur.entrepot_url) erreurs.push("Adresse de l'outil entrepôt : https://… attendu.");
   if (valeur.demandes === "entrepot" && !valeur.entrepot_url) erreurs.push("Mode « Outil entrepôt » : renseignez d'abord l'adresse de son API.");
@@ -106,6 +109,12 @@ export function raisonFermeture(ctx, r) {
   if (ctx.admin || r.ouvert_a_tous || r.pilote.includes(Number(ctx.odooId))) return null;
   return "hors_pilote";
 }
+
+// Adresses web d'un texte libre (réponse du modèle, résumé de transmission, commentaire de retour) : remplacées, jamais
+// rendues cliquables (panneau, e-mails à l'équipe et à la pharmacie, charge vers l'outil entrepôt). Formes : https://…,
+// www.…, et domaine suivi d'un chemin (« site.example/connexion ») ; une adresse e-mail n'est pas touchée.
+const RE_LIEN = /\b(?:https?:\/\/|www\.)[^\s<>"')\]]+|(?<![@\w.-])(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s<>"')\]]*/gi;
+export const neutraliserLiens = (t) => String(t ?? "").replace(RE_LIEN, "[adresse retirée]");
 
 // Erreur dont le message (français) peut être relayé à la pharmacie ou au modèle tel quel
 export const erreurPublique = (message, code = "refus") => Object.assign(new Error(message), { public: true, code });

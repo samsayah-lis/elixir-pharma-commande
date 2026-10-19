@@ -9,7 +9,10 @@
 //  • hôte d'aperçu → réponses fictives, aucun appel au modèle, aucune lecture ni écriture ;
 //  • confirmation d'un retour sans IA, double clic = une demande ; l'événement est dit au modèle après le message suivant ;
 //  • historique en ajout seulement (préfixe identique octet pour octet) ; placement des messages système ;
-//  • admin : vues, transitions de statut, coûts par jour, réglages avec conflit ; purge.
+//  • admin : vues, transitions de statut, coûts par jour, réglages avec conflit ; purge ;
+//  • relecture du 19/10 : 409 avec le tour en cours, 410 conversation fermée, plafond de coût par fiche (et par admin),
+//    quotas sans les messages de l'admin, identité gardée pour l'attente, débit par famille d'actions, « reconnexion »
+//    + « ouvert », refus final retiré de l'historique, 400 de l'API = conversation close, coût gardé si le stockage échoue.
 import crypto from "node:crypto";
 
 process.env.SUPABASE_URL = "https://supabase.test";
@@ -161,6 +164,9 @@ const PERIMETRE = {
   },
   odoo: async (model, method, args) => {
     const dom = args[0] || [];
+    // adresses encore portées par la fiche (identifier : une ancienne adresse n'ouvre que la transmission à un conseiller)
+    const fichePere = dom.find(c => c[0] === "commercial_partner_id")?.[2];
+    if (model === "res.partner" && method === "search_read" && fichePere) return PHARMACIES.filter(p => p.odoo_id === fichePere).map((p, i) => ({ id: 10000 + i, email: p.email }));
     if (model === "res.partner" && method === "search_read") {
       const id = dom.find(c => c[0] === "id")?.[2];
       const f = FICHES[id];
@@ -289,9 +295,9 @@ let h = messagesDe(conv1);
 eq("historique : message de la pharmacie puis contexte serveur", [h.map(m => m.role), h[0].content], [["user", "system"], "Je voudrais retourner 2 Spasfon."]);
 vrai("contexte serveur : pharmacie et coordonnées, aucune adresse e-mail", h[1].content.includes("PHARMACIE A, Versailles") && !h[1].content.includes("@"));
 r = await post("jeton-a", { action: "message", conversation_id: conv1, texte: "Vous êtes là ?" });
-eq("second message pendant un tour → 409, CORS", [r.statut, r.corps.error, corsNoStore(r)], [409, "tour_en_cours", true]);
+eq("second message pendant un tour → 409 avec le tour en cours (le panneau le suit), CORS", [r.statut, r.corps.error, r.corps.tour_id, corsNoStore(r)], [409, "tour_en_cours", tour1, true]);
 r = await post("jeton-b", { action: "message", conversation_id: conv1, texte: "Je lis la conversation d'une autre pharmacie" });
-eq("conversation d'une autre pharmacie → 404", r.statut, 404);
+eq("conversation d'une autre pharmacie → 410 (même réponse qu'une conversation fermée), rien écrit", [r.statut, r.corps.error, messagesDe(conv1).length], [410, "conversation_fermee", 2]);
 r = await get("jeton-a", { tour: tour1, conversation_id: conv1 });
 eq("attente (≤ 8 s) : tour pas encore lancé → en_attente, sans message", [r.statut, r.corps.statut, r.corps.message], [200, "en_attente", null]);
 
@@ -393,6 +399,86 @@ r = await post("jeton-a", { action: "ouvrir" });
 eq("budget atteint : l'historique reste consultable", [r.statut, r.corps.conversation_id], [200, conv1]);
 db.tables.chat_tours.pop();
 
+// ════════ Plafond de coût par fiche, quotas sans les messages de l'admin, débit, identité gardée ════════
+const ilYAUneHeure = new Date(T - 3600e3).toISOString();
+const nbAvant = await stock.compter.messages(595, ilYAUneHeure);
+const tourAdmin = () => ({ id: crypto.randomUUID(), conversation_id: crypto.randomUUID(), odoo_id: 595, admin_email: "equipe@elixir.test", statut: "termine", cout_eur: 0, created_at: new Date(T).toISOString(), repli: false, refus: false });
+db.tables.chat_tours.push(tourAdmin(), tourAdmin(), tourAdmin());
+eq("quotas de la pharmacie : les messages d'un admin en saisie Elixir ne comptent pas", await stock.compter.messages(595, ilYAUneHeure), nbAvant);
+db.tables.chat_tours.splice(-3, 3);
+db.tables.chat_tours.push({ ...tourAdmin(), admin_email: null, cout_eur: 1.6 });
+r = await post("jeton-a", { action: "message", conversation_id: conv1, texte: "Encore une longue question" });
+eq("plafond du jour de la fiche (1,50 €) atteint → 429 avec le téléphone ; les autres pharmacies ne sont pas touchées",
+  [r.statut, r.corps.error, r.corps.message.includes(REGLAGES_DEFAUT.telephone), (await post("jeton-b", { action: "etat" })).corps.disponible], [429, "quota", true, true]);
+db.tables.chat_tours.pop();
+db.tables.chat_tours.push({ ...tourAdmin(), cout_eur: 4.6 });
+const ra = await post("jeton-admin", { action: "ouvrir", pour_odoo_id: 595 });
+r = await post("jeton-admin", { action: "message", conversation_id: ra.corps.conversation_id, texte: "Question en saisie", pour_odoo_id: 595 });
+eq("saisie Elixir : plafond propre à l'admin (trois fois celui d'une fiche)", [r.statut, r.corps.error], [429, "quota"]);
+db.tables.chat_tours.pop();
+await stock.conversations.fermer(ra.corps.conversation_id, 595);
+// identité gardée 60 s pour l'attente : Odoo n'est pas relu à chaque interrogation du tour
+let appelsOdoo = 0;
+const chatC = creerChat({ ...depsChat, perimetre: { ...PERIMETRE, odoo: async (...a) => { appelsOdoo++; return PERIMETRE.odoo(...a); } } });
+const getC = async (jeton, q) => lit(await chatC(ev("GET", { jeton, q })));
+r = await getC("jeton-a", { tour: tour5, conversation_id: conv1 });
+const apres1 = appelsOdoo;
+r = await getC("jeton-a", { tour: tour5, conversation_id: conv1 });
+eq("attente : identité vérifiée une fois (Odoo lu au 1er appel seulement)", [r.statut, apres1 > 0, appelsOdoo], [200, true, apres1]);
+r = await getC("jeton-b", { tour: tour5, conversation_id: conv1 });
+eq("identité gardée par jeton : une autre pharmacie ne lit pas le tour", r.statut, 404);
+// débit par IP et par famille d'actions (limiteur réel)
+const chatD = creerChat({ ...depsChat, limiteIp: undefined });
+const etats = [];
+for (let i = 0; i < 41; i++) etats.push(lit(await chatD(ev("POST", { corps: { action: "etat" } }))).statut);
+const attente = lit(await chatD(ev("GET", { q: { tour: crypto.randomUUID() } })));
+eq("débit : 40 « etat » par minute, le 41e → 429 (CORS) ; l'attente a son propre compteur", [etats.slice(0, 40).every(x => x === 200), etats[40], attente.statut], [true, 429, 401]);
+// session sans jeton : « reconnexion » ; ouvert seulement quand l'assistant est ouvert à toutes les pharmacies
+reglages({ actif: true, ouvert_a_tous: true, quotas: { messages_heure: 50, messages_jour: 50 } });
+r = await post(null, { action: "etat" });
+eq("assistant ouvert à tous, session sans jeton : reconnexion proposée (bouton et encart « Me reconnecter »)", r.corps, { disponible: false, mode: null, raison: "reconnexion", ouvert: true });
+reglages({ actif: true, pilote: [595, 777], quotas: { messages_heure: 50, messages_jour: 50 } });
+r = await post(null, { action: "etat" });
+eq("pendant le pilote : reconnexion, sans « ouvert » (bouton masqué)", r.corps, { disponible: false, mode: null, raison: "reconnexion" });
+
+// ════════ Refus final, requête refusée par l'API, coût d'un tour qui échoue (pharmacie B) ════════
+const convR = (await post("jeton-b", { action: "ouvrir" })).corps.conversation_id;
+r = await post("jeton-b", { action: "message", conversation_id: convR, texte: "Bonjour" });
+script.push(rep("end_turn", [{ type: "thinking", thinking: "", signature: "r1" }, { type: "text", text: "Bonjour, que puis-je faire ?" }]));
+await lancer(r.corps.tour_id);
+await stock.conversations.evenement(convR, 777, "Demande de retour R-2026-0099 enregistrée.");
+const texteAvantRefus = convDb(convR).messages;
+r = await post("jeton-b", { action: "message", conversation_id: convR, texte: "QUESTION-REFUSEE" });
+const tourRefus = r.corps.tour_id;
+vrai("l'événement est dit avec la question (message système qui la suit)", messagesDe(convR).at(-1).content.includes("R-2026-0099"));
+script.push(rep("refusal", [], USAGE, { stop_details: { type: "refusal", category: "cyber" } }));
+await lancer(tourRefus);
+const tr = db.tables.chat_tours.find(t => t.id === tourRefus);
+eq("refus final : question retirée de l'historique de l'API, gardée à l'écran avec le texte fixe (téléphone des réglages)",
+  [JSON.stringify(messagesDe(convR)).includes("QUESTION-REFUSEE"), JSON.parse(convDb(convR).affichage).some(m => m.texte === "QUESTION-REFUSEE"), tr.statut, tr.refus, tr.texte.includes(REGLAGES_DEFAUT.telephone)],
+  [false, true, "termine", true, true]);
+eq("refus final : historique rendu tel qu'avant la question, octet pour octet ; événement remis en attente",
+  [convDb(convR).messages === texteAvantRefus, JSON.parse(convDb(convR).evenements_en_attente)], [true, ["Demande de retour R-2026-0099 enregistrée."]]);
+r = await post("jeton-b", { action: "message", conversation_id: convR, texte: "Oui" });
+h = messagesDe(convR);
+eq("après un refus : « Oui » seul, historique valide, événement redit", [verifierHistorique(h), h.at(-2).content, h.at(-1).content.includes("R-2026-0099")], [null, "Oui", true]);
+// requête refusée par l'API (400) : conversation close, texte qui annonce une nouvelle conversation
+script.push(() => { throw Object.assign(new Error("requête invalide"), { status: 400 }); });
+await lancer(r.corps.tour_id);
+eq("400 de l'API : conversation close, texte « nouvelle conversation »", [convDb(convR).statut, db.tables.chat_tours.find(t => t.id === r.corps.tour_id).texte], ["close", TEXTES.bloquee()]);
+r = await post("jeton-b", { action: "message", conversation_id: convR, texte: "Et maintenant ?" });
+eq("message suivant : 410 conversation_fermee", [r.statut, r.corps.error], [410, "conversation_fermee"]);
+// stockage en panne après les appels au modèle : le tour est clos en erreur AVEC son coût
+const convP = (await post("jeton-b", { action: "ouvrir" })).corps.conversation_id;
+r = await post("jeton-b", { action: "message", conversation_id: convP, texte: "Question coûteuse" });
+const tourPanne = r.corps.tour_id;
+script.push(rep("end_turn", [{ type: "text", text: "Réponse jamais enregistrée." }]));
+const stockPanne = { ...stock, conversations: { ...stock.conversations, modifier: async () => { throw Object.assign(new Error("Supabase lent"), { code: "concurrence" }); } } };
+await creerTour({ stock: stockPanne, client, outils: outilsFaux, maintenant, journal, creerDemandes: fabriqueDemandes, envoyerMail, perimetre: PERIMETRE })(ev("POST", { corps: { tour: tourPanne }, cron: "secret-cron-test" }));
+const tp = db.tables.chat_tours.find(t => t.id === tourPanne);
+eq("stockage en panne : tour en erreur, coût et jetons des appels gardés (budget du jour)", [tp.statut, tp.cout_eur > 0, JSON.parse(tp.usage)?.output_tokens > 0], ["erreur", true, true]);
+await stock.conversations.fermer(convP, 777);
+
 // ════════ Nouvelle conversation, changement de prompt, saisie Elixir ════════
 r = await post("jeton-a", { action: "ouvrir" });
 eq("ouvrir : affichage de la conversation (textes visibles seulement)", [r.corps.messages.every(m => ["pharmacie", "assistant"].includes(m.role) && typeof m.texte === "string"), JSON.stringify(r.corps.messages).includes("thinking"), "outils" in r.corps.messages.at(-1)], [true, false, false]);
@@ -407,13 +493,14 @@ const convAdmin = r.corps.conversation_id;
 const rb = await post("jeton-b", { action: "ouvrir" });
 eq("saisie Elixir : conversation propre à l'admin, distincte de celle de la pharmacie", [r.corps.admin, r.corps.pharmacie.nom, convAdmin !== rb.corps.conversation_id, convDb(convAdmin).admin_email], ["equipe@elixir.test", "PHARMACIE B", true, "equipe@elixir.test"]);
 r = await post("jeton-b", { action: "message", conversation_id: convAdmin, texte: "Je prends la conversation de l'admin" });
-eq("pharmacie sur la conversation de l'admin → 404", r.statut, 404);
+eq("pharmacie sur la conversation de l'admin → 410", [r.statut, r.corps.error], [410, "conversation_fermee"]);
 
 // ════════ Outils réels du lot 1 : préfixe identique (outils passés tels quels) ════════
 // conversation ouverte avant un déploiement (version « outils-test ») : le message est refusé proprement
 const chatReel = creerChat({ ...depsChat, versionOutils: undefined });
 r = lit(await chatReel(ev("POST", { jeton: "jeton-b", corps: { action: "message", conversation_id: rb.corps.conversation_id, texte: "Bonjour" } })));
-eq("prompt ou outils changés depuis l'ouverture : 503 « mis à jour », conversation close", [r.statut, r.corps.message.includes("mis à jour"), convDb(rb.corps.conversation_id).statut], [503, true, "close"]);
+eq("prompt ou outils changés depuis l'ouverture : 410 « mis à jour » (le panneau en ouvre une nouvelle), conversation close",
+  [r.statut, r.corps.error, r.corps.message.includes("mis à jour"), convDb(rb.corps.conversation_id).statut], [410, "conversation_fermee", true, "close"]);
 try {
   const vrais = await import("../netlify/functions/_chat-outils.js");
   const bgReel = creerTour({ stock, client, maintenant, journal, creerDemandes: fabriqueDemandes, envoyerMail, perimetre: PERIMETRE });
@@ -469,7 +556,7 @@ r = await adm("jeton-admin", { q: { vue: "reglages" } });
 const base = r.corps.updated_at;
 eq("admin réglages : valeur fusionnée avec les défauts", [r.corps.valeur.actif, r.corps.valeur.pilote, r.corps.valeur.telephone, r.corps.valeur.quotas.messages_heure], [true, [595, 777], REGLAGES_DEFAUT.telephone, 50]);
 eq("admin réglages : modèles acceptés (sans Haiku) et noms des fiches du pilote", [r.corps.modeles, r.corps.pilote_fiches, nomsDemandes.at(-1)],
-  [["claude-opus-5-5", "claude-sonnet-5-5"], [{ odoo_id: 595, nom: "PHARMACIE 595", ville: null }, { odoo_id: 777, nom: "PHARMACIE 777", ville: null }], [595, 777]]);
+  [["claude-opus-5-5"], [{ odoo_id: 595, nom: "PHARMACIE 595", ville: null }, { odoo_id: 777, nom: "PHARMACIE 777", ville: null }], [595, 777]]);
 {
   const enPanne = creerAdmin({ stock, maintenant, journal, nomsFiches: async () => { throw new Error("Odoo injoignable"); } });
   const rp = lit(await enPanne(ev("GET", { jeton: "jeton-admin", q: { vue: "reglages" } })));

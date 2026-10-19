@@ -54,9 +54,9 @@ const ACTIONS = [
 const numeroDe = (d) => d.numero || `n° ${String(d.id || "").slice(0, 8)}`;
 
 // ── Réglages (REGLAGES_DEFAUT de _chat-config.js, docs/assistant-contrat.md) ──
-// modèles acceptés par le serveur (MODELES de _chat-config.js) : pas Haiku 5.5, sans messages système en cours de
-// conversation ni repli serveur en cas de refus
-const MODELES = [["claude-opus-5-5", "Opus 5.5 (recommandé)"], ["claude-sonnet-5-5", "Sonnet 5.5 (environ −45 %)"]];
+// modèles acceptés par le serveur (MODELES de _chat-config.js) : pas Haiku 5.5 (sans repli serveur), pas Sonnet 5.5 (son
+// repli, Sonnet 5, refuse les messages système en cours de conversation) ; une conversation ancienne garde son modèle
+const MODELES = [["claude-opus-5-5", "Opus 5.5 (recommandé)"]];
 const EFFORTS = [["low", "Bas (recommandé)"], ["medium", "Moyen"], ["high", "Élevé"], ["xhigh", "Très élevé (coûteux)"], ["max", "Maximal (coûteux)"]];
 // libellé court (bandeau) : « Opus 5.5 », « effort bas »
 const libelleDe = (liste, k) => (liste.find(([x]) => x === k)?.[1] || k || "").replace(/\s*\(.*\)$/, "");
@@ -72,7 +72,7 @@ function normaliser(f) {
   return {
     ...f,
     pilote: [...new Set((Array.isArray(f.pilote) ? f.pilote : []).map(Number).filter(n => Number.isInteger(n) && n > 0))],
-    budget_jour_eur: num(f.budget_jour_eur), conservation_jours: num(f.conservation_jours),
+    budget_jour_eur: num(f.budget_jour_eur), budget_fiche_jour_eur: num(f.budget_fiche_jour_eur), conservation_jours: num(f.conservation_jours),
     quotas: parCle(f.quotas, QUOTAS), profondeur: parCle(f.profondeur, PROFONDEURS),
     entrepot_url: String(f.entrepot_url || "").trim(), email_equipe: String(f.email_equipe || "").trim(), email_qualite: String(f.email_qualite || "").trim(),
   };
@@ -85,6 +85,7 @@ function erreursReglages(v) {
   const e = [];
   const entier = (x, min) => Number.isInteger(x) && x >= min;
   if (!(Number.isFinite(v.budget_jour_eur) && v.budget_jour_eur >= 0)) e.push("Budget du jour : montant positif attendu.");
+  if (!(Number.isFinite(v.budget_fiche_jour_eur) && v.budget_fiche_jour_eur >= 0)) e.push("Plafond par pharmacie : montant positif attendu.");
   if (!entier(v.conservation_jours, 1)) e.push("Conservation : nombre de jours entier (1 au moins).");
   for (const [k, l] of QUOTAS) if (!entier(v.quotas[k], 0)) e.push(`Quota « ${l} » : nombre entier attendu.`);
   for (const [k, l] of PROFONDEURS) if (!entier(v.profondeur[k], 1)) e.push(`« ${l} » : nombre entier (1 au moins).`);
@@ -105,7 +106,7 @@ const sourdine = { fontSize: 12, color: T.inkMute, lineHeight: 1.5 };
 // tableaux de listes (demandes, conversations) : marges internes resserrées pour tenir sans défiler à 1 024 px
 const thS = { ...ui.th, padding: "9px 10px" };
 const tdS = { ...ui.td, fontSize: 12, padding: "9px 10px" };
-const eyebrow = { fontSize: 10.5, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute };
+const eyebrow = { fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute };
 const Badge = ({ ton = "neutral", children, titre: t }) => <span title={t} style={ui.badge(ton)}>{children}</span>;
 const Statut = ({ statut }) => { const [l, t] = STATUTS[statut] || [statut || "?", "neutral"]; return <Badge ton={t}>{l}</Badge>; };
 const Erreur = ({ texte }) => texte ? <div role="alert" style={{ ...ui.encart("danger"), display: "flex", gap: 6, alignItems: "flex-start" }}><Icone nom="alerte" taille={14} style={{ marginTop: 2, flexShrink: 0 }} /><span>{texte}</span></div> : null;
@@ -655,6 +656,9 @@ function VueReglages({ adminFetch, form, setForm, lu, dirty, busy, enregistrer, 
           </Champ>
           <Champ label="Budget par jour (€)" aide="Coût cumulé des tours du jour ; au-delà, l'assistant est indisponible jusqu'au lendemain. Alerte à 80 %. 0 : sans plafond.">
             <input type="number" min="0" step="0.5" inputMode="decimal" style={champ} value={form.budget_jour_eur ?? ""} onChange={e => maj({ budget_jour_eur: e.target.value })} />
+          </Champ>
+          <Champ label="Plafond par pharmacie et par jour (€)" aide="Au-delà, la pharmacie est invitée à appeler le service client jusqu'au lendemain ; les autres pharmacies ne sont pas touchées. Saisie Elixir : trois fois ce plafond par membre de l'équipe. 0 : sans plafond.">
+            <input type="number" min="0" step="0.5" inputMode="decimal" style={champ} value={form.budget_fiche_jour_eur ?? ""} onChange={e => maj({ budget_fiche_jour_eur: e.target.value })} />
           </Champ>
         </div>
       </section>

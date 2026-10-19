@@ -30,7 +30,7 @@ export function ajouterAuTexte(texte, items) {
 
 const COLS_CONV = "id,odoo_id,cip,pharmacie,compte_email,admin_email,modele,prompt_version,statut,messages,affichage,evenements_en_attente,nb_messages,version,created_at,updated_at";
 const COLS_TOUR = "id,conversation_id,odoo_id,admin_email,statut,etape,texte,ui_actions,outils,usage,cout_eur,appels,repli,refus,code,duree_ms,created_at,started_at,finished_at";
-const COLS_DEMANDE = "id,seq,numero,type,statut,conversation_id,odoo_id,pharmacie,admin_email,brouillon,resume,cible_ref,expire_at,created_at,confirmee_at,transmise_at,updated_at,erreur";
+const COLS_DEMANDE = "id,seq,numero,type,categorie,statut,conversation_id,odoo_id,pharmacie,admin_email,brouillon,resume,cible_ref,expire_at,created_at,confirmee_at,transmise_at,updated_at,erreur";
 
 const conversation = (r) => r ? {
   ...r, messages_texte: r.messages, messages: lireJson(r.messages, []), affichage_texte: r.affichage,
@@ -187,6 +187,9 @@ export function creerStock(deps = {}) {
       statut: "erreur", etape: null, code: String(code || "erreur").slice(0, 40), texte: extra.texte ?? null, ui_actions: JSON.stringify(extra.ui_actions || []),
       outils: JSON.stringify(extra.outils || []), usage: extra.usage ? JSON.stringify(extra.usage) : null, cout_eur: Number(extra.cout_eur) || 0,
       appels: extra.appels || 0, repli: !!extra.repli, refus: !!extra.refus, duree_ms: extra.duree_ms ?? null, finished_at: iso() }),
+    // coût des appels déjà faits, sur un tour clos ailleurs (déclaré perdu, clôture refusée) : sans filtre de statut
+    noterCout: (id, r) => majTour(id, "statut=in.(en_attente,en_cours,termine,erreur)", { cout_eur: Number(r.cout_eur) || 0,
+      usage: r.usage ? JSON.stringify(r.usage) : null, appels: r.appels || 0, repli: !!r.repli, refus: !!r.refus }),
     async lire(id, odooId) {
       const n = entier(odooId);
       if (!UUID.test(String(id || "")) || !n) return null;
@@ -234,14 +237,16 @@ export function creerStock(deps = {}) {
 
   // ── Demandes (retours, transmissions) ──
   const demandes = {
-    // → demande (avec son numéro R-2026-0412 / T-2026-0187) ; { doublon: true } si l'index unique refuse (transmission ouverte)
-    async creer({ type, statut, conversation_id = null, odoo_id, pharmacie = null, admin_email = null, brouillon = {}, resume = null, expire_at = null, confirmee_at = null }) {
+    // → demande (avec son numéro R-2026-0412 / T-2026-0187) ; { doublon: true } si l'index unique refuse (transmission
+    // ouverte de la même catégorie dans la conversation)
+    async creer({ type, statut, categorie = null, conversation_id = null, odoo_id, pharmacie = null, admin_email = null, brouillon = {}, resume = null, expire_at = null, confirmee_at = null }) {
       const n = entier(odoo_id);
       if (!n) throw new Error("fiche Odoo manquante");
       let r;
       try {
         [r] = await sb(`chat_demandes?select=${COLS_DEMANDE}`, { method: "POST", prefer: "return=representation", body: {
-          type, statut, conversation_id, odoo_id: n, pharmacie: pharmacie ? String(pharmacie).slice(0, 200) : null, admin_email,
+          type, statut, ...(categorie ? { categorie: String(categorie).replace(/[^a-z_]/g, "").slice(0, 30) } : {}), conversation_id, odoo_id: n,
+          pharmacie: pharmacie ? String(pharmacie).slice(0, 200) : null, admin_email,
           brouillon: JSON.stringify(brouillon ?? {}), resume: resume ? String(resume).slice(0, 2000) : null, expire_at, confirmee_at, updated_at: iso() } }) || [];
       } catch (e) {
         if (doublon(e)) return { doublon: true };
@@ -265,11 +270,21 @@ export function creerStock(deps = {}) {
       const [r] = await sb(`chat_demandes?id=eq.${id}&statut=in.${liste([de].flat())}&select=${COLS_DEMANDE}`, { method: "PATCH", prefer: "return=representation", body: champs }) || [];
       return demande(r);
     },
-    async lister({ statut, type, odoo_id, conversation_id, depuisIso, limite = 500 } = {}) {
+    // envoi interrompu (fonction coupée entre « confirmée » et l'envoi) : un seul repreneur, par une écriture conditionnelle
+    // sur la date de mise à jour lue → demande reprise, ou null (déjà reprise ou envoyée entre-temps)
+    async reprendre(id, updatedAt) {
+      if (!UUID.test(String(id || "")) || !updatedAt) return null;
+      const [r] = await sb(`chat_demandes?id=eq.${id}&statut=eq.confirmee&cible_ref=is.null&updated_at=eq.${enc(updatedAt)}&select=${COLS_DEMANDE}`,
+        { method: "PATCH", prefer: "return=representation", body: { updated_at: iso() } }) || [];
+      return demande(r);
+    },
+    // sans_cible + confirmee_avant : envois interrompus (confirmées sans cible depuis cette date)
+    async lister({ statut, type, odoo_id, conversation_id, depuisIso, sans_cible = false, confirmee_avant = null, limite = 500 } = {}) {
       const f = [
         statut ? `statut=in.${liste([statut].flat())}` : null, type ? `type=eq.${type === "retour" ? "retour" : "transmission"}` : null,
         entier(odoo_id) ? `odoo_id=eq.${entier(odoo_id)}` : null, UUID.test(String(conversation_id || "")) ? `conversation_id=eq.${conversation_id}` : null,
-        depuisIso ? `created_at=gte.${enc(depuisIso)}` : null,
+        depuisIso ? `created_at=gte.${enc(depuisIso)}` : null, sans_cible ? "cible_ref=is.null" : null,
+        confirmee_avant ? `confirmee_at=lt.${enc(confirmee_avant)}` : null,
       ].filter(Boolean);
       return (await sb(`chat_demandes?${f.join("&")}${f.length ? "&" : ""}select=${COLS_DEMANDE}&order=created_at.desc&limit=${Math.min(limite, 1000)}`) || []).map(demande);
     },
@@ -277,8 +292,10 @@ export function creerStock(deps = {}) {
 
   // ── Compteurs durables (quotas, budget) ──
   const depuis = (d) => `created_at=gte.${enc(d)}`;
+  const somme = (rows) => Math.round(rows.reduce((s, r) => s + (Number(r.cout_eur) || 0), 0) * 1e6) / 1e6;
   const compter = {
-    messages: (odooId, depuisIso) => sb(`chat_tours?odoo_id=eq.${entier(odooId) || 0}&${depuis(depuisIso)}&select=id`, { compter: true }),
+    // messages de la pharmacie elle-même (ceux d'un admin en saisie Elixir comptent pour l'admin : messagesAdmin)
+    messages: (odooId, depuisIso) => sb(`chat_tours?odoo_id=eq.${entier(odooId) || 0}&admin_email=is.null&${depuis(depuisIso)}&select=id`, { compter: true }),
     messagesAdmin: (admin, depuisIso) => sb(`chat_tours?admin_email=eq.${enc(admin)}&${depuis(depuisIso)}&select=id`, { compter: true }),
     fichiers: (odooId, depuisIso) => sb(`chat_fichiers?odoo_id=eq.${entier(odooId) || 0}&${depuis(depuisIso)}&select=id`, { compter: true }),
     demandes: (odooId, type, depuisIso, statuts = null) => sb(`chat_demandes?odoo_id=eq.${entier(odooId) || 0}&type=eq.${type === "retour" ? "retour" : "transmission"}&${depuis(depuisIso)}${statuts ? `&statut=in.${liste(statuts)}` : ""}&select=id`, { compter: true }),
@@ -286,8 +303,11 @@ export function creerStock(deps = {}) {
     // somme des coûts des tours du jour « AAAA-MM-JJ » (heure de Paris)
     async coutJour(jourIso = jourParis(maintenant())) {
       const rows = await tout(`chat_tours?created_at=gte.${enc(debutJourParisIso(jourIso))}&created_at=lt.${enc(debutJourParisIso(jourSuivant(jourIso)))}&select=cout_eur`);
-      return Math.round(rows.reduce((s, r) => s + (Number(r.cout_eur) || 0), 0) * 1e6) / 1e6;
+      return somme(rows);
     },
+    // coût depuis une date : d'une pharmacie (ses propres messages), ou d'un admin en saisie Elixir (plafonds par fiche)
+    async coutFiche(odooId, depuisIso) { return somme(await tout(`chat_tours?odoo_id=eq.${entier(odooId) || 0}&admin_email=is.null&${depuis(depuisIso)}&select=cout_eur`)); },
+    async coutAdmin(admin, depuisIso) { return somme(await tout(`chat_tours?admin_email=eq.${enc(admin)}&${depuis(depuisIso)}&select=cout_eur`)); },
   };
 
   // ── Réglages (une ligne id = 1) ──

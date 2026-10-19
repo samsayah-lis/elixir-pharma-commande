@@ -49,6 +49,7 @@ export const REGLAGES_DEFAUT = {
   modele: "claude-opus-5-5",
   effort: "low",
   budget_jour_eur: 8,
+  budget_fiche_jour_eur: 1.5,   // plafond de coût par pharmacie et par jour (saisie Elixir : 3 × par admin) ; 0 = sans plafond
   demandes: "simulation",       // "simulation" | "email" | "entrepot"
   entrepot_url: "",             // URL de l'API chatbot-intake de l'outil entrepôt (vide = non branché)
   email_equipe: "pharmacien@elixirpharma.fr",
@@ -61,7 +62,7 @@ export const REGLAGES_DEFAUT = {
   profondeur: { factures_mois: 24, releve_mois: 12, commandes_mois: 6 },
 };
 ```
-Modèles acceptés (`MODELES`) : `claude-opus-5-5`, `claude-sonnet-5-5` (pas Haiku 5.5 : ni messages `role:"system"` en cours de conversation documentés, ni repli serveur). `budget_jour_eur: 0` = sans plafond.
+Modèles acceptés (`MODELES`) : `claude-opus-5-5` seulement. Pas Haiku 5.5 (pas de repli serveur) ; pas Sonnet 5.5 (relecture du 19/10/2026) : son repli serveur tourne sur Claude Sonnet 5, qui refuse les messages `role:"system"` en cours de conversation, alors que la requête repliée doit rester valable pour le modèle de repli. `budget_jour_eur: 0` = sans plafond.
 
 ## Identité (`_chat-perimetre.js`)
 
@@ -98,7 +99,7 @@ export async function executerOutil(nom, entree, ctx, deps) → {
 Noms (ordre figé) : `rechercher_factures`, `duplicata_facture`, `releve_facturation`, `rechercher_commandes`, `detail_commande`, `preparer_demande_retour`, `transmettre_a_un_conseiller`. Schémas : ceux de la conception § 2.5 (sauf `duplicata_facture.envoi` : garder l'énumération `telechargement | email_compte`).
 
 - `preparer_demande_retour` : `_chat-outils` résout et contrôle dans Odoo (document → livraison validée, lignes, lots, quantité ≤ livrée − déjà retournée, date de sortie d'entrepôt), puis appelle `deps.demandes.creerBrouillon(ctx, brouillon)` → `{ demande_id, expire_at }` et renvoie l'action `recap_retour`.
-- `transmettre_a_un_conseiller` : appelle `deps.demandes.transmettre(ctx, { categorie, resume, reference, urgence, rappel, conversation_id })` → `{ numero, delai }` et renvoie l'action `transmission`.
+- `transmettre_a_un_conseiller` : appelle `deps.demandes.transmettre(ctx, { categorie, resume, reference, urgence, rappel, conversation_id })` → `{ numero, delai, deja_transmise?, complement?, complement_envoye? }` et renvoie l'action `transmission`. Une transmission ouverte par conversation **et par catégorie** (une alerte qualité n'est jamais rattachée à une autre catégorie) ; même catégorie avec un nouveau texte = complément (e-mail « Complément à T-… ») ; même texte = rien de nouveau, jamais annoncé comme « transmis ». Appelé seulement avec l'accord explicite de la pharmacie, sauf qualité (immédiat).
 - Fichiers (duplicata, relevé) : `deps.stock.fichiers.creer({ odoo_id, type, params, ttl_min: 15, usages_max: 3 })` → `id` (128 bits aléatoires, hex 32).
 
 ## Stockage (`_chat-stock.js`, clé `SUPABASE_SERVICE_ROLE_KEY`)
@@ -108,23 +109,23 @@ Tables de `sql/chat-schema.sql` (RLS activé, aucune policy) : `chat_reglages`, 
 ```js
 export function creerStock(deps = {}) → {
   conversations: { ouverte(odooId, admin), creer(ctx, { modele, prompt_version }), lire(id, odooId), ajouterMessages(id, odooId, msgs), fermer(id, odooId), evenement(id, odooId, texte) },
-  tours: { creer(conv, ctx), demarrer(id) /* en_attente→en_cours conditionnel, renvoie bool */, etape(id, texte), terminer(id, { texte, ui_actions, usage, cout_eur, repli, duree_ms }), erreur(id, code), lire(id, odooId), enCours(convId) },
+  tours: { creer(conv, ctx), demarrer(id) /* en_attente→en_cours conditionnel, renvoie bool */, etape(id, texte), terminer(id, { texte, ui_actions, usage, cout_eur, repli, duree_ms }), erreur(id, code, bilan?) /* coût gardé */, noterCout(id, bilan), lire(id, odooId), enCours(convId) },
   fichiers: { creer({ odoo_id, type, params, ttl_min, usages_max }), consommer(id, odooId) /* null si expiré, épuisé ou autre fiche */ },
-  demandes: { creer(...), lire(id, odooId), passer(id, de, vers, extra) /* transition conditionnelle */, lister(filtre) },
-  compter: { messages(odooId, depuisIso), fichiers(odooId, depuisIso), demandes(odooId, type, depuisIso), coutJour(jourIso) },
+  demandes: { creer({ …, categorie? }), lire(id, odooId), passer(id, de, vers, extra) /* transition conditionnelle */, reprendre(id, updatedAt) /* envoi interrompu, un seul repreneur */, lister(filtre) },
+  compter: { messages(odooId, depuisIso) /* sans les messages d'un admin */, fichiers(odooId, depuisIso), demandes(odooId, type, depuisIso), coutJour(jourIso), coutFiche(odooId, depuisIso), coutAdmin(admin, depuisIso) },
 }
 ```
 En plus (compatibles) : `conversations.modifier`, `afficher`, `lister`, `lireAdmin` ; `tours.lireServeur`, `lister` ; `compter.messagesAdmin`, `erreurs` ; `reglages.lire`, `ecrire(valeur, base)` ; `alertes` ; `purger`. Une demande de retour reçoit son numéro (`R-AAAA-NNNN`) dès le brouillon.
 
 ## API HTTP
 
-Toutes les réponses : CORS de `cors.js` (y compris 401/403/409/429/503), `Cache-Control: no-store`, JSON. Jeton : `Authorization: Bearer` (pharmacie : `freshPharmacyToken()` ; admin « pour une pharmacie » : `admin_token` + `pour_odoo_id` dans le corps ou la requête).
+Toutes les réponses : CORS de `cors.js` (y compris 401/403/409/410/429/503), `Cache-Control: no-store`, JSON. Limite de débit par IP et par famille d'actions (attente : 150/min, état : 40/min, autres : 30/min) ; identité gardée 60 s par jeton pour l'attente et l'état. Jeton : `Authorization: Bearer` (pharmacie : `freshPharmacyToken()` ; admin « pour une pharmacie » : `admin_token` + `pour_odoo_id` dans le corps ou la requête).
 
 | Appel | Corps / paramètres | Réponse |
 |---|---|---|
-| `POST /.netlify/functions/chat` `{action:"etat"}` | `pour_odoo_id?` | `200 { disponible: boolean, mode: "complet"|"conseiller_seul"|null, raison: null|"inactif"|"hors_pilote"|"reconnexion"|"budget", infos? }` (`infos` si disponible) — n'échoue jamais en 401 : `disponible:false, raison:"reconnexion"` |
+| `POST /.netlify/functions/chat` `{action:"etat"}` | `pour_odoo_id?` | `200 { disponible: boolean, mode: "complet"|"conseiller_seul"|null, raison: null|"inactif"|"hors_pilote"|"reconnexion"|"budget", infos?, ouvert? }` (`infos` si disponible) — n'échoue jamais en 401 : `disponible:false, raison:"reconnexion"` (+ `ouvert: true` si l'assistant est ouvert à toutes les pharmacies : bouton et encart « Me reconnecter ») ; `raison: null` = échec passager (relu par le navigateur) |
 | `{action:"ouvrir", conversation_id?}` | | `200 { conversation_id, pharmacie: { nom, ville }, admin: string|null, mode, messages: MessageAffiche[], infos: { delai_annonce, telephone, horaires, conservation_jours }, tour_en_cours: string|null }` |
-| `{action:"message", conversation_id, texte, contexte?: { commande_site_id?: string }}` | texte ≤ 2 000 car. | `202 { tour_id }` · `409 { error:"tour_en_cours" }` · `429 { error:"quota", message }` · `503 { error:"indisponible", message }` (y compris prompt ou outils mis à jour : « ouvrez une nouvelle conversation ») |
+| `{action:"message", conversation_id, texte, contexte?: { commande_site_id?: string }}` | texte ≤ 2 000 car. | `202 { tour_id }` · `409 { error:"tour_en_cours", tour_id }` · `410 { error:"conversation_fermee", message }` (conversation fermée ailleurs, inconnue, ou prompt/outils mis à jour : le panneau en ouvre une nouvelle et garde le texte) · `429 { error:"quota", message }` (messages, coût du jour de la fiche) · `503 { error:"indisponible", message }` |
 | `GET /.netlify/functions/chat?tour=<id>&conversation_id=<id>` | long-poll ≤ 8 s | `200 { statut: "en_attente"|"en_cours"|"termine"|"erreur", etape: string|null, message: MessageAffiche|null }` |
 | `{action:"confirmer", conversation_id, demande_id, decision: "confirmer"|"annuler", prevenir_pharmacie?: boolean}` | sans IA ; `prevenir_pharmacie` : admin seulement (défaut true) | `200 { message: MessageAffiche }` (id `d-<demande_id>` ; carte `demande_enregistree` ou texte « Demande annulée ») · `410 { error:"expiree" }` · `503` (recontrôle Odoo impossible : le brouillon reste) |
 | `{action:"nouvelle", conversation_id?}` | ferme l'ouverte | `200` comme `ouvrir` |

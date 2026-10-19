@@ -384,11 +384,12 @@ export default function App() {
   const [myOrdersErreur, setMyOrdersErreur] = useState(null);   // null | "reconnexion" | "fiche" | "lecture"
 
   // Appel authentifié (lot 0 : order-list et restock-alert exigent un jeton) : admin_token en saisie pour une pharmacie,
-  // sinon jeton pharmacie, renouvelé une fois s'il a expiré (renouvellement partagé avec l'assistant, assistant-client.js)
+  // sinon jeton pharmacie ; l'un ou l'autre renouvelé une fois s'il a expiré (renouvellement partagé avec l'assistant,
+  // assistant-client.js)
   const appelAuthentifie = useCallback(async (url, options = {}) => {
     const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
     let res = await envoi(jetonCourant(authAssistant(actingFor)));
-    if (res.status === 401 && !actingFor) { const t = await renouvelleJeton(); if (t) res = await envoi(t); }
+    if (res.status === 401) { const t = await renouvelleJeton(authAssistant(actingFor)); if (t) res = await envoi(t); }
     return res;
   }, [actingFor]);
 
@@ -603,16 +604,11 @@ export default function App() {
     if (activeTab === "ulabs") fetchGroupOrders();
     const _camp = getCampaign(activeTab);
     if (_camp && pharmacyCip) {
-      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
-        .then(r => r.ok ? r.json() : { orders: [] })
-        .then(orders => {
-          // Commandes validées de la campagne : les vôtres (l'admin en saisie : toutes) ; les autres pharmacies comptent via group-order
-          const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
-            .filter(o => o.source === activeTab);
-          const cipArr = [];
-          campOrders.forEach(o => { (o.items||[]).forEach(it => { if(it.cip && !cipArr.includes(it.cip)) cipArr.push(it.cip); }); });
-          setValidatedCampOrders(prev => ({...prev, [activeTab]: cipArr}));
-        }).catch(() => {});
+      // Références des commandes validées de la campagne, toutes pharmacies (palier) : agrégat seul, jeton exigé (lot 0)
+      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}&agrege=1`)
+        .then(r => r.ok ? r.json() : { cips: [] })
+        .then(j => setValidatedCampOrders(prev => ({...prev, [activeTab]: Array.isArray(j?.cips) ? j.cips : []})))
+        .catch(() => {});
     }
   }, [activeTab, fetchGroupOrders, appelAuthentifie]);
 
@@ -861,11 +857,19 @@ export default function App() {
     setAssistant(null); setAssistantOuvert(false); setAssistantContexte(null);
     if (!identiteAssistant) return;
     let annule = false;
-    etatAssistant(authAssistant(actingFor), identiteAssistant).then(e => { if (!annule) setAssistant(e); });
-    return () => { annule = true; };
+    const lire = () => etatAssistant(authAssistant(actingFor), identiteAssistant).then(e => { if (!annule) setAssistant(a => (a?.disponible ? a : e)); });
+    lire();
+    // indisponible pour une raison passagère (serveur ou Odoo injoignable, réseau) : relu au retour sur l'onglet et toutes
+    // les 15 min (un état franc est gardé par etatAssistant, sans nouvel appel)
+    const auRetour = () => { if (document.visibilityState === "visible") lire(); };
+    document.addEventListener("visibilitychange", auRetour);
+    const t = setInterval(auRetour, 15 * 60e3);
+    return () => { annule = true; document.removeEventListener("visibilitychange", auRetour); clearInterval(t); };
   }, [identiteAssistant]);   // eslint-disable-line react-hooks/exhaustive-deps -- actingFor est dans l'identité
   useEffect(() => { if (cartOpen) setAssistantOuvert(false); }, [cartOpen]);
-  const assistantDispo = !!assistant?.disponible;
+  // session sans jeton valide (ancien mode, renouvellement impossible) alors que l'assistant est ouvert à toutes les
+  // pharmacies (« ouvert ») : le bouton s'affiche, le panneau propose « Me reconnecter » (pendant le pilote : masqué)
+  const assistantDispo = !!assistant?.disponible || (!actingFor && assistant?.raison === "reconnexion" && !!assistant?.ouvert);
   const ouvrirAssistant = (contexte = null) => { setCartOpen(false); setSidebarOpen(false); setShowMyOrders(false); setAssistantContexte(contexte); setAssistantOuvert(true); };
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);

@@ -4,15 +4,17 @@
 // ne le joue qu'une fois), relit l'identité vérifiée par chat.js (chat_tours.ctx, table serveur), joue la boucle du
 // modèle (_chat-moteur.js) avec les 7 outils (_chat-outils.js), écrit l'étape à chaque outil, puis :
 //  1. ajoute les nouveaux messages à l'historique, seulement s'il n'a pas changé depuis le début du tour (un tour
-//     déclaré perdu entre-temps par chat.js n'écrit plus rien) ;
-//  2. clôt le tour (texte, cartes, jetons, coût) : le navigateur, qui interroge le tour, voit alors la réponse.
+//     déclaré perdu entre-temps par chat.js n'écrit plus rien) ; refus final : la question refusée est retirée de
+//     l'historique de l'API (l'affichage la garde) ; requête refusée par l'API (400) : la conversation est close ;
+//  2. clôt le tour (texte, cartes, jetons, coût) : le navigateur, qui interroge le tour, voit alors la réponse. Le coût
+//     des appels déjà faits est toujours enregistré, même si la clôture échoue ou si le tour a été déclaré perdu.
 // Clé : CHATBOT_ANTHROPIC_API_KEY (espace de travail dédié, plafonné), à défaut ANTHROPIC_API_KEY.
 import Anthropic from "@anthropic-ai/sdk";
 import { isCronAuthorized } from "./auth.js";
 import { creerStock, ajouterAuTexte } from "./_chat-stock.js";
 import { lireReglages, journalJson } from "./_chat-config.js";
 import { SYSTEME, PROMPT_VERSION } from "./_chat-systeme.js";
-import { jouerTour, reparerFin, TEXTES } from "./_chat-moteur.js";
+import { jouerTour, reparerFin, retirerDernierMessage, TEXTES } from "./_chat-moteur.js";
 import { creerDemandes, surveiller } from "./_chat-demandes.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,7 +35,9 @@ export function creerHandler(deps = {}) {
     try { id = JSON.parse(event.body || "{}").tour; } catch { /* corps illisible */ }
     if (!UUID.test(String(id || ""))) return { statusCode: 400, body: "" };
     const stock = stockDe();
-    let conv = null, r = null;
+    let conv = null, r = null, res = null;
+    // bilan du modèle (coût, jetons) : gardé sur le tour quelle que soit l'issue
+    const cout = () => (res ? { usage: res.usage, cout_eur: res.cout_eur, appels: res.appels, outils: res.outils, repli: res.repli, refus: res.refus, duree_ms: res.duree_ms } : {});
     try {
       if (!await stock.tours.demarrer(id)) { journal({ evt: "tour", tour: id, code: "deja_lance" }); return { statusCode: 200, body: "" }; }
       const tour = await stock.tours.lireServeur(id);
@@ -54,42 +58,55 @@ export function creerHandler(deps = {}) {
       const demandes = (deps.creerDemandes || creerDemandes)({ stock, reglages: r, conversationId: conv.id, maintenant, perimetre: deps.perimetre || {}, journal });
       const depsOutils = { ...(deps.perimetre || {}), stock, demandes, maintenant, reglages: r, conversation_id: conv.id };
 
-      const res = await jouerTour({
+      res = await jouerTour({
         client, messages: conv.messages, modele: conv.modele, effort: r.effort, systeme: SYSTEME, outils: outils.OUTILS,
         executer: (nom, entree) => outils.executerOutil(nom, entree, ctx, depsOutils),
         etapes: outils.ETAPES || {}, surEtape: (texte) => stock.tours.etape(id, texte),
         infos: r, journal, ids: { conv: conv.id, tour: id }, limites: deps.limites || {},
       });
 
-      // 1. historique (ajout seulement, et seulement s'il est resté celui du début du tour)
+      // requête refusée par l'API (400) : rejouer cet historique échouerait à chaque message ; la conversation est close
+      const bloquee = res.code === "api_requete";
+      if (bloquee) res.texte = TEXTES.bloquee();
+      // 1. historique (ajout seulement, et seulement s'il est resté celui du début du tour) ; refus : question retirée
       const affiche = { id: `a-${id}`, role: "assistant", texte: res.texte, ui_actions: res.ui_actions, at: maintenant().toISOString(), outils: res.outils };
       let ajoute = false;
       await stock.conversations.modifier(conv.id, conv.odoo_id, (c) => {
         ajoute = c.messages_texte === conv.messages_texte;
-        return ajoute ? { messages: ajouterAuTexte(c.messages_texte, res.nouveaux), affichage: JSON.stringify([...c.affichage, affiche]) } : null;
+        if (!ajoute) return null;
+        const sans = res.refus ? retirerDernierMessage(c.messages_texte, c.messages) : null;
+        return { messages: sans ? sans.texte : ajouterAuTexte(c.messages_texte, res.nouveaux), affichage: JSON.stringify([...c.affichage, affiche]),
+          ...(sans?.evenements.length ? { evenements_en_attente: JSON.stringify([...(Array.isArray(c.evenements) ? c.evenements : []), ...sans.evenements].slice(-10)) } : {}) };
       });
+      if (bloquee && ajoute) await stock.conversations.fermer(conv.id, conv.odoo_id).catch(() => {});
       // 2. clôture du tour
       const bilan = { texte: res.texte, ui_actions: res.ui_actions, outils: res.outils, usage: res.usage, cout_eur: res.cout_eur, appels: res.appels,
         repli: res.repli, refus: res.refus, code: res.code, duree_ms: res.duree_ms };
       const clos = !ajoute ? await stock.tours.erreur(id, "historique_modifie", { ...bilan, texte: TEXTES.interrompu() })
         : ECHEC(res.code) ? await stock.tours.erreur(id, res.code, bilan) : await stock.tours.terminer(id, bilan);
+      // tour déjà clos par chat.js (déclaré perdu) : son coût est quand même compté (budget du jour, plafonds)
+      if (!clos && res.cout_eur > 0) await stock.tours.noterCout(id, cout()).catch(() => {});
       journal({ evt: "tour", conv: conv.id, tour: id, code: ajoute ? res.code : "historique_modifie", clos, appels: res.appels, outils: res.outils.length,
         repli: res.repli, refus: res.refus, usage: res.usage, duree_ms: res.duree_ms, alerte_paiement: res.alerte_paiement });
       await surveiller({ stock, reglages: r, maintenant, journal, ...(deps.envoyerMail ? { envoyerMail: deps.envoyerMail } : {}) })
         .catch(e => journal({ evt: "alerte", code: "surveillance_impossible", erreur: String(e?.message || e).slice(0, 80) }));
+      // demandes confirmées dont l'envoi a été interrompu (fonction coupée) : reprises ici, après 5 min
+      await demandes.relancerEnvois?.().catch(e => journal({ evt: "demande", code: "relance_impossible", erreur: String(e?.message || e).slice(0, 80) }));
     } catch (e) {
       journal({ evt: "tour", tour: id, code: e?.code || "exception", erreur: String(e?.message || e).slice(0, 120) });
       const texte = e?.code === "version" ? "L'assistant vient d'être mis à jour : ouvrez une nouvelle conversation pour continuer." : TEXTES.erreur(r || {});
+      // l'historique se termine par une réponse (si le stockage le permet), puis le tour est clos en erreur, avec le coût
+      // des appels déjà faits (le navigateur voit le message)
+      if (conv) {
+        await stock.conversations.modifier(conv.id, conv.odoo_id, (c) => {
+          const rep = reparerFin(c.messages, texte);
+          return rep.length ? { messages: ajouterAuTexte(c.messages_texte, rep),
+            affichage: JSON.stringify([...c.affichage, { id: `a-${id}`, role: "assistant", texte, ui_actions: [], at: maintenant().toISOString() }]) } : null;
+        }).catch(e2 => journal({ evt: "tour", tour: id, code: "historique_non_repare", erreur: String(e2?.message || e2).slice(0, 80) }));
+      }
       try {
-        // l'historique se termine par une réponse, puis le tour est clos en erreur (le navigateur voit le message)
-        if (conv) {
-          await stock.conversations.modifier(conv.id, conv.odoo_id, (c) => {
-            const rep = reparerFin(c.messages, texte);
-            return rep.length ? { messages: ajouterAuTexte(c.messages_texte, rep),
-              affichage: JSON.stringify([...c.affichage, { id: `a-${id}`, role: "assistant", texte, ui_actions: [], at: maintenant().toISOString() }]) } : null;
-          });
-        }
-        await stock.tours.erreur(id, e?.code || "exception", { texte });
+        const clos = await stock.tours.erreur(id, e?.code || "exception", { texte, ...cout() });
+        if (!clos && res?.cout_eur > 0) await stock.tours.noterCout(id, cout());
       } catch (e2) {
         journal({ evt: "tour", tour: id, code: "erreur_non_enregistree", erreur: String(e2?.message || e2).slice(0, 80) });
       }

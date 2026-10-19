@@ -66,12 +66,14 @@ const ECARTS_AUTORISES = [];
 const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*)\.js$/;
 const FICHIERS_AUTORISES = {
   "netlify/functions/_odoo-rpc.js": { empreinte: "c405c5a8fadd", motif: "délai facultatif des lectures (5e argument), lectures de l'assistant coupées à 6 s" },
-  "netlify/functions/order-list.js": { empreinte: "09cc359871db", motif: "lot 0 : jeton obligatoire, une pharmacie ne lit que son CIP" },
+  "netlify/functions/order-list.js": { empreinte: "b2ee094b9f09", motif: "lot 0 : jeton obligatoire, une pharmacie ne lit que son CIP ; agrégat de campagne (CIP seuls)" },
   "netlify/functions/pharmacy-lookup.js": { empreinte: "1a702100a2ab", motif: "lot 0 : limite par IP, rien en mode code" },
   "netlify/functions/restock-alert.js": { empreinte: "88962a3f4878", motif: "lot 0 : jeton obligatoire, CIP du jeton" },
 };
 const CLES_AUTORISEES = {   // appel → nombre d'appels en plus par rapport à la référence
   'localStorage.getItem("pharmacy_refresh_token"': 1,   // assistant-client.js : renouvellement du jeton partagé (assistant, Mes commandes, alertes)
+  // assistant-client.js : renouvellement du jeton admin en saisie Elixir (relecture de la revue, 19/10/2026)
+  'localStorage.getItem("admin_refresh_token"': 2, 'localStorage.setItem("admin_token", j.token': 1, 'localStorage.setItem("admin_refresh_token", j.refresh_token': 1,
   "sessionStorage.getItem(cle(identite": 1, "sessionStorage.setItem(cle(identite": 1, "sessionStorage.removeItem(cle(identite": 1,   // conversation de l'onglet
 };
 
@@ -235,6 +237,9 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // 5. budget du bundle (revue, § 20) : JS + CSS de dist/assets en octets (Vite affiche des kB de caractères, les accents
 // pèsent plusieurs octets), polices exclues. Depuis que l'admin se charge à la demande (labo-otc, 16/10/2026), le
 // bundle des pharmacies pèse ~895 000 octets : budget resserré à 940 000 pour qu'il reste un garde-fou.
+// Part de l'Assistant Elixir dans ce bundle (bouton, état, renouvellement des jetons, entrées d'App et de Mes commandes ;
+// groupe « AIDE » et panneau chargés à la demande) : ≈ 3,6 Ko mesurés le 19/10/2026, pour un critère de 3 Ko au lot 4
+// (à relever à 4 Ko avec l'accord de la cliente).
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 940_000;

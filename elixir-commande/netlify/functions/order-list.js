@@ -2,6 +2,9 @@
 // GET /order-list                         → admin : toutes ; pharmacie : les siennes (CIP du jeton)
 // GET /order-list?source=ulabs            → filtre par source campagne (pharmacie : parmi les siennes seulement)
 // GET /order-list?pharmacy_cip=XXX        → admin en saisie pour une pharmacie : ses commandes ; ignoré pour une pharmacie
+// GET /order-list?source=ulabs&agrege=1   → barre de progression d'une campagne (tout jeton valide) : { cips } seulement,
+//                                           les CIP distincts des commandes validées de la campagne, toutes pharmacies,
+//                                           sans id, pharmacie, e-mail, quantité ni csv
 // Sans jeton valide → 401 { error: "reconnexion" } ; jeton pharmacie sans CIP → 403 { error: "fiche" }.
 // L'ancien accès sans jeton (?pharmacy_cip=, ?source= : commandes de toutes les pharmacies) est fermé.
 import { verifyTokenAsync } from "./auth.js";
@@ -27,6 +30,27 @@ export const handler = async (event) => {
   if (!isAdmin && !validCip(user.cip)) return json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." });
 
   const params = event.queryStringParameters || {};
+
+  // Barre de progression d'une campagne (palier en références distinctes) : les références validées par TOUTES les
+  // pharmacies comptent, mais rien d'autre ne sort (ni commande, ni pharmacie, ni quantité). Sources de campagne seulement.
+  if (params.agrege) {
+    const source = String(params.source || "");
+    if (!/^[a-z0-9_-]{1,40}$/i.test(source) || ["catalogue", "justificatif"].includes(source)) return json(400, { error: "source" });
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?source=eq.${encodeURIComponent(source)}&select=items&limit=5000`,
+        { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+      if (!res.ok) return json(500, { error: "lecture" });
+      const cips = new Set();
+      for (const r of await res.json()) {
+        let it = r.items;
+        if (typeof it === "string") { try { it = JSON.parse(it); } catch { it = []; } }
+        for (const i of Array.isArray(it) ? it : []) { const c = String(i?.cip ?? "").trim(); if (/^\d{7,13}$/.test(c)) cips.add(c); }
+      }
+      return json(200, { cips: [...cips] });
+    } catch {
+      return json(500, { error: "lecture" });
+    }
+  }
 
   // Construction de l'URL Supabase avec filtres
   let url = `${SUPABASE_URL}/rest/v1/elixir_orders?select=*&order=date.desc`;

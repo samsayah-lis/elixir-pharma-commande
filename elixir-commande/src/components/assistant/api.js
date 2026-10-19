@@ -1,14 +1,16 @@
 // ── Assistant Elixir : conversation, attente de la réponse, fichiers (docs/assistant-contrat.md, « API HTTP ») ──
 // Chargé avec le panneau (hors du bundle des pharmacies). Identité : src/assistant-client.js (jeton pharmacie, ou
 // admin_token + pour_odoo_id en mode « Commander pour une pharmacie »).
-// Erreurs : objets Error avec .code — "reconnexion" (401), "fiche" (403), "tour_en_cours" (409), "quota" (429),
+// Erreurs : objets Error avec .code — "reconnexion" (401), "fiche" (403), "tour_en_cours" (409, .tourId : le tour en
+// cours), "conversation" (410 conversation_fermee : fermée ailleurs ou assistant mis à jour), "quota" (429),
 // "indisponible" (503), "expiree" (410), "introuvable" (404), "reseau", "delai", "http" — et .message lisible.
 import { jetonCourant, renouvelleJeton } from "../../assistant-client.js";
 
 const FONCTIONS = "/.netlify/functions/";
 
-// Appel d'une fonction du chat → { status, ok, json, reponse } ; un 401 d'une pharmacie est rejoué une fois avec un
-// jeton renouvelé. Ne lève qu'en cas de coupure réseau ou d'abandon (signal). brut : réponse non lue (fichiers).
+// Appel d'une fonction du chat → { status, ok, json, reponse } ; un 401 est rejoué une fois avec un jeton renouvelé
+// (pharmacie, ou admin en saisie Elixir). Ne lève qu'en cas de coupure réseau ou d'abandon (signal). brut : réponse
+// non lue (fichiers).
 export async function requeteAssistant(fn, { corps = null, query = {}, auth = { admin: false }, signal, brut = false } = {}) {
   const params = new URLSearchParams(query);
   if (auth.admin && auth.odooId != null) {
@@ -22,7 +24,7 @@ export async function requeteAssistant(fn, { corps = null, query = {}, auth = { 
     ...(corps ? { body: JSON.stringify(corps) } : {}),
   });
   let r = await envoi(jetonCourant(auth));
-  if (r.status === 401 && !auth.admin) { const j = await renouvelleJeton(); if (j) r = await envoi(j); }
+  if (r.status === 401) { const j = await renouvelleJeton(auth); if (j) r = await envoi(j); }
   if (brut) return { status: r.status, ok: r.ok, json: null, reponse: r };
   const json = await r.json().catch(() => null);
   return { status: r.status, ok: r.ok, json, reponse: r };
@@ -41,6 +43,7 @@ const MESSAGES = {
   indisponible: "L'assistant est momentanément indisponible : réessayez plus tard.",
   expiree: "Ce récapitulatif a expiré : demandez à l'assistant de le préparer à nouveau.",
   introuvable: "Ce lien de téléchargement a expiré : demandez à nouveau le document à l'assistant.",
+  conversation: "Cette conversation a été fermée (nouvelle conversation ouverte ailleurs, ou assistant mis à jour) : vous pouvez renvoyer votre question.",
   reseau: "Connexion impossible : vérifiez votre réseau puis réessayez.",
   delai: "La réponse tarde à arriver.",
   http: "L'assistant n'a pas pu traiter la demande : réessayez dans un instant.",
@@ -50,9 +53,10 @@ const erreur = (code, message) => Object.assign(new Error(message || MESSAGES[co
 // statut HTTP → erreur ; le message du serveur (429, 503) est repris s'il est fourni
 function verifie(r) {
   if (r.ok) return r.json || {};
-  const code = { 401: "reconnexion", 403: "fiche", 404: "introuvable", 409: "tour_en_cours", 410: "expiree", 429: "quota", 503: "indisponible" }[r.status] || "http";
+  const code = r.status === 410 && r.json?.error === "conversation_fermee" ? "conversation"
+    : { 401: "reconnexion", 403: "fiche", 404: "introuvable", 409: "tour_en_cours", 410: "expiree", 429: "quota", 503: "indisponible" }[r.status] || "http";
   const texte = typeof r.json?.message === "string" && r.json.message.trim() && ["quota", "indisponible"].includes(code) ? r.json.message.trim().slice(0, 300) : null;
-  throw erreur(code, texte);
+  throw Object.assign(erreur(code, texte), r.json?.tour_id ? { tourId: String(r.json.tour_id) } : {});
 }
 async function appel(corps, auth, signal) {
   let r;
@@ -74,8 +78,10 @@ export const decider = (auth, conversationId, demandeId, decision, { prevenir = 
     .catch((e) => { throw e.code === "introuvable" ? erreur("expiree") : e; });
 
 // Attente de la réponse d'un tour : long-poll (le serveur garde la requête jusqu'à 8 s), relancé aussitôt ; au moins
-// 0,8 s entre deux requêtes ; 4 échecs de suite ou 3 minutes sans réponse → erreur (le tour peut être repris).
+// 0,8 s entre deux requêtes. Coupure réseau, 5xx ou 429 : passagers, nouvel essai à délai croissant (10 s au plus) avec
+// la ligne d'état « Connexion perdue… », jusqu'à 3 minutes sans réponse → erreur « delai » (le tour peut être repris).
 // surEtape(texte | null) : ligne d'état (texte fourni par le serveur). → { message, erreur } ; null si abandonné.
+const PERDUE = "Connexion perdue, nouvel essai…";
 export async function attendreReponse({ auth, tourId, conversationId, signal, surEtape, delaiMax = 180000 }) {
   const fin = Date.now() + delaiMax;
   let echecs = 0;
@@ -86,10 +92,11 @@ export async function attendreReponse({ auth, tourId, conversationId, signal, su
     try { r = await requeteAssistant("chat", { query: { tour: tourId, conversation_id: conversationId }, auth, signal }); }
     catch { if (signal?.aborted) return null; }
     if (r && r.status === 401) throw erreur("reconnexion");
-    if (r && r.status === 404) throw erreur("http");   // tour inconnu (expiré, autre conversation) : rien à attendre
+    if (r && (r.status === 403 || r.status === 404)) throw erreur(r.status === 403 ? "fiche" : "http");   // tour inconnu : rien à attendre
     if (!r || !r.ok || !r.json) {
-      if (++echecs >= 4) throw erreur(r ? "http" : "reseau");
-      await pause(1500 * echecs, signal);
+      echecs++;
+      if (echecs >= 2) surEtape?.(PERDUE);
+      await pause(Math.min(10000, 1500 * echecs), signal);
       continue;
     }
     echecs = 0;
