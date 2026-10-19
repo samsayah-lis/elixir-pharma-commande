@@ -17,7 +17,7 @@
 // aucun appel au modèle, aucune écriture, aucun e-mail. Réponses : CORS de cors.js, no-store, JSON, y compris les erreurs.
 import { createHash } from "node:crypto";
 import { getCors } from "./cors.js";
-import { clientIp } from "./rate-limit.js";
+import { cleIp } from "./rate-limit.js";
 import { creerStock, ajouterAuTexte } from "./_chat-stock.js";
 import { REGLAGES_DEFAUT, lireReglages, raisonFermeture, journalJson, jourParis, debutJourParisIso } from "./_chat-config.js";
 import { PROMPT_VERSION, messageContexte } from "./_chat-systeme.js";
@@ -43,7 +43,7 @@ const FERMEE = "Cette conversation est terminée (nouvelle conversation ouverte 
 const DEBITS = { attendre: [150, 60], etat: [40, 60], autre: [30, 60] };
 function limiteDebit(compteurs, event, famille) {
   const [max, fenetre] = DEBITS[famille] || DEBITS.autre;
-  const cle = `${famille}|${clientIp(event)}`, t = Date.now();
+  const cle = `${famille}|${cleIp(event)}`, t = Date.now();   // IPv6 : préfixe /64 (cleIp, correctif de sécurité du 19/10/2026)
   let e = compteurs.get(cle);
   if (!e || t > e.fin) {
     if (compteurs.size > 5000) for (const [k, v] of compteurs) if (t > v.fin) compteurs.delete(k);

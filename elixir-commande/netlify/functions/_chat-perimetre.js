@@ -509,7 +509,8 @@ function resumeCommande(so, lignes, factures, sorties) {
 const groupe = (xs, cle) => { const m = new Map(); for (const x of xs) { const k = cle(x); if (!m.has(k)) m.set(k, []); m.get(k).push(x); } return m; };
 
 // ── Commandes du site (Supabase elixir_orders, CIP DE LA FICHE) et état simplifié du relais PharmaML ──
-// elixir_orders est écrite par order-save SANS authentification : une ligne au CIP de la fiche peut venir d'un tiers.
+// elixir_orders a été écrite par order-save SANS authentification jusqu'au correctif de sécurité du 19/10/2026 (depuis :
+// jeton obligatoire ; commandes en quarantaine « a_verifier » sans CIP) : une ligne ancienne au CIP de la fiche peut venir d'un tiers.
 // Aucun texte libre de la ligne (libellé d'article…) ne part donc vers le modèle (CIP et quantités seulement, noms relus
 // dans Odoo), et une commande qui n'est rattachée ni à un compte de la fiche ni à une commande Odoo est « non vérifiée ».
 const ETATS_A_VERIFIER = new Set(["incertaine", "refusee", "non_envoyee", "expiree", "annulee"]);
