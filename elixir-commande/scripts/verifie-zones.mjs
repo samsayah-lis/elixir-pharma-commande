@@ -64,7 +64,9 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/restock-alert.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
   "netlify/functions/pharmacy-lookup.js": "correctif de sécurité du 19/10/2026 (limite de débit, fermé en mode code)",
 };
-const CLES_AUTORISEES = { 'localStorage.getItem("pharmacy_refresh_token"': 1 };   // clé → écart de nombre d'appels admis
+// clé → écart de nombre d'appels admis (appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie)
+const CLES_AUTORISEES = { 'localStorage.getItem("pharmacy_refresh_token"': 1, 'localStorage.getItem("admin_refresh_token"': 1,
+  'localStorage.setItem("admin_token", d.token': 1, 'localStorage.setItem("admin_refresh_token", d.refresh_token': 1 };
 
 // ── lecture ──
 const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

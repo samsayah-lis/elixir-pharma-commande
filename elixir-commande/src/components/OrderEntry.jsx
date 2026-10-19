@@ -88,15 +88,16 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     const cip = product.cip;
     setAlertSaving(prev => ({ ...prev, [cip]: true }));
     setAlertErreur(prev => { const n = { ...prev }; delete n[cip]; return n; });
+    const activer = !alerts[cip];   // action réellement envoyée (la lecture initiale des alertes peut arriver pendant l'envoi)
     try {
-      const res = alerts[cip]
+      const res = !activer
         ? await fetchAuth(`/.netlify/functions/restock-alert?pharmacy_cip=${encodeURIComponent(pharmacyCip)}&cip=${encodeURIComponent(cip)}`, { method: "DELETE" })
         : await fetchAuth("/.netlify/functions/restock-alert", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ pharmacy_cip: pharmacyCip, pharmacy_email: pharmacyEmail, cip, product_name: product.name }),
           });
       // l'alerte ne change d'état que si le serveur l'a enregistrée
-      if (res.ok) setAlerts(prev => { const n = { ...prev }; if (n[cip]) delete n[cip]; else n[cip] = true; return n; });
+      if (res.ok) setAlerts(prev => { const n = { ...prev }; if (activer) n[cip] = true; else delete n[cip]; return n; });
       else setAlertErreur(prev => ({ ...prev, [cip]: res.status === 401 ? "Reconnectez-vous pour gérer vos alertes" : "Alerte non enregistrée, réessayez" }));
     } catch { setAlertErreur(prev => ({ ...prev, [cip]: "Alerte non enregistrée, réessayez" })); }
     setAlertSaving(prev => ({ ...prev, [cip]: false }));

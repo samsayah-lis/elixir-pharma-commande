@@ -44,7 +44,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
           {!loading && erreur && (
             <EtatVide icone="commandes" erreur
               titre={erreur === "reconnexion" ? "Reconnectez-vous" : erreur === "fiche" ? "Pharmacie introuvable" : "Lecture impossible"}
-              texte={erreur === "reconnexion" ? "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail."
+              texte={erreur === "reconnexion" ? (onReconnecter ? "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail." : "Session admin expirée : reconnectez-vous à l'admin, puis reprenez la saisie pour cette pharmacie.")
                 : erreur === "fiche" ? "Aucune pharmacie n'est rattachée à ce compte : contactez Elixir Pharma."
                 : "Vos commandes n'ont pas pu être lues. Réessayez dans un instant."}
               actions={erreur === "reconnexion" && onReconnecter ? <ActionEtat principal onClick={onReconnecter}>Se reconnecter</ActionEtat> : null} />

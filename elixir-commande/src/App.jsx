@@ -381,10 +381,23 @@ export default function App() {
   const [myOrdersErreur, setMyOrdersErreur] = useState(null);   // null | "reconnexion" | "fiche" | "lecture"
 
   // Appel authentifié (correctif de sécurité du 19/10/2026 : order-list et restock-alert exigent un jeton) :
-  // admin_token en saisie pour une pharmacie, sinon jeton pharmacie, renouvelé une fois s'il a expiré
+  // admin_token en saisie pour une pharmacie, sinon jeton pharmacie ; l'un comme l'autre renouvelé une fois s'il a expiré
   const appelAuthentifie = useCallback(async (url, options = {}) => {
     const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
-    if (actingFor) return envoi(localStorage.getItem("admin_token"));
+    if (actingFor) {
+      let res = await envoi(localStorage.getItem("admin_token"));
+      const rt = localStorage.getItem("admin_refresh_token");
+      if (res.status === 401 && rt) {   // même renouvellement qu'adminFetch (AdminPanel.jsx)
+        const d = await fetch("/.netlify/functions/admin-refresh", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ refresh_token: rt }) })
+          .then(r => r.json()).catch(() => ({}));
+        if (d.success && d.token) {
+          localStorage.setItem("admin_token", d.token);
+          if (d.refresh_token) localStorage.setItem("admin_refresh_token", d.refresh_token);
+          res = await envoi(d.token);
+        }
+      }
+      return res;
+    }
     let res = await envoi(localStorage.getItem("pharmacy_token"));
     if (res.status === 401 && localStorage.getItem("pharmacy_refresh_token")) res = await envoi(await freshPharmacyToken());
     return res;
@@ -551,7 +564,7 @@ export default function App() {
         ]);
         const dcJson = await dcRes.json();
         const promoJson = await promoRes.json();
-        try { const amJson = await amRes.json(); if (amJson.value) setAuthMode(amJson.value === "otp" ? "otp" : "legacy"); } catch {}
+        try { const amJson = await amRes.json(); if (amJson.value) setAuthMode(amJson.value === "legacy" ? "legacy" : "otp"); } catch {}   // comme pharmacy-lookup : seul « legacy » exact ouvre l'ancien mode
         if (dcJson.value) {
           localStorage.setItem("display_config", JSON.stringify(dcJson.value));
         }
