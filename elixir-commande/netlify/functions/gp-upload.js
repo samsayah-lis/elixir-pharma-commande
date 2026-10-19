@@ -1,8 +1,8 @@
 // ── Commandes groupées : dépôt d'un fichier à analyser par l'IA ─────────
 // POST { action: "upload", kind: "offre" | "lgo", op_id, file_name, mime, text | data_base64 }
 // POST { action: "status", job }
-// « offre » = admin uniquement ; « lgo » = admin, ou pharmacie ayant accès au module,
-// inscrite à l'opération, opération « ouverte » et dans ses dates.
+// « offre » = admin uniquement ; « lgo » = admin, ou pharmacie connectée (jeton) ayant accès au module,
+// inscrite à l'opération, opération « ouverte » et dans ses dates. Sans jeton valide → 401 { error: "reconnexion" }.
 // L'analyse tourne dans gp-extract-background (15 min max) ; l'écran interroge le statut.
 //
 // Quotas comptés en base avant toute écriture :
@@ -13,8 +13,7 @@
 // préfixe ; la date est comparée dans le code (la base trie le texte selon la langue).
 import crypto from "node:crypto";
 import { getCors } from "./cors.js";
-import { verifyTokenAsync } from "./auth.js";
-import { json, sb, identifyPharmacy, today } from "./_gp.js";
+import { json, sb, identifyPharmacy, jetonVerifie, today } from "./_gp.js";
 import { kvGet, kvSet, kvDel, kvByPrefix } from "./_kv.js";
 import { rateLimit } from "./rate-limit.js";
 
@@ -47,14 +46,14 @@ async function importsOf(owner, sinceIso) {
   }));
 }
 
+// Correctif de sécurité du 19/10/2026 : jeton obligatoire (l'e-mail du corps ne désigne plus une pharmacie, ni
+// son quota d'analyses). → { admin, owner, pharmacy } ou { erreur: 401 (sans jeton valide) | 403 (compte sans fiche) }
 async function whoIs(event, b) {
-  const tok = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
-  if (tok) {
-    const u = await verifyTokenAsync(tok).catch(() => null);
-    if (u?.isAdmin) return { admin: true, owner: "admin" };
-  }
-  const ph = await identifyPharmacy(event, b.cip, b.email);
-  return ph?.id ? { admin: false, owner: String(ph.id), pharmacy: ph } : null;
+  const u = await jetonVerifie(event);
+  if (!u) return { erreur: 401 };
+  if (u.isAdmin) return { admin: true, owner: "admin" };
+  const ph = await identifyPharmacy(event, b.cip, b.email, u);
+  return ph?.id ? { admin: false, owner: String(ph.id), pharmacy: ph } : { erreur: 403 };
 }
 
 // Contrôle du fichier reçu → { text | data_base64, mime } ou { error, status }
@@ -116,7 +115,8 @@ export const handler = async (event) => {
   try { b = JSON.parse(event.body || "{}") || {}; } catch { return json(cors, 400, { error: "Requête illisible" }); }
   try {
     const who = await whoIs(event, b);
-    if (!who) return json(cors, 403, { error: "Non autorisé" });
+    if (who.erreur === 401) return json(cors, 401, { error: "reconnexion", message: "Session expirée : reconnectez-vous avec le code reçu par e-mail, puis déposez à nouveau le fichier." });
+    if (who.erreur) return json(cors, 403, { error: "fiche", message: "Aucune fiche pharmacie n'est rattachée à ce compte : contactez Elixir Pharma." });
     if (b.action === "status") return await status(cors, who, b);
     if (b.action !== "upload") return json(cors, 400, { error: "Action inconnue" });
 

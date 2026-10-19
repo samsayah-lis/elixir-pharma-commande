@@ -1,5 +1,13 @@
 // ── ML Engine — Cross-sell, Re-order, Segmentation ──────────────────────
-import { verifyAdmin } from "./auth.js";
+// Correctif de sécurité du 19/10/2026 :
+//  • GET ?mode=reorder : jeton obligatoire. Pharmacie : habitudes de SON CIP (celui du jeton ; ?pharmacy_cip ignoré) ;
+//    admin (saisie pour une pharmacie) : ?pharmacy_cip=X. Sans jeton valide → 401 { error: "reconnexion" } ;
+//    compte sans CIP → 403 { error: "fiche" } ;
+//  • GET ?mode=segments (CIP, nom et chiffre d'affaires de toutes les pharmacies), ?mode=ruptures : admin seulement ;
+//  • GET ?cip=X (« commandent aussi », associations de produits sans pharmacie) : public, inchangé ;
+//  • POST { action: "compute" } : admin (inchangé).
+import { verifyAdmin, verifyTokenAsync } from "./auth.js";
+import { validCip } from "./_pharmacies.js";
 import { getCors } from "./cors.js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -278,11 +286,14 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
   const params = event.queryStringParameters || {};
+  const json = (code, body) => ({ statusCode: code, headers: { ...cors, "Cache-Control": "no-store" }, body: JSON.stringify(body) });
+  const limite = (n, defaut, max) => Math.min(max, Math.max(1, parseInt(n) || defaut));
 
   if (event.httpMethod === "POST") {
     const auth = await verifyAdmin(event);
     if (auth.error) return auth.error;
-    const body = JSON.parse(event.body || "{}");
+    let body;
+    try { body = JSON.parse(event.body || "{}") || {}; } catch { return json(400, { error: "JSON invalide" }); }
     if (body.action === "compute") {
       const [assoc, pats, rupt, seg] = await Promise.all([
         computeAssociations(), computePatterns(), computeRuptures(), computeSegments()
@@ -292,27 +303,40 @@ export const handler = async (event) => {
     return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "action inconnue" }) };
   }
 
-  // GET ruptures
-  if (params.mode === "ruptures") {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/ec_rupture_predictions?order=days_before_rupture.asc&limit=50`, { headers: H });
-    const data = await res.json();
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ predictions: Array.isArray(data) ? data : [] }) };
-  }
-
-  // GET segments
-  if (params.mode === "segments") {
+  // GET ruptures, segments : tableaux de bord de l'admin (données de toutes les pharmacies)
+  if (params.mode === "ruptures" || params.mode === "segments") {
+    const auth = await verifyAdmin(event);
+    if (auth.error) return { ...auth.error, headers: { ...auth.error.headers, "Cache-Control": "no-store" } };
+    if (params.mode === "ruptures") {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/ec_rupture_predictions?order=days_before_rupture.asc&limit=50`, { headers: H });
+      const data = await res.json();
+      return json(200, { predictions: Array.isArray(data) ? data : [] });
+    }
     const res = await fetch(`${SUPABASE_URL}/rest/v1/ec_pharmacy_segments?order=score.desc&limit=100`, { headers: H });
     const data = await res.json();
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ segments: Array.isArray(data) ? data : [] }) };
+    return json(200, { segments: Array.isArray(data) ? data : [] });
   }
 
-  if (params.mode === "reorder" && params.pharmacy_cip) {
-    const suggestions = await getReorder(params.pharmacy_cip, parseInt(params.limit) || 20);
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ suggestions }) };
+  // GET reorder : la pharmacie du jeton (admin : celle de ?pharmacy_cip)
+  if (params.mode === "reorder") {
+    const token = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
+    const user = token ? await verifyTokenAsync(token) : null;
+    if (!user) return json(401, { error: "reconnexion", message: "Session expirée : reconnectez-vous pour voir vos suggestions." });
+    let pharmacyCip;
+    if (user.isAdmin === true) {
+      pharmacyCip = String(params.pharmacy_cip || "").trim();
+      if (!validCip(pharmacyCip)) return json(400, { error: "pharmacy_cip requis" });
+    } else {
+      if (!validCip(user.cip)) return json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." });
+      pharmacyCip = String(user.cip).trim();
+    }
+    const suggestions = await getReorder(pharmacyCip, limite(params.limit, 20, 50));
+    return json(200, { suggestions });
   }
   if (params.cip) {
-    const recommendations = await getRecs(params.cip, parseInt(params.limit) || 5);
+    if (!/^[0-9A-Za-z-]{1,20}$/.test(String(params.cip))) return json(400, { error: "cip invalide" });
+    const recommendations = await getRecs(params.cip, limite(params.limit, 5, 20));
     return { statusCode: 200, headers: cors, body: JSON.stringify({ recommendations }) };
   }
-  return { statusCode: 200, headers: cors, body: JSON.stringify({ status: "ok", usage: "?cip=XXX or ?pharmacy_cip=XXX&mode=reorder" }) };
+  return { statusCode: 200, headers: cors, body: JSON.stringify({ status: "ok", usage: "?cip=XXX or ?mode=reorder (jeton)" }) };
 };

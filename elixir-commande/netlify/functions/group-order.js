@@ -1,8 +1,17 @@
 import { getCors } from "./cors.js";
+import { verifyTokenAsync } from "./auth.js";
+import { validCip } from "./_pharmacies.js";
+import crypto from "node:crypto";
 // Commandes groupées U-Labs
-// GET  /group-order?fournisseur=ulabs              → totaux par produit
-// POST /group-order  { fournisseur, cip, pharmacy_cip, pharmacy_name, qty } → upsert
-// DELETE /group-order?fournisseur=ulabs&pharmacy_cip=XXX → vider panier pharmacie
+// Correctif de sécurité du 19/10/2026 : jeton obligatoire (avant, n'importe qui lisait le CIP et le nom de toutes les
+// pharmacies participantes, et modifiait ou vidait le panier groupé de n'importe laquelle).
+// GET  /group-order?fournisseur=ulabs              → admin : toutes les lignes ; pharmacie : ses lignes, et celles des
+//                                                    autres pharmacies sans leur identité (CIP remplacé par un repère
+//                                                    anonyme stable, ni nom ni date) : totaux et nombre de participantes
+// POST /group-order  { cip, qty }                 → pharmacie : sa ligne (CIP du jeton, nom de sa fiche) ;
+//                                                    admin (saisie pour une pharmacie) : + pharmacy_cip, pharmacy_name
+// DELETE /group-order?fournisseur=ulabs            → pharmacie : vide son panier ; admin : + &pharmacy_cip=XXX
+// Sans jeton valide → 401 { error: "reconnexion" } ; compte sans CIP → 403 { error: "fiche" }.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = {
@@ -10,57 +19,87 @@ const H = {
   "Authorization": `Bearer ${SUPABASE_KEY}`,
   "Content-Type": "application/json",
 };
+// Repère anonyme d'une autre pharmacie : signé avec un secret du serveur (ne permet pas de retrouver le CIP)
+const SECRET = process.env.GP_KEY_SECRET || process.env.CRON_SECRET || process.env.SUPABASE_KEY || "gp";
+const anonyme = (fournisseur, cip) => `anonyme-${crypto.createHmac("sha256", SECRET).update(`group-order:${fournisseur}:${cip}`).digest("hex").slice(0, 12)}`;
+
+// Appelant → { admin: true } | { admin: false, cip, email } | { erreur: réponse 401/403 }
+async function appelant(event, json) {
+  const token = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
+  const user = token ? await verifyTokenAsync(token) : null;
+  if (!user) return { erreur: json(401, { error: "reconnexion", message: "Session expirée : reconnectez-vous avec le code reçu par e-mail." }) };
+  if (user.isAdmin === true) return { admin: true };
+  if (!validCip(user.cip)) return { erreur: json(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." }) };
+  return { admin: false, cip: String(user.cip).trim(), email: String(user.email || "").toLowerCase() };
+}
+
 export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
+  const json = (code, body) => ({ statusCode: code, headers: { ...cors, "Cache-Control": "no-store" }, body: JSON.stringify(body) });
 
   const params = event.queryStringParameters || {};
-  const fournisseur = params.fournisseur || "ulabs";
+  const fournisseur = String(params.fournisseur || "ulabs");
+  if (!/^[\w-]{1,40}$/.test(fournisseur)) return json(400, { error: "fournisseur invalide" });
+  if (!["GET", "POST", "DELETE"].includes(event.httpMethod)) return { statusCode: 405, headers: cors, body: "Method not allowed" };
 
-  // ── GET : récupère toutes les lignes du groupement ──
+  const qui = await appelant(event, json);
+  if (qui.erreur) return qui.erreur;
+
+  // ── GET : lignes du groupement (identité des autres pharmacies masquée) ──
   if (event.httpMethod === "GET") {
     const res = await fetch(
       `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&select=*`,
       { headers: H }
     );
-    const rows = await res.json();
-    return { statusCode: 200, headers: cors, body: JSON.stringify(rows) };
+    const rows = await res.json().catch(() => null);
+    if (!res.ok || !Array.isArray(rows)) return json(500, { error: "lecture du groupement impossible" });
+    if (qui.admin) return json(200, rows);
+    return json(200, rows.map(r => String(r.pharmacy_cip) === qui.cip ? r
+      : { fournisseur: r.fournisseur, cip: r.cip, qty: r.qty, pharmacy_cip: anonyme(fournisseur, r.pharmacy_cip) }));
   }
 
   // ── POST : upsert une ligne (pharmacy_cip + cip + fournisseur = clé unique) ──
   if (event.httpMethod === "POST") {
-    const body = JSON.parse(event.body || "{}");
-    const { cip, pharmacy_cip, pharmacy_name, qty } = body;
-    if (!cip || !pharmacy_cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip et pharmacy_cip requis" }) };
+    let body;
+    try { body = JSON.parse(event.body || "{}") || {}; }
+    catch { return json(400, { error: "JSON invalide" }); }
+    const fr = fournisseur;   // comme avant : celui de l'adresse (?fournisseur=, « ulabs » par défaut), pas celui du corps
+    const cip = String(body.cip || "").trim();
+    const pharmacyCip = qui.admin ? String(body.pharmacy_cip || "").trim() : qui.cip;
+    if (!cip || !pharmacyCip) return json(400, { error: qui.admin ? "cip et pharmacy_cip requis" : "cip requis" });
+    const qty = Number(body.qty);
+    if (!Number.isInteger(qty) || qty < 0 || qty > 100000) return json(400, { error: "quantité invalide" });
+    // nom : celui de la fiche de la pharmacie connectée (celui envoyé par l'écran seulement s'il manque)
+    let pharmacyName = body.pharmacy_name || null;
+    if (!qui.admin) {
+      const pr = await fetch(`${SUPABASE_URL}/rest/v1/elixir_pharmacies?email=eq.${encodeURIComponent(qui.email)}&select=name&limit=1`, { headers: H }).catch(() => null);
+      const [p] = pr?.ok ? await pr.json().catch(() => []) : [];
+      pharmacyName = p?.name || (pharmacyName ? String(pharmacyName).slice(0, 200) : null);
+    }
 
-    const now = new Date().toISOString();
-
-    if (qty === 0) {
+    const res = qty === 0
       // Supprimer la ligne
-      await fetch(
-        `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&cip=eq.${encodeURIComponent(cip)}&pharmacy_cip=eq.${encodeURIComponent(pharmacy_cip)}`,
+      ? await fetch(
+        `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fr)}&cip=eq.${encodeURIComponent(cip)}&pharmacy_cip=eq.${encodeURIComponent(pharmacyCip)}`,
         { method: "DELETE", headers: H }
-      );
-    } else {
-      await fetch(`${SUPABASE_URL}/rest/v1/elixir_group_orders`, {
+      )
+      : await fetch(`${SUPABASE_URL}/rest/v1/elixir_group_orders`, {
         method: "POST",
         headers: { ...H, "Prefer": "resolution=merge-duplicates,return=minimal" },
-        body: JSON.stringify({ fournisseur, cip, pharmacy_cip, pharmacy_name, qty, updated_at: now })
+        body: JSON.stringify({ fournisseur: fr, cip, pharmacy_cip: pharmacyCip, pharmacy_name: pharmacyName, qty, updated_at: new Date().toISOString() })
       });
-    }
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
+    if (!res.ok) return json(500, { error: await res.text() });
+    return json(200, { success: true });
   }
 
   // ── DELETE : vider tout le panier d'une pharmacie ──
-  if (event.httpMethod === "DELETE") {
-    const { pharmacy_cip } = params;
-    if (!pharmacy_cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "pharmacy_cip requis" }) };
-    await fetch(
-      `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&pharmacy_cip=eq.${encodeURIComponent(pharmacy_cip)}`,
-      { method: "DELETE", headers: H }
-    );
-    return { statusCode: 200, headers: cors, body: JSON.stringify({ success: true }) };
-  }
-
-  return { statusCode: 405, headers: cors, body: "Method not allowed" };
+  const pharmacyCip = qui.admin ? String(params.pharmacy_cip || "").trim() : qui.cip;
+  if (!pharmacyCip) return json(400, { error: "pharmacy_cip requis" });
+  const res = await fetch(
+    `${SUPABASE_URL}/rest/v1/elixir_group_orders?fournisseur=eq.${encodeURIComponent(fournisseur)}&pharmacy_cip=eq.${encodeURIComponent(pharmacyCip)}`,
+    { method: "DELETE", headers: H }
+  );
+  if (!res.ok) return json(500, { error: await res.text() });
+  return json(200, { success: true });
 };

@@ -88,7 +88,9 @@ export function CrossSellBanner({ cartCips = [], onAdd }) {
 }
 
 // ── RE-ORDER : "Réapprovisionnement suggéré" à la connexion ────────────
-export function ReorderSuggestion({ pharmacyCip, onApply }) {
+// fetchAuth : appel avec le jeton (appelAuthentifie d'App) — correctif de sécurité du 19/10/2026 : les habitudes d'achat
+// ne sont plus servies sans jeton ; le serveur prend le CIP du jeton (?pharmacy_cip ne sert qu'à l'admin en saisie)
+export function ReorderSuggestion({ pharmacyCip, onApply, fetchAuth = fetch }) {
   const [suggestions, setSuggestions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [visible, setVisible] = useState(true);
@@ -99,15 +101,15 @@ export function ReorderSuggestion({ pharmacyCip, onApply }) {
     (async () => {
       setLoading(true);
       try {
-        const res = await fetch(`/.netlify/functions/ml-recommend?pharmacy_cip=${pharmacyCip}&mode=reorder&limit=15`);
-        const data = await res.json();
+        const res = await fetchAuth(`/.netlify/functions/ml-recommend?pharmacy_cip=${encodeURIComponent(pharmacyCip)}&mode=reorder&limit=15`);
+        const data = res.ok ? await res.json() : {};   // session expirée : pas de suggestions (rien d'affiché)
         if (!cancelled && Array.isArray(data.suggestions))
           setSuggestions(data.suggestions.filter(s => s.should_reorder));
       } catch (e) { console.warn("[reorder]", e.message); }
       finally { if (!cancelled) setLoading(false); }
     })();
     return () => { cancelled = true; };
-  }, [pharmacyCip]);
+  }, [pharmacyCip, fetchAuth]);
 
   if (!visible || (suggestions.length === 0 && !loading)) return null;
 

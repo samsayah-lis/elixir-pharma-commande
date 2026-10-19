@@ -24,7 +24,8 @@ const DEMANDES = [
   "odoo-catalog?count=1",
   "odoo-catalog?expiry_months=4",
   "restock-alert?action=expiry_discounts",
-  "group-order?fournisseur=ulabs",
+  // group-order n'est plus capturé : il exige un jeton depuis le second correctif du 19/10/2026 ; la réponse
+  // calculée du banc (plugin.mjs, « group-order ») prend le relais
   ...RECHERCHES.map(q => `odoo-catalog?q=${encodeURIComponent(q)}&limit=200`),
 ];
 

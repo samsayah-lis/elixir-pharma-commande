@@ -55,7 +55,45 @@ const DOSSIERS = ["netlify/functions"];
 // { zone: "<début du nom de la zone>", avant: "…", apres: "…", lot: "E2", motif: "…" }
 // Écarts validés par rapport à master. Vide depuis la mise en ligne de la refonte (16/10/2026) : master contient
 // désormais les lots 1, E2 et 8 ; y inscrire un nouvel écart volontaire, avec sa zone, son motif, son avant et son après.
-const ECARTS_AUTORISES = [];
+// Seul écart en cours : le second correctif de sécurité du 19/10/2026 (ci-dessous).
+const ECARTS_AUTORISES = [
+  // Correctif de sécurité du 19/10/2026 (order-save, quota-status et group-order exigent un jeton) : envoi de la commande
+  // et contingentement passent par appelAuthentifie ; la session est vérifiée avant tout envoi. À retirer dès que master les contient.
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "sécurité 19/10/2026", motif: "quota-status exige un jeton : appel par appelAuthentifie (jeton pharmacie, ou admin en saisie, renouvelé s'il a expiré)",
+    avant: "      const t = actingFor ? localStorage.getItem(\"admin_token\") : localStorage.getItem(\"pharmacy_token\");\n      const r = await fetch(\"/.netlify/functions/quota-status\", { method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\", ...(t ? { Authorization: `Bearer ${t}` } : {}) },",
+    apres: "      // jeton pharmacie (saisie Elixir : jeton admin), renouvelé s'il a expiré (quota-status exige un jeton)\n      const r = await appelAuthentifie(\"/.netlify/functions/quota-status\", { method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\" }," },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "sécurité 19/10/2026", motif: "dépendance de loadQuota : appelAuthentifie",
+    avant: "  }, [pharmacyEmail, pharmacyCip, actingFor]);",
+    apres: "  }, [pharmacyEmail, pharmacyCip, actingFor, appelAuthentifie]);" },
+  { zone: "envoi de la commande", lot: "sécurité 19/10/2026", motif: "session vérifiée AVANT tout envoi (sessionPourEnvoi : order-save { verifier }), pharmacie comprise ; sinon rien ne part et le panier reste intact",
+    avant: "    // Saisie Elixir : la session admin doit être valide AVANT tout envoi (sinon commande sans mention ni trace admin)\n    if (actingFor) {\n      const ok = await fetch(\"/.netlify/functions/admin-pharmacy-find?q=\", { headers: { Authorization: `Bearer ${localStorage.getItem(\"admin_token\") || \"\"}` } })\n        .then(r => r.ok).catch(() => false);\n      if (!ok) { setSendStatus(null); flash(\"⚠ Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande\"); return false; }\n    }",
+    apres: "    // Session valide AVANT tout envoi (e-mail, enregistrement, PharmaML) : jeton pharmacie renouvelé si besoin, sinon\n    // reconnexion par code, panier intact ; saisie Elixir : session admin (sinon commande sans mention ni trace admin)\n    if (!(await sessionPourEnvoi())) { setSendStatus(null); return false; }" },
+  { zone: "envoi de la commande", lot: "sécurité 19/10/2026", motif: "order-save exige un jeton : lignes « justificatif » enregistrées par appelAuthentifie",
+    avant: "      const atok = actingFor ? localStorage.getItem(\"admin_token\") : null;\n      const saveOrder = (o) => fetch(\"/.netlify/functions/order-save\", {\n        method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },",
+    apres: "      const saveOrder = (o) => appelAuthentifie(\"/.netlify/functions/order-save\", {   // jeton pharmacie, ou admin en saisie\n        method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\" }," },
+  { zone: "envoi de la commande", lot: "sécurité 19/10/2026", motif: "order-save exige un jeton : commande normale enregistrée par appelAuthentifie",
+    avant: "        const atok = actingFor ? localStorage.getItem(\"admin_token\") : null;\n        const saveRes = await fetch(\"/.netlify/functions/order-save\", {\n          method: \"POST\",\n          headers: { \"Content-Type\": \"application/json\", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },",
+    apres: "        const saveRes = await appelAuthentifie(\"/.netlify/functions/order-save\", {   // jeton pharmacie, ou admin en saisie\n          method: \"POST\",\n          headers: { \"Content-Type\": \"application/json\" }," },
+  { zone: "confirmation de la commande groupée U-Labs", lot: "sécurité 19/10/2026", motif: "order-save exige un jeton : commande U-Labs enregistrée par appelAuthentifie",
+    avant: "                const atok = actingFor ? localStorage.getItem(\"admin_token\") : null;   // saisie Elixir pour une pharmacie\n                await fetch(\"/.netlify/functions/order-save\", {\n                  method: \"POST\", headers: { \"Content-Type\": \"application/json\", ...(atok ? { Authorization: `Bearer ${atok}` } : {}) },",
+    apres: "                // jeton pharmacie, ou admin en saisie Elixir pour une pharmacie ; confirmée seulement si enregistrée\n                const res = await appelAuthentifie(\"/.netlify/functions/order-save\", {\n                  method: \"POST\", headers: { \"Content-Type\": \"application/json\" }," },
+  { zone: "confirmation de la commande groupée U-Labs", lot: "sécurité 19/10/2026", motif: "« Commande confirmée » seulement si le serveur l'a enregistrée ; sinon message (session expirée, compte sans pharmacie, erreur) et reconnexion par code, quantités gardées",
+    avant: "                setUlabsConfirmed(true);\n              } catch(e) { console.error(e); }",
+    apres: "                if (res.ok) setUlabsConfirmed(true);\n                else {\n                  if (res.status === 401 && !actingFor) setEnvoiBloque(\"reconnexion\");\n                  setUlabsError(res.status === 401 ? `⚠️ Commande non enregistrée : session expirée\\n${actingFor ? MESSAGE_ENVOI_BLOQUE.admin : \"Reconnectez-vous avec le code reçu par e-mail, puis confirmez à nouveau : vos quantités sont conservées.\"}`\n                    : res.status === 403 ? `⚠️ Commande non enregistrée\\n${actingFor ? MESSAGE_ENVOI_BLOQUE.admin : MESSAGE_ENVOI_BLOQUE.fiche}`\n                    : \"⚠️ Commande non enregistrée\\nRéessayez dans un instant : vos quantités sont conservées.\");\n                }\n              } catch(e) { console.error(e); setUlabsError(\"⚠️ Commande non enregistrée\\nRéessayez dans un instant : vos quantités sont conservées.\"); }" },
+  // relecture du second correctif : délais compatibles Safari < 16, e-mail de commande avec le jeton, reconnexion sans fenêtre promo
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "sécurité 19/10/2026 (relecture)", motif: "délai sans AbortSignal.timeout (Safari < 16) : l'appel part sans délai au lieu d'échouer",
+    avant: "}), signal: AbortSignal.timeout(12000) });",
+    apres: "}), ...delai(12000) });" },
+  { zone: "identification de la pharmacie", lot: "sécurité 19/10/2026 (relecture)", motif: "reconnexion demandée depuis la session : retour au panier sans la fenêtre « Offres du moment »",
+    avant: "      setOnboardingDone(true);\n      if (promoSections.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);",
+    apres: "      setOnboardingDone(true);\n      // reconnexion demandée depuis la session (envoi du panier…) : retour direct au panier, sans « Offres du moment »\n      if (!reconnexion && promoSections.some(p => p.active) && !menuViaLien.current) setPromoPopupOpen(true);" },
+  { zone: "envoi de la commande", lot: "sécurité 19/10/2026 (relecture)", motif: "e-mail de commande envoyé avec le jeton (send-email : adresse vérifiée, destinataire fixé) ; session refusée → rien ne part, panier intact",
+    avant: "    try {\n      await fetch(\"/.netlify/functions/send-email\", {\n        method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\" },\n        body: JSON.stringify({ template_params: templateParams }),\n      });\n      setSendStatus(\"success\");",
+    apres: "    try {\n      // e-mail de commande avec le jeton (send-email : adresse de la pharmacie vérifiée ; sans jeton, « non vérifiée ») ;\n      // session refusée (expirée juste après le contrôle, non renouvelable) : rien n'est parti, panier intact\n      const mail = await appelAuthentifie(\"/.netlify/functions/send-email\", {\n        method: \"POST\",\n        headers: { \"Content-Type\": \"application/json\" },\n        body: JSON.stringify({ template_params: templateParams }),\n      });\n      if (mail.status === 401) {\n        const motif = actingFor ? \"admin\" : \"reconnexion\";\n        setSendStatus(null); setEnvoiBloque(motif); flash(`⚠ ${MESSAGE_ENVOI_BLOQUE[motif]}`, 8000);\n        return false;\n      }\n      setSendStatus(\"success\");" },
+  { zone: "envoi de la commande", lot: "sécurité 19/10/2026 (relecture)", motif: "délai sans AbortSignal.timeout (Safari < 16) : le relais PharmaML part sans délai au lieu de ne jamais partir",
+    avant: "              signal: AbortSignal.timeout(20000),",
+    apres: "              ...delai(20000)," },
+];
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
 // pharmacy-lookup exigent un jeton ; le site renouvelle le jeton pharmacie expiré : une lecture de plus).
@@ -63,10 +101,26 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/order-list.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
   "netlify/functions/restock-alert.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
   "netlify/functions/pharmacy-lookup.js": "correctif de sécurité du 19/10/2026 (limite de débit, fermé en mode code)",
+  // second correctif du 19/10/2026 : plus aucune commande, commande groupée ni habitude d'achat sans jeton
+  "netlify/functions/_gp.js": "second correctif de sécurité du 19/10/2026 (identité des commandes groupées : jeton obligatoire, plus de repli sur l'e-mail du corps)",
+  "netlify/functions/gp-pharmacy.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire : 401 reconnexion)",
+  "netlify/functions/gp-upload.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire : analyses LGO et quota au nom du jeton)",
+  "netlify/functions/quota-status.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, adresses comparées en eq au lieu de ilike)",
+  "netlify/functions/order-save.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, identité du jeton, contrôle { verifier } avant envoi, quarantaine bornée des pages d'avant le correctif, entered_by pour la saisie Elixir seulement, lignes « justificatif » contrôlées)",
+  "netlify/functions/ml-recommend.js": "second correctif de sécurité du 19/10/2026 (suggestions au CIP du jeton, segments et ruptures réservés à l'admin)",
+  "netlify/functions/group-order.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, autres pharmacies anonymes)",
+  "netlify/functions/pharmacy-otp-send.js": "second correctif de sécurité du 19/10/2026 (limite durable par connexion et par adresse × connexion, IPv6 par /64 ; code non envoyé non compté)",
+  "netlify/functions/pharmacy-otp-verify.js": "second correctif de sécurité du 19/10/2026 (limite durable des codes erronés par adresse et par connexion)",
+  "netlify/functions/send-email.js": "second correctif de sécurité du 19/10/2026 (destinataire fixé par le serveur, adresse vérifiée par le jeton, « identité non vérifiée » sans jeton)",
+  "netlify/functions/rate-limit.js": "second correctif de sécurité du 19/10/2026 (limiteDurable : limite partagée dans kv_store, liberer ; IPv6 compté par préfixe /64)",
 };
-// clé → écart de nombre d'appels admis (appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie)
-const CLES_AUTORISEES = { 'localStorage.getItem("pharmacy_refresh_token"': 1, 'localStorage.getItem("admin_refresh_token"': 1,
-  'localStorage.setItem("admin_token", d.token': 1, 'localStorage.setItem("admin_refresh_token", d.refresh_token': 1 };
+// clé → écart de nombre d'appels admis (appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie ;
+// second correctif : contingentement, envoi de la commande, commande U-Labs, accès et écran des commandes groupées lisent
+// désormais le jeton par appelAuthentifie, plus directement — 5 lectures du jeton admin et 3 du jeton pharmacie en moins ;
+// une lecture de plus de pharmacy_token et de pharmacy_refresh_token : session sans aucun jeton, annoncée dans le panier)
+const CLES_AUTORISEES = { 'localStorage.getItem("pharmacy_refresh_token"': 2, 'localStorage.getItem("admin_refresh_token"': 1,
+  'localStorage.setItem("admin_token", d.token': 1, 'localStorage.setItem("admin_refresh_token", d.refresh_token': 1,
+  'localStorage.getItem("admin_token"': -5, 'localStorage.getItem("pharmacy_token"': -2 };
 
 // ── lecture ──
 const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });

@@ -61,24 +61,26 @@ export async function productInfo(cips) {
 }
 
 // ── Pharmacie : identité ────────────────────────────────────────────────
-// Jeton de connexion (e-mail vérifié) si présent, sinon e-mail de la session du site,
-// qui doit être celui d'un compte pharmacie (elixir_pharmacies ne contient que des
-// clients Elixir, voir pharmacy-sync-now). Renvoie { id, cip, name, email } ou null.
-export async function identifyPharmacy(event, cip, email) {
-  const auth = event.headers?.authorization || event.headers?.Authorization || "";
-  const tok = auth.replace(/^Bearer\s+/i, "");
-  let mail = "";
-  if (tok) {
-    const u = await verifyTokenAsync(tok);
-    if (u && !u.isAdmin && u.email) mail = u.email.toLowerCase();
-  }
-  if (!mail) mail = String(email || "").trim().toLowerCase();
+// Correctif de sécurité du 19/10/2026 : jeton de connexion obligatoire (l'e-mail envoyé par le navigateur ne
+// désigne plus aucune pharmacie). Pharmacie : compte de l'e-mail VÉRIFIÉ du jeton, le CIP de la session est ignoré ;
+// admin (saisie pour une pharmacie) : compte de l'adresse envoyée par l'écran (elixir_pharmacies ne contient que
+// des clients Elixir, voir pharmacy-sync-now). Appelant du jeton → { id, email, isAdmin, cip } ou null.
+export async function jetonVerifie(event) {
+  const tok = (event.headers?.authorization || event.headers?.Authorization || "").replace(/^Bearer\s+/i, "");
+  return tok ? await verifyTokenAsync(tok).catch(() => null) : null;
+}
+// user : appelant déjà vérifié par jetonVerifie (sinon le jeton de la requête est vérifié ici).
+// Renvoie { id, cip, name, email } ou null (sans jeton valide, ou compte sans fiche Odoo).
+export async function identifyPharmacy(event, cip, email, user) {
+  const u = user === undefined ? await jetonVerifie(event) : user;
+  if (!u) return null;
+  const mail = String((u.isAdmin ? email : u.email) || "").trim().toLowerCase();
   if (!mail.includes("@")) return null;
   const [p] = await sb(`elixir_pharmacies?email=${eq(mail)}&select=cip,name,email,odoo_id&limit=1`);
   if (!p || !p.odoo_id) return null;
-  // cohérence avec la session : un CIP réel fourni doit être celui du compte
+  // saisie admin : un CIP réel fourni par l'écran doit être celui du compte choisi
   const c = String(cip || "").trim();
-  if (c && c !== "0" && p.cip && p.cip !== "0" && c !== p.cip) return null;
+  if (u.isAdmin && c && c !== "0" && p.cip && p.cip !== "0" && c !== p.cip) return null;
   return { id: String(p.odoo_id), cip: p.cip || "", name: p.name, email: mail };
 }
 

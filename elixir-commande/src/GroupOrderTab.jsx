@@ -3,7 +3,9 @@ import { useState, useEffect, useCallback } from "react";
 const fmt = (n) => n != null ? Number(n).toFixed(2).replace(".", ",") + " €" : "–";
 const MARQUES = ["Tous", "Fluocaril", "Parogencyl", "Regenerate"];
 
-export default function GroupOrderTab({ products, pharmacyCip, pharmacyName, accent = "#059669", color = "#0d4f3c" }) {
+// Composant non utilisé (l'onglet U-Labs est rendu par App.jsx). fetchAuth : appel avec jeton (appelAuthentifie d'App) —
+// correctif de sécurité du 19/10/2026 : group-order exige un jeton et prend le CIP du jeton pour une pharmacie
+export default function GroupOrderTab({ products, pharmacyCip, pharmacyName, accent = "#059669", color = "#0d4f3c", fetchAuth = fetch }) {
   const [groupOrders, setGroupOrders] = useState([]); // toutes les lignes de la table
   const [myQty, setMyQty] = useState({});             // cip → qty (ma pharmacie)
   const [saving, setSaving] = useState({});
@@ -17,16 +19,16 @@ export default function GroupOrderTab({ products, pharmacyCip, pharmacyName, acc
   const fetchOrders = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch("/.netlify/functions/group-order?fournisseur=ulabs");
-      const rows = await res.json();
+      const res = await fetchAuth("/.netlify/functions/group-order?fournisseur=ulabs");
+      const rows = res.ok ? await res.json() : [];
       setGroupOrders(Array.isArray(rows) ? rows : []);
       // Pré-remplir mes quantités
       const mine = {};
-      rows.filter(r => r.pharmacy_cip === pharmacyCip).forEach(r => { mine[r.cip] = r.qty; });
+      (Array.isArray(rows) ? rows : []).filter(r => r.pharmacy_cip === pharmacyCip).forEach(r => { mine[r.cip] = r.qty; });
       setMyQty(mine);
     } catch(e) { console.error(e); }
     setLoading(false);
-  }, [pharmacyCip]);
+  }, [pharmacyCip, fetchAuth]);
 
   useEffect(() => { fetchOrders(); }, [fetchOrders]);
 
@@ -46,15 +48,15 @@ export default function GroupOrderTab({ products, pharmacyCip, pharmacyName, acc
   const updateQty = async (cip, qty) => {
     setMyQty(q => ({ ...q, [cip]: qty }));
     setSaving(s => ({ ...s, [cip]: true }));
-    await fetch("/.netlify/functions/group-order", {
+    await fetchAuth("/.netlify/functions/group-order", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fournisseur: "ulabs", cip, pharmacy_cip: pharmacyCip, pharmacy_name: pharmacyName, qty })
     });
     setSaving(s => ({ ...s, [cip]: false }));
     // Rafraîchir les totaux
-    const res = await fetch("/.netlify/functions/group-order?fournisseur=ulabs");
-    const rows = await res.json();
+    const res = await fetchAuth("/.netlify/functions/group-order?fournisseur=ulabs");
+    const rows = res.ok ? await res.json() : [];
     setGroupOrders(Array.isArray(rows) ? rows : []);
   };
 
