@@ -331,8 +331,8 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // pèsent plusieurs octets), polices exclues. Depuis que l'admin se charge à la demande (labo-otc, 16/10/2026), le
 // bundle des pharmacies pèse ~895 000 octets : budget resserré à 940 000 pour qu'il reste un garde-fou.
 // Part de l'Assistant Elixir dans ce bundle (bouton, état, renouvellement des jetons, entrées d'App et de Mes commandes ;
-// groupe « AIDE » et panneau chargés à la demande) : ≈ 3,6 Ko mesurés le 19/10/2026, pour un critère de 3 Ko au lot 4
-// (à relever à 4 Ko avec l'accord de la cliente).
+// groupe « AIDE » et panneau chargés à la demande) : ≈ 3,6 Ko mesurés le 19/10/2026 ; critère relevé de 3 à 4 Ko avec
+// l'accord de Zineb (19/10/2026).
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 940_000;
