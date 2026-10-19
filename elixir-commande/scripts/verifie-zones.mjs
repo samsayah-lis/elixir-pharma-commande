@@ -56,6 +56,15 @@ const DOSSIERS = ["netlify/functions"];
 // Écarts validés par rapport à master. Vide depuis la mise en ligne de la refonte (16/10/2026) : master contient
 // désormais les lots 1, E2 et 8 ; y inscrire un nouvel écart volontaire, avec sa zone, son motif, son avant et son après.
 const ECARTS_AUTORISES = [];
+// Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
+// dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
+// pharmacy-lookup exigent un jeton ; le site renouvelle le jeton pharmacie expiré : une lecture de plus).
+const FICHIERS_AUTORISES = {
+  "netlify/functions/order-list.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
+  "netlify/functions/restock-alert.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
+  "netlify/functions/pharmacy-lookup.js": "correctif de sécurité du 19/10/2026 (limite de débit, fermé en mode code)",
+};
+const CLES_AUTORISEES = { 'localStorage.getItem("pharmacy_refresh_token"': 1 };   // clé → écart de nombre d'appels admis
 
 // ── lecture ──
 const git = (...a) => execFileSync("git", a, { cwd: APP, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
@@ -134,6 +143,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null) { ko(`${chemin} : ajouté`); return false; }
   if (b == null) { ko(`${chemin} : supprimé`); return false; }
+  if (a !== b && FICHIERS_AUTORISES[chemin]) { console.log(`  ~ ${chemin} : modifié (autorisé : ${FICHIERS_AUTORISES[chemin]})`); return true; }
   if (a !== b) { const d = premiereDifference(a, b); ko(`${chemin} : modifié, ligne ${d.i + 1}`); return false; }
   if (!silencieux) ok(chemin);
   return true;
@@ -156,7 +166,11 @@ if (JSON.stringify(appelsRef) === JSON.stringify(appelsCours)) ok(`${appelsCours
 else {
   const compte = (l) => l.reduce((m, x) => m.set(x, (m.get(x) || 0) + 1), new Map());
   const cr = compte(appelsRef), cc = compte(appelsCours);
-  for (const k of new Set([...cr.keys(), ...cc.keys()])) if ((cr.get(k) || 0) !== (cc.get(k) || 0)) ko(`${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0}`);
+  for (const k of new Set([...cr.keys(), ...cc.keys()])) {
+    const ecart = (cc.get(k) || 0) - (cr.get(k) || 0);
+    if (ecart && ecart === CLES_AUTORISEES[k]) console.log(`  ~ ${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0} (autorisé)`);
+    else if (ecart) ko(`${k}) : ${cr.get(k) || 0} → ${cc.get(k) || 0}`);
+  }
 }
 
 // 4. tableaux d'ordinateur : autant d'en-têtes que de cellules par ligne (revue, docs/refonte-charte.md § 20 : la

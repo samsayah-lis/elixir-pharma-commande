@@ -25,7 +25,6 @@ const DEMANDES = [
   "odoo-catalog?expiry_months=4",
   "restock-alert?action=expiry_discounts",
   "group-order?fournisseur=ulabs",
-  "order-list?source=ulabs",
   ...RECHERCHES.map(q => `odoo-catalog?q=${encodeURIComponent(q)}&limit=200`),
 ];
 
@@ -56,9 +55,8 @@ async function main() {
       index.entrees[chemin] = { fichier, statut, octets: JSON.stringify(propre).length, capture: new Date().toISOString() };
       console.log(`${statut === 200 ? "✓" : "⚠"} ${statut} ${chemin.slice(0, 90)} → ${fichier} (${ms} ms)`);
       if (statut !== 200) echecs++;
-      // campagnes actives : leurs commandes validées (CIP et quantités agrégés, sans données de pharmacie)
-      if (chemin === "campaign-get" && Array.isArray(corps))
-        for (const c of corps) if (c?.active && c.id && c.id !== "ulabs") demandes.push(`order-list?source=${encodeURIComponent(c.id)}`);
+      // order-list?source=<campagne> n'est plus capturé : il exige un jeton depuis le correctif du 19/10/2026 ;
+      // la réponse calculée du banc (plugin.mjs, « order-list ») prend le relais
     } catch (e) {
       echecs++;
       console.log(`✗ ${chemin.slice(0, 90)} : ${e.message}`);

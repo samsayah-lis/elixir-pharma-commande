@@ -378,19 +378,31 @@ export default function App() {
   const [showMyOrders, setShowMyOrders] = useState(false);
   const [myOrders, setMyOrders] = useState([]);
   const [myOrdersLoading, setMyOrdersLoading] = useState(false);
+  const [myOrdersErreur, setMyOrdersErreur] = useState(null);   // null | "reconnexion" | "fiche" | "lecture"
+
+  // Appel authentifié (correctif de sécurité du 19/10/2026 : order-list et restock-alert exigent un jeton) :
+  // admin_token en saisie pour une pharmacie, sinon jeton pharmacie, renouvelé une fois s'il a expiré
+  const appelAuthentifie = useCallback(async (url, options = {}) => {
+    const envoi = (t) => fetch(url, { ...options, headers: { ...(options.headers || {}), ...(t ? { Authorization: `Bearer ${t}` } : {}) } });
+    if (actingFor) return envoi(localStorage.getItem("admin_token"));
+    let res = await envoi(localStorage.getItem("pharmacy_token"));
+    if (res.status === 401 && localStorage.getItem("pharmacy_refresh_token")) res = await envoi(await freshPharmacyToken());
+    return res;
+  }, [actingFor]);
 
   const fetchMyOrders = useCallback(async () => {
     if (!pharmacyCip || pharmacyCip === "0") return;
     setMyOrdersLoading(true);
     try {
-      const ptok = actingFor ? localStorage.getItem("admin_token") : localStorage.getItem("pharmacy_token");
-      const res = await fetch(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`,
-        ptok ? { headers: { Authorization: `Bearer ${ptok}` } } : {});
-      const data = await res.json();
-      setMyOrders(data.orders || []);
-    } catch { setMyOrders([]); }
+      setMyOrdersErreur(null);
+      // ?pharmacy_cip ne sert qu'à l'admin : pour une pharmacie, le serveur prend le CIP de son jeton
+      const res = await appelAuthentifie(`/.netlify/functions/order-list?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setMyOrders(data.orders || []);
+      else { setMyOrders([]); setMyOrdersErreur(res.status === 401 ? "reconnexion" : res.status === 403 ? "fiche" : "lecture"); }
+    } catch { setMyOrders([]); setMyOrdersErreur("lecture"); }
     setMyOrdersLoading(false);
-  }, [pharmacyCip, actingFor]);
+  }, [pharmacyCip, appelAuthentifie]);
   useEffect(() => {
     setReorderSuggestions([]); setShowReorder(false);   // autre pharmacie (saisie Elixir) : pas les suggestions de la précédente
     setUlabsConfirmed(false); setUlabsError(null);
@@ -527,7 +539,8 @@ export default function App() {
 
   // ── Charger la config partagée depuis Supabase (source de vérité) ────
   const [configLoaded, setConfigLoaded] = useState(false);
-  const [authMode, setAuthMode] = useState("legacy"); // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode
+  // Connexion par code par défaut : l'ancien mode (sans code) ne sert que si config-get le déclare explicitement
+  const [authMode, setAuthMode] = useState("otp"); // 'legacy' | 'otp' — flag serveur pharmacy_auth_mode
   useEffect(() => {
     (async () => {
       try {
@@ -587,10 +600,10 @@ export default function App() {
     if (activeTab === "ulabs") fetchGroupOrders();
     const _camp = getCampaign(activeTab);
     if (_camp && pharmacyCip) {
-      fetch(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
-        .then(r => r.json())
+      appelAuthentifie(`/.netlify/functions/order-list?source=${encodeURIComponent(activeTab)}`)
+        .then(r => r.ok ? r.json() : { orders: [] })
         .then(orders => {
-          // Toutes les commandes validées de la campagne (toutes pharmacies)
+          // Commandes validées de la campagne : les vôtres (l'admin en saisie : toutes) ; les autres pharmacies comptent via group-order
           const campOrders = (Array.isArray(orders) ? orders : orders.orders || [])
             .filter(o => o.source === activeTab);
           const cipArr = [];
@@ -598,7 +611,7 @@ export default function App() {
           setValidatedCampOrders(prev => ({...prev, [activeTab]: cipArr}));
         }).catch(() => {});
     }
-  }, [activeTab, fetchGroupOrders]);
+  }, [activeTab, fetchGroupOrders, appelAuthentifie]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
   // Hauteur de l'en-tête pétrole collant : la barre A–Z se colle juste dessous (et le bloc de marque de la barre latérale s'y aligne)
@@ -2196,6 +2209,7 @@ export default function App() {
               pharmacyEmail={pharmacyEmail}
               onAddToCart={ajouterDepuisSaisie}
               regleQuantite={regleSaisie}
+              fetchAuth={appelAuthentifie}
               initialQuery={initialProductQuery}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
               couleur={CATALOG_WITH_ADMIN[activeTab].accent}
@@ -3030,6 +3044,8 @@ export default function App() {
           <MyOrdersPanel
             orders={myOrders}
             loading={myOrdersLoading}
+            erreur={myOrdersErreur}
+            onReconnecter={actingFor ? null : () => { setShowMyOrders(false); setOnboardingDone(false); setObStep("email"); setEmailInput(pharmacyEmail); setOtpInput(""); }}
             pharmacyName={pharmacyName}
             onClose={() => setShowMyOrders(false)}
             onReorder={async (items) => {

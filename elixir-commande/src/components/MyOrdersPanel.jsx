@@ -2,7 +2,7 @@ import React from "react";
 import { JUSTIF_STATUTS } from "../lab-justif-client.js";
 import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
-import EtatVide, { Chargement } from "./ui/EtatVide.jsx";
+import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 import FocusFenetre from "./ui/FocusFenetre.jsx";
 
 // ── Mes commandes (refonte charte, lot 7 : docs/refonte-charte.md § 3) ──
@@ -18,7 +18,7 @@ const STATUT = {
 const dateLongue = (d) => new Date(d).toLocaleDateString("fr-FR", { day:"numeric", month:"long" });
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 
-export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder }) {
+export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder, erreur = null, onReconnecter = null }) {
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="mes-commandes-titre" style={{ ...ui.overlay, zIndex:400, padding:16 }}
       onClick={onClose}>
@@ -31,7 +31,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         <div style={{ padding:"20px 20px 16px 24px", borderBottom:`1px solid ${T.line}`, display:"flex", justifyContent:"space-between", alignItems:"center", gap:12 }}>
           <div style={{ minWidth:0 }}>
             <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
-            <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
+            <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading || erreur ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
           </div>
           <button className="ex-btn-discret ex-cible" data-focus-initial onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
@@ -40,7 +40,16 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
         <div style={{ flex:1, overflowY:"auto", padding:"16px 16px 20px", background:T.cream }}>
           {/* chargement, aucune commande : composants communs (lot 8) ; « 0 commande » n'est plus annoncé pendant la lecture */}
           {loading && <Chargement texte="Chargement de vos commandes…" />}
-          {!loading && orders.length === 0 && (
+          {/* lecture refusée (jeton absent ou expiré, compte sans pharmacie) ou en échec : jamais « Aucune commande » */}
+          {!loading && erreur && (
+            <EtatVide icone="commandes" erreur
+              titre={erreur === "reconnexion" ? "Reconnectez-vous" : erreur === "fiche" ? "Pharmacie introuvable" : "Lecture impossible"}
+              texte={erreur === "reconnexion" ? "Pour afficher vos commandes, reconnectez-vous avec le code reçu par e-mail."
+                : erreur === "fiche" ? "Aucune pharmacie n'est rattachée à ce compte : contactez Elixir Pharma."
+                : "Vos commandes n'ont pas pu être lues. Réessayez dans un instant."}
+              actions={erreur === "reconnexion" && onReconnecter ? <ActionEtat principal onClick={onReconnecter}>Se reconnecter</ActionEtat> : null} />
+          )}
+          {!loading && !erreur && orders.length === 0 && (
             <EtatVide icone="commandes" titre="Aucune commande trouvée"
               texte="Vos commandes envoyées depuis le site apparaîtront ici, prêtes à être recommandées." />
           )}
