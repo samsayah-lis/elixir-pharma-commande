@@ -5,7 +5,7 @@
 // le panier calculé (cartItems), readCart, expandSupplierGroups et sendOrder d'App.jsx, extraits des fichiers et exécutés
 // avec des doublures (état React, order-save, send-email, submit-order). src/peremption-panier.js, applyTiers
 // (src/tiers.jsx) et lab-justif-client.js sont assemblés par esbuild (React vide). Comparaison avec la production d'avant
-// le lot (origin/master, d840631) quand git l'a. Parties admin de l'onglet Péremptions (src/components/PeremptionsAdmin.jsx) :
+// le lot (d840631, commit figé : origin/master avance à chaque mise en ligne) quand git l'a. Parties admin de l'onglet Péremptions (src/components/PeremptionsAdmin.jsx) :
 // saisie de la remise notée, chargées avec l'admin seulement.
 //  • page : prix facturé = celui de la Saisie (prix remisé de la liste n° 5, sinon prix catalogue ; paliers), jamais −50 %
 //    ni −20 % d'office ni la remise notée par l'admin ; mention « Pér. <date> » et date du lot ;
@@ -51,7 +51,9 @@ const vrai = (label, v) => eq(label, !!v, true);
 // ── Extraction du code ──
 const lire = (f) => readFileSync(join(RACINE, f), "utf8");
 const APP = lire("src/App.jsx"), SHORT = lire("src/components/ShortExpiry.jsx"), SAISIE = lire("src/components/OrderEntry.jsx");
-const PROD_REF = "origin/master";   // production d'avant le lot (d840631)
+// production d'avant le lot, par son commit (d840631) : pas origin/master, qui avance à chaque mise en ligne (après l'envoi
+// du lot 0, origin/master contient le lot et la page de la production n'a plus getDiscount)
+const PROD_REF = "d8406310969dec4eb2206751275b5f7bc621b32b";
 const enProd = (f) => { try { return execFileSync("git", ["show", `${PROD_REF}:./${f}`], { cwd: RACINE, encoding: "utf8", maxBuffer: 1 << 26, stdio: ["ignore", "pipe", "ignore"] }); } catch { return null; } };
 const PROD = enProd("src/App.jsx");
 if (!PROD) console.log(`· production ${PROD_REF} absente de git : comparaisons avec la production sautées`);

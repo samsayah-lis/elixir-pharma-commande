@@ -71,6 +71,9 @@ et de l'envoi, comparé à la production), `node scripts/test-accueil-outils.mjs
 
 ### Mise en service du lot 0
 
+- Mise en ligne en avance rapide, **après** `appli-notifications` (la branche la contient ; prérequis de l'appli :
+  `docs/notifications.md`) : `git -C ~/Downloads/elixir-peremption-lot0-wt push origin peremption-lot0:master`. Jamais
+  `--force` ; si l'envoi est refusé, `master` a bougé entre-temps : refaire l'intégration.
 - Les onglets ouverts avant la mise en ligne et **non rechargés** gardent l'ancienne page (−50 %) jusqu'au
   rechargement : leurs ajouts partent à l'ancien prix si la commande est envoyée depuis cet onglet.
 - Pendant quelques jours, relever dans l'onglet Commandes de l'admin les lignes hors catalogue dont le « PU HT » est
