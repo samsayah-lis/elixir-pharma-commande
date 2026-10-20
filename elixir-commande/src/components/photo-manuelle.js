@@ -8,6 +8,15 @@
 // catalogue n'est pas touché. L'adresse renvoyée reçoit ?v=<instant> : une photo remplacée (même fichier) se montre tout
 // de suite ; pour un produit du catalogue, un second appel (image_url, sans fichier) y range aussi cette adresse.
 // Parties pures (contrôle du fichier, dimensions, adresse, clés, dosages visés, menus) : scripts/test-photo-manuelle.mjs.
+// Affichage vérifié (incident du 20/10/2026 : stockage elixir-images privé, toute adresse /object/public/ répondait 400
+// « Bucket not found », carte de devant blanche sur l'accueil malgré « ✓ Photo ajoutée ») : envoyerEtVerifier (les deux
+// éditeurs) — produit du catalogue : stockage sondé AVANT l'envoi ; puis l'adresse renvoyée doit s'afficher dans le
+// navigateur (new Image(), sans CORS) AVANT tout message de réussite ; sinon rien n'est mis dans le brouillon ni publié, et
+// le message dit pourquoi d'après la réponse du stockage (bucket privé, fichier absent, panne, connexion), jamais deviné.
+// Photos déjà choisies : contrôlées de même, notées illisibles avec leur motif (accueil/illisibles.js, partagé avec
+// l'aperçu) : « Photo illisible » dans l'admin.
+
+import { estIllisible, illisibles, motifIllisible, noterIllisible, oublierIllisible, preciserMotif } from "./accueil/illisibles.js";
 
 export const TYPES = { "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WebP" };
 export const MAX_OCTETS = 15e6;   // 15 Mo comme le Finder les compte (Mo décimaux)
@@ -86,9 +95,11 @@ export const cleDuFichier = (url) => /\/elixir-images\/products\/([\w-]{1,80})\.
 export const liee = (o, photos = {}) => !!o?.cip && auCatalogue(o) && cleDuFichier(photos[o.cip]) === String(o.cip);
 
 // Clé d'une photo de l'accueil seul (mise en avant, produit hors catalogue) : « accueil-… », jamais un CIP (le catalogue
-// n'est pas modifié) et nouvelle à chaque envoi (la version en ligne garde son fichier jusqu'à « Publier »)
+// n'est pas modifié) et nouvelle à chaque envoi (la version en ligne garde son fichier jusqu'à « Publier ») ; outil du site :
+// « accueil-outil-peremption-… » (aucune ligne du catalogue n'a ce CIP)
 export function cleMiseEnAvant(it, t = Date.now()) {
-  const objet = it?.type === "menu" ? `menu-${String(it.menu_id ?? "").replace(/[^\w-]/g, "").slice(0, 40)}` : String(it?.cip ?? "").replace(/\D/g, "").slice(0, 14);
+  const objet = it?.type === "menu" ? `menu-${String(it.menu_id ?? "").replace(/[^\w-]/g, "").slice(0, 40)}`
+    : it?.type === "outil" ? `outil-${String(it.outil ?? "").replace(/[^a-z]/g, "").slice(0, 20)}` : String(it?.cip ?? "").replace(/\D/g, "").slice(0, 14);
   return `accueil-${objet}-${t.toString(36)}`;
 }
 // Clé d'envoi d'une ligne des plus commandés : CIP du dosage montré s'il est au catalogue (photo du produit), sinon accueil seul
@@ -240,4 +251,238 @@ export async function versionnerAuCatalogue(adminFetch, cip, url) {
     const j = await r.json().catch(() => ({}));
     return !!(r.ok && j.success);
   } catch { return false; }
+}
+
+// ── affichage des photos : l'adresse donne-t-elle vraiment une image dans ce navigateur ? ──
+export const DELAI_AFFICHAGE = 12000;   // une photo de 900 px au plus : largement assez, même en 4G
+// Photo rangée dans le stockage des photos (Supabase elixir-images, ou sa copie du banc d'essai)
+export const auStockage = (url) => /\/elixir-images\//.test(String(url || ""));
+export const DOC_STOCKAGE = "docs/accueil.md, « Stockage des photos »";
+const sansVersion = (url) => String(url || "").split(/[?#]/)[0];
+// Base des adresses publiques du stockage (…supabase.co/storage/v1/object/public/elixir-images/ ; sur le banc local
+// seulement : /banc-photos/elixir-images/) : jamais une autre adresse sondée
+const RE_BASE = /^https:\/\/[a-z0-9-]+\.supabase\.co\/storage\/v1\/object\/public\/elixir-images\//;
+const RE_BASE_BANC = /^\/banc-photos\/elixir-images\//;
+export const baseStockage = (url, dev = DEV) => (RE_BASE.exec(String(url || "")) || (dev ? RE_BASE_BANC.exec(String(url || "")) : null))?.[0] || null;
+const enLigneParDefaut = () => typeof navigator === "undefined" || navigator.onLine !== false;
+
+// adresse → Promise<"ok" | "illisible" | "delai" | "inconnu"> ; jamais d'erreur. new Image() sans crossOrigin : aucune
+// lecture des pixels, aucun en-tête CORS nécessaire (la page la montre de la même façon). « inconnu » : pas de navigateur.
+export function verifierAffichage(url, { delai = DELAI_AFFICHAGE, Img = globalThis.Image } = {}) {
+  return new Promise((fini) => {
+    if (!url || typeof Img !== "function") { fini("inconnu"); return; }
+    let img = null, fait = false, minuteur = 0;
+    const conclure = (v) => {
+      if (fait) return;
+      fait = true; clearTimeout(minuteur);
+      if (img) { img.onload = null; img.onerror = null; }
+      fini(v);
+    };
+    try {
+      img = new Img();
+      minuteur = setTimeout(() => conclure("delai"), delai);
+      img.onload = () => conclure(img.naturalWidth > 0 && img.naturalHeight > 0 ? "ok" : "illisible");
+      img.onerror = () => conclure("illisible");
+      img.src = url;
+    } catch { conclure("inconnu"); }
+  });
+}
+
+// Pourquoi une adresse du stockage ne s'affiche pas : sa réponse, lue par fetch sans cache (le Storage répond
+// « access-control-allow-origin: * », même en erreur ; relevé du 20/10/2026 : 400 { code: "NoSuchBucket" } pour un bucket
+// privé ou absent, 400 { code: "NoSuchKey" } pour un fichier absent d'un bucket public). Un onerror seul ne dit pas
+// pourquoi : bucket privé, fichier absent, panne, connexion coupée, proxy ou bloqueur donnent tous le même.
+// → "prive" | "introuvable" | "panne" (5xx) | "connexion" (réseau coupé, hors ligne) | "lisible" (elle répond 200) | "inconnu"
+export async function diagnostiquerStockage(url, { fetch: f = globalThis.fetch, enLigne = enLigneParDefaut } = {}) {
+  if (!url) return "inconnu";
+  if (!enLigne()) return "connexion";
+  if (typeof f !== "function") return "inconnu";
+  let r;
+  try { r = await f(url, { cache: "no-store" }); } catch { return "connexion"; }
+  if (r.ok) { try { r.body?.cancel?.(); } catch { /* corps déjà lu */ } return "lisible"; }
+  if (r.status >= 500) return "panne";
+  const j = await r.json().catch(() => null);
+  const code = String(j?.code || ""), texte = `${j?.error || ""} ${j?.message || ""}`;
+  if (code === "NoSuchBucket" || /bucket not found/i.test(texte)) return "prive";
+  if (code === "NoSuchKey" || /object not found/i.test(texte)) return "introuvable";
+  return "inconnu";
+}
+
+// Pourquoi une photo ne s'affiche pas (court, après « Photo illisible : ») : motif établi pour CETTE adresse
+// (diagnostiquerStockage, gardé avec elle dans illisibles.js), jamais deviné d'après le seul fait qu'elle est au stockage
+const RAISONS = {
+  prive: `le stockage des photos (Supabase, « elixir-images ») n'est pas public — réglage à faire une seule fois dans Supabase, voir ${DOC_STOCKAGE}`,
+  introuvable: "photo introuvable dans le stockage des photos (fichier retiré ou renommé) : ajoutez-la de nouveau",
+  panne: "stockage des photos momentanément indisponible : « Vérifier de nouveau » dans quelques minutes",
+  connexion: "connexion perdue pendant le contrôle : vérifiez Internet, puis « Vérifier de nouveau »",
+};
+export function raisonIllisible(url) {
+  if (!auStockage(url)) return "l'adresse ne donne plus d'image (photo retirée par son hébergeur, ou adresse erronée)";
+  const m = motifIllisible(url);
+  return RAISONS[m] || (m ? "la photo ne s'affiche pas dans ce navigateur, sans motif reconnu : « Vérifier de nouveau »"
+    : "la photo ne s'affiche pas dans ce navigateur (motif en cours de vérification)");
+}
+// Photo illisible parce que le stockage n'est pas public (bandeaux de l'admin : renvoi vers le réglage)
+export const illisibleCarPrive = (url) => auStockage(url) && motifIllisible(url) === "prive";
+
+// Message après un envoi dont l'adresse ne s'affiche pas (verdict de verifierAffichage, diagnostic de l'adresse) ; null si
+// elle s'affiche. catalogue : produit du catalogue, dont la fiche a déjà reçu l'adresse (product-upload-image l'y range
+// d'office, avant toute vérification) ; restauree : l'ancienne photo du produit y a été remise.
+export function messageNonAffichee(verdict, { url, catalogue = false, diag = null, restauree = false } = {}) {
+  if (verdict === "ok" || verdict === "inconnu") return null;
+  const fiche = restauree ? " L'ancienne photo du produit a été remise au catalogue : rien n'a changé sur l'accueil."
+    : " Elle est pourtant déjà la photo du produit au catalogue (la fonction d'envoi l'y range d'office) : le catalogue et l'accueil la montreront dès qu'elle s'affichera.";
+  if (verdict === "delai") {
+    return `Photo reçue, mais elle ne s'est pas affichée en ${DELAI_AFFICHAGE / 1000} secondes (connexion lente ?)`
+      + (catalogue ? `.${fiche} Pour la publier aussi sur l'accueil (autres dosages compris), ajoutez-la de nouveau quand la connexion le permet.`
+        : " : ajoutez-la de nouveau quand la connexion le permet. Rien n'a changé sur l'accueil.");
+  }
+  const cause = !auStockage(url) ? "l'adresse renvoyée ne donne pas d'image : ajoutez-la de nouveau."
+    : diag === "prive" ? "le site ne peut pas l'afficher : le stockage des photos (Supabase, « elixir-images ») n'est pas public. "
+      + `C'est un réglage à faire une seule fois dans Supabase (voir ${DOC_STOCKAGE}) ; une fois fait, ajoutez de nouveau la photo.`
+    : diag === "introuvable" ? "elle est introuvable dans le stockage des photos : ajoutez-la de nouveau."
+    : diag === "panne" ? "le stockage des photos est momentanément indisponible : ajoutez-la de nouveau dans quelques minutes."
+    : diag === "connexion" ? "la connexion a été perdue avant qu'elle s'affiche : vérifiez Internet, puis ajoutez-la de nouveau."
+    : "elle ne s'affiche pas dans ce navigateur : ajoutez-la de nouveau.";
+  return `Photo reçue, mais ${cause}${catalogue ? fiche : " Rien n'a changé sur l'accueil."}`;
+}
+
+// Photos déjà choisies (brouillon, version en ligne, réglages de l'accueil) : contrôlées une fois par adresse ; illisible
+// → notée avec son motif (illisibles.js : « Photo illisible » dans l'admin, aperçu sans elle, avertissement à « Publier »).
+// variante : adresse réellement chargée (miniature de la banque d'images : photo(url, "thumbnail")), l'adresse elle-même sinon ;
+// variante en erreur : l'adresse elle-même avant de conclure (une miniature manquante ne rend pas la photo illisible).
+const controles = new Map();   // adresse → Promise<verdict>
+export function controlerAffichage(url, { variante = url, ...opts } = {}) {
+  if (!url) return Promise.resolve("inconnu");
+  if (!controles.has(url)) {
+    controles.set(url, verifierAffichage(variante, opts).then(async (v0) => {
+      const v = v0 === "illisible" && variante !== url ? await verifierAffichage(url, opts) : v0;
+      if (v !== "illisible") return v;
+      noterIllisible(url);
+      await expliquerIllisible(url, opts);
+      return estIllisible(url) ? "illisible" : "ok";
+    }));
+  }
+  return controles.get(url);
+}
+// Motif d'une photo du stockage notée illisible (par un contrôle ou par l'onError d'une miniature) : diagnostic une fois par
+// adresse (refait si le motif a été effacé) ; elle répond 200 (erreur passagère) : nouvel essai, oubliée si elle s'affiche
+const explications = new Map();   // adresse → { promesse, fini }
+export function expliquerIllisible(url, opts = {}) {
+  if (!auStockage(url) || !estIllisible(url)) return Promise.resolve(motifIllisible(url));
+  const x = explications.get(url);
+  if (x && (!x.fini || motifIllisible(url))) return x.promesse;
+  const e = { fini: false };
+  e.promesse = diagnostiquerStockage(url, opts).then(async (m) => {
+    if (m === "lisible") await reverifierIllisibles([url], opts);
+    else preciserMotif(url, m);
+    e.fini = true;
+    return m;
+  });
+  explications.set(url, e);
+  return e.promesse;
+}
+// Nouvel essai des photos notées illisibles (« Vérifier de nouveau », réglage fait, sans recharger la page) : une adresse du
+// stockage est redemandée avec un ?v= neuf (jamais une réponse d'erreur gardée en cache) ; affichée → oubliée, elle se
+// montre de nouveau partout ; toujours illisible → motif relu. → nombre d'adresses redevenues lisibles.
+export async function reverifierIllisibles(urls = [...illisibles()], opts = {}) {
+  const t = opts.t ?? Date.now();
+  const verdicts = await Promise.all(urls.filter(estIllisible).map(async (u) => {
+    const v = await verifierAffichage(auStockage(u) ? avecVersion(u, t) : u, opts);
+    if (v === "ok") { oublierIllisible(u); controles.delete(u); return 1; }
+    if (auStockage(u)) { const m = await diagnostiquerStockage(u, opts); if (m !== "lisible") preciserMotif(u, m); }
+    return 0;
+  }));
+  return verdicts.reduce((a, b) => a + b, 0);
+}
+
+// Photo du stockage qui vient de s'afficher : le stockage est public, les autres photos du stockage notées illisibles
+// sont réessayées (elles réapparaissent sans recharger la page)
+export function stockageLisible(url, opts = {}) {
+  if (!auStockage(url)) return Promise.resolve(0);
+  if (dernierEchec) dernierEchec = null;
+  return reverifierIllisibles([...illisibles()].filter(auStockage), opts);
+}
+
+// ── avant d'envoyer la photo d'un produit du CATALOGUE : le stockage est-il public ? ──
+// product-upload-image (protégée, inchangée) écrit l'adresse dans la fiche du produit (elixir_products) AVANT toute
+// vérification possible : une photo qui ne s'afficherait pas y remplacerait la sienne. La sonde ne dépend d'aucune photo
+// existante : adresse d'un fichier qui n'existe pas (products/__sonde-<instant>.jpg) sous la base du stockage, lue par
+// fetch : NoSuchKey → public, NoSuchBucket → privé. Base connue d'une adresse du stockage (dernier envoi de la session,
+// photos de l'accueil, du catalogue, des mises en avant) ; aucune : "aucune" (envoyerEtVerifier envoie alors une image
+// témoin de 1 × 1 sous la clé fixe « accueil-sonde », sans ligne au catalogue, puis vérifie qu'elle s'affiche).
+// → "public" | "prive" | "panne" | "connexion" | "inconnu" | "aucune"
+let dernierEchec = null, derniereAdresse = null;
+export const noterEchecStockage = (url) => { if (auStockage(url)) dernierEchec = url; };
+// tests : session sans aucune adresse du stockage connue
+export const oublierAdressesConnues = () => { dernierEchec = null; derniereAdresse = null; };
+export async function sonderStockage(candidats = [], { t = Date.now(), dev = DEV, ...opts } = {}) {
+  const base = [dernierEchec, derniereAdresse, ...candidats].map(u => baseStockage(u, dev)).find(Boolean);
+  if (!base) return "aucune";
+  const d = await diagnostiquerStockage(`${base}products/__sonde-${t.toString(36)}.jpg`, opts);
+  return d === "introuvable" ? "public" : d === "lisible" ? "inconnu" : d;
+}
+export const CLE_SONDE = "accueil-sonde";   // aucune ligne du catalogue n'a ce CIP : le PATCH de la fonction est sans effet
+const PHOTO_SONDE = { base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", mimeType: "image/png" };
+async function sonderParEnvoi(adminFetch, { t, ...opts }) {
+  const url = await envoyerPhoto(adminFetch, CLE_SONDE, PHOTO_SONDE, t);   // envoi refusé : erreur (message français)
+  derniereAdresse = url;
+  const v = await verifierAffichage(url, opts);
+  if (v === "ok") return "public";
+  if (v === "delai") return "delai";
+  if (v === "inconnu" || !auStockage(url)) return "inconnu";
+  const d = await diagnostiquerStockage(url, opts);
+  return ["prive", "panne", "connexion"].includes(d) ? d : "inconnu";
+}
+export const MESSAGE_STOCKAGE_PRIVE = "Rien n'a été envoyé : le stockage des photos (Supabase, « elixir-images ») n'est pas public, et cette photo deviendrait "
+  + `aussi celle du produit au catalogue sans pouvoir s'y afficher. Faites d'abord le réglage dans Supabase (voir ${DOC_STOCKAGE}), puis ajoutez la photo.`;
+// Refus avant l'envoi (produit du catalogue) selon l'état du stockage
+export function messageAvantEnvoi(etat) {
+  if (etat === "prive") return MESSAGE_STOCKAGE_PRIVE;
+  if (etat === "panne") return "Rien n'a été envoyé : le stockage des photos est momentanément indisponible, et cette photo deviendrait aussi celle du produit au catalogue sans pouvoir s'y afficher. Réessayez dans quelques minutes.";
+  if (etat === "connexion") return "Rien n'a été envoyé : connexion perdue pendant la vérification du stockage des photos. Vérifiez Internet, puis réessayez.";
+  if (etat === "delai") return "Rien n'a été envoyé : la vérification du stockage des photos a pris trop de temps (connexion lente ?). Réessayez.";
+  return "Rien n'a été envoyé : le stockage des photos n'a pas pu être vérifié, et cette photo deviendrait aussi celle du produit au catalogue. Réessayez dans quelques minutes.";
+}
+
+// ── envoi complet, partagé par les plus commandés (AdminAccueil) et les mises en avant (AdminVedettes) ──
+// 1. produit du catalogue : stockage sondé AVANT l'envoi (refus : rien n'est envoyé) ; 2. envoi (product-upload-image) ;
+// 3. l'adresse doit s'afficher dans le navigateur ; sinon, motif lu (diagnostiquerStockage), rien n'est publié, et pour un
+// produit du catalogue son ancienne photo (autre fichier) lui est remise ; 4. produit du catalogue : adresse avec ?v= rangée
+// dans sa fiche ; 5. publier(url) (brouillon ou réglages de l'accueil), seulement maintenant.
+// → { url, publication } (publication : résultat de publier) ou { message, ton } (rien n'est publié). Jamais d'erreur.
+// catalogue : null, ou { cip, ancienne } (photo du produit avant l'envoi) ; candidats : adresses connues (base du stockage) ;
+// etape(message) : progression ; Img, fetch, delai : navigateur (remplacés par les tests).
+export async function envoyerEtVerifier({ adminFetch, cle, prete, t = Date.now(), catalogue = null, candidats = [], publier = null, etape = () => {}, ...nav } = {}) {
+  const opts = { Img: nav.Img ?? globalThis.Image, fetch: nav.fetch ?? globalThis.fetch, delai: nav.delai, enLigne: nav.enLigne };
+  if (opts.delai === undefined) delete opts.delai;
+  if (opts.enLigne === undefined) delete opts.enLigne;
+  try {
+    if (catalogue) {
+      etape("Vérification du stockage des photos…");
+      let etat = await sonderStockage(candidats, { t, dev: nav.dev ?? DEV, ...opts });
+      if (etat === "aucune") etat = await sonderParEnvoi(adminFetch, { t, ...opts });
+      if (etat !== "public") return { message: messageAvantEnvoi(etat), ton: "danger", etat };
+    }
+    etape("Envoi de la photo…");
+    const url = await envoyerPhoto(adminFetch, cle, prete, t);
+    if (auStockage(url)) derniereAdresse = url;
+    etape("Vérification de l'affichage de la photo…");
+    let verdict = await verifierAffichage(url, opts), diag = null;
+    if (verdict === "illisible" && auStockage(url)) {
+      diag = await diagnostiquerStockage(url, opts);
+      // elle répond (erreur passagère du navigateur) : nouvel essai avec un ?v= neuf
+      if (diag === "lisible") verdict = await verifierAffichage(avecVersion(url, t + 1), opts);
+    }
+    if (verdict !== "ok" && verdict !== "inconnu") {
+      if (diag === "prive") noterEchecStockage(url);
+      let restauree = false;
+      const ancienne = catalogue?.ancienne;
+      if (verdict === "illisible" && ancienne && sansVersion(ancienne) !== sansVersion(url)) restauree = await versionnerAuCatalogue(adminFetch, catalogue.cip, ancienne);
+      return { message: messageNonAffichee(verdict, { url, catalogue: !!catalogue, diag, restauree }), ton: "danger", verdict, diag };
+    }
+    stockageLisible(url, opts);
+    if (catalogue) await versionnerAuCatalogue(adminFetch, catalogue.cip, url);
+    return { url, publication: publier ? await publier(url) : null };
+  } catch (e) { return { message: e?.message || "Envoi impossible : réessayez.", ton: "danger" }; }
 }

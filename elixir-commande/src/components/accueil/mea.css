@@ -79,6 +79,9 @@
 .mea-visuel--menu { align-items: center; }
 .mea-cadre { position: relative; display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; max-height: 400px; padding: 14px 10px 6px; }
 .mea-reflet-cadre { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+/* photo du produit pas encore chargée : lueur de la teinte de l'offre à sa place (après 0,3 s, sans animation infinie) */
+.mea-cadre--attente::before { content: ""; position: absolute; left: 20%; right: 20%; top: 16%; bottom: 6%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, var(--mea-claire), transparent); opacity: .7; animation: mea-attente .4s var(--ease) .3s both; }
 .mea-photo { display: block; max-width: 100%; max-height: 100%; object-fit: contain; mix-blend-mode: multiply; }
 .mea-sujet--boite { display: flex; align-items: flex-end; justify-content: center; }
 .mea-vivant .mea-sujet { transform: perspective(900px) rotateX(calc(var(--py, 0) * -5deg)) rotateY(calc(var(--px, 0) * 5deg)) translate3d(calc(var(--px, 0) * 8px), calc(var(--py, 0) * 8px), 0); }
@@ -123,6 +126,13 @@
 .mea-carte-prix { font-size: 13px; font-weight: 700; color: var(--ink); }
 .mea-eventail--mini .mea-carte-nom, .mea-eventail--s .mea-carte-nom { font-size: 9.5px; -webkit-line-clamp: 3; }
 .mea-eventail--mini .mea-carte-prix, .mea-eventail--s .mea-carte-prix { font-size: 10px; }
+/* photo pas encore chargée (lente, ou erreur en attente) : jamais une carte blanche — nom et prix comme une carte texte,
+   montrés après 0,3 s (une photo rapide ne fait rien clignoter), photo invisible hors du flux jusqu'à son chargement */
+.mea-carte--attente { flex-direction: column; align-items: flex-start; justify-content: space-between; padding-top: 16px; border-top: 3px solid var(--mea-trait); }
+.mea-carte--attente img { position: absolute; left: 0; top: 0; opacity: 0; }
+.mea-carte--attente .mea-carte-nom, .mea-carte--attente .mea-carte-prix { animation: mea-attente .25s var(--ease) .3s both; }
+@keyframes mea-attente { from { opacity: 0; } }
+.mea-carte--chargee img { animation: mea-attente .2s var(--ease) both; }
 
 /* ── le texte (colonne de gauche, sur la salle) : les deux diapositives (sortante, active) dans la même cellule ── */
 .mea-texte { grid-area: texte; position: relative; display: grid; min-width: 0; padding: 12px 40px 40px 56px; }
@@ -301,5 +311,108 @@
 .mea-tuile--petite.mea-tuile--menu .mea-tuile-visuel .mea-eventail { margin: 4px auto 6px; }
 .mea-tuile--large .mea-tuile-boite .acc-boite--carte, .mea-tuile--petite .mea-tuile-boite .acc-boite--carte { --acc-s: .36; }
 .mea-grille--s .mea-tuile--large { min-height: 120px; }
+
+/* ══ Outils du site (docs/accueil.md § 7.8) : plaque pétrole et or, cartes-chiffres, tuile ══
+   La plaque reste pétrole et or quelle que soit la teinte de l'outil (charte Elixir ; or clair sur pétrole ≈ 7,7:1) ;
+   cartes-chiffres blanches, filet de la teinte ; aucune animation infinie (le curseur du champ clignote deux fois). */
+.mea-carte--plaque { flex-direction: column; gap: 9%; padding: 18px 12px 14px; color: var(--or-clair);
+  background: linear-gradient(165deg, var(--petrol) 0%, var(--deep) 100%); box-shadow: 0 22px 44px -18px rgba(10,29,34,.7), 0 0 0 1px rgba(10,29,34,.25); }
+.mea-carte--plaque::after { content: ""; position: absolute; inset: 5px; border-radius: 10px; border: 1px solid var(--or-clair); opacity: .3; pointer-events: none; }
+.mea-plaque-croix { position: absolute; left: 11px; top: 11px; color: var(--or-clair); }
+.mea-plaque-icone { display: block; flex-shrink: 0; height: auto; aspect-ratio: 1 / 1; }
+.mea-plaque-champ { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; height: 22px; padding: 0 8px; border-radius: 999px;
+  box-shadow: inset 0 0 0 1px var(--or-clair); color: var(--or-clair); font-size: 10px; font-weight: 600; letter-spacing: .02em; white-space: nowrap; overflow: hidden; }
+.mea-plaque-texte { display: inline-flex; }
+.mea-plaque-curseur { display: inline-block; width: 1.5px; height: 11px; margin-left: 1px; background: var(--or-clair); }
+.mea-eventail--l .mea-plaque-champ { height: 24px; font-size: 11px; }
+.mea-eventail--s .mea-carte--plaque, .mea-eventail--mini .mea-carte--plaque { padding: 14px 6px 8px; }
+.mea-eventail--s .mea-plaque-croix, .mea-eventail--mini .mea-plaque-croix { left: 8px; top: 8px; width: 10px; height: 10px; }
+.mea-eventail--s .mea-plaque-champ { height: 17px; padding: 0 5px; gap: 3px; font-size: 7.5px; }
+.mea-eventail--s .mea-plaque-curseur { height: 8px; }
+.mea-eventail--mini .mea-plaque-champ { display: none; }
+.mea-carte--chiffre { flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 5px; padding: 22px 14px 14px; border-top: 3px solid var(--mea-trait); color: var(--ink); }
+.mea-carte--chiffre[data-cote="d"] { align-items: flex-end; text-align: right; }
+.mea-carte-chiffre { font-size: 22px; font-weight: 700; letter-spacing: -.02em; line-height: 1; color: var(--ink); white-space: nowrap; }
+.mea-eventail--l .mea-carte-chiffre { font-size: 28px; }
+.mea-eventail--s .mea-carte-chiffre, .mea-eventail--mini .mea-carte-chiffre { font-size: 16px; }
+.mea-eventail .mea-carte-chiffre--mot { font-size: 17px; letter-spacing: -.01em; }
+.mea-eventail--l .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: 21px; }
+.mea-eventail--s .mea-carte-chiffre.mea-carte-chiffre--mot, .mea-eventail--mini .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: 12.5px; }
+.mea-carte-legende { font-size: 11px; font-weight: 600; line-height: 1.3; color: var(--ink-soft); }
+.mea-eventail--s .mea-carte--chiffre, .mea-eventail--mini .mea-carte--chiffre { padding: 14px 8px 8px; gap: 3px; }
+.mea-eventail--s .mea-carte-legende, .mea-eventail--mini .mea-carte-legende { font-size: 9.5px; }
+/* éventail d'un outil : plus grand que celui d'un menu (3 cartes bien ouvertes) ; photos du fabricant presque bord à bord */
+.mea-eventail--outil { width: 172px; height: 222px; }
+.mea-eventail--outil.mea-eventail--l { width: 200px; height: 258px; }
+.mea-eventail--outil.mea-eventail--s { width: 124px; height: 160px; }
+.mea-eventail--outil.mea-eventail--mini { width: 76px; height: 98px; }
+.mea-eventail--outil .mea-carte:not(.mea-carte--plaque):not(.mea-carte--chiffre):not(.mea-carte--texte) { padding: 6px; }
+.mea-eventail--outil.mea-eventail--l .mea-carte-chiffre { font-size: 30px; }
+/* vitrine : éventail d'un outil à la mesure de l'écran (768 à ~1 080 px, l'écran ne fait que ~360 px : 172 px de carte
+   et ±40 % d'écart rognaient les chiffres des cartes de côté) ; sans container queries : tailles fixes ci-dessus */
+@supports (width: 1cqi) {
+  .mea-ecran { container-type: inline-size; }
+  .mea-ecran .mea-eventail--outil { width: min(172px, 42cqi); height: auto; aspect-ratio: 172 / 222; }
+  .mea-ecran .mea-eventail--outil.mea-eventail--l { width: min(200px, 42cqi); aspect-ratio: 200 / 258; }
+  .mea-ecran .mea-eventail--outil.mea-eventail--s { width: min(124px, 42cqi); aspect-ratio: 124 / 160; }
+  .mea-ecran .mea-eventail--outil .mea-carte-chiffre { font-size: clamp(16px, 6.2cqi, 22px); }
+  .mea-ecran .mea-eventail--outil.mea-eventail--l .mea-carte-chiffre { font-size: clamp(18px, 7.5cqi, 30px); }
+  .mea-ecran .mea-eventail--outil.mea-eventail--s .mea-carte-chiffre { font-size: 16px; }
+  .mea-ecran .mea-eventail--outil .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: clamp(13px, 4.8cqi, 17px); }
+  .mea-ecran .mea-eventail--outil.mea-eventail--l .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: clamp(14px, 5.4cqi, 21px); }
+  .mea-ecran .mea-eventail--outil.mea-eventail--s .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: 12.5px; }
+}
+/* vitrine : chiffre des cartes de côté au milieu de leur partie découverte (en haut, les deux tiers restaient blancs) */
+.mea-ecran .mea-eventail--outil .mea-carte--chiffre { justify-content: center; padding-bottom: 26%; }
+/* légende d'une carte-chiffre dans la moitié découverte de la carte (« opérations / ouvertes ») : jamais sous la plaque */
+.mea-eventail--outil .mea-carte--chiffre .mea-carte-legende { max-width: 50%; }
+/* tablette (768 à 1 279 px) : accroche d'un outil sur 4 lignes (3 coupaient celles de la Saisie et du justificatif) */
+.mea-f-m .mea-accroche--outil { -webkit-line-clamp: 4; }
+.mea-accroche--outil { -webkit-line-clamp: 3; }
+.mea-tuile--outil .mea-tuile-visuel { min-height: 48px; }
+/* grille : l'éventail d'un outil garde la taille de celui d'un menu (agrandi, il débordait de la grande tuile quand les
+   rangées sont basses : 3 ou 4 mises en avant, aucun produit) ; la grande tuile grandit plutôt que de le rogner */
+.mea-tuile .mea-eventail--outil.mea-eventail--l { width: 160px; height: 206px; }
+.mea-tuile .mea-eventail--outil.mea-eventail--m { width: 152px; height: 196px; }
+.mea-grille--l .mea-tuile--outil.mea-tuile--grande .mea-tuile-visuel, .mea-grille--m .mea-tuile--outil.mea-tuile--grande .mea-tuile-visuel { flex: 1 0 auto; min-height: calc(206px + 48px); }
+.mea-grille--s .mea-tuile--outil.mea-tuile--grande .mea-tuile-visuel { min-height: calc(160px + 40px); }
+.mea-tuile--outil.mea-tuile--grande .mea-tuile-corps { flex: 0 0 auto; }
+/* chiffres des cartes de côté dans une tuile (cartes de 160 px) : entiers, jamais sous la plaque */
+.mea-tuile .mea-eventail--outil.mea-eventail--l .mea-carte-chiffre { font-size: 25px; }
+.mea-tuile .mea-eventail--outil.mea-eventail--l .mea-carte-chiffre.mea-carte-chiffre--mot { font-size: 19px; }
+/* bandeau étroit (2 mises en avant, 768 à 1 279 px : visuel de ~216 px) : 2 cartes (Bento.jsx) et éventail à la mesure du
+   visuel ; il ne passe jamais sur le texte */
+.mea-tuile--outil.mea-tuile--bandeau .mea-tuile-visuel { min-width: 0; }
+@supports (width: 1cqi) {
+  .mea-tuile--outil.mea-tuile--bandeau .mea-tuile-visuel { container-type: inline-size; }
+  .mea-tuile--bandeau .mea-eventail--outil.mea-eventail--s { width: min(124px, 56cqi); height: auto; aspect-ratio: 124 / 160; }
+}
+/* petite tuile : la plaque de l'outil en carte (76 × 98 : croix, icône, filet or ; ses chiffres sont dans la méta) ou les
+   pastilles des photos, centrées dans la place que lui laisse sa rangée (tuile étirée : pas de trou sous la méta) */
+.mea-tuile--outil.mea-tuile--petite .mea-tuile-visuel { flex: 1 0 auto; }
+.mea-tuile--outil.mea-tuile--petite .mea-tuile-corps { flex: 0 0 auto; }
+.mea-tuile--outil .mea-tuile-pied { white-space: nowrap; }
+.mea-tuile-plaque { width: 48px; height: 48px; flex-shrink: 0; border-radius: 14px; display: flex; align-items: center; justify-content: center;
+  color: var(--or-clair); background: linear-gradient(165deg, var(--petrol), var(--deep)); box-shadow: var(--shadow-1); }
+.mea-tuile--outil.mea-tuile--grande .mea-tuile-visuel, .mea-tuile--outil.mea-tuile--bandeau .mea-tuile-visuel { padding: 18px 0 22px; }
+.mea-grille--s .mea-tuile--outil.mea-tuile--grande .mea-tuile-visuel { max-height: none; padding: 12px 0 18px; }
+/* bandeau : l'éventail ouvert d'un outil déborde de 38 % ; il prend un peu plus de place */
+.mea-tuile--outil.mea-tuile--bandeau .mea-tuile-visuel { flex-basis: 46%; }
+.mea-actions--outil { margin-top: 12px; }
+/* bouton d'un outil : une ligne (texte court quand le long ne tient pas : CtaOutil de Cinema.jsx) */
+.mea-cta--outil { max-width: 100%; white-space: nowrap; }
+.mea-cta--outil > * { flex-shrink: 0; }   /* la flèche ne s'écrase pas : un texte trop long déborde, et la mesure passe au court */
+.mea-cta-court { display: none; }
+.mea-cta--outil[data-court] .mea-cta-long { display: none; }
+.mea-cta--outil[data-court] .mea-cta-court { display: inline; }
+.mea-cta--outil[data-court] { white-space: normal; height: auto; min-height: 48px; padding-block: 8px; line-height: 1.2; }
+/* méta d'un outil en segments (SegmentsMeta d'outils.js) : chaque segment passe à la ligne entier ; le « · » posé devant
+   chaque segment est rogné quand le segment commence une ligne */
+.mea-segs { display: block; min-width: 0; overflow: hidden; }
+.mea-segs-in { display: flex; flex-wrap: wrap; margin-left: -1.1em; }
+.mea-seg { min-width: 0; }
+.mea-seg::before { content: "·"; display: inline-block; width: 1.1em; text-align: center; }
+.mea-tuile-meta .mea-segs { flex: 0 1 auto; }
+.mea-outil-sous { margin: 0; }
 
 @media print { .mea-cinema, .mea-grille-section { display: none !important; } }

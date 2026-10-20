@@ -48,6 +48,13 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
       return { success: true };
     // Assistant Elixir : conversation écrite d'avance (aucune IA, aucun Odoo)
     case "chat":                return reponseChatFictive(b, pharmacie);
+    // alertes retour (admin) : « Envoyer maintenant », « Activer / Suspendre », « Relancer » — aucun e-mail ne part
+    case "restock-notify":      return b.action === "envoyer"
+      ? { done: true, mode: "complet", envoyes: 0, pharmacies: 0, produits: 0, closes: { ancienne: 0, destinataire: 0, echec: 0, interrompu: 0 },
+          echecs: 0, deja_pris: 0, restants: 0, reportes: 0, ecartees: 0, hors_fenetre: false, suspendu: false, plafond: false, panne: null,
+          erreurs: ["essai à blanc : aucun e-mail envoyé"] }
+      : b.action === "activer" ? { success: true, actif: b.actif === true, mise_en_service: b.actif === true ? new Date().toISOString() : null }
+      : { success: true };
     // Notifications de l'appli (docs/notifications.md) : aucun abonnement enregistré, aucune notification envoyée
     case "push-abonnement":     return reponsePushFictive(b);
     case "push-admin":          return reponsePushAdminFictive(b);
@@ -99,6 +106,9 @@ function vedettesFictives() {
     objet("mea_apercu_vas", "menu", "vitrine", "Le baume culte, au prix de précommande", jourParis(10), { menu_id: "1792060000000" }),
     objet("mea_apercu_ven", "produit", "vitrine", "Ventoline au carton", jourParis(1), { couleur: "#2f6fa8", offre }),
     objet("mea_apercu_cla", "menu", "grille", "", null, { menu_id: "1792040000000" }),
+    // outil du site (docs/accueil.md § 7.8) : chiffres d'exemple (aperçu)
+    objet("mea_apercu_per", "outil", "vitrine", "", null, { outil: "peremption", chiffres: { nb: 167, des: 0.44, jusqua: 50,
+      mois: [jourParis(41).slice(0, 7), jourParis(130).slice(0, 7)], maj: new Date(Date.now() - 3 * 3600e3).toISOString() } }),
   ] };
 }
 export function accueilFictif() {

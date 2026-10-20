@@ -10,6 +10,12 @@
 // mouvement réduit : fondu de 150 ms, rien d'automatique. Offre suivie par son identifiant (la liste peut raccourcir :
 // offre échue, produit passé en rupture). Photos en multiply directement sur l'écran clair : aucune enveloppe transformée
 // entre la photo et l'écran (elle effacerait le fond blanc des PNG opaques).
+// Outil du site (docs/accueil.md § 7.8) : photo de Zineb rendue comme celle d'un produit, sinon l'éventail de sa
+// composition automatique (photos du fabricant, ou plaque et cartes-chiffres) ; sur-titre « Outil · <rubrique> », chiffres
+// du moment sous le titre (segments insécables : SegmentsMeta), un seul bouton qui ouvre l'outil (comme l'appui sur
+// l'écran ; texte court quand le long ne tient pas sur une ligne : tablette) ; médaillon « jusqu'à » pour la Péremption
+// seulement ; jamais de compte à rebours. Vitrine avec un outil : « mise en avant » au lieu d'« offre » dans les noms
+// accessibles (un outil n'est pas une offre). Éventail d'un outil à la mesure de l'écran (mea.css, container queries).
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur, fmtPct } from "../../theme.js";
@@ -18,37 +24,60 @@ import BoutonLot from "./BoutonLot.jsx";
 import Rouleau from "./Rouleau.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail, { donne } from "./Eventail.jsx";
-import { EASE, RESSORT, SORTIE, anime, photo, photoReconnue } from "./outils.js";
+import { EASE, PhotoDecor, RESSORT, SORTIE, SegmentsMeta, anime, photo, photoReconnue, prechargerPhoto, surErreurPhoto, useIllisibles } from "./outils.js";
 import { prixLu, resumeMenuLu } from "./vedettes.js";
+import { estIllisible } from "./illisibles.js";
 
 // mémoire de la page (aucune clé de stockage) : arrivée jouée, défilement arrêté par l'utilisateur, indice de glissé vu
 let arriveeJouee = false, defilementArrete = false, indiceVu = false;
 const DUREE = 8000, TOURS = 2, FLOTTE = "cubic-bezier(.45,0,.55,1)";
 const borne = (v, a) => Math.max(-a, Math.min(a, v));
-const tailleTitre = (t) => (t.length <= 24 ? "l" : t.length <= 40 ? "m" : "s");
+// mots d'un titre : coupés aux espaces ordinaires seulement (une espace insécable, « à la », lie les mots)
+const motsDe = (t) => String(t || "").split(/[ \t\n\r]+/).filter(Boolean);
+// lignes d'un titre à n caractères par ligne (estimation, coupure aux espaces ordinaires)
+const lignesEstimees = (t, n) => { let lignes = 1, l = 0; for (const m of motsDe(t)) { if (l && l + 1 + m.length > n) { lignes++; l = m.length; } else l += (l ? 1 : 0) + m.length; } return lignes; };
+// taille « l » pour un titre court qui tient en 2 lignes (~12 caractères par ligne à 56 px : « Vos commandes groupées »
+// en ferait 3 → « m ») ; « m » s'il tient en 2 lignes de ~17 caractères (« Fauteuil de transfert Transit Lite » → « s »)
+const tailleTitre = (t) => (t.length <= 24 && lignesEstimees(t, 12) <= 2 ? "l" : t.length <= 40 && lignesEstimees(t, 17) <= 2 ? "m" : "s");
+// noms accessibles de la vitrine : « offre », ou « mise en avant » dès qu'un outil y figure (un outil n'est pas une offre)
+const motsVitrine = (items) => (items.some(x => x?.outil)
+  ? { une: "Mise en avant", region: "Mises en avant du moment", choisir: "Choisir une mise en avant", prec: "Mise en avant précédente", suiv: "Mise en avant suivante" }
+  : { une: "Offre", region: "Offre du moment", choisir: "Choisir une offre", prec: "Offre précédente", suiv: "Offre suivante" });
 const lienVoir = (o) => (o.menu?.key && o.menu.key !== "saisie" ? `Voir dans ${o.menu.label}` : "Voir dans la Saisie de commande");
+// éventail à l'écran : menu promo, ou outil sans photo de Zineb (composition automatique)
+const enEventail = (e) => !!(e?.menu || (e?.outil && !e.outil.photo));
 
-// le sujet de l'écran : photo (medium, large en 2x) posée en multiply sur l'écran, boîte générée, ou éventail du menu
+// le sujet de l'écran : photo (medium, large en 2x) posée en multiply sur l'écran, boîte générée, ou éventail du menu.
+// Photo en erreur : l'original d'abord (taille réduite en erreur), puis notée (illisibles.js) ; la page reconstruit l'offre
+// sans elle (photo du catalogue ou de la banque), sinon la boîte générée, dans le même rendu (jamais d'écran vide ni
+// d'icône d'image cassée). Photo pas encore chargée : lueur de la teinte de l'offre sous le produit (écran jamais nu).
 function Sujet({ e, format, priorite, mode }) {
-  const [ko, setKo] = useState(false);
-  const url = e.offre?.image_url;
-  useEffect(() => { setKo(false); }, [url]);
+  useIllisibles();
+  const url = e.offre?.image_url || e.outil?.photo;
+  const img = useRef(null);
+  const [chargee, setChargee] = useState(null);   // adresse chargée
+  const montree = url && !estIllisible(url) && !e.menu ? url : null;
+  useLayoutEffect(() => { const i = img.current; if (montree && i?.complete && i.naturalWidth > 0) setChargee(montree); }, [montree]);
   if (e.menu) return <Eventail cartes={e.menu.cartes} max={format === "s" ? 3 : 5} taille={format} />;
+  // outil : photo de Zineb (en erreur : la page refait l'entrée sans elle, composition automatique)
+  if (e.outil && !montree) return <Eventail cartes={e.outil.cartes} max={format === "s" ? 3 : 5} taille={format} />;
   return (
-    <span className="mea-cadre">
-      {url && !ko ? <img className="mea-sujet mea-photo" src={photo(url, "medium")} srcSet={photoReconnue(url) ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
-        alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={() => setKo(true)} />
-        : <span className="mea-sujet mea-sujet--boite"><Boite boite={e.offre.boite} cip={e.offre.cip} teinte={e.couleur} mode={mode} taille={format === "s" ? "carte" : "grande"} /></span>}
+    <span className={`mea-cadre${montree && chargee !== montree ? " mea-cadre--attente" : ""}`}>
+      {montree ? <img ref={img} className="mea-sujet mea-photo" src={photo(url, "medium")} srcSet={photoReconnue(url) ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
+        alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined}
+        onLoad={() => setChargee(url)} onError={(ev) => surErreurPhoto(url, ev)} />
+        : e.offre && <span className="mea-sujet mea-sujet--boite"><Boite boite={e.offre.boite} cip={e.offre.cip} teinte={e.couleur} mode={mode} taille={format === "s" ? "carte" : "grande"} /></span>}
       <span className="mea-reflet-cadre"><span className="mea-reflet" /></span>
     </span>
   );
 }
 const varsTeinte = (e) => (e ? { "--mea-sombre": e.teintes.sombre, "--mea-claire": e.teintes.claire, "--mea-trait": e.teintes.trait } : undefined);
-// calque de lumière (deux calques en fondu enchaîné : la salle change de couleur comme un changement de lumière)
+// calque de lumière (deux calques en fondu enchaîné : la salle change de couleur comme un changement de lumière) ;
+// miniature floutée en erreur : retirée (la teinte seule reste)
 const Lumiere = ({ e, k, devant, ecran }) => (
   <span className={`mea-calque${ecran ? " mea-calque--ecran" : ""}${devant ? " mea-calque--devant" : ""}`} data-k={k} style={varsTeinte(e)}>
     <span className="mea-debord" />
-    {e?.halo && <img className="mea-debord-photo" src={photo(e.halo, "thumbnail")} alt="" draggable={false} decoding="async" />}
+    <PhotoDecor url={e?.halo} className="mea-debord-photo" />
   </span>
 );
 
@@ -98,7 +127,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
     if (source !== "rotation") arreter();
     sens.current = source === "precedent" || (source === "glisse" && glisseDx.current > 0) ? -1 : source === "onglet" || source === "clavier" ? (j >= refs.current.actif ? 1 : -1) : 1;
     setActifId(l[j].id);
-    if (["precedent", "suivant", "glisse"].includes(source)) setLive({ mode: "polite", texte: `Offre ${j + 1} sur ${l.length} : ${l[j].titre}` });
+    if (["precedent", "suivant", "glisse"].includes(source)) setLive({ mode: "polite", texte: `${motsVitrine(l).une} ${j + 1} sur ${l.length} : ${l[j].titre}` });
     if (source === "glisse") { try { if (window.matchMedia?.("(pointer: coarse)").matches) navigator.vibrate?.(6); } catch { /* sans vibreur */ } }
   };
   useLayoutEffect(() => {
@@ -134,7 +163,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
     if (!arrivee.current) { if (!reduit && !apercu) garder(anime(region.current, [{ opacity: 0 }, { opacity: 1 }], { duration: 150 })); return; }
     garder(anime(sel(".mea-voile-ecran"), [{ opacity: 0.85 }, { opacity: 0 }], { duration: 600, easing: EASE }));
     tous('.mea-calque[data-k="0"]').forEach(c => garder(anime(c, [{ opacity: 0 }, { opacity: 1 }], { duration: 700, delay: 100, easing: EASE })));
-    if (e.menu) garder(donne(sel(".mea-visuel"), 200));
+    if (enEventail(e)) garder(donne(sel(".mea-visuel"), 200));
     else garder(anime(sujetActif(), [{ transform: "translateY(36px) scale(.94)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 700, delay: 200, easing: RESSORT }));
     motsEtTextes(0, null);
     medaillon(450);
@@ -166,7 +195,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
         { duration: 180, easing: SORTIE, fill: "forwards" }));
       tous(`.mea-calque[data-k="${calques.devant}"]`).forEach(c => garder(anime(c, [{ opacity: 0 }, { opacity: 1 }], { duration: 700, easing: EASE })));
       garder(anime(sel(".mea-ecran"), [{ transform: "scale(1)" }, { transform: "scale(.985)", offset: 0.4 }, { transform: "scale(1)" }], { duration: 700, easing: EASE }));
-      if (e?.menu) garder(donne(sel(".mea-visuel:not(.mea-sortant)"), 120));
+      if (enEventail(e)) garder(donne(sel(".mea-visuel:not(.mea-sortant)"), 120));
       else garder(anime(sujetActif(), [{ transform: `translateX(${(dx != null ? 120 : 64) * s}${dx != null ? "%" : "px"}) scale(.9)`, opacity: 0 }, { transform: "none", opacity: 1 }],
         { duration: dx != null ? 560 : 700, delay: dx != null ? 60 : 120, easing: RESSORT }));
       motsEtTextes(180, 260);
@@ -202,10 +231,11 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
       if (j === 0 && ++tours.current >= TOURS) { tours.current = 0; setActifId(l[0].id); setRotation("finie"); return; }
       setActifId(l[j].id);
     };
-    // préchargement de l'offre suivante, 1 s avant son tour
+    // préchargement de l'offre suivante, 1 s avant son tour (photo en erreur, original compris : notée, l'offre arrive déjà
+    // sans elle ; hors ligne : rien n'est noté ; erreur passagère : nouvel essai par illisibles.js)
     const suivante = items[(actif + 1) % n];
-    const t = setTimeout(() => [suivante?.offre?.image_url, ...(suivante?.menu?.cartes || []).map(c => c.url)].filter(Boolean).slice(0, 5)
-      .forEach(u => { const i = new Image(); i.src = photo(u, "medium"); }), DUREE - 1000 + (premier ? 1200 : 0));
+    const t = setTimeout(() => [suivante?.offre?.image_url, suivante?.outil?.photo, ...(suivante?.menu?.cartes || suivante?.outil?.cartes || []).map(c => c.url)].filter(Boolean).slice(0, 5)
+      .forEach(u => prechargerPhoto(u, "medium")), DUREE - 1000 + (premier ? 1200 : 0));
     return () => { a.onfinish = null; a.cancel(); animRot.current = null; clearTimeout(t); };
   }, [enMarche, actif]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const a = animRot.current; if (!a) return; if (enPause) a.pause(); else if (a.playState === "paused") a.play(); }, [enPause]);
@@ -309,11 +339,14 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
 
   if (!e) return null;
   const titreId = `${uid}-titre`;
+  const noms = motsVitrine(items);
   const carrousel = n > 1;
   const suivante = carrousel ? items[(actif + 1) % n] : null;
   const ajouter = (x, q) => { arreter(); onAjouter?.(x, q, sujetActif() || sel(".mea-visuel")); };
   // actions d'une offre ; inerte : copie de la diapositive sortante ou du gabarit (même hauteur, aucun effet)
-  const actions = (x, inerte) => (x.offre ? (<>
+  const actions = (x, inerte) => (x.outil ? (
+    <CtaOutil long={x.outil.cta} court={x.outil.ctaCourt} inerte={inerte} onClick={() => { arreter(); onVoir?.(x); }} />
+  ) : x.offre ? (<>
     <BoutonLot offre={x.offre} nom={x.titre} qte={qteAuPanier[x.offre.cip] || 0} pret={pret} desactive={apercu} inactif={inerte} onAjouter={(q) => ajouter(x, q)}
       onModifier={(q) => { arreter(); onModifier?.(x.offre.cip, q); }} onOuvrirPanier={onOuvrirPanier} />
     <button type="button" className="mea-voir" tabIndex={inerte ? -1 : undefined} onClick={() => { arreter(); onVoir?.(x); }}>{lienVoir(x.offre)}<Icone nom="fleche" taille={15} /></button>
@@ -325,7 +358,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
   return (
     <section ref={region} className={`mea-cinema mea-f-${format}${vivant ? " mea-vivant" : ""}${enMarche ? " mea--defile" : ""}${carrousel || possible ? "" : " mea--seule"} ex-on-dark`}
       style={varsTeinte(e)}
-      {...(carrousel ? { "aria-roledescription": "carrousel", "aria-label": "Offre du moment" } : { "aria-labelledby": titreId })}
+      {...(carrousel ? { "aria-roledescription": "carrousel", "aria-label": noms.region } : { "aria-labelledby": titreId })}
       onMouseEnter={() => setSurvol(true)} onMouseLeave={() => { setSurvol(false); surSortie(); }}
       onPointerDown={surAppui} onPointerMove={surDeplacement} onPointerUp={surRelache} onPointerCancel={() => { geste.current = null; ecrireGlisse(0); }}
       onFocus={(ev) => { try { if (ev.target.matches(":focus-visible")) arreter(); } catch { arreter(); } }}>
@@ -343,19 +376,19 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
             </button>
           )}
           {carrousel && (
-            <div role="tablist" aria-label="Choisir une offre" className="mea-barres">
+            <div role="tablist" aria-label={noms.choisir} className="mea-barres">
               {items.map((x, i) => (
                 <button key={x.id} type="button" role="tab" id={`${uid}-onglet-${i}`} aria-selected={i === actif} aria-controls={`${uid}-diapo`} tabIndex={i === actif ? 0 : -1}
                   className={`mea-barre${i < actif ? " mea-barre--passee" : ""}`} onClick={() => aller(i, "onglet")} onKeyDown={toucheOnglet}>
-                  <span className="acc-vh">Offre {i + 1} sur {n} : {x.titre}</span>
+                  <span className="acc-vh">{noms.une} {i + 1} sur {n} : {x.titre}</span>
                   <span className="mea-barre-fond" aria-hidden="true"><span className="mea-barre-rempli" /></span>
                 </button>
               ))}
             </div>
           )}
           {carrousel && !mobile && (<>
-            <button type="button" className="mea-rond" aria-label="Offre précédente" onClick={() => aller(actif - 1, "precedent")}><Icone nom="precedent" taille={17} epaisseur={2.4} /></button>
-            <button type="button" className="mea-rond" aria-label="Offre suivante" onClick={() => aller(actif + 1, "suivant")}><Icone nom="suivant" taille={17} epaisseur={2.4} /></button>
+            <button type="button" className="mea-rond" aria-label={noms.prec} onClick={() => aller(actif - 1, "precedent")}><Icone nom="precedent" taille={17} epaisseur={2.4} /></button>
+            <button type="button" className="mea-rond" aria-label={noms.suiv} onClick={() => aller(actif + 1, "suivant")}><Icone nom="suivant" taille={17} epaisseur={2.4} /></button>
           </>)}
         </div>
       )}
@@ -365,7 +398,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
           <Lumiere e={lumiere(0)} k={0} devant={calques.devant === 0} ecran /><Lumiere e={lumiere(1)} k={1} devant={calques.devant === 1} ecran />
           <div className="mea-plateau">
             {sortant && <div key={sortant.cle} className="mea-visuel mea-sortant" inert=""><Sujet e={sortant.e} format={format} mode={vivant ? "3d" : "25d"} /><span className="mea-ombre" /></div>}
-            <div className={`mea-visuel${e.menu ? " mea-visuel--menu" : ""}`}><Sujet e={e} format={format} priorite={actif === 0} mode={vivant ? "3d" : "25d"} /><span className="mea-ombre" /></div>
+            <div className={`mea-visuel${enEventail(e) ? " mea-visuel--menu" : ""}`}><Sujet e={e} format={format} priorite={actif === 0} mode={vivant ? "3d" : "25d"} /><span className="mea-ombre" /></div>
           </div>
           <span className="mea-voile-ecran" />
           {suivante && <span className="mea-lisere" style={varsTeinte(suivante)} />}
@@ -387,13 +420,44 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
   );
 }
 
-// médaillon or : remise du produit, ou « jusqu'à » la plus forte remise d'un menu (absent sans remise)
+// bouton d'un outil : le texte long (« Ouvrir la Saisie de commande ») s'il tient sur une ligne, sinon le court (« Ouvrir
+// la Saisie » : tablette, colonne étroite) — mesuré comme BoutonLot (ResizeObserver sur la largeur) ; le nom accessible
+// est le texte affiché
+function CtaOutil({ long, court, inerte, onClick }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const b = ref.current, env = b?.parentElement;
+    if (!b || !env || !court || court === long) return undefined;
+    // contenu (texte, flèche, écart, marges intérieures) plus large que le bouton : un débordement dans la marge intérieure
+    // ne se voit pas dans scrollWidth (texte collé au bord droit), d'où la somme
+    const deborde = () => {
+      const cs = getComputedStyle(b), enfants = [...b.children].filter(x => getComputedStyle(x).display !== "none");
+      const contenu = enfants.reduce((t, x) => t + x.getBoundingClientRect().width, 0) + Math.max(0, enfants.length - 1) * (parseFloat(cs.columnGap) || 0)
+        + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      return contenu > b.getBoundingClientRect().width + 0.5 || b.scrollWidth > b.clientWidth + 1;
+    };
+    const mesure = () => { b.removeAttribute("data-court"); if (deborde()) b.setAttribute("data-court", ""); };
+    mesure();
+    let largeur = env.clientWidth;
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => { if (env.clientWidth !== largeur) { largeur = env.clientWidth; mesure(); } }) : null;
+    ro?.observe(env);
+    return () => ro?.disconnect();
+  }, [long, court]);
+  return (
+    <button ref={ref} type="button" className="mea-cta mea-cta--outil" tabIndex={inerte ? -1 : undefined} onClick={onClick}>
+      <span className="mea-cta-long">{long}</span>{court && court !== long && <span className="mea-cta-court">{court}</span>}<Icone nom="fleche" taille={17} epaisseur={2.4} />
+    </button>
+  );
+}
+
+// médaillon or : remise du produit, ou « jusqu'à » la plus forte remise d'un menu ou de la Péremption courte (absent sans
+// remise ; jamais pour les autres outils : les fauteuils ont la remise standard du catalogue)
 function Medaillon({ e }) {
-  const pct = e.offre ? (e.offre.pct >= 1 ? e.offre.pct : null) : e.menu?.jusqua;
+  const pct = e.offre ? (e.offre.pct >= 1 ? e.offre.pct : null) : e.menu ? e.menu.jusqua : e.outil?.jusqua;
   if (!pct) return null;
   return (
     <span className="mea-medaillon num">
-      {e.menu && <small>jusqu’à</small>}<b>{fmtPct(pct)}</b>
+      {(e.menu || e.outil) && <small>jusqu’à</small>}<b>{fmtPct(pct)}</b>
       <span className="mea-medaillon-eclat" />
     </span>
   );
@@ -401,27 +465,31 @@ function Medaillon({ e }) {
 
 // textes d'une offre (diapositive active, ou copie inerte de l'offre sortante : « fantome », sans prix ni boutons visibles)
 function Textes({ e, titreId, fantome, actif = true, reduit, onExpire, children }) {
-  const mots = e.titre.split(/\s+/).filter(Boolean);
+  const mots = motsDe(e.titre);
   const groupes = mots.length > 12 ? [...mots.slice(0, 11), mots.slice(11).join(" ")] : mots;
   const o = e.offre;
   return (<>
-    <div className="mea-tete mea-a mea-tot"><p className="mea-eyebrow"><span className="mea-eyebrow-pre">Offre du moment · </span>{e.rayon}</p>
+    <div className="mea-tete mea-a mea-tot"><p className="mea-eyebrow"><span className="mea-eyebrow-pre">{e.outil ? "Outil" : "Offre du moment"} · </span>{e.rayon}</p>
       {e.badge && e.badge.toLowerCase() !== e.rayon.toLowerCase() && <span className="mea-badge">{e.badge}</span>}</div>
     <h2 id={titreId} className={`mea-titre mea-titre--${tailleTitre(e.titre)}`}>
       <span className="acc-vh">{e.titre}</span>
       <span aria-hidden="true">{groupes.map((m, i) => <React.Fragment key={i}><span className="mea-mot">{m}</span>{i < groupes.length - 1 ? " " : ""}</React.Fragment>)}</span>
     </h2>
     {e.sousLigne && <p className="mea-sous mea-a">{e.sousLigne}</p>}
-    {e.accroche && <p className="mea-accroche mea-a">{e.accroche}</p>}
+    {e.accroche && <p className={`mea-accroche mea-a${e.outil ? " mea-accroche--outil" : ""}`}>{e.accroche}</p>}
     <div className={`mea-prix-bloc${fantome ? " mea-cache" : ""}`}>
       {o ? (<>
         <span className="mea-prix num"><span className="acc-vh">{prixLu(o)}</span><span aria-hidden="true"><Rouleau texte={fmtEur(o.pn)} /><span className="mea-ht">HT</span></span></span>
         {o.pv > o.pn && <span className="mea-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)} HT</span>}
+      </>) : e.outil ? (<>
+        {e.outil.meta ? <span className="mea-menu-meta num"><span className="acc-vh">{e.outil.lu}</span><SegmentsMeta texte={e.outil.meta} /></span>
+          : <span className="acc-vh">{e.outil.lu}</span>}
+        {e.outil.meta2 && <span className="mea-sous mea-outil-sous">{e.outil.meta2}</span>}
       </>) : (
         <span className="mea-menu-meta num"><span className="acc-vh">{resumeMenuLu(e)}</span><span aria-hidden="true">{e.menu.nb} référence{e.menu.nb > 1 ? "s" : ""}{e.menu.des ? ` · dès ${fmtEur(e.menu.des)} HT` : ""}</span></span>
       )}
     </div>
     {e.finOffre && <Rebours fin={e.finOffre} actif={actif && !fantome} secondes={!reduit} onFin={fantome ? undefined : onExpire} classe={`mea-a${fantome ? " mea-cache" : ""}`} />}
-    <div className={`mea-actions mea-actions--${o ? "produit" : "menu"}${fantome ? " mea-cache" : ""}`}>{children}</div>
+    <div className={`mea-actions mea-actions--${o ? "produit" : e.outil ? "outil" : "menu"}${fantome ? " mea-cache" : ""}`}>{children}</div>
   </>);
 }

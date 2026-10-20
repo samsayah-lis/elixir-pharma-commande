@@ -10,6 +10,16 @@ function cible() {
   return liste.find(el => { const r = el.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < window.innerHeight; }) || null;
 }
 
+// mini-boîte (marque, dosage, teinte) : produit sans photo, ou photo en erreur pendant le vol
+function miniBoite({ marque, dosage, teinte }) {
+  const boite = document.createElement("div");
+  boite.className = "acc-vol-boite";
+  if (teinte) boite.style.setProperty("--acc-teinte", teinte);
+  boite.textContent = marque || "";
+  if (dosage) { const d = document.createElement("b"); d.textContent = dosage; boite.appendChild(d); }
+  return boite;
+}
+
 export function voler(source, { image, marque, dosage, teinte }) {
   const arrivee = cible();
   if (!source || !arrivee) return;
@@ -19,16 +29,11 @@ export function voler(source, { image, marque, dosage, teinte }) {
   x.className = "acc-vol"; y.className = "acc-vol-y";
   if (image) {
     const img = document.createElement("img");
+    // photo en erreur : la mini-boîte à sa place (le geste d'achat reste visible), jamais une icône d'image cassée
+    img.onerror = () => { img.onerror = null; img.replaceWith(miniBoite({ marque, dosage, teinte })); };
     img.src = image; img.alt = ""; img.draggable = false;
     y.appendChild(img);
-  } else {
-    const boite = document.createElement("div");
-    boite.className = "acc-vol-boite";
-    if (teinte) boite.style.setProperty("--acc-teinte", teinte);
-    boite.textContent = marque || "";
-    if (dosage) { const d = document.createElement("b"); d.textContent = dosage; boite.appendChild(d); }
-    y.appendChild(boite);
-  }
+  } else y.appendChild(miniBoite({ marque, dosage, teinte }));
   x.appendChild(y);
   const x0 = a.left + a.width / 2 - 28, y0 = a.top + a.height / 2 - 28;
   x.style.left = `${x0}px`; x.style.top = `${y0}px`;

@@ -17,13 +17,23 @@
 // l'image_url du GET, qui peut être en retard. Hors catalogue : clé « accueil-… », le catalogue n'est pas touché.
 // Publication : majAccueil (AdminPanel) applique seulement le changement voulu à la DERNIÈRE version des réglages, même
 // si l'onglet a été quitté ou remonté pendant l'envoi ; l'état d'envoi de chaque ligne vit hors du composant.
+// Affichage vérifié (incident du 20/10/2026, stockage des photos privé ; envoyerEtVerifier de photo-manuelle.js) : la
+// photo envoyée doit s'afficher dans le navigateur avant d'être publiée et annoncée ; sinon rien n'est publié et le message
+// dit pourquoi, d'après la réponse du stockage (docs/accueil.md, « Stockage des photos »). Produit du catalogue : le
+// stockage est TOUJOURS sondé avant l'envoi (l'envoi écrit l'adresse dans sa fiche avant toute vérification) ; refus si
+// son état n'est pas établi ; photo envoyée qui ne s'affiche pas : son ancienne photo (autre fichier) lui est remise.
+// Photos de la liste qui ne s'affichent pas : « Photo illisible » sur la ligne, avec son motif et ce que l'accueil montre
+// à la place, et « Vérifier de nouveau ».
 // Trois intertitres dans l'ordre de la page : Mises en avant (AdminVedettes.jsx : vitrine cinéma et grille, clé
 // accueil_vedettes publiée par l'éditeur lui-même) · Les plus commandés (aperçu et exclusions) · Réglages (interrupteurs).
 import React, { useEffect, useRef, useState } from "react";
 import { T, R, fmtEur, ui } from "../theme.js";
 import AdminVedettes from "./AdminVedettes.jsx";
-import { ACCEPT, AIDE, abonnerLignes, auCatalogue, cleEnvoi, controlerFichier, envoyerPhoto, estPhotoEnvoyee, etatLigne, liee, noterLigne,
-  portee, preparerPhoto, questionCatalogue, repartitionFamille, suivre, versionnerAuCatalogue } from "./photo-manuelle.js";
+import { ACCEPT, AIDE, abonnerLignes, auCatalogue, cleEnvoi, controlerAffichage, controlerFichier, envoyerEtVerifier, estPhotoEnvoyee, etatLigne,
+  expliquerIllisible, illisibleCarPrive, liee, noterLigne, portee, preparerPhoto, questionCatalogue, raisonIllisible, repartitionFamille,
+  reverifierIllisibles, suivre } from "./photo-manuelle.js";
+import { estIllisible } from "./accueil/illisibles.js";
+import { photo, useIllisibles } from "./accueil/outils.js";
 
 const Case = ({ coche, onChange, titre, texte }) => (
   <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", cursor: "pointer" }}>
@@ -46,6 +56,8 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
   // état de chaque ligne (CIP du dosage montré → { occupe, message, ton }) : hors du composant (photo-manuelle.js)
   const [, rafraichir] = useState(0);
   useEffect(() => abonnerLignes(() => rafraichir(n => n + 1)), []);
+  useIllisibles();   // photo de la liste notée illisible (contrôle ci-dessous) : ligne redessinée
+  const [reverif, setReverif] = useState(null);   // null | "en cours" | message du dernier essai
   const noter = noterLigne;
   const fichierRef = useRef(null), ligneRef = useRef(null);   // sélecteur de fichier unique ; ligne qui l'a ouvert
   const [apercu, setApercu] = useState(null);   // null : chargement ; { erreur } ; réponse du GET
@@ -110,14 +122,18 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
     const remplace = cibles.some(c => photos[c]);
     return suivre((async () => {
       noter(s.cip, { occupe: "envoi", message: "Préparation de la photo…" });
-      let prete, url;
+      let prete;
       try { prete = await preparerPhoto(fichier); } catch (e) { noter(s.cip, { message: e.message, ton: "danger" }); return; }
-      noter(s.cip, { occupe: "envoi", message: "Envoi de la photo…" });
+      // sonde du stockage (produit du catalogue), envoi, affichage vérifié, adresse avec ?v= rangée au catalogue, puis
+      // seulement publication (photo-manuelle.js, envoyerEtVerifier) ; échec : rien de publié, message avec le motif
       const t = Date.now();
-      try { url = await envoyerPhoto(adminFetch, cleEnvoi(s, t), prete, t); } catch (e) { noter(s.cip, { message: e.message, ton: "danger" }); return; }
-      // produit du catalogue : la fonction y a rangé la photo (adresse sans ?v=) ; l'adresse avec ?v= l'y remplace
-      if (versCatalogue) await versionnerAuCatalogue(adminFetch, s.cip, url);
-      const r = await publierPhotos(Object.fromEntries(cibles.map(c => [c, url])));
+      const connues = [...Object.values(photos), ...(apercu?.slides || []), ...(apercu?.reserves || [])].flatMap(x => (typeof x === "string" ? [x] : dosages(x).map(o => o.image_url)));
+      const res = await envoyerEtVerifier({ adminFetch, cle: cleEnvoi(s, t), prete, t, candidats: connues,
+        catalogue: versCatalogue ? { cip: s.cip, ancienne: s.image_url || (dejaLiee ? photos[s.cip] : null) } : null,
+        publier: (url) => publierPhotos(Object.fromEntries(cibles.map(c => [c, url]))),
+        etape: (message) => noter(s.cip, { occupe: "envoi", message }) });
+      if (!res.url) { noter(s.cip, { message: res.message, ton: res.ton }); return; }
+      const r = res.publication || { ok: false };
       const n = cibles.length, verbe = remplace ? "remplacée" : "ajoutée";
       const dosagesTxt = tous.length < 2 ? "" : n === tous.length ? ` pour les ${n} dosages` : ` pour ${n} dosage${n > 1 ? "s" : ""} sur ${tous.length}`;
       const par = (raison) => gardees.filter(g => g.raison === raison);
@@ -146,6 +162,22 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
           : { message: `✓ ${cips.length > 1 ? "Photos retirées" : "Photo retirée"} de l'accueil.`, ton: "neutral" }));
   };
   const lignes = apercu?.slides ? [...apercu.slides, ...(apercu.reserves || [])] : [];
+  // photos montrées par la liste (catalogue, choisies ici) : contrôlées une fois chacune ; illisible → « Photo illisible »
+  const photosListe = [...new Set(lignes.flatMap(s => [s.image_url, ...dosages(s).map(o => photos[o.cip])]).filter(Boolean))];
+  const clePhotos = photosListe.join("|");
+  useEffect(() => { photosListe.forEach(u => controlerAffichage(u, { variante: photo(u, "thumbnail") })); }, [clePhotos]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const illisiblesListe = photosListe.filter(estIllisible);
+  // motif de chaque photo du stockage illisible (lu dans la réponse du stockage, jamais deviné)
+  const cleIllisibles = illisiblesListe.join("|");
+  useEffect(() => { illisiblesListe.forEach(u => expliquerIllisible(u)); }, [cleIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const reverifier = async () => {
+    setReverif("en cours");
+    const n = await reverifierIllisibles(illisiblesListe);
+    const reste = illisiblesListe.length - n;
+    setReverif(reste ? `${reste} photo${reste > 1 ? "s" : ""} toujours illisible${reste > 1 ? "s" : ""}.` : "✓ Toutes les photos s'affichent de nouveau.");
+  };
+  // ce que l'accueil montre pour le dosage montré d'une ligne : photo du catalogue, puis celle choisie ici, sinon la boîte
+  const montreeAlaPlace = (s) => { const u = [s.image_url, photos[s.cip]].find(x => x && !estIllisible(x)); return !u ? "la boîte générée" : u === s.image_url ? "la photo du catalogue" : "la photo choisie ici"; };
   return (
     <div style={{ background: T.surface, borderRadius: 14, padding: "20px 24px", marginBottom: 20, border: "1px solid var(--line)" }}>
       <div style={{ fontWeight: 700, fontSize: 15, color: T.petrol, marginBottom: 10 }}>Page d'accueil</div>
@@ -153,6 +185,15 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
       <div style={intertitre}>Les plus commandés · 15 jours</div>
       <div style={{ fontSize: 11, color: T.inkMute, marginBottom: 8 }}>Vitrine des produits les plus commandés et servis, recalculée toutes les 3 h de 6 h 40 à 21 h 40 ; les pharmacies en voient 10.</div>
       <div style={{ fontSize: 12, fontWeight: 700, color: T.inkSoft, margin: "12px 0 6px" }}>Classement en cours{apercu?.genere_le ? ` · calculé le ${new Date(apercu.genere_le).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}</div>
+      {illisiblesListe.length > 0 && (
+        <div role="status" style={{ ...ui.encart("warn"), fontSize: 12, margin: "6px 0 8px" }}>
+          ⚠ {illisiblesListe.length} photo{illisiblesListe.length > 1 ? "s" : ""} de cette liste ne s'affiche{illisiblesListe.length > 1 ? "nt" : ""} pas (lignes marquées « Photo illisible ») : l'accueil {illisiblesListe.length > 1 ? "les remplace" : "la remplace"} par une autre photo du produit ou par la boîte générée.
+          {illisiblesListe.some(illisibleCarPrive) ? " Stockage des photos pas public : réglage à faire une seule fois dans Supabase (docs/accueil.md, « Stockage des photos ») ; ensuite, « Vérifier de nouveau »." : ""}
+          <button type="button" onClick={reverifier} disabled={reverif === "en cours"} style={{ ...ui.btn("ligne", "s"), height: 26, marginLeft: 8 }}>{reverif === "en cours" ? "Vérification…" : "Vérifier de nouveau"}</button>
+          {reverif && reverif !== "en cours" && <span style={{ marginLeft: 8 }}>{reverif}</span>}
+        </div>
+      )}
+      {illisiblesListe.length === 0 && reverif && reverif !== "en cours" && <div role="status" style={{ fontSize: 12, color: T.ok, margin: "6px 0" }}>{reverif}</div>}
       {apercu === null ? <div style={{ fontSize: 12, color: T.inkMute }}>Chargement…</div>
         : apercu.erreur || apercu.perime ? <div style={{ ...ui.encart("warn"), fontSize: 12 }}>{apercu.erreur ? `Classement indisponible (${apercu.erreur}).` : "Classement périmé ou pas encore calculé : la vitrine est masquée chez les pharmacies."}</div>
         : (
@@ -170,6 +211,8 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
               const libelleRetrait = lie ? (retirables.length > 1 ? "Retirer la photo des autres dosages" : "Retirer la photo de l'autre dosage")
                 : retirables.length > 1 ? "Retirer les photos" : "Retirer la photo";
               const styleMessage = { flexBasis: "100%", paddingLeft: 38, fontSize: 11, marginTop: -2, color: { ok: T.ok, warn: T.warn, danger: T.danger }[etat.ton] || T.inkMute };
+              // photos de la ligne qui ne s'affichent pas (catalogue ou choisies ici, tous dosages)
+              const illisiblesLigne = [...new Set([s.image_url, ...ds.map(o => photos[o.cip])].filter(u => u && estIllisible(u)))];
               const refus = etat.message && etat.ton === "danger";
               return (
                 // une ligne qui passe à la ligne : boutons sous le nom quand la place manque (le nom garde 220 px au moins)
@@ -179,7 +222,7 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
                   <span style={{ flex: "1 1 300px", minWidth: 0 }}>
                     <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.nom}>
                       {s.nom_court}{plusieurs ? ` (+${s.variantes.length - 1} dosage${s.variantes.length > 2 ? "s" : ""})` : ""}</span>
-                    <span style={{ display: "block", fontSize: 11, color: T.inkMute }}>{s.menu?.label} · {statut}</span>
+                    <span style={{ display: "block", fontSize: 11, color: T.inkMute }}>{s.menu?.label} · {statut}{illisiblesLigne.length > 0 && <b style={{ color: T.danger }}> · Photo illisible</b>}</span>
                   </span>
                   <span className="num" style={{ fontWeight: 700, whiteSpace: "nowrap" }}>{fmtEur(s.pn)}</span>
                   <span className="num" style={{ color: T.inkMute, whiteSpace: "nowrap" }}>{s.lot ? `${s.lot.qte} × ${fmtEur(s.lot.pu)} = ${fmtEur(s.lot.total)}` : ""}</span>
@@ -196,6 +239,12 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
                     )}
                     <button onClick={() => basculer(s)} style={{ ...ui.btn("ligne", "s"), height: 28 }}>{ex ? "Réintégrer" : plusieurs ? "Exclure (tous les dosages)" : "Exclure"}</button>
                   </span>
+                  {/* photo de la ligne qui ne s'affiche pas : motif et ce que l'accueil montre à la place, sur toute la largeur */}
+                  {illisiblesLigne.length > 0 && (
+                    <span style={{ ...styleMessage, color: T.danger }}>
+                      <b>Photo illisible</b>{illisiblesLigne.length > 1 ? ` (${illisiblesLigne.length})` : ""} : {raisonIllisible(illisiblesLigne[0])}.
+                      {[s.image_url, photos[s.cip]].some(estIllisible) ? ` L'accueil montre ${montreeAlaPlace(s)} à la place.` : " Les dosages concernés montrent une autre photo ou la boîte générée à la place."}</span>
+                  )}
                   <span role="status" aria-live="polite" style={etat.message && !refus ? styleMessage : CACHE}>{refus ? "" : etat.message}</span>
                   {refus && <span key={etat.n} role="alert" style={styleMessage}>{etat.message}</span>}
                 </div>

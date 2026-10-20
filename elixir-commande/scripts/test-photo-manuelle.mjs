@@ -6,9 +6,23 @@
 // catalogue). La réduction
 // elle-même (canvas) se vérifie au banc, dans un vrai navigateur. L'adresse produite passe la règle des mises en avant
 // du serveur (netlify/functions/_accueil-vedettes.js : https, 500 caractères au plus).
-import { abonnerLignes, adresseRecue, auCatalogue, avecVersion, ciblesFamille, cleDuFichier, cleEnvoi, cleMiseEnAvant, controlerFichier, dimensions,
-  envoisEnCours, envoyerPhoto, estPhotoEnvoyee, etatLigne, liee, MAX_OCTETS, memeForme, MENUS_AVEC_PHOTOS, MENUS_CATALOGUE, noterLigne, portee,
-  questionCatalogue, repartitionFamille, suivre, typeDuFichier, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
+// Affichage vérifié (incident du 20/10/2026, stockage elixir-images privé : 400 « Bucket not found ») : verifierAffichage
+// avec une fausse Image (chargée, en erreur, vide, muette → délai) ; motif lu dans la réponse du stockage avec un faux fetch
+// (NoSuchBucket, NoSuchKey, 5xx, réseau coupé, hors ligne, 200) et messages de l'admin qui en découlent (jamais « pas
+// public » deviné, produit du catalogue jamais « Rien n'a changé sur l'accueil ») ; photos notées illisibles
+// (accueil/illisibles.js : une fois par adresse, notifications regroupées, motif, oubli ; nouveaux essais hors de la page
+// avec faux minuteurs : 3 s, 30 s, 5 min, 15 min, 4 au plus, « online », retour sur l'onglet) ; contrôle dédoublonné ;
+// « Vérifier de nouveau » (?v= neuf) ; sonde du stockage avant l'envoi d'un produit du catalogue (fichier témoin absent :
+// NoSuchKey / NoSuchBucket ; aucune adresse connue : image témoin) ; envoi complet (envoyerEtVerifier) avec un faux
+// product-upload-image qui compte les POST : illisible → rien de publié, sonde privée → 0 envoi, délai → rien dans le
+// brouillon, affichée → publication ; ancienne photo du catalogue remise.
+import { abonnerLignes, adresseRecue, auCatalogue, auStockage, avecVersion, baseStockage, ciblesFamille, CLE_SONDE, cleDuFichier, cleEnvoi, cleMiseEnAvant,
+  controlerAffichage, controlerFichier, DELAI_AFFICHAGE, diagnostiquerStockage, dimensions, envoisEnCours, envoyerEtVerifier, envoyerPhoto, estPhotoEnvoyee,
+  etatLigne, expliquerIllisible, illisibleCarPrive, liee, MAX_OCTETS, memeForme, MENUS_AVEC_PHOTOS, MENUS_CATALOGUE, MESSAGE_STOCKAGE_PRIVE, messageAvantEnvoi,
+  messageNonAffichee, noterLigne, oublierAdressesConnues, portee, questionCatalogue, raisonIllisible, repartitionFamille, reverifierIllisibles, sonderStockage,
+  stockageLisible, suivre, typeDuFichier, verifierAffichage, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
+import { abonnerIllisibles, estIllisible, illisibles, lisible, motifIllisible, noterIllisible, oublierIllisible, preciserMotif, reglerIllisibles, relancerIllisibles,
+  versionIllisibles } from "../src/components/accueil/illisibles.js";
 import { ORDRE_MENUS } from "../netlify/functions/_accueil-selection.js";
 
 process.env.SUPABASE_URL = "https://supabase.test";
@@ -92,6 +106,7 @@ egal("clé : pas d'adresse", cleDuFichier(undefined), null);
 const t0 = 1760950000000;
 egal("produit", cleMiseEnAvant({ type: "produit", cip: "3400930303122" }, t0), `accueil-3400930303122-${t0.toString(36)}`);
 egal("menu promo", cleMiseEnAvant({ type: "menu", menu_id: "1759327" }, t0), `accueil-menu-1759327-${t0.toString(36)}`);
+egal("outil du site (docs/accueil.md § 7.8)", cleMiseEnAvant({ type: "outil", outil: "peremption" }, t0), `accueil-outil-peremption-${t0.toString(36)}`);
 egal("caractères inattendus retirés", cleMiseEnAvant({ type: "menu", menu_id: "12/../x y" }, t0), `accueil-menu-12xy-${t0.toString(36)}`);
 vrai("clé acceptée par la fonction et le banc", /^[\w-]{1,80}$/.test(cleMiseEnAvant({ type: "produit", cip: "34009302929141234" }, t0)));
 vrai("deux envois : deux clés", cleMiseEnAvant({ type: "produit", cip: "1" }, t0) !== cleMiseEnAvant({ type: "produit", cip: "1" }, t0 + 1));
@@ -205,6 +220,290 @@ egal("résultat transmis", await enVol, "fini");
 egal("plus rien en cours", envoisEnCours(), false);
 await suivre(Promise.reject(new Error("x"))).catch(() => {});
 egal("échec : plus rien en cours non plus", envoisEnCours(), false);
+
+// ── affichage vérifié : fausse Image (le navigateur charge l'adresse ; aucune lecture de pixels, aucun CORS) ──
+// comportement(adresse) → "ok" (chargée), "erreur" (400 du stockage privé), "vide" (0 × 0), "rien" (jamais de réponse)
+const fausseImage = (comportement) => {
+  const F = class { set src(u) { F.demandes.push(u); this.s = u; const c = comportement(u);
+    if (c === "ok") setTimeout(() => { this.naturalWidth = 900; this.naturalHeight = 675; this.onload?.(); }, 1);
+    else if (c === "erreur") setTimeout(() => this.onerror?.(), 1);
+    else if (c === "vide") setTimeout(() => { this.naturalWidth = 0; this.naturalHeight = 0; this.onload?.(); }, 1);
+    else if (c === "deux") setTimeout(() => { this.onerror?.(); this.naturalWidth = 1; this.naturalHeight = 1; this.onload?.(); }, 1); }
+  get src() { return this.s; } };
+  F.demandes = [];
+  return F;
+};
+const SUPA = "https://jwhbmnytrcrflavqtihj.supabase.co/storage/v1/object/public/elixir-images/products";
+const DEVANT = `${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=1792486536000`;   // la carte de devant de l'incident
+egal("chargée : ok", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "ok") }), "ok");
+egal("stockage privé (400 « Bucket not found ») : illisible", await verifierAffichage(DEVANT, { Img: fausseImage(() => "erreur") }), "illisible");
+egal("image de 0 × 0 : illisible", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "vide") }), "illisible");
+egal("aucune réponse : délai", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "rien"), delai: 20 }), "delai");
+egal("erreur puis chargement : la première réponse compte", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "deux") }), "illisible");
+egal("sans navigateur : inconnu", await verifierAffichage(`${SUPA}/a.jpg`, { Img: undefined }), "inconnu");
+egal("Image qui lève une erreur : inconnu", await verifierAffichage(`${SUPA}/a.jpg`, { Img: class { set src(u) { throw new Error(u); } } }), "inconnu");
+egal("pas d'adresse : inconnu", await verifierAffichage("", { Img: fausseImage(() => "ok") }), "inconnu");
+const F1 = fausseImage(() => "ok");
+await verifierAffichage(DEVANT, { Img: F1 });
+egal("adresse chargée telle quelle (sans crossOrigin ni réécriture)", F1.demandes, [DEVANT]);
+vrai("délai par défaut : 12 s", DELAI_AFFICHAGE === 12000);
+
+const tic = (ms = 10) => new Promise(r => setTimeout(r, ms));
+
+// ── réponse du stockage (diagnostic) : faux fetch ; le Storage répond en JSON, même en erreur (relevé du 20/10/2026) ──
+const fauxFetch = (regle) => {
+  const f = async (url, options) => {
+    f.appels.push({ url, options });
+    const r = regle(url);
+    if (r === "jette") throw new TypeError("Failed to fetch");
+    return { ok: r.statut >= 200 && r.statut < 300, status: r.statut, body: null, json: async () => { if (r.corps == null) throw new SyntaxError("x"); return r.corps; } };
+  };
+  f.appels = [];
+  return f;
+};
+const PRIVE = { statut: 400, corps: { statusCode: "404", error: "Bucket not found", message: "Bucket not found", code: "NoSuchBucket" } };
+const ABSENT = { statut: 400, corps: { statusCode: "404", error: "not_found", message: "Object not found", code: "NoSuchKey" } };
+const OK200 = { statut: 200, corps: null }, PANNE = { statut: 503, corps: null };
+egal("bucket privé (code NoSuchBucket)", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => PRIVE) }), "prive");
+egal("ancien format sans code (« Bucket not found »)", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => ({ statut: 400, corps: { error: "Bucket not found" } })) }), "prive");
+egal("fichier absent d'un bucket public (NoSuchKey) : jamais « privé »", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => ABSENT) }), "introuvable");
+egal("panne du stockage (503)", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => PANNE) }), "panne");
+egal("réseau coupé, proxy, bloqueur (TypeError)", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => "jette") }), "connexion");
+const FH = fauxFetch(() => PRIVE);
+egal("hors ligne : connexion, sans requête", [await diagnostiquerStockage(DEVANT, { fetch: FH, enLigne: () => false }), FH.appels.length], ["connexion", 0]);
+egal("elle répond 200 : lisible (erreur passagère du navigateur)", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => OK200) }), "lisible");
+egal("autre réponse : inconnu", await diagnostiquerStockage(DEVANT, { fetch: fauxFetch(() => ({ statut: 403, corps: {} })) }), "inconnu");
+const FC = fauxFetch(() => PRIVE);
+await diagnostiquerStockage(DEVANT, { fetch: FC });
+egal("adresse lue telle quelle, sans cache", [FC.appels[0].url, FC.appels[0].options], [DEVANT, { cache: "no-store" }]);
+
+// ── messages de l'admin : motif lu dans la réponse du stockage, jamais deviné ──
+egal("affichée : aucun message", messageNonAffichee("ok", { url: DEVANT }), null);
+egal("pas de navigateur pour vérifier : aucun message", messageNonAffichee("inconnu", { url: DEVANT }), null);
+egal("stockage privé (motif lu) : message clair, pas de « ✓ Photo ajoutée »", messageNonAffichee("illisible", { url: DEVANT, diag: "prive" }),
+  "Photo reçue, mais le site ne peut pas l'afficher : le stockage des photos (Supabase, « elixir-images ») n'est pas public. "
+  + "C'est un réglage à faire une seule fois dans Supabase (voir docs/accueil.md, « Stockage des photos ») ; une fois fait, ajoutez de nouveau la photo. Rien n'a changé sur l'accueil.");
+egal("fichier absent : jamais « pas public »", messageNonAffichee("illisible", { url: DEVANT, diag: "introuvable" }),
+  "Photo reçue, mais elle est introuvable dans le stockage des photos : ajoutez-la de nouveau. Rien n'a changé sur l'accueil.");
+egal("panne : réessayer plus tard", messageNonAffichee("illisible", { url: DEVANT, diag: "panne" }),
+  "Photo reçue, mais le stockage des photos est momentanément indisponible : ajoutez-la de nouveau dans quelques minutes. Rien n'a changé sur l'accueil.");
+egal("connexion perdue", messageNonAffichee("illisible", { url: DEVANT, diag: "connexion" }),
+  "Photo reçue, mais la connexion a été perdue avant qu'elle s'affiche : vérifiez Internet, puis ajoutez-la de nouveau. Rien n'a changé sur l'accueil.");
+vrai("motif inconnu : jamais « pas public »", !messageNonAffichee("illisible", { url: DEVANT }).includes("pas public"));
+vrai("banc d'essai (stockage privé simulé, motif lu) : même message", messageNonAffichee("illisible", { url: "/banc-photos/elixir-images/products/a.jpg?v=1", diag: "prive" }).includes("n'est pas public"));
+egal("délai : ajouter de nouveau quand la connexion le permet, rien n'a changé", messageNonAffichee("delai", { url: DEVANT }),
+  "Photo reçue, mais elle ne s'est pas affichée en 12 secondes (connexion lente ?) : ajoutez-la de nouveau quand la connexion le permet. Rien n'a changé sur l'accueil.");
+const CATA = `${SUPA}/3400930292914.webp?v=1`;
+for (const [v, diag] of [["illisible", "panne"], ["illisible", "prive"], ["delai", null]]) {
+  const m = messageNonAffichee(v, { url: CATA, catalogue: true, diag });
+  vrai(`produit du catalogue (${v}${diag ? `, ${diag}` : ""}) : jamais « Rien n'a changé sur l'accueil » (sa fiche a reçu la photo)`, !m.includes("Rien n'a changé") && m.includes("déjà la photo du produit au catalogue"));
+}
+vrai("produit du catalogue, délai : pas de « ajoutez-la de nouveau » pour lui seul (la photo est rangée)", messageNonAffichee("delai", { url: CATA, catalogue: true }).includes("Pour la publier aussi sur l'accueil"));
+vrai("produit du catalogue, ancienne photo remise : dit, et vrai (rien n'a changé sur l'accueil)",
+  messageNonAffichee("illisible", { url: CATA, catalogue: true, diag: "panne", restauree: true }).endsWith("L'ancienne photo du produit a été remise au catalogue : rien n'a changé sur l'accueil."));
+egal("autre hébergeur : pas d'image", messageNonAffichee("illisible", { url: "https://x.test/a.jpg" }), "Photo reçue, mais l'adresse renvoyée ne donne pas d'image : ajoutez-la de nouveau. Rien n'a changé sur l'accueil.");
+egal("refus avant l'envoi (catalogue) : « Rien n'a été envoyé » quel que soit l'état", ["prive", "panne", "connexion", "delai", "inconnu"].map(e => messageAvantEnvoi(e).startsWith("Rien n'a été envoyé : ")), [true, true, true, true, true]);
+egal("refus avant l'envoi, stockage privé : le réglage", messageAvantEnvoi("prive"), MESSAGE_STOCKAGE_PRIVE);
+vrai("photo du stockage reconnue (Supabase et banc)", auStockage(DEVANT) && auStockage("/banc-photos/elixir-images/products/a.jpg") && !auStockage("https://assets.medipim.fr/media/medium/a.png"));
+
+// ── photos notées illisibles (partagé avec l'accueil et l'aperçu) : une fois par adresse, notifications regroupées ──
+let prevenus = 0;
+const finAbonnement = abonnerIllisibles(() => { prevenus++; });
+const v0 = versionIllisibles();
+vrai("première erreur : notée", noterIllisible(DEVANT));
+egal("même adresse en erreur de nouveau : ignorée", noterIllisible(DEVANT), false);
+vrai("liste à jour tout de suite (lue au rendu)", estIllisible(DEVANT) && illisibles().has(DEVANT));
+egal("abonnés pas encore prévenus (une notification par image affichée)", prevenus, 0);
+noterIllisible(`${SUPA}/lot-2.jpg`); noterIllisible(`${SUPA}/lot-3.jpg`, "prive");
+await tic();
+egal("3 adresses notées d'un coup : abonnés prévenus une seule fois, version + 1", [prevenus, versionIllisibles() - v0], [1, 1]);
+egal("lisible : null pour une adresse notée, l'adresse sinon", [lisible(DEVANT), lisible(`${SUPA}/b.jpg`), lisible(null)], [null, `${SUPA}/b.jpg`, null]);
+egal("adresse vide : jamais notée", noterIllisible(""), false);
+egal("motif gardé avec l'adresse", [motifIllisible(`${SUPA}/lot-3.jpg`), motifIllisible(`${SUPA}/lot-2.jpg`)], ["prive", null]);
+vrai("motif précisé après coup : redessiné", preciserMotif(`${SUPA}/lot-2.jpg`, "introuvable") && !preciserMotif(`${SUPA}/lot-2.jpg`, "introuvable"));
+await tic();
+egal("… une notification de plus", prevenus, 2);
+finAbonnement();
+
+// ── motif de la photo illisible (« Photo illisible : … ») ──
+egal("motif : autre hébergeur", raisonIllisible("https://assets.medipim.fr/media/medium/a.png"), "l'adresse ne donne plus d'image (photo retirée par son hébergeur, ou adresse erronée)");
+vrai("motif lu « privé » : le réglage, avec la marche à suivre", raisonIllisible(`${SUPA}/lot-3.jpg`).startsWith("le stockage des photos (Supabase, « elixir-images ») n'est pas public") && raisonIllisible(`${SUPA}/lot-3.jpg`).includes("docs/accueil.md"));
+vrai("motif lu « introuvable » : jamais « pas public »", raisonIllisible(`${SUPA}/lot-2.jpg`).startsWith("photo introuvable") && !raisonIllisible(`${SUPA}/lot-2.jpg`).includes("pas public"));
+vrai("motif pas encore lu : jamais « pas public »", !raisonIllisible(DEVANT).includes("pas public"));
+egal("bandeaux : renvoi au réglage seulement pour un motif « privé »", [illisibleCarPrive(`${SUPA}/lot-3.jpg`), illisibleCarPrive(`${SUPA}/lot-2.jpg`), illisibleCarPrive(DEVANT)], [true, false, false]);
+const FE = fauxFetch(() => ABSENT);
+const [m1, m2] = await Promise.all([expliquerIllisible(DEVANT, { fetch: FE }), expliquerIllisible(DEVANT, { fetch: FE })]);
+egal("photo notée par une miniature : motif lu une fois (dédoublonné)", [m1, m2, motifIllisible(DEVANT), FE.appels.length], ["introuvable", "introuvable", "introuvable", 1]);
+
+// ── contrôle des photos déjà choisies : une fois par adresse, miniature chargée (variante), adresse notée avec son motif ──
+const F2 = fausseImage((u) => (u.includes("retiree") ? "erreur" : "ok"));
+const PHOTO_BANQUE = "https://assets.medipim.fr/media/medium/retiree.png";
+egal("photo retirée par la banque : illisible", await controlerAffichage(PHOTO_BANQUE, { variante: PHOTO_BANQUE.replace("medium", "thumbnail"), Img: F2 }), "illisible");
+vrai("… notée sous son adresse (pas celle de la miniature)", estIllisible(PHOTO_BANQUE) && !estIllisible(PHOTO_BANQUE.replace("medium", "thumbnail")));
+egal("… miniature, puis l'adresse elle-même avant de conclure", F2.demandes, [PHOTO_BANQUE.replace("medium", "thumbnail"), PHOTO_BANQUE]);
+await controlerAffichage(PHOTO_BANQUE, { Img: F2 });
+egal("contrôlée une seule fois (dédoublonné)", F2.demandes.length, 2);
+const VIGNETTE_SEULE = "https://assets.medipim.fr/media/medium/sans-miniature.png";
+egal("miniature seule en erreur (la photo s'affiche) : pas illisible", [await controlerAffichage(VIGNETTE_SEULE, { variante: VIGNETTE_SEULE.replace("medium", "thumbnail"),
+  Img: fausseImage((u) => (u.includes("thumbnail") ? "erreur" : "ok")) }), estIllisible(VIGNETTE_SEULE)], ["ok", false]);
+egal("photo qui s'affiche : pas notée", [await controlerAffichage(`${SUPA}/c.jpg`, { Img: fausseImage(() => "ok") }), estIllisible(`${SUPA}/c.jpg`)], ["ok", false]);
+egal("photo du stockage illisible : notée avec le motif lu (bucket privé)", [await controlerAffichage(`${SUPA}/d.jpg`, { Img: fausseImage(() => "erreur"), fetch: fauxFetch(() => PRIVE) }), motifIllisible(`${SUPA}/d.jpg`)], ["illisible", "prive"]);
+egal("photo du stockage en erreur passagère (elle répond 200 et s'affiche au nouvel essai) : pas notée",
+  [await controlerAffichage(`${SUPA}/e.jpg?v=1`, { Img: fausseImage((u) => (u.endsWith("?v=1") ? "erreur" : "ok")), fetch: fauxFetch(() => OK200), t: 6 }), estIllisible(`${SUPA}/e.jpg?v=1`)], ["ok", false]);
+
+// ── « Vérifier de nouveau » (réglage fait) : ?v= neuf pour le stockage, adresse oubliée si elle s'affiche, motif relu sinon ──
+const F3 = fausseImage(() => "ok");
+egal("après le réglage : redevenue lisible", await reverifierIllisibles([DEVANT], { Img: F3, t: 77 }), 1);
+egal("redemandée avec un ?v= neuf (jamais une erreur gardée en cache)", F3.demandes, [`${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=77`]);
+vrai("oubliée : elle se montre de nouveau partout (motif effacé)", !estIllisible(DEVANT) && motifIllisible(DEVANT) === null);
+noterIllisible(DEVANT);
+egal("toujours privé : reste notée, motif relu", [await reverifierIllisibles([DEVANT], { Img: fausseImage(() => "erreur"), fetch: fauxFetch(() => PRIVE) }), estIllisible(DEVANT), motifIllisible(DEVANT)], [0, true, "prive"]);
+const F4 = fausseImage(() => "ok");
+await reverifierIllisibles([PHOTO_BANQUE], { Img: F4, t: 5 });
+egal("autre hébergeur : adresse redemandée telle quelle", F4.demandes, [PHOTO_BANQUE]);
+egal("adresse jamais notée : rien à refaire", await reverifierIllisibles([`${SUPA}/jamais.jpg`], { Img: fausseImage(() => "ok") }), 0);
+vrai("oublier une adresse non notée : sans effet", !oublierIllisible(`${SUPA}/jamais.jpg`));
+// photo du stockage qui vient de s'afficher : les autres photos du stockage notées illisibles sont réessayées
+const F7 = fausseImage(() => "ok");
+egal("stockage lisible : les photos du stockage notées sont réessayées et redeviennent lisibles",
+  [await stockageLisible(`${SUPA}/nouvelle.jpg?v=1`, { Img: F7, t: 8 }), estIllisible(DEVANT), F7.demandes.includes(`${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=8`)], [4, false, true]);
+egal("photo d'un autre hébergeur : rien n'est réessayé", await stockageLisible("https://x.test/a.jpg"), 0);
+
+// ── nouveaux essais d'une photo notée (erreur passagère : Wi-Fi, 502, stockage rendu public page ouverte) ──
+// faux minuteurs (délais relevés), fausse Image (réponse au choix), faux réseau, horloge
+const faux = new Map(); let nId = 0, horloge = 1e6, enLigneSim = true;
+const prevus = () => [...faux.values()].map(m => m.ms).filter(ms => ms !== 20000).sort((a, b) => a - b);
+const declencher = async (ms) => { for (const [id, m] of [...faux]) if (m.ms === ms) { faux.delete(id); m.f(); } await tic(); };
+let reponse = () => "erreur";
+const ImgEssai = fausseImage((u) => reponse(u));
+const demandesDe = (u) => ImgEssai.demandes.filter(x => x === u).length;
+reglerIllisibles({ Img: () => ImgEssai, minuteur: (f, ms) => { faux.set(++nId, { f, ms }); return nId; }, arret: (id) => { faux.delete(id); },
+  maintenant: () => horloge, enLigne: () => enLigneSim });
+const P = `${SUPA}/passagere.jpg?v=1`;
+let vusEssais = 0;
+const fin2 = abonnerIllisibles(() => { vusEssais++; });
+noterIllisible(P);
+egal("notée : un essai hors de la page prévu dans 3 s, aucune requête tout de suite", [prevus(), demandesDe(P)], [[3000], 0]);
+reponse = () => "ok";
+await declencher(3000);
+egal("essai réussi : oubliée (la photo revient, sans recharger), abonnés prévenus", [estIllisible(P), demandesDe(P), vusEssais >= 2, prevus()], [false, 1, true, []]);
+noterIllisible(P);
+egal("notée de nouveau : les essais ne repartent pas de zéro (aucune boucle)", prevus(), [30000]);
+oublierIllisible(P);
+egal("oubliée : essai prévu annulé", prevus(), []);
+const Q = `${SUPA}/cassee.jpg`;
+reponse = () => "erreur";
+noterIllisible(Q);
+for (const d of [3000, 30000, 300000, 900000]) await declencher(d);
+egal("4 essais en échec (3 s, 30 s, 5 min, 15 min) : reste notée, plus aucun essai prévu", [estIllisible(Q), demandesDe(Q), prevus()], [true, 4, []]);
+const R = `${SUPA}/hors-ligne.jpg`;
+enLigneSim = false;
+noterIllisible(R);
+egal("hors ligne : aucun essai prévu (rien n'est gâché)", prevus(), []);
+enLigneSim = true; reponse = (u) => (u === R ? "ok" : "erreur");
+relancerIllisibles("online");
+await tic();
+egal("réseau revenu (« online ») : essai immédiat, oubliée", [demandesDe(R), estIllisible(R)], [1, false]);
+egal("… et un seul essai de plus pour l'adresse épuisée, sans suite", [demandesDe(Q), estIllisible(Q), prevus()], [5, true, []]);
+horloge += 20e3;
+relancerIllisibles("visible");
+await tic();
+egal("retour sur l'onglet moins d'une minute après : rien", demandesDe(Q), 5);
+horloge += 61e3;
+reponse = () => "ok";
+relancerIllisibles("visible");
+await tic();
+egal("retour sur l'onglet plus tard (stockage rendu public entre-temps) : essai, la photo revient", [demandesDe(Q), estIllisible(Q)], [6, false]);
+const S2 = `${SUPA}/muette.jpg`;
+reponse = () => "rien";
+noterIllisible(S2);
+await declencher(3000);
+await declencher(20000);   // garde : un essai sans réponse compte comme un échec
+egal("essai sans réponse : compté comme un échec après 20 s, essai suivant prévu", [estIllisible(S2), prevus()], [true, [30000]]);
+fin2();
+reglerIllisibles();
+faux.clear();
+
+// ── sonde du stockage avant l'envoi d'un produit du catalogue (l'envoi écrit l'adresse dans sa fiche) ──
+oublierAdressesConnues();
+egal("aucune adresse du stockage connue : « aucune » (image témoin envoyée ensuite)", await sonderStockage(["https://assets.medipim.fr/a.png"], { fetch: fauxFetch(() => ABSENT) }), "aucune");
+const FS = fauxFetch(() => ABSENT);
+egal("bucket public : NoSuchKey sur un fichier témoin absent → public", await sonderStockage([`${SUPA}/3400930292914.webp?v=1`], { fetch: FS, t: 9 }), "public");
+egal("… sondé sur un fichier qui n'existe pas, sans cache, jamais sur une photo existante", [FS.appels.map(a => a.url), FS.appels[0].options], [[`${SUPA}/__sonde-9.jpg`], { cache: "no-store" }]);
+egal("bucket privé : NoSuchBucket → privé", await sonderStockage([`${SUPA}/3400930292914.webp?v=1`], { fetch: fauxFetch(() => PRIVE) }), "prive");
+egal("photo connue supprimée depuis, bucket public : public (la sonde ne la relit pas)",
+  await sonderStockage([`${SUPA}/accueil-supprimee.jpg?v=1`], { fetch: fauxFetch((u) => (u.includes("__sonde") ? ABSENT : PRIVE)) }), "public");
+egal("panne / réseau coupé : jamais « public »", [await sonderStockage([CATA], { fetch: fauxFetch(() => PANNE) }), await sonderStockage([CATA], { fetch: fauxFetch(() => "jette") })], ["panne", "connexion"]);
+egal("adresse d'un autre hôte contenant /elixir-images/ : jamais sondée", await sonderStockage(["https://autre.test/x/elixir-images/products/a.jpg"], { fetch: fauxFetch(() => ABSENT) }), "aucune");
+egal("adresse du banc : sondée sur le banc seulement", [await sonderStockage(["/banc-photos/elixir-images/products/a.jpg"], { fetch: fauxFetch(() => ABSENT), dev: true }),
+  await sonderStockage(["/banc-photos/elixir-images/products/a.jpg"], { fetch: fauxFetch(() => ABSENT), dev: false })], ["public", "aucune"]);
+egal("base du stockage", [baseStockage(CATA), baseStockage("https://assets.medipim.fr/a.png")], ["https://jwhbmnytrcrflavqtihj.supabase.co/storage/v1/object/public/elixir-images/", null]);
+
+// ── envoi complet (envoyerEtVerifier, partagé par les deux éditeurs) : faux product-upload-image qui compte les POST ──
+const fonction = () => {
+  const f = async (url, options) => {
+    const b = JSON.parse(options.body);
+    f.posts.push(b);
+    if (f.refus) return { status: 401, ok: false, json: async () => ({ error: "Non autorisé" }) };
+    return { status: 200, ok: true, json: async () => ({ success: true, image_url: b.image_url || `${SUPA}/${b.cip}.${b.mimeType === "image/png" ? "png" : "jpg"}` }) };
+  };
+  f.posts = [];
+  return f;
+};
+const PRETE = { base64: "QUJD", mimeType: "image/jpeg" };
+let publies = [];
+const publier = (url) => { publies.push(url); return { ok: true }; };
+const resume = (af) => af.posts.map(b => (b.image_url ? `adresse:${b.image_url}` : `photo:${b.cip}`));
+const CIP_M = "3400930292914", MEDI = "https://assets.medipim.fr/media/medium/mounjaro.jpg";
+const etapes = [];
+// produit du catalogue, aucune adresse du stockage connue : image témoin d'abord
+oublierAdressesConnues();
+let af = fonction();
+let r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 40, catalogue: { cip: CIP_M, ancienne: null }, candidats: [MEDI], publier, etape: (m) => etapes.push(m),
+  Img: fausseImage(() => "ok"), fetch: fauxFetch(() => OK200) });
+egal("catalogue sans adresse connue : image témoin (clé fixe, PNG 1 × 1) affichée → envoi, adresse ?v= au catalogue, puis publication",
+  [af.posts.map(b => b.image_url ? "adresse" : `${b.cip}:${b.mimeType}`), publies, r.url], [["accueil-sonde:image/png", `${CIP_M}:image/jpeg`, "adresse"], [`${SUPA}/${CIP_M}.jpg?v=40`], `${SUPA}/${CIP_M}.jpg?v=40`]);
+egal("… étapes annoncées dans l'ordre", etapes, ["Vérification du stockage des photos…", "Envoi de la photo…", "Vérification de l'affichage de la photo…"]);
+oublierAdressesConnues(); publies = [];
+af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 41, catalogue: { cip: CIP_M, ancienne: null }, publier,
+  Img: fausseImage((u) => (u.includes(CLE_SONDE) ? "erreur" : "ok")), fetch: fauxFetch(() => PRIVE) });
+egal("catalogue sans adresse connue, image témoin illisible (bucket privé) : la photo n'est jamais envoyée, rien de publié",
+  [resume(af), publies.length, r.message], [["photo:accueil-sonde"], 0, MESSAGE_STOCKAGE_PRIVE]);
+// les quatre cas de la revue
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: "accueil-menu-1-a", prete: PRETE, t: 50, publier, Img: fausseImage(() => "erreur"), fetch: fauxFetch(() => PRIVE) });
+egal("illisible (stockage privé) : 1 envoi, rien dans le brouillon, motif « pas public »", [af.posts.length, publies.length, r.url, r.ton, r.message.includes("n'est pas public")], [1, 0, undefined, "danger", true]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 51, catalogue: { cip: CIP_M, ancienne: null }, candidats: [CATA], publier, Img: fausseImage(() => "ok"), fetch: fauxFetch(() => PRIVE) });
+egal("produit du catalogue, sonde « privé » : 0 envoi, rien de publié", [af.posts.length, publies.length, r.message], [0, 0, MESSAGE_STOCKAGE_PRIVE]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: "accueil-1-b", prete: PRETE, t: 52, publier, Img: fausseImage(() => "rien"), delai: 20, fetch: fauxFetch(() => OK200) });
+egal("délai : 1 envoi, rien dans le brouillon", [af.posts.length, publies.length, r.verdict], [1, 0, "delai"]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: "accueil-1-c", prete: PRETE, t: 53, publier, Img: fausseImage(() => "ok"), fetch: fauxFetch(() => OK200) });
+egal("affichée : 1 envoi, puis publication de l'adresse ?v=", [af.posts.length, publies, r.url, r.publication], [1, [`${SUPA}/accueil-1-c.jpg?v=53`], `${SUPA}/accueil-1-c.jpg?v=53`, { ok: true }]);
+// produit du catalogue : sonde publique, photo envoyée illisible (panne) → ancienne photo (autre fichier) remise
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 54, catalogue: { cip: CIP_M, ancienne: MEDI }, candidats: [CATA], publier,
+  Img: fausseImage(() => "erreur"), fetch: fauxFetch((u) => (u.includes("__sonde") ? ABSENT : PANNE)) });
+egal("catalogue, photo envoyée illisible : son ancienne photo lui est remise, rien de publié, dit",
+  [resume(af), publies.length, r.message.endsWith("L'ancienne photo du produit a été remise au catalogue : rien n'a changé sur l'accueil.")], [[`photo:${CIP_M}`, `adresse:${MEDI}`], 0, true]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 55, catalogue: { cip: CIP_M, ancienne: `${SUPA}/${CIP_M}.jpg?v=3` }, candidats: [CATA], publier,
+  Img: fausseImage(() => "erreur"), fetch: fauxFetch((u) => (u.includes("__sonde") ? ABSENT : PANNE)) });
+egal("catalogue, ancienne photo = même fichier (écrasé) : rien à remettre, le message dit que la fiche a la nouvelle", [resume(af), r.message.includes("déjà la photo du produit au catalogue")], [[`photo:${CIP_M}`], true]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: CIP_M, prete: PRETE, t: 56, catalogue: { cip: CIP_M, ancienne: MEDI }, candidats: [CATA], publier,
+  Img: fausseImage(() => "rien"), delai: 20, fetch: fauxFetch((u) => (u.includes("__sonde") ? ABSENT : OK200)) });
+egal("catalogue, délai : l'ancienne photo n'est pas remise (la nouvelle est sans doute bonne)", [resume(af), publies.length], [[`photo:${CIP_M}`], 0]);
+publies = []; af = fonction();
+r = await envoyerEtVerifier({ adminFetch: af, cle: "accueil-1-d", prete: PRETE, t: 57, publier,
+  Img: fausseImage((u) => (u.endsWith("?v=57") ? "erreur" : "ok")), fetch: fauxFetch(() => OK200) });
+egal("erreur passagère (l'adresse répond 200) : nouvel essai avec un ?v= neuf, publiée", [publies, r.url], [[`${SUPA}/accueil-1-d.jpg?v=57`], `${SUPA}/accueil-1-d.jpg?v=57`]);
+publies = []; af = fonction(); af.refus = true;
+r = await envoyerEtVerifier({ adminFetch: af, cle: "accueil-1-e", prete: PRETE, t: 58, publier, Img: fausseImage(() => "ok"), fetch: fauxFetch(() => OK200) });
+egal("envoi refusé (session expirée) : message de l'envoi, rien de publié", [r.message, publies.length], ["Session admin expirée : reconnectez-vous, puis recommencez.", 0]);
 
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);

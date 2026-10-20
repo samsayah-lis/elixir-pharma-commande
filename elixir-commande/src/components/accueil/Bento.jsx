@@ -2,18 +2,23 @@
 // Placement fixe selon le nombre de tuiles et la largeur (format s < 768 px, m < 1 280 px, l), la première en grand.
 // Tuile produit : <article> (nom en h3), deux vrais boutons (« Ajouter » par BoutonLot, « Voir dans … »), pas de lien
 // étiré. Tuile menu : un <button> entier (nom accessible : nom, références, « dès », remise, « voir le menu »).
+// Tuile outil (docs/accueil.md § 7.8) : un <button> entier aussi (nom accessible : titre, chiffres, texte du pied) ;
+// photo de Zineb, sinon éventail de la composition automatique (grande tuile, bandeau ; petite tuile : éventail réduit),
+// pastilles des photos du fabricant ou plaque pétrole de l'outil (large tuile) ; « jusqu'à » pour la Péremption seulement ;
+// méta en segments insécables ; pied sur une ligne (petite tuile sur téléphone : verbe seul, « Choisir »).
 // Pointeur fin seulement : bordure lumineuse qui tourne (pseudo-élément conique tourné, sans @property), relief qui suit
 // le pointeur (±3 à ±4°, lissé), projecteur (tache déplacée par transform). Entrée en cascade une fois par chargement.
 // Mouvement réduit : filet or clair fixe au survol et au focus, rien d'autre ; tactile : pression seulement.
-import React, { useId, useLayoutEffect, useRef, useState } from "react";
+import React, { useId, useLayoutEffect, useRef } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur, fmtPct } from "../../theme.js";
 import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail from "./Eventail.jsx";
-import { RESSORT, anime, photo, photoReconnue, sansEmoji } from "./outils.js";
+import { PhotoDecor, RESSORT, SegmentsMeta, anime, photo, photoReconnue, sansEmoji, surErreurPhoto, useIllisibles } from "./outils.js";
 import { dateTexte, prixLu, resumeMenuLu } from "./vedettes.js";
+import { estIllisible } from "./illisibles.js";
 
 let cascadeJouee = false;
 // [colonnes, rangées] de chaque tuile et variante : g grande, b bandeau, c large compacte, p petite
@@ -29,11 +34,13 @@ const lot = (o) => (o.lot?.qte > 1 ? `${o.menu?.key === "stratege" ? "Carton" : 
 // rayon où l'ajout range la ligne, comme la vitrine cinéma : « Sélection Stratège », sinon « la Saisie de commande »
 const rayonDe = (o) => (o.menu?.key && o.menu.key !== "saisie" ? sansEmoji(o.menu.label) : "la Saisie de commande");
 
+// photo en erreur : l'original d'abord (taille réduite en erreur), puis notée (illisibles.js) ; la page reconstruit l'offre
+// sans elle (autre photo du produit, sinon la boîte)
 function Photo({ url, taille, teinte, offre }) {
-  const [ko, setKo] = useState(false);
+  useIllisibles();
   // 2x : la taille au-dessus (vignette → moyenne), jamais la grande pour une petite tuile (1,4 Mo sur téléphone)
-  if (url && !ko) return <img className="mea-tuile-photo" src={photo(url, taille)} srcSet={photoReconnue(url) ? `${photo(url, taille)} 1x, ${photo(url, taille === "thumbnail" ? "medium" : "large")} 2x` : undefined}
-    alt="" draggable={false} decoding="async" loading="lazy" onError={() => setKo(true)} />;
+  if (url && !estIllisible(url)) return <img className="mea-tuile-photo" src={photo(url, taille)} srcSet={photoReconnue(url) ? `${photo(url, taille)} 1x, ${photo(url, taille === "thumbnail" ? "medium" : "large")} 2x` : undefined}
+    alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(url, ev)} />;
   return offre ? <span className="mea-tuile-boite"><Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode="25d" taille="carte" /></span> : null;
 }
 
@@ -112,11 +119,12 @@ export default function Bento({ items, format = "l", reduit, finPointer, depart 
       <ul role="list" ref={liste} className={`mea-grille mea-grille--${format}${vivant ? " mea-vivant" : ""}`}>
         {items.map((e, i) => {
           const p = places[i] || { c: 1, r: 1, v: "petite" };
-          const props = { className: `mea-tuile mea-tuile--${p.v}${e.menu ? " mea-tuile--menu" : ""}`, style: varsTeinte(e), "data-amp": p.v === "grande" || p.v === "bandeau" ? "3" : "4",
+          const props = { className: `mea-tuile mea-tuile--${p.v}${e.menu || e.outil ? " mea-tuile--menu" : ""}${e.outil ? " mea-tuile--outil" : ""}`, style: varsTeinte(e), "data-amp": p.v === "grande" || p.v === "bandeau" ? "3" : "4",
             onPointerMove: survol, onPointerLeave: sortie };
           return (
             <li key={e.id} className="mea-place" style={{ gridColumn: `span ${p.c}`, gridRow: `span ${p.r}` }}>
               {e.menu ? <TuileMenu e={e} v={p.v} format={format} props={props} onVoir={onVoir} onExpire={onExpire} />
+                : e.outil ? <TuileOutil e={e} v={p.v} format={format} props={props} onVoir={onVoir} />
                 : <TuileProduit e={e} v={p.v} props={props} id={`${uid}-t${i}`} qte={qteAuPanier[e.offre.cip] || 0} pret={pret} apercu={apercu}
                   onAjouter={onAjouter} onModifier={onModifier} onOuvrirPanier={onOuvrirPanier} onVoir={onVoir} onExpire={onExpire} />}
             </li>
@@ -130,7 +138,7 @@ export default function Bento({ items, format = "l", reduit, finPointer, depart 
 const Fond = ({ e }) => (
   <span className="mea-tuile-fond" aria-hidden="true">
     <span className="mea-tuile-lavis" />
-    {e.halo && <img className="mea-tuile-halo" src={photo(e.halo, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" />}
+    <PhotoDecor url={e.halo} className="mea-tuile-halo" loading="lazy" />
     <span className="mea-projecteur" />
   </span>
 );
@@ -176,13 +184,14 @@ function TuileProduit({ e, v, props, id, qte, pret, apercu, onAjouter, onModifie
 function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
   const m = e.menu, grand = v === "grande" || v === "bandeau";
   const fin = e.finOffre ? `, jusqu'au ${dateTexte(e.finOffre)}` : "";
-  const vignettes = m.cartes.filter(c => c.url).slice(0, 3);
+  useIllisibles();
+  const vignettes = m.cartes.filter(c => c.url && !estIllisible(c.url)).slice(0, 3);
   return (
     <button type="button" {...props} aria-label={`${resumeMenuLu(e)}${fin}, voir le menu`} onClick={() => onVoir?.(e)}>
       <Fond e={e} />
       <span className={`mea-tuile-visuel${!grand && !vignettes.length && m.cartes.length ? " mea-tuile-visuel--cartes" : ""}`} aria-hidden="true">
         {grand ? <Eventail cartes={m.cartes} max={v === "grande" && format !== "s" ? 5 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
-          : vignettes.length ? <span className="mea-pastilles">{vignettes.map((c, i) => <span key={i} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" /></span>)}</span>
+          : vignettes.length ? <span className="mea-pastilles">{vignettes.map(c => <span key={c.url} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(c.url, ev)} /></span>)}</span>
             // menu sans photo : ses cartes texte en éventail (nom et prix, filet de la teinte) ; l'icône seulement sans aucune carte
             : m.cartes.length ? <Eventail cartes={m.cartes} max={3} taille={v === "petite" && format !== "s" ? "s" : "mini"} balise="span" />
               : <span className="mea-tuile-icone"><Icone nom="etiquette" taille={20} /></span>}
@@ -197,6 +206,45 @@ function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
         </span>
         {e.finOffre && <Rebours fin={e.finOffre} secondes={false} onFin={onExpire} classe="mea-tuile-fin" balise="span" />}
         <span className="mea-tuile-pied">Voir le menu<Icone nom="fleche" taille={16} epaisseur={2.4} /></span>
+      </span>
+    </button>
+  );
+}
+
+// outil du site : photo de Zineb, sinon composition automatique ; chiffres du moment ; le bouton entier ouvre l'outil.
+// Nom accessible : titre et chiffres (x.lu), puis le texte du pied (court) : le libellé visible est dans le nom.
+function TuileOutil({ e, v, format, props, onVoir }) {
+  const x = e.outil, grand = v === "grande" || v === "bandeau";
+  useIllisibles();
+  const photoZineb = x.photo && !estIllisible(x.photo) ? x.photo : null;
+  const vignettes = x.cartes.filter(c => c.url && !estIllisible(c.url)).slice(0, 3);
+  // petite tuile sans photo : la plaque en carte (comme dans la vitrine, en petit ; ses chiffres sont dans la méta : une
+  // carte-chiffre de 76 px serait illisible), centrée dans la place libre ; large tuile (visuel de 96 px) : l'icône
+  const eventailPetit = v === "petite" && x.cartes[0]?.type === "plaque";
+  const pied = format === "s" && v === "petite" ? x.ctaMini : x.ctaCourt;
+  return (
+    <button type="button" {...props} aria-label={`${x.lu}, ${x.ctaCourt}`} onClick={() => onVoir?.(e)}>
+      <Fond e={e} />
+      <span className={`mea-tuile-visuel${eventailPetit && !photoZineb ? " mea-tuile-visuel--cartes" : ""}`} aria-hidden="true">
+        {photoZineb ? <Photo url={photoZineb} taille={grand ? "medium" : "thumbnail"} teinte={e.couleur} />
+          // bandeau étroit (2 mises en avant, 768 à 1 279 px) : plaque et un chiffre, l'éventail tient dans son visuel
+          : grand ? <Eventail cartes={x.cartes} max={v === "bandeau" && format === "m" ? 2 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
+            : vignettes.length ? <span className="mea-pastilles">{vignettes.map(c => <span key={c.url} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(c.url, ev)} /></span>)}</span>
+              : eventailPetit ? <Eventail cartes={x.cartes} max={1} taille="mini" balise="span" />
+                : <span className="mea-tuile-plaque"><Icone nom={x.icone} taille={24} epaisseur={1.6} /></span>}
+        {grand && photoZineb && <span className="mea-tuile-ombre" />}
+      </span>
+      <span className="mea-tuile-corps" aria-hidden="true">
+        <span className="mea-tuile-eyebrow">{e.badge || e.rayon}</span>
+        <span className="mea-tuile-nom">{e.titre}</span>
+        {grand && e.accroche && <span className="mea-tuile-accroche">{e.accroche}</span>}
+        {(x.meta || x.jusqua) && (
+          <span className="mea-tuile-meta num">
+            {(v === "petite" ? x.metaCourt : x.meta) && <SegmentsMeta texte={v === "petite" ? x.metaCourt : x.meta} />}
+            {x.jusqua ? <span className="mea-tuile-remise">jusqu’à {fmtPct(x.jusqua)}</span> : null}
+          </span>
+        )}
+        <span className="mea-tuile-pied">{pied}<Icone nom="fleche" taille={16} epaisseur={2.4} /></span>
       </span>
     </button>
   );

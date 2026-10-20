@@ -32,6 +32,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [alerts, setAlerts] = useState({});
   const [alertSaving, setAlertSaving] = useState({});
   const [alertErreur, setAlertErreur] = useState({});   // CIP → message quand le serveur refuse l'alerte (jeton absent ou expiré…)
+  // Alertes retour (20/10/2026, docs/alertes-retour.md) : demandes déjà averties (e-mail parti) dont le produit est de
+  // nouveau en stock depuis moins de 14 jours (« retour », calculé par restock-alert) → mention « De retour en stock ».
+  // cipAffiche : CIP de la ligne de la Saisie (article sous plusieurs CIP : la référence servie en premier, retour_cip)
+  const [retours, setRetours] = useState([]);   // [{ cip, cipAffiche, nom }]
+  const [retourErreur, setRetourErreur] = useState("");   // masquage refusé par le serveur
   const [stockOnly, setStockOnly] = useState(false);
   const debounceRef = useRef(null);
 
@@ -48,9 +53,13 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
             // ?pharmacy_cip ne sert qu'à l'admin : pour une pharmacie, le serveur prend le CIP de son jeton
             const alertRes = await fetchAuth(`/.netlify/functions/restock-alert?pharmacy_cip=${encodeURIComponent(pharmacyCip)}`);
             const alertData = await alertRes.json();
-            const map = {};
-            (Array.isArray(alertData) ? alertData : []).forEach(a => { map[a.cip] = true; });
-            if (!cancelled) setAlerts(map);
+            // alerte active = pas encore avertie ; avertie et produit revenu = « De retour en stock »
+            const map = {}, rev = [];
+            (Array.isArray(alertData) ? alertData : []).forEach(a => {
+              if (a.retour) rev.push({ cip: a.cip, cipAffiche: a.retour_cip || a.cip, nom: a.product_name || a.cip });
+              else if (!a.notified) map[a.cip] = true;
+            });
+            if (!cancelled) { setAlerts(map); setRetours(rev); }
           } catch (e) { /* ignore */ }
         }
       } catch (e) { console.warn("[init]", e.message); if (!cancelled) setInfoLue(true); }
@@ -103,9 +112,48 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     setAlertSaving(prev => ({ ...prev, [cip]: false }));
   };
 
+  // Masquer « De retour en stock » = retirer la demande déjà avertie (même DELETE que « Alerte activée ») ; refus : remise
+  // et message (sauf masquage automatique après l'ajout au panier : la mention reviendra simplement au prochain affichage)
+  const masquerRetour = async (r, { silencieux = false } = {}) => {
+    setRetours(prev => prev.filter(x => x.cip !== r.cip));
+    setRetourErreur("");
+    let ok = false;
+    try {
+      ok = (await fetchAuth(`/.netlify/functions/restock-alert?pharmacy_cip=${encodeURIComponent(pharmacyCip)}&cip=${encodeURIComponent(r.cip)}`, { method: "DELETE" })).ok;
+    } catch { ok = false; }
+    if (!ok) {
+      setRetours(prev => prev.some(x => x.cip === r.cip) ? prev : [...prev, r]);
+      if (!silencieux) setRetourErreur(`Mention « De retour en stock » non retirée pour ${r.nom}, réessayez.`);
+    }
+  };
+  const retourDe = (cip) => retours.find(r => r.cip === cip || r.cipAffiche === cip);
+  // recherche en cours (lien ?cip= de l'e-mail compris) : le bandeau ne répète pas les produits affichés (leur ligne porte
+  // déjà la mention) et passe SOUS les résultats — sur téléphone, le produit ouvert par l'e-mail reste en haut de l'écran
+  const enRecherche = query.length >= 2;
+  const retoursBandeau = enRecherche ? retours.filter(r => !results.some(p => p.cip === r.cip || p.cip === r.cipAffiche)) : retours;
+
+  // Bandeau « De retour en stock » (ton info, suite de « Alerte activée » ; nom → recherche du CIP ; croix → mention retirée)
+  const bandeauRetours = retoursBandeau.length > 0 && (
+    <section aria-label="Produits de retour en stock" style={{ ...ui.encart("info"), display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px", marginBottom: 14 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Icone nom="cloche" taille={15} />De retour en stock</span>
+      <span style={{ color: T.inkSoft }}>{retoursBandeau.length > 1 ? "Les produits que vous attendiez sont disponibles :" : "Le produit que vous attendiez est disponible :"}</span>
+      {retoursBandeau.map(r => (
+        <span key={r.cip} style={{ display: "inline-flex", alignItems: "center", maxWidth: "100%", background: T.surface, borderRadius: R.pill, boxShadow: `inset 0 0 0 1px ${tone("info").border}` }}>
+          <button onClick={() => setQuery(r.cipAffiche)} aria-label={`Afficher ${r.nom} dans la recherche`} title={`Afficher ${r.nom}`}
+            style={{ ...retourStyle, display: "block", lineHeight: "28px", padding: "0 4px 0 12px", maxWidth: 280, overflow: "hidden", textOverflow: "ellipsis" }}>{r.nom}</button>
+          <button onClick={() => masquerRetour(r)} aria-label={`Masquer « De retour en stock » pour ${r.nom}`} title="Masquer"
+            style={{ ...retourStyle, width: 28, justifyContent: "center", flexShrink: 0, color: T.inkMute }}><Icone nom="fermer" taille={12} /></button>
+        </span>
+      ))}
+    </section>
+  );
+
   const handleAdd = (product) => {
     const qty = parseInt(quantities[product.cip]) || 0;
     if (qty <= 0) return;
+    // produit attendu ajouté au panier : la pharmacie a donné suite, la mention « De retour en stock » se retire
+    const attendu = retourDe(product.cip);
+    if (attendu) masquerRetour(attendu, { silencieux: true });
     const hasDiscount = product.discounted_price && product.discount_pct > 0;
     const price = hasDiscount ? product.discounted_price : product.list_price;
     onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0, tiers: product.price_tiers || null,
@@ -164,6 +212,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         )}
       </div>
 
+      {/* Alertes retour : produits attendus de nouveau en stock (nom → recherche du CIP ; croix → mention retirée). Ton
+          info (sarcelle sur menthe), suite de « Alerte activée » : l'or reste aux remises et aux paliers (charte § 1.4) */}
+      {retourErreur && <div role="alert" style={{ ...ui.encart("danger"), marginBottom: 10 }}>{retourErreur}</div>}
+      {!enRecherche && bandeauRetours}
+
       {/* États vides (lot 8 : composant commun EtatVide). « Catalogue non synchronisé » seulement une fois le compte lu :
           pendant sa lecture, la consigne de recherche (avant le lot, le message s'affichait le temps de la réponse) */}
       {infoLue && !hasProducts && (
@@ -219,6 +272,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "4px 10px", marginTop: 5 }}>
                       <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
                         title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
+                      {p.in_stock && retourDe(p.cip) && (
+                        <span title="Vous aviez demandé à être averti de son retour" style={{ ...ui.badge("info"), padding: "2px 8px 2px 6px" }}>
+                          <Icone nom="cloche" taille={12} epaisseur={2.4} />De retour en stock
+                        </span>
+                      )}
                       {/* CIP avec bouton de copie (anti-copie § 19 : le CIP n'est plus sélectionnable ; revue § 20), hors de la
                           tabulation pour garder l'enchaînement « − », quantité, « + » au clavier (lots 5 et E3) */}
                       <span style={{ fontSize: 12, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 4 }}>CIP <CipCell cip={p.cip} tabulable={false} /></span>
@@ -264,6 +322,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       </button>
                     </>) : (
                       <button className={isAlert ? "ex-saisie-alerte" : "ex-btn-ligne ex-saisie-alerte"} onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
+                        title={isAlert ? "Un e-mail vous sera envoyé à son retour en stock. Cliquez pour retirer l’alerte." : "Recevoir un e-mail, une seule fois, dès son retour en stock"}
                         style={{ ...alerteStyle, ...(isAlert ? alerteActive : {}), opacity: alertSaving[p.cip] ? 0.5 : 1 }}>
                         <Icone nom={isAlert ? "coche" : "cloche"} taille={15} />{alertErreur[p.cip] || (isAlert ? "Alerte activée" : "M’avertir du retour")}
                       </button>
@@ -273,6 +332,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               );
             })}
           </div>
+          {bandeauRetours && <div style={{ marginTop: 14 }}>{bandeauRetours}</div>}
         </div>
       )}
     </div>
@@ -289,3 +349,6 @@ const ajouterStyle = { ...ui.btn("primaire", "s"), background: undefined, color:
 // alerte de retour en stock : bouton à filet, puis ton info (menthe + sarcelle) une fois activée
 const alerteStyle = { ...ui.btn("ligne", "s"), background: undefined, height: undefined, gap: 6, padding: "0 14px", boxShadow: `inset 0 0 0 1.5px ${T.lineField}` };
 const alerteActive = { background: tone("info").bg, color: tone("info").fg, boxShadow: `inset 0 0 0 1px ${tone("info").border}` };
+// « De retour en stock » : nom du produit (recherche) et croix (masquer), dans une pastille blanche à filet menthe
+const retourStyle = { height: 28, border: "none", borderRadius: R.pill, background: "transparent", cursor: "pointer", fontSize: 13, fontWeight: 600, fontFamily: "inherit",
+  color: T.ink, display: "inline-flex", alignItems: "center", whiteSpace: "nowrap" };

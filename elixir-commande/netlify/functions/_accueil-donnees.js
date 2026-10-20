@@ -1,12 +1,14 @@
 // ── Accueil « La Tête de gondole » : lectures (Odoo en lecture seule, Supabase) et calcul du classement ──
 // Utilisé par accueil-offres-refresh.js (planifié) et accueil-offres.js (GET ; calcul au premier appel sans cache).
 // Dépendances injectables (scripts/test-accueil.mjs : aucune lecture réelle). Aucune écriture Odoo ; dans Supabase,
-// seulement kv_store « accueil:offres », « accueil:dernier_passage » et le verrou « accueil:verrou ».
+// seulement kv_store « accueil:offres », « accueil:dernier_passage », « accueil:outils » (mises en avant d'outils,
+// _accueil-outils.js) et le verrou « accueil:verrou ».
 import { odoo as odooReel, COMPANY_ID } from "./_odoo-rpc.js";
 import { quotaProducts as quotasReels } from "./_quota.js";
 import { sb as sbReel, kvGet as kvGetReel, kvSet as kvSetReel, lireConfig, indexProduits, avecVerrou } from "./_lab-justif.js";
 import { verifierJeton } from "./auth.js";
 import { TOP_ODOO, VERSION, contexteMenus, dateOdoo, depuisOdoo, fenetre, jourParis, normaliser, selectionner } from "./_accueil-selection.js";
+import { labosDeConfig } from "./_accueil-outils.js";
 
 export const CLE_CACHE = "accueil:offres";
 export const CLE_JOURNAL = "accueil:dernier_passage";
@@ -17,22 +19,38 @@ const enc = encodeURIComponent;
 const liste = (arr) => `(${arr.map(v => `"${String(v).replace(/["\\]/g, "")}"`).join(",")})`;
 const parse = (v) => { if (typeof v !== "string") return v ?? null; try { return JSON.parse(v); } catch { return null; } };
 
-// deps : { odoo, sb, quotaProducts, justifs, kvGet, kvSet, verrou, verifierJeton, maintenant } (tout est facultatif)
+// deps : { odoo, sb, compter, quotaProducts, justifs, labosJustif, kvGet, kvSet, verrou, verifierJeton, maintenant } (tout est facultatif)
 // delaiOdoo : délai maximal de chaque appel Odoo réel (ms ; 0 = aucun) — GET : court, la fonction entière est plafonnée
 // à 10 s par Netlify ; planifiée : une erreur (journal écrit) plutôt qu'un arrêt muet à 30 s
 export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
+  // configuration des justificatifs (kv « lj:config ») lue une fois par appel : justifs et labosJustif la partagent
+  let configP = null;
+  const config = () => (configP ||= lireConfig());
   return {
     odoo: deps.odoo || (delaiOdoo > 0 ? (m, me, a, k) => odooReel(m, me, a, k, { timeoutMs: delaiOdoo }) : odooReel),
     sb: deps.sb || sbReel,
+    // nombre de lignes d'une lecture Supabase (Prefer: count=exact, Range: 0-0 → content-range « 0-0/27871 »)
+    compter: deps.compter || compterReel,
     quotaProducts: deps.quotaProducts || quotasReels,
     // CIP sur justificatif labo (tous les labos, comme lab-justif?action=products)
-    justifs: deps.justifs || (async () => new Set(Object.keys(indexProduits(await lireConfig())))),
+    justifs: deps.justifs || (async () => new Set(Object.keys(indexProduits(await config())))),
+    // laboratoires sur justificatif montrés sur le site (site !== false) : [{ nom, medicaments, presentations }]
+    labosJustif: deps.labosJustif || (async () => labosDeConfig(await config())),
     kvGet: deps.kvGet || kvGetReel,
     kvSet: deps.kvSet || kvSetReel,
     verrou: deps.verrou || ((fn) => avecVerrou(fn, 60e3, CLE_VERROU)),
     verifierJeton: deps.verifierJeton || verifierJeton,
     maintenant: deps.maintenant || (() => Date.now()),
   };
+}
+
+async function compterReel(chemin) {
+  const r = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${chemin}`, { headers: { apikey: process.env.SUPABASE_KEY, Authorization: `Bearer ${process.env.SUPABASE_KEY}`,
+    Prefer: "count=exact", Range: "0-0" } });
+  if (!r.ok && r.status !== 206) throw new Error(`Supabase ${chemin.split("?")[0]} : HTTP ${r.status}`);
+  const n = parseInt(String(r.headers.get("content-range") || "").split("/")[1], 10);
+  if (!Number.isFinite(n)) throw new Error(`Supabase ${chemin.split("?")[0]} : compte illisible`);
+  return n;
 }
 
 // ── Supabase : configuration de l'accueil en une requête (menus, menus promo, mises en avant de Zineb) ──

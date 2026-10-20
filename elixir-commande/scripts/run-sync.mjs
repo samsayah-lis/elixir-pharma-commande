@@ -69,6 +69,26 @@ async function stockRefresh() {
   console.log("  → stock",      JSON.stringify(await call("odoo-stock-sync", "step=stock")).slice(0, 160));
   await loop("odoo-stock-sync", "apply");
   console.log("  → reset_absent", JSON.stringify(await call("odoo-stock-sync", "step=reset_absent")));
+  await alertesRetour();
+}
+
+// Alertes « M'avertir du retour » (restock-notify, docs/alertes-retour.md) : stock à jour → e-mails aux pharmacies dont un
+// produit attendu est revenu (une fois par demande, 7 h – 21 h heure de Paris, une fois les envois automatiques activés
+// dans l'admin ; plafonds : un e-mail par adresse sur 24 h, 150 par jour). 4 s de travail par appel : rappelé tant qu'il
+// en reste (done=false) ; une panne de Resend arrête la boucle (done=true). Réponse en chiffres seulement (ni nom ni
+// adresse dans ce journal). Un échec ici ne fait PAS échouer la synchro du stock : le passage planifié restock-notify-cron
+// (h:50) reprend ce qui reste.
+async function alertesRetour() {
+  try {
+    for (let i = 0; i < 40; i++) {
+      const d = await call("restock-notify", "action=envoyer");
+      console.log("  → alertes retour", JSON.stringify(d).slice(0, 240));
+      if (d.done !== false) return;
+    }
+    console.log("  ⚠ alertes retour : il en reste après 40 appels (repris par le passage planifié)");
+  } catch (e) {
+    console.log(`  ⚠ alertes retour non traitées : ${e.message} (repris par le passage planifié)`);
+  }
 }
 
 async function syncStockQuick() {

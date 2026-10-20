@@ -41,11 +41,17 @@ export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = 
   useLayoutEffect(() => {
     const b = refCentre.current, l = refLot.current;
     if (!b || !l) return undefined;
+    // débordement réel (largeur du texte au demi-pixel, pas scrollWidth arrondi : « 240 au panier » de 95,09 px dans
+    // 94 px passait pour entier, rogné d'1 px dans une petite tuile à 1 280 px)
+    const deborde = (el) => {
+      if (el.scrollWidth > el.clientWidth + 1) return true;
+      try { const r = document.createRange(); r.selectNodeContents(el); return r.getBoundingClientRect().width > el.getBoundingClientRect().width + 0.5; } catch { return false; }
+    };
     const mesure = () => {
       b.removeAttribute("data-lignes"); b.removeAttribute("data-court");
       const t = b.querySelector(".acc-lot-textes"), q = b.querySelector(".acc-lot-qte");
-      if (t && t.scrollWidth > t.clientWidth + 1) b.setAttribute("data-lignes", "2");
-      if (q && q.scrollWidth > q.clientWidth + 1) b.setAttribute("data-court", "");
+      if (t && deborde(t)) b.setAttribute("data-lignes", "2");
+      if (q && deborde(q)) b.setAttribute("data-court", "");
     };
     mesure();
     let largeur = l.clientWidth;

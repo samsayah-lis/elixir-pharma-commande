@@ -12,6 +12,7 @@ import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
 import AdminAssistant from "./components/AdminAssistant.jsx";
+import AdminAlertesRetour from "./components/AdminAlertesRetour.jsx";
 import AdminNotifications from "./components/AdminNotifications.jsx";
 import { envoisEnCours } from "./components/photo-manuelle.js";
 import { T, R, tone, alpha, adm } from "./theme.js";
@@ -1084,6 +1085,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
     {k:"expiry",    label:"⏰ Péremptions",icon:"⏰"},
+    {k:"alertes",   label:"🔔 Alertes retour",icon:"🔔"},
     {k:"display",   label:"🎨 Affichage",  icon:"🎨"},
     {k:"sync",      label:"🔄 Synchronisation",icon:"🔄"},
     {k:"search_ml", label:"🧠 Recherches",icon:"🧠"},
@@ -1918,6 +1920,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
               Le sync stock charge les produits et quantités. Le sync prix associe les remises de la liste de prix EUR 2. Le sync péremptions charge les lots et dates d'expiration pour les produits en stock.
             </div>
           </div>
+        )}
+
+        {/* ── ALERTES RETOUR EN STOCK (« M'avertir du retour » de la Saisie : docs/alertes-retour.md) ── */}
+        {tab==="alertes"&&(
+          <AdminAlertesRetour adminFetch={adminFetch} flash={flash} />
         )}
 
         {/* ── SEARCH ML TAB ── */}

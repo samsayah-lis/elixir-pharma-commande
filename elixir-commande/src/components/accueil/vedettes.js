@@ -5,7 +5,12 @@
 // Ici : dates (heure de Paris), compte à rebours, repli automatique sur les menus promo, résumé d'un menu, teintes, et la
 // construction finale des deux emplacements à partir du GET accueil-offres (produits recalés sur le catalogue chargé par
 // resoudreOffre : le montant du bouton est ce que le panier facture).
+// Outils du site (type « outil », registre rubriques.js) : écartés pour une pharmacie qui ne peut pas les ouvrir (rubrique
+// non ouvrable ; Commandes groupées sans accès ou sans opération ouverte) ou sans chiffres quand ils en exigent — la
+// réserve prend la place ; chiffres du serveur, recalculés ici pour le justificatif (justifProducts) et les groupées
+// (opérations ouvertes de la pharmacie) ; jamais de compte à rebours.
 import { resoudreOffre, produitDuCatalogue, nombre, jourParis } from "./resolution.js";
+import { OUTILS, cartesOutil, chiffresJustif, chiffresTexte, rayonOutil } from "./rubriques.js";
 
 export const MAX_VISIBLES = 5;
 export const LIMITES = { titre: 60, accroche: 140, badge: 24 };
@@ -50,6 +55,9 @@ export function rebours(fin, t = Date.now(), secondes = true) {
 // ── Couleur ──
 const hexValide = (h) => (typeof h === "string" && RE_COULEUR.test(h.toLowerCase()) ? h.toLowerCase() : null);
 export const couleurMenu = (menu) => { const h = hexValide(menu?.color); return h && !COULEURS_DEFAUT.has(h) ? h : null; };
+// teinte d'un outil : accent de sa rubrique (renommage ou couleur de l'admin compris), sinon celui du registre ; le violet
+// par défaut (justificatif) est remplacé par la sarcelle Elixir
+export const accentOutil = (cle, catalogue) => { const h = hexValide(catalogue?.[cle]?.accent) || hexValide(OUTILS[cle]?.accent); return h ? (COULEURS_DEFAUT.has(h) ? ELIXIR : h) : null; };
 // teinte retenue et sa source : choisie > tirée de la photo > couleur du menu (sauf violet par défaut) > accent du rayon > Elixir
 export function couleurDe(v, { menu, accent } = {}) {
   const c = [[v?.couleur, "choisie"], [v?.couleur_auto, "photo"], [couleurMenu(menu), "menu"], [accent, "rayon"]].find(([h]) => hexValide(h));
@@ -78,22 +86,27 @@ const enRupture = (stockData, cip) => { const st = (stockData || {})[cip]; retur
 export function produitsVisibles(menu, stockData) {
   return (Array.isArray(menu?.products) ? menu.products : []).filter(p => p && nombre(p.pn) > 0 && (menu.sansStock || !enRupture(stockData, String(p.cip || ""))));
 }
-// photo d'un produit de menu : la sienne, sinon celle du catalogue pour ce CIP (premier menu qui en a une)
-const photoCatalogue = (catalogue, cip) => {
-  for (const c of Object.values(catalogue || {})) { const p = (c.products || []).find(x => x.cip === cip && x.image_url); if (p) return p.image_url; }
+// Photo affichable : présente et pas notée illisible (illisibles : ensemble des adresses en erreur sur cette page,
+// illisibles.js) ; une photo illisible est traitée exactement comme une photo absente
+export const photoLisible = (url, illisibles) => (url && !illisibles?.has?.(url) ? url : null);
+// photo d'un produit de menu : la sienne, sinon celle du catalogue pour ce CIP (premier menu qui en a une lisible)
+const photoCatalogue = (catalogue, cip, illisibles) => {
+  for (const c of Object.values(catalogue || {})) { const p = (c.products || []).find(x => x.cip === cip && photoLisible(x.image_url, illisibles)); if (p) return p.image_url; }
   return null;
 };
 // résumé d'un menu : nombre de produits montrés, « dès » (plus petit prix net), « jusqu'à » (plus forte remise réellement
 // présente), cartes de l'éventail (5 au plus : photos dans l'ordre du menu, dédoublonnées, la carte de devant d'abord ;
-// complétées jusqu'à 3 par des cartes texte)
-export function resumeMenu(menu, { stockData, catalogue, image } = {}) {
+// complétées jusqu'à 3 par des cartes texte). Photo illisible (carte de devant comprise) : comme sans photo. Chaque carte
+// photo a un texte (nom du menu pour la carte de devant, nom et prix du produit sinon), montré tant que sa photo charge.
+export function resumeMenu(menu, { stockData, catalogue, image, illisibles } = {}) {
   const vis = produitsVisibles(menu, stockData);
   const pns = vis.map(p => nombre(p.pn)), pcts = vis.map(p => Math.abs(nombre(p.pct) ?? 0)).filter(x => x >= 1 && x < 100);
   const cartes = [], urls = new Set();
-  if (image) { cartes.push({ url: image, nom: "", pn: null }); urls.add(image); }
+  const devant = photoLisible(image, illisibles);
+  if (devant) { cartes.push({ url: devant, nom: titreMenu(menu), pn: null }); urls.add(devant); }
   for (const p of vis) {
     if (cartes.length >= 5) break;
-    const url = p.image_url || photoCatalogue(catalogue, String(p.cip || ""));
+    const url = photoLisible(p.image_url, illisibles) || photoCatalogue(catalogue, String(p.cip || ""), illisibles);
     if (url && !urls.has(url)) { urls.add(url); cartes.push({ url, nom: String(p.name || ""), pn: nombre(p.pn) }); }
   }
   for (const p of vis) {
@@ -128,7 +141,7 @@ export const titreMenu = (menu) => sansEmoji(menu?.name) || "Offre";
 
 // ── Construction finale (page des pharmacies, aperçu de l'admin) ──
 // ved : vedettes du GET ({ repli, defilement, items }) ou null (GET absent, refusé, trop lent) ; ctx : celui de
-// resoudreOffre + { promos, aujourdhui, apercu } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
+// resoudreOffre (illisibles compris) + { promos, aujourdhui, apercu, gp: { autorise, ouvertes } } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
 export function construireMisesEnAvant(ved, ctx) {
   const conf = ved && typeof ved === "object" ? ved : { repli: true, defilement: true, items: [] };
   const out = { vitrine: [], grille: [], auto: { vitrine: false, grille: false }, defilement: conf.defilement !== false };
@@ -137,7 +150,7 @@ export function construireMisesEnAvant(ved, ctx) {
   for (const v of Array.isArray(conf.items) ? conf.items : []) {
     const place = out[v?.emplacement];
     if (!place || place.length >= MAX_VISIBLES || (v.fin && aj > v.fin)) continue;
-    const e = v.type === "menu" ? entreeMenu(v, ctx, aj) : v.type === "produit" ? entreeProduit(v, ctx) : null;
+    const e = v.type === "menu" ? entreeMenu(v, ctx, aj) : v.type === "produit" ? entreeProduit(v, ctx) : v.type === "outil" ? entreeOutil(v, ctx) : null;
     if (!e || vus.has(e.cle)) continue;
     vus.add(e.cle); place.push(e);
   }
@@ -164,7 +177,8 @@ function entreeProduit(v, ctx) {
   const promo = key.startsWith("promo_") ? (ctx.promos || []).find(p => `promo_${p.id}` === key) : null;
   const r = resoudreOffre(o, { ...ctx, ignorerStock: !!promo?.sansStock });
   if (!r) return null;
-  if (v.image) r.image_url = v.image;
+  // photo choisie dans l'admin d'abord ; illisible : celle du catalogue ou de la banque (resoudreOffre), sinon la boîte
+  if (photoLisible(v.image, ctx.illisibles)) r.image_url = v.image;
   const t = ctx.catalogueCharge ? produitDuCatalogue(ctx.catalogue, o.cip) : null;
   const rkey = r.menu?.key || key;
   const menuPromo = rkey.startsWith("promo_") ? (ctx.promos || []).find(p => `promo_${p.id}` === rkey) : null;
@@ -181,11 +195,34 @@ function entreeMenu(v, ctx, aj) {
   const m = (ctx.promos || []).find(p => String(p?.id) === String(v.menu_id));
   const key = `promo_${m?.id}`;
   if (!menuEnCours(m, aj) || (ctx.menuOuvrable && !ctx.menuOuvrable(key))) return null;
-  const res = resumeMenu(m, { stockData: ctx.stockData, catalogue: ctx.catalogue, image: v.image });
+  const res = resumeMenu(m, { stockData: ctx.stockData, catalogue: ctx.catalogue, image: v.image, illisibles: ctx.illisibles });
   if (!res.nb) return null;
   const e = commun(v, `m:${m.id}`, couleurDe(v, { menu: m }), res.cartes.find(c => c.url)?.url);
   return { ...e, titre: v.titre || titreMenu(m), accroche: v.accroche || String(m.description || "").trim(), fin: finEffective(v.fin, m.endDate), finOffre: jour10(m.endDate),
     rayon: m.sansStock ? "Précommande" : "Menu promo", menu: { id: String(m.id), key, nom: titreMenu(m), icone: m.icon || "", sansStock: !!m.sansStock, ...res } };
+}
+
+// outil du site : null si la pharmacie ne peut pas l'ouvrir ou s'il lui manque ses chiffres (la réserve comble). Visuel :
+// photo de Zineb (lisible), sinon composition automatique (cartesOutil) ; halo : la photo, sinon la 1re photo du fabricant.
+// ctx.gp : { autorise (accès de la pharmacie, hors saisie Elixir), ouvertes (opérations ouvertes) } ; ctx.apercu : éditeur
+function entreeOutil(v, ctx) {
+  const cle = String(v.outil || ""), def = OUTILS[cle];
+  if (!def) return null;
+  if (ctx.menuOuvrable && !ctx.menuOuvrable(cle)) return null;
+  if (cle === "groupees" && !ctx.apercu && !(ctx.gp?.autorise === true && ctx.gp.ouvertes > 0)) return null;
+  let ch = v.chiffres && typeof v.chiffres === "object" ? v.chiffres : null;
+  if (cle === "justificatif") ch = chiffresJustif(ctx.justifProducts) || ch;
+  if (cle === "groupees") ch = { ouvertes: ctx.apercu ? null : ctx.gp.ouvertes };
+  if (def.chiffresRequis && !ch) return null;
+  const photo = photoLisible(v.image, ctx.illisibles);
+  const cartes = cartesOutil(cle, ch, { illisibles: ctx.illisibles });
+  const e = commun(v, `o:${cle}`, couleurDe(v, { accent: accentOutil(cle, ctx.catalogue) }), photo || cartes.find(c => c.url)?.url);
+  const long = chiffresTexte(cle, ch), court = chiffresTexte(cle, ch, { court: true });
+  const titre = v.titre || def.titre;
+  const outil = { cle, cta: def.cta(ch), ctaCourt: def.ctaCourt, ctaMini: def.ctaMini || def.ctaCourt, icone: def.icone, photo, cartes, meta: long.meta, metaCourt: court.meta, meta2: long.meta2,
+    chiffresLu: long.lu, jusqua: cle === "peremption" && ch?.jusqua >= 1 ? ch.jusqua : null };
+  outil.lu = resumeOutilLu({ titre, outil });
+  return { ...e, titre, accroche: v.accroche || def.accroche(ch), fin: v.fin || null, finOffre: null, rayon: rayonOutil(cle, ctx.catalogue), outil };
 }
 
 // ── Textes accessibles ──
@@ -194,5 +231,7 @@ export function prixLu(o) {
   if (!(o?.pn > 0)) return "";
   return [eur(o.pn), o.pct >= 1 ? `remise de ${String(Number(Math.abs(o.pct).toFixed(2))).replace(".", ",")} %` : "", o.pv > o.pn ? `prix de vente ${eur(o.pv)}` : ""].filter(Boolean).join(", ");
 }
+// « Péremption courte, petits prix, 167 références, dès 0,44 € HT, jusqu'à −50 % »
+export const resumeOutilLu = (e) => [e.titre, e.outil?.chiffresLu].filter(Boolean).join(", ");
 export const resumeMenuLu = (e) => [e.titre, `${e.menu.nb} référence${e.menu.nb > 1 ? "s" : ""}`, e.menu.des ? `dès ${eur(e.menu.des)}` : "",
   e.menu.jusqua ? `jusqu'à −${String(e.menu.jusqua).replace(".", ",")} %` : ""].filter(Boolean).join(", ");

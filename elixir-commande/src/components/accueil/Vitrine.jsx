@@ -16,7 +16,8 @@ import Rouleau from "./Rouleau.jsx";
 import Pouls from "./Pouls.jsx";
 import Etiquette from "./Etiquette.jsx";
 import Gondole, { Visuel, Halo } from "./Gondole.jsx";
-import { RESSORT, EASE, anime, photo, periodeTexte, prixHT, useDebord } from "./outils.js";
+import { RESSORT, EASE, anime, photo, periodeTexte, prixHT, surErreurPhoto, useDebord, useIllisibles } from "./outils.js";
+import { estIllisible } from "./illisibles.js";
 import { voler, rebondPanier } from "./vol.js";
 import { indexActif } from "./resolution.js";
 
@@ -31,6 +32,7 @@ const DUREE = 7000;
 export default function Vitrine({ slides, periode, isMobile, reduit, finPointer, reglages, pauseExterne, qteAuPanier, pret, onAjouter, onModifier, onOuvrirPanier, onVoir,
   offres = [], onOffre, niveauTitre = "h1" }) {
   const Titre = niveauTitre === "h2" ? "h2" : "h1";
+  useIllisibles();   // facing dont la photo est en erreur : redessiné aussitôt (boîte), avant même la reconstruction
   const n = slides.length;
   // produit actif : sa famille ; disparue de la liste, la place qu'elle occupait (bornée au dernier produit)
   const [famActive, setFamActive] = useState(() => slides[0]?.famille);
@@ -298,7 +300,9 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
                 className="acc-emplacement" onClick={() => aller(i, "onglet")} onKeyDown={toucheOnglet}
                 aria-label={`${i + 1} : ${nomLu(sl)}, ${prixHT(p.pn)}${deja ? ", déjà au panier" : ""}`}>
                 <span className="acc-facing" aria-hidden="true">
-                  {p.image_url ? <img src={photo(p.image_url, "thumbnail")} alt="" draggable={false} decoding="async" loading={i < 6 ? "eager" : "lazy"} />
+                  {/* photo en erreur : l'original d'abord (miniature en erreur), puis notée ; la page reconstruit le produit sans
+                      elle (autre photo, sinon la boîte) */}
+                  {p.image_url && !estIllisible(p.image_url) ? <img src={photo(p.image_url, "thumbnail")} alt="" draggable={false} decoding="async" loading={i < 6 ? "eager" : "lazy"} onError={(ev) => surErreurPhoto(p.image_url, ev)} />
                     : <span className="acc-facing-boite"><Boite boite={p.boite} cip={p.cip} teinte={sl.teinte} taille="mini" /></span>}
                 </span>
                 <span className="acc-tablette" aria-hidden="true" />

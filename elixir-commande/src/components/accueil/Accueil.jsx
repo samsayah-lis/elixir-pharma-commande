@@ -11,6 +11,10 @@
 // puis la grille « À la une » (vedettes du même GET, recalées sur le catalogue par vedettes.js ; sans mise en avant
 // visible, ou GET absent ou plus lent que 4 s : repli automatique sur les menus promo actifs, la page n'est jamais nue).
 // Une seule rotation à la fois : la vitrine cinéma qui défile à l'écran met en pause celle des plus commandés.
+// Mises en avant d'outils (§ 7.8) : gp = accès de la pharmacie aux Commandes groupées et opérations ouvertes (appel
+// « access » déjà fait par App ; attente : réponse pas encore reçue) ; le bouton d'un outil ouvre sa rubrique et remonte
+// en haut, comme un menu promo. Commandes groupées mises en avant et accès pas encore connu : le squelette reste au plus
+// 1,5 s de plus (sinon la vitrine commencerait sans elles, puis les insérerait en cours de lecture).
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./accueil.css";
 import "./mea.css";
@@ -22,27 +26,30 @@ import Cinema from "./Cinema.jsx";
 import Bento from "./Bento.jsx";
 import { construireDiapos, promosEnCours, jourParis } from "./resolution.js";
 import { construireMisesEnAvant } from "./vedettes.js";
-import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useMedia } from "./outils.js";
+import { RUBRIQUES_HORS_CATALOGUE } from "./rubriques.js";
+import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useIllisibles, useMedia } from "./outils.js";
+import { illisibles } from "./illisibles.js";
 import { voler, rebondPanier } from "./vol.js";
 
 // pour l'aperçu de l'admin (ApercuMea.jsx, chargé à part) : les vitrines viennent de ce chunk
 export { Cinema, Bento };
 
-const OUTILS = ["accueil", "saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"];
 const RAFRAICHIR_MS = 5 * 60e3;   // prix et stock des produits hors menu : relus comme le stock des menus (5 min)
 const DELAI_MAX_MS = 4000;        // GET plus lent : la page s'affiche (repli des mises en avant), la réponse tardive suit
+const ATTENTE_GP_MS = 1500;       // accès aux Commandes groupées pas encore connu (mise en avant des groupées) : attente au plus
+const avecGroupees = (d) => (Array.isArray(d?.vedettes?.items) ? d.vedettes.items : []).some(i => i?.type === "outil" && i.outil === "groupees");
 const vitrineValide = (d) => !!(d && !d.perime && Array.isArray(d.slides) && d.slides.length > 0);
 const reponseValide = (d) => !!(d && typeof d === "object" && (vitrineValide(d) || d.vedettes));
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
   estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
-  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, alertes = null }) {
+  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, gp = null, alertes = null }) {
   // menus promo actifs et pas encore échus (une offre « jusqu'au 25 sept. » n'est plus mise en avant le 19 oct.)
   const promos = promosEnCours(menusPromo, jourParis());
   const teinteDe = (k) => catalogue[k]?.accent || catalogue.saisie?.accent || "#2d9cbc";
   // accès rapides : Saisie de commande, Mes commandes, puis les 4 premiers menus du catalogue (ordre de l'admin)
   const saisie = catalogue.saisie ? { icone: iconeMenu("saisie", catalogue.saisie, 22), label: catalogue.saisie.label } : null;
-  const menus = ordre.filter(k => catalogue[k] && !OUTILS.includes(k) && !k.startsWith("promo_")).slice(0, 4)
+  const menus = ordre.filter(k => catalogue[k] && !RUBRIQUES_HORS_CATALOGUE.includes(k) && !k.startsWith("promo_")).slice(0, 4)
     .map(k => ({ key: k, label: catalogue[k].label, sousTitre: catalogue[k].subtitle, icone: iconeMenu(k, catalogue[k], 22), couleur: catalogue[k].accent }));
   const reduit = useMedia(REDUIT), finPointer = useMedia(POINTEUR_FIN), isMobile = useMedia("(max-width: 767px)");   // mêmes seuils qu'App
   const large = useMedia("(min-width: 1280px)");
@@ -92,6 +99,16 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
     document.addEventListener("visibilitychange", relire);
     return () => { annule = true; clearTimeout(minuteur); clearInterval(relecture); document.removeEventListener("visibilitychange", relire); };
   }, [identite]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Commandes groupées mises en avant, accès de la pharmacie pas encore connu : données tenues en attente (squelette)
+  // jusqu'à la réponse d'App, 1,5 s au plus
+  const [patienceGp, setPatienceGp] = useState(true);
+  const attendGp = patienceGp && gp?.attente === true && donnees !== undefined && avecGroupees(donnees);
+  useEffect(() => {
+    if (!attendGp) return undefined;
+    const t = setTimeout(() => setPatienceGp(false), ATTENTE_GP_MS);
+    return () => clearTimeout(t);
+  }, [attendGp]);
+  const vues = attendGp ? undefined : donnees;
   // visibilité des mises en avant refiltrée chaque minute (fin d'offre) tant que l'onglet est affiché, et à la fin d'un
   // compte à rebours
   const [minute, setMinute] = useState(0);
@@ -104,17 +121,20 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   // photos choisies dans l'admin (display_config.accueil.photos : CIP → adresse) pour les produits sans photo au catalogue ;
   // réglages relus à chaque rendu d'App : clé texte, pour ne recalculer qu'à un vrai changement
   const photos = JSON.stringify(reglages.photos || {});
-  const classement = vitrineValide(donnees) ? donnees : null;
+  // photo en erreur (stockage pas public, photo retirée…) : notée par le composant qui la montrait, vitrines reconstruites
+  // sans elle, comme si elle n'existait pas (illisibles.js)
+  const nIllisibles = useIllisibles();
+  const classement = vitrineValide(vues) ? vues : null;
   const slides = useMemo(() => construireDiapos(classement, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
-    exclus: new Set(exclus ? exclus.split(",") : []),
-  }), [classement, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos]);   // eslint-disable-line react-hooks/exhaustive-deps
+    exclus: new Set(exclus ? exclus.split(",") : []), illisibles: illisibles(),
+  }), [classement, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos, nIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
   // mises en avant (chargement : rien ; réponse sans vedettes, refusée ou tardive : repli automatique)
-  const vedettes = donnees?.vedettes ?? null;
-  const mea = useMemo(() => (donnees === undefined ? { vitrine: [], grille: [], defilement: false } : construireMisesEnAvant(vedettes, {
+  const vedettes = vues?.vedettes ?? null;
+  const mea = useMemo(() => (vues === undefined ? { vitrine: [], grille: [], defilement: false } : construireMisesEnAvant(vedettes, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
-    promos: menusPromo, aujourdhui: jourParis(),
-  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute]);   // eslint-disable-line react-hooks/exhaustive-deps
+    promos: menusPromo, aujourdhui: jourParis(), illisibles: illisibles(), gp: { autorise: gp?.autorise === true, ouvertes: gp?.ouvertes ?? null },
+  })), [vues === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute, nIllisibles, gp?.autorise, gp?.ouvertes]);   // eslint-disable-line react-hooks/exhaustive-deps
   const montreMea = mea.vitrine.length > 0 || mea.grille.length > 0;
   const menusMontres = new Set([...mea.vitrine, ...mea.grille].filter(x => x.menu).map(x => x.menu.id));
   const offresRestantes = promos.filter(ps => !menusMontres.has(String(ps.id)));
@@ -123,7 +143,7 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   const page = useRef(null);
   const avecSalle = mea.vitrine.length > 0;
   useEffect(() => {
-    if (donnees === undefined) return undefined;
+    if (vues === undefined) return undefined;
     const salle = page.current?.querySelector(":scope > .mea-cinema");
     if (!salle) { noterSalle(0); return undefined; }
     let t = 0;
@@ -132,7 +152,7 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(noter) : null;
     ro?.observe(salle);
     return () => { clearTimeout(t); ro?.disconnect(); };
-  }, [donnees === undefined, avecSalle]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [vues === undefined, avecSalle]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // « Voir dans… », offres, accès rapides : changement de menu, puis haut de page (la vue suivante commence en haut)
   const aller = (ok) => { if (ok) window.scrollTo({ top: 0 }); };
@@ -149,6 +169,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
     try { if (window.matchMedia?.("(pointer: coarse)").matches) navigator.vibrate?.(8); } catch { /* sans vibreur */ }
   };
   const voirVedette = (x) => {
+    // outil : même chemin qu'un menu promo ; false (commande groupée non confirmée, l'utilisateur reste) → pas de remontée
+    if (x.outil) return aller(naviguer(x.outil.cle));
     if (x.menu) return aller(naviguer(x.menu.key));
     const o = x.offre, k = o.menu?.key;
     return aller(k && k !== "saisie" ? naviguer(k, { terme: k.startsWith("promo_") ? "" : (o.boite?.marque || "") }) : voirDansSaisie(o.cip));
@@ -158,8 +180,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
 
   return (
     <div ref={page} className="acc-page">
-      {donnees === undefined && <SqueletteAccueil mobile={isMobile} vedettes={salleProbable(menusPromo, menuOuvrable)} />}
-      {donnees !== undefined && (montreMea || slides.length === 0) && <h1 className="acc-vh">Accueil</h1>}
+      {vues === undefined && <SqueletteAccueil mobile={isMobile} vedettes={salleProbable(menusPromo, menuOuvrable)} />}
+      {vues !== undefined && (montreMea || slides.length === 0) && <h1 className="acc-vh">Accueil</h1>}
       {mea.vitrine.length > 0 && <Cinema items={mea.vitrine} defilement={mea.defilement} pauseExterne={pauseExterne} onDefile={setCinemaDefile} {...proprietesMea} />}
       {mea.grille.length > 0 && <Bento items={mea.grille} depart={mea.vitrine.length ? 1000 : 200} {...proprietesMea} />}
       {slides.length >= 3 && (
@@ -212,7 +234,7 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
       <section className="acc-section" aria-labelledby="acc-acces-titre">
         <h2 id="acc-acces-titre" className="acc-h2">Accès rapides</h2>
         <div className="acc-acces">
-          {saisie && <Tuile icone={saisie.icone} titre={saisie.label} texte="Par CIP ou par nom, stock en temps réel" onClick={() => aller(naviguer("saisie"))} />}
+          {saisie && <Tuile icone={saisie.icone} titre={saisie.label} texte="Par CIP, EAN ou nom" onClick={() => aller(naviguer("saisie"))} />}
           {ouvrirMesCommandes && <Tuile icone={<Icone nom="commandes" taille={22} />} titre="Mes commandes" texte="Suivre et recommander" onClick={ouvrirMesCommandes} />}
           {menus.map(m => <Tuile key={m.key} icone={m.icone} titre={sansEmoji(m.label)} texte={m.sousTitre} couleur={m.couleur} onClick={() => aller(naviguer(m.key))} />)}
         </div>

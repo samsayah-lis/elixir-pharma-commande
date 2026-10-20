@@ -1,6 +1,15 @@
 // ── Page d'accueil : outils communs du chunk (mouvement, photos, formats, préférences de l'appareil) ──
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { fmtEur } from "../../theme.js";
+import { abonnerIllisibles, estIllisible, noterIllisible, versionIllisibles } from "./illisibles.js";
+
+// Photos notées illisibles (illisibles.js) : le composant se redessine dès qu'une adresse l'est → numéro de version
+// (dépendance des useMemo qui construisent les vitrines)
+export function useIllisibles() {
+  const [v, setV] = useState(versionIllisibles);
+  useEffect(() => { setV(versionIllisibles()); return abonnerIllisibles(setV); }, []);
+  return v;
+}
 
 // Jetons de mouvement (docs/accueil.md § 5.1) : linear() quand le navigateur le connaît (rebond), sinon cubic-bezier (Safari 15)
 const lineaireConnu = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("transition-timing-function", "linear(0, 1)");
@@ -56,7 +65,50 @@ const RE_SHOPIFY = /^https:\/\/(cdn\.shopify\.com\/s\/files\/|[^/?#]+\/cdn\/shop
 const RE_OBF = /^(https:\/\/images\.openbeautyfacts\.org\/images\/products\/[^?#]+\.\d+\.)(full|100|200|400)(\.jpg)$/;
 const LARGEUR_SHOPIFY = { thumbnail: 200, medium: 480, large: 960 };
 const TAILLE_OBF = { thumbnail: "200", medium: "400", large: "full" };
+// Miniature décorative (halo flou de la salle, d'une tuile, de la gondole) : en erreur, simplement retirée ici (jamais
+// d'icône d'image cassée), sans noter l'adresse : une miniature décorative ratée ne retire pas la photo du produit ;
+// onKo : le parent montre son repli (halo teinté de la gondole)
+export function PhotoDecor({ url, onKo, ...props }) {
+  const [ko, setKo] = useState(null);
+  if (!url || ko === url || estIllisible(url)) return null;
+  return React.createElement("img", { ...props, src: photo(url, "thumbnail"), alt: "", draggable: false, decoding: "async", onError: () => { setKo(url); onKo?.(url); } });
+}
 export const photoReconnue = (url) => !!url && (RE_TAILLE.test(url) || RE_SHOPIFY.test(url) || RE_OBF.test(url));
+
+// Méta d'un outil (« 167 références · dès 0,44 € HT ») découpée à ses « · » : chaque segment passe à la ligne entier
+// (nombres et unités déjà liés par des espaces insécables, rubriques.js) ; le point médian est posé devant chaque segment
+// et rogné quand le segment commence une ligne (bloc décalé à gauche, débord masqué) : jamais de « · » en fin ni en début
+// de ligne. Décoratif (le texte lu est ailleurs).
+export function SegmentsMeta({ texte }) {
+  const segments = String(texte || "").split(" · ").filter(Boolean);
+  return React.createElement("span", { className: "mea-segs", "aria-hidden": "true" },
+    React.createElement("span", { className: "mea-segs-in" }, segments.map((x, i) => React.createElement("span", { key: i, className: "mea-seg" }, x))));
+}
+
+// onError d'une photo montrée (adresse des données : url). Taille réduite en erreur (miniature de la banque d'images,
+// .200/.400 d'Open Beauty Facts, 2x « large ») : l'original d'abord, sans srcset — une seule bascule par adresse, donc
+// aucune boucle ; l'original en erreur à son tour (ou photo sans taille réduite) : notée illisible (illisibles.js), la
+// page la remplace comme une photo absente. → true si l'adresse a été notée.
+export function surErreurPhoto(url, ev) {
+  const img = ev?.currentTarget;
+  const essayee = img ? img.currentSrc || img.getAttribute?.("src") || "" : "";
+  if (img && photoReconnue(url) && essayee !== url && img.dataset?.original !== url) {
+    img.dataset.original = url;
+    img.removeAttribute("srcset");
+    img.src = url;
+    return false;
+  }
+  return noterIllisible(url);
+}
+// Préchargement (offre suivante de la vitrine cinéma) : taille demandée, puis l'original ; notée illisible seulement si
+// l'original échoue aussi, et jamais hors ligne (le réseau coupé n'est pas la photo : rien n'est noté)
+export function prechargerPhoto(url, taille = "medium", Img = globalThis.Image) {
+  if (!url || estIllisible(url) || typeof Img !== "function") return;
+  const charger = (src, siErreur) => { const i = new Img(); i.onerror = siErreur; i.src = src; };
+  const echec = () => { if (typeof navigator === "undefined" || navigator.onLine !== false) noterIllisible(url); };
+  const variante = photo(url, taille);
+  charger(variante, variante !== url ? () => charger(url, echec) : echec);
+}
 export function photo(url, taille) {
   if (!url) return null;
   if (RE_TAILLE.test(url)) return url.replace(RE_TAILLE, `/media/${taille}/`);
