@@ -43,7 +43,7 @@ const reponseValide = (d) => !!(d && typeof d === "object" && (vitrineValide(d) 
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
   estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
-  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, gp = null }) {
+  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, gp = null, alertes = null }) {
   // menus promo actifs et pas encore échus (une offre « jusqu'au 25 sept. » n'est plus mise en avant le 19 oct.)
   const promos = promosEnCours(menusPromo, jourParis());
   const teinteDe = (k) => catalogue[k]?.accent || catalogue.saisie?.accent || "#2d9cbc";
@@ -239,6 +239,10 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
           {menus.map(m => <Tuile key={m.key} icone={m.icone} titre={sansEmoji(m.label)} texte={m.sousTitre} couleur={m.couleur} onClick={() => aller(naviguer(m.key))} />)}
         </div>
       </section>
+
+      {/* « Recevez nos alertes sur votre téléphone » (App, docs/notifications.md) : APRÈS les accès rapides — la carte arrive
+          après la configuration et le statut, elle ne décale donc jamais les tuiles qu'on s'apprête à toucher */}
+      {alertes}
     </div>
   );
 }

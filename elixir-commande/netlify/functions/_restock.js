@@ -25,7 +25,14 @@
 // fonctionne : réservation sur notified seul, essais comptés dans kv_store, issues lues dans le journal ; un envoi
 // incertain reste réservé (pas de « Relancer » possible). Aucune adresse e-mail dans le journal ni les réponses, sauf
 // celle des envois à vérifier, montrée à l'admin seul (apercu, derrière verifyAdmin) pour la recherche dans Resend.
-import { createHash } from "node:crypto";
+// Notification « Retour en stock » sur le téléphone (appli installable, docs/notifications.md § 9.1) : après un e-mail
+// réellement parti (issue « envoye » seulement), UNE notification par pharmacie et par appel de passage() (produits
+// regroupés comme l'e-mail), par notifierPharmacie (_push.js, chargé seulement si les clés VAPID sont en place). Lancée
+// sans être attendue : les e-mails suivants n'attendent jamais une notification ; en fin de passage, attente bornée
+// (PUSH_ATTENTE_MS, et toujours PUSH_MARGE_FIN_MS avant limiteMs pour le journal). Jamais relancée (pas de doublon) ;
+// clés ou tables absentes, ouverture fermée : rien, sans erreur. Étiquette (aussi en-tête Topic, lu en clair par le
+// service push) : empreinte à clé, jamais un CIP.
+import { createHash, createHmac } from "node:crypto";
 import { ADMIN_MAIL } from "./_gp-mail.js";
 import { kvGet, kvSet, kvParse, kvDeleteOlder } from "./_kv.js";
 import { ALL_GROUP_CODES, ALL_FALLBACK_CIPS, allocate, totalStock } from "../../src/wheelchair-logic.js";
@@ -383,13 +390,110 @@ export function emailRetour({ produits, pharmacie = null, constate = Date.now(),
   return { subject, html };
 }
 
+// ── Notification « Retour en stock » (appli installable, docs/notifications.md § 9.1) ──
+export const PUSH_ATTENTE_MS = 3000;          // fin du passage : notifications en cours attendues au plus
+export const PUSH_MARGE_FIN_MS = 1000;        // ... et jamais à moins de 1 s de limiteMs : temps laissé à fin() (noms, journal)
+export const PUSH_DELAI_APPAREIL_MS = 2500;   // réponse d'un service push (Google, Apple, Mozilla, Microsoft) attendue au plus
+export const PUSH_LANCEMENT_MIN_MS = 1500;    // notification gardée pour la fin (pharmacie à plusieurs adresses) : lancée
+                                              // seulement s'il reste ce temps (marge de fin déduite), sinon abandonnée (l'e-mail est parti)
+// Clés VAPID et clé serveur en place ? (sinon : aucune notification, _push.js n'est même pas chargé)
+export const pushDisponible = (env = process.env) => !!(env.VAPID_PUBLIC_KEY && env.VAPID_PRIVATE_KEY && env.SUPABASE_SERVICE_ROLE_KEY && env.SUPABASE_URL);
+// Étiquette de la notification (remplace une notification identique sur l'appareil) : elle sert aussi d'en-tête Topic
+// (_push.js, sujetDe), que le service push (Google, Apple, Mozilla, Microsoft) lit EN CLAIR à côté de l'adresse de
+// l'appareil → jamais un CIP, et une empreinte À CLÉ (clé VAPID privée, lue ici seulement, jamais affichée) : une simple
+// empreinte se retrouverait en essayant les CIP du catalogue. Mêmes produits → même étiquette.
+const empreinteEtiquette = (texte) => createHmac("sha256", process.env.VAPID_PRIVATE_KEY || "elixir-etiquette")
+  .update(`retour-stock|${texte}`).digest("hex").slice(0, 16);
+// Contenu de la notification d'une pharmacie : produits [{ cip, nom }] (une ligne par produit, comme l'e-mail). Écran
+// verrouillé lisible par tous : nom du produit seulement, jamais de prix. Lien : le produit (?cip=), ou la Saisie de
+// commande (bandeau « De retour en stock ») s'il y en a plusieurs.
+export function contenuRetour(produits) {
+  const liste = (produits || []).filter(p => p && trim(p.cip));
+  const nom = (p) => couper(p.nom || p.cip, 80);
+  if (liste.length <= 1) {
+    const cip = trim(liste[0]?.cip);
+    return { titre: "De retour en stock", corps: `${nom(liste[0] || { cip: "Un produit attendu" })} est de nouveau disponible chez Elixir.`,
+      url: /^\d{7,14}$/.test(cip) ? `/?cip=${cip}` : "/?outil=saisie", ...(cip ? { tag: `stock-${empreinteEtiquette(cip)}` } : {}) };
+  }
+  const n = liste.length, autres = n - 2;
+  const noms = autres > 0 ? `${nom(liste[0])}, ${nom(liste[1])} et ${autres} autre${autres > 1 ? "s" : ""}` : `${nom(liste[0])} et ${nom(liste[1])}`;
+  return { titre: `${n} produits de retour en stock`, corps: `${noms} sont de nouveau disponibles chez Elixir.`, url: "/?outil=saisie",
+    tag: `stock-lot-${empreinteEtiquette(liste.map(p => trim(p.cip)).sort().join(","))}` };
+}
+// Envoi réel : notifierPharmacie (ne lève jamais ; respecte l'ouverture, le pilote, l'alerte choisie, les comptes rattachés)
+async function notifierRetourStock(pharmacyCip, contenu) {
+  const { notifierPharmacie } = await import("./_push.js");
+  return notifierPharmacie(pharmacyCip, "stock", contenu, { delaiMs: PUSH_DELAI_APPAREIL_MS });
+}
+// Crochet d'un passage. notifier(cip de la pharmacie, contenu) → { envoyes, echecs, retires, raison } ; ecoule() : temps
+// écoulé du passage (même horloge que les e-mails). Bilan : nombres seulement (journal, GitHub Action, admin).
+function crochetNotifications({ notifier, ecoule, limiteMs }) {
+  const bilan = { pharmacies: 0, servies: 0, appareils: 0, sans_appareil: 0, ecartees: 0, echecs: 0, indisponible: 0, en_retard: 0, abandonnees: 0 };
+  const aLancer = new Map();   // pharmacie → Map(cip → { cip, nom }) : produits dont l'e-mail est parti, notification pas encore lancée
+  const enCours = new Set();
+  let coupe = false;           // clés ou tables absentes : plus aucun essai dans ce passage
+  let fini = false;            // bilan rendu : une notification qui finit après ne le modifie plus (« en retard » reste juste)
+  const noter = (r) => {
+    if (fini) return;
+    if (r?.envoyes > 0) { bilan.servies++; bilan.appareils += r.envoyes; return; }
+    const raison = r?.raison ?? null;
+    if (raison === "configuration" || raison === "schema") { coupe = true; bilan.indisponible++; }
+    else if (raison === "aucun_appareil") bilan.sans_appareil++;
+    else if (["fermee", "hors_pilote", "deja_envoye", "plafond"].includes(raison)) bilan.ecartees++;
+    else if (raison === null) bilan.echecs++;
+    else bilan.indisponible++;
+  };
+  const lancer = (pc) => {
+    const produits = [...(aLancer.get(pc)?.values() || [])];
+    aLancer.delete(pc);
+    if (coupe || !produits.length) return;
+    bilan.pharmacies++;
+    // jamais attendue ici ; une exception (même synchrone) ne remonte jamais jusqu'aux e-mails
+    const p = Promise.resolve().then(() => notifier(pc, contenuRetour(produits))).then(noter, () => { coupe = true; if (!fini) bilan.indisponible++; })
+      .finally(() => enCours.delete(p));
+    enCours.add(p);
+  };
+  return {
+    // e-mail parti pour cette pharmacie ; suite : un autre groupe (autre adresse) de la même pharmacie peut encore partir
+    // dans CET appel → notification gardée pour n'en lancer qu'une, avec tous les produits (sinon : lancée tout de suite)
+    apresEmail(pharmacyCip, produits, suite) {
+      if (coupe) return;
+      const pc = trim(pharmacyCip);
+      if (!aLancer.has(pc)) aLancer.set(pc, new Map());
+      for (const p of produits) if (!aLancer.get(pc).has(trim(p.cip))) aLancer.get(pc).set(trim(p.cip), { cip: trim(p.cip), nom: p.nom });
+      if (!suite) lancer(pc);
+    },
+    // fin du passage : notifications gardées lancées s'il reste le temps, puis attente bornée des envois en cours ; le
+    // temps compté s'arrête PUSH_MARGE_FIN_MS avant limiteMs (fin() lit encore les noms et écrit le journal)
+    async terminer() {
+      if (!aLancer.size && !enCours.size && !bilan.pharmacies) return null;
+      const reste = limiteMs - PUSH_MARGE_FIN_MS - ecoule();
+      for (const pc of [...aLancer.keys()]) {
+        if (!coupe && reste >= PUSH_LANCEMENT_MIN_MS) lancer(pc);
+        else { aLancer.delete(pc); if (!coupe) bilan.abandonnees++; }
+      }
+      const attente = Math.min(PUSH_ATTENTE_MS, Math.max(0, reste));
+      if (enCours.size && attente > 0) {
+        let minuterie;
+        await Promise.race([Promise.allSettled([...enCours]), new Promise(r => { minuterie = setTimeout(r, attente); })]);
+        clearTimeout(minuterie);
+      }
+      bilan.en_retard = enCours.size;   // pas finies à temps : jamais relancées
+      fini = true;
+      return { ...bilan };
+    },
+  };
+}
+
 // ── Passage : détection, clôtures, envois ──
 // source : "planifie" | "synchro" (GitHub Action) | "admin" ; budgetMs : plus de nouvelle opération après ce temps (sauf la
 // première de l'appel) ; limiteMs : aucune opération qui pourrait finir au-delà (fonction HTTP : 10 s au plus ;
-// planifiée : 30 s) ; horsFenetre : envoyer même hors 7 h – 21 h (admin).
-// → bilan { envoyes, pharmacies, produits, closes, echecs, restants, reportes, done, erreurs, lignes… } (lignes : noms, jamais d'adresse)
+// planifiée : 30 s) ; horsFenetre : envoyer même hors 7 h – 21 h (admin) ; notifier : notification « Retour en stock »
+// (par défaut notifierPharmacie si les clés VAPID sont en place, sinon aucune ; tests : doublure).
+// → bilan { envoyes, pharmacies, produits, closes, echecs, restants, reportes, done, erreurs, lignes…, notifications? }
+// (lignes : noms, jamais d'adresse ; notifications : nombres, seulement si une notification a été lancée ou abandonnée)
 export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 9000, horsFenetre = false, maintenant = () => Date.now(),
-  envoyer = envoyerResend, attendre = (ms) => new Promise(r => setTimeout(r, ms)), journaliser = true } = {}) {
+  envoyer = envoyerResend, attendre = (ms) => new Promise(r => setTimeout(r, ms)), journaliser = true, notifier } = {}) {
   const debut = maintenant();
   const iso = new Date(debut).toISOString();
   const b = { at: iso, source, mode: null, envoyes: 0, pharmacies: 0, produits: 0, closes: { ancienne: 0, destinataire: 0, echec: 0, interrompu: 0 },
@@ -399,6 +503,7 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
   const ligne = (r, issue, extra = {}) => b.lignes.push({ pharmacy_cip: trim(r.pharmacy_cip), cip: trim(r.cip), produit: r.product_name || null, issue, ...extra });
   const destinataires = new Set();
   const ecoule = () => maintenant() - debut;
+  let push = null;   // crochet des notifications (créé juste avant les envois, si une notification est possible)
   // nouvelle opération : avant le budget (ou la première de l'appel : chaque appel avance), jamais au-delà de la limite
   const peut = (cout, faits) => (faits === 0 || ecoule() <= budgetMs) && ecoule() + cout <= limiteMs;
   try {
@@ -491,7 +596,9 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
     const recents = await lireDestinataires(debut - ADRESSE_HEURES * 3600e3);
     const reste = (i) => valides.slice(i).filter(x => !recents.has(empreinteAdresse(x.email))).length;
 
-    // 7. envois : réservation conditionnelle, e-mail, compte rendu
+    // 7. envois : réservation conditionnelle, e-mail, compte rendu (puis notification de la pharmacie, sans l'attendre)
+    const notifie = notifier === undefined ? (pushDisponible() ? notifierRetourStock : null) : notifier;
+    if (typeof notifie === "function") push = crochetNotifications({ notifier: notifie, ecoule, limiteMs });
     let dernierEnvoi = -Infinity, envois = 0;
     const rendre = async (rows, compter) => {
       for (const r of rows) {
@@ -560,6 +667,15 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
         b.envoyes++; b.produits += pris.length; destinataires.add(g.pharmacy_cip);
         pris.forEach(r => ligne(r, "envoye", { prix: prixNet(etat(r.cip).p) }));
         recents.add(empreinte); duJour++;
+        // notification « Retour en stock » : e-mail réellement parti seulement (« deja » : rien de neuf pour la pharmacie) ;
+        // une par pharmacie et par appel : gardée pour la fin seulement si un autre groupe de la même pharmacie (autre
+        // adresse, pas déjà avertie depuis 24 h) peut encore partir dans CET appel (temps, plafond du jour) ; sinon lancée
+        // tout de suite (jamais gardée dans un appel qui n'enverra plus d'e-mail)
+        if (issue === "envoye" && push) {
+          const encore = peut(COUT_ENVOI_MS, envois) && duJour < PLAFOND_JOUR
+            && valides.slice(i + 1).some(x => x.pharmacy_cip === g.pharmacy_cip && !recents.has(empreinteAdresse(x.email)));
+          push.apresEmail(g.pharmacy_cip, produits, encore);
+        }
         await Promise.all([kvSet(cleJour, { n: duJour }), kvSet(`${PREFIXE_DEST}${empreinte}`, { at: maintenantIso() })])
           .catch(e => b.erreurs.push(`plafonds non mis à jour (${sansAdresse(e?.message)})`));
         continue;
@@ -593,6 +709,10 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
   return await fin();
 
   async function fin() {
+    if (push) {
+      try { const n = await push.terminer(); if (n) b.notifications = n; } catch { /* notifications : jamais une erreur du passage */ }
+      push = null;
+    }
     b.pharmacies = destinataires.size;
     const manquants = [...new Set(b.lignes.map(l => l.pharmacy_cip).filter(c => !noms.has(c)))];
     if (manquants.length) { try { for (const [k, v] of await lireNoms(manquants)) noms.set(k, v); } catch { /* noms facultatifs */ } }
@@ -603,7 +723,8 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
     const { lignes, ...resume } = b;
     console.log(`[restock-notify] ${source} (${b.mode}) : ${b.envoyes} e-mail(s), ${b.produits} produit(s), closes ${JSON.stringify(b.closes)}, ` +
       `${b.echecs} refus, ${b.restants} restant(s), ${b.reportes} reporté(s)${b.suspendu ? " (envois automatiques suspendus)" : ""}${b.hors_fenetre ? " (hors 7 h – 21 h)" : ""}` +
-      `${b.plafond ? " (plafond du jour)" : ""}${b.panne ? `, Resend en panne : ${b.panne}` : ""}${b.erreur ? `, erreur : ${b.erreur}` : ""}`);
+      `${b.plafond ? " (plafond du jour)" : ""}${b.panne ? `, Resend en panne : ${b.panne}` : ""}${b.erreur ? `, erreur : ${b.erreur}` : ""}` +
+      `${b.notifications ? `, notifications : ${b.notifications.servies}/${b.notifications.pharmacies} pharmacie(s) servie(s), ${b.notifications.appareils} appareil(s)` : ""}`);
     if (journaliser) {
       if (lignes.length || b.erreurs.length || b.erreur) {
         await kvSet(`${PREFIXE_PASSAGE}${iso}:${Math.random().toString(36).slice(2, 6)}`, b).catch(e => console.error("[restock-notify] journal", e.message));
@@ -617,7 +738,8 @@ export async function passage({ source = "admin", budgetMs = 4000, limiteMs = 90
 // Chiffres seulement (réponse à la GitHub Action et à l'admin) : ni nom, ni adresse, ni ligne
 export const chiffres = (b) => ({ done: b.done, mode: b.mode, envoyes: b.envoyes, pharmacies: b.pharmacies, produits: b.produits, closes: b.closes,
   echecs: b.echecs, deja_pris: b.deja_pris, restants: b.restants, reportes: b.reportes, ecartees: b.ecartees, hors_fenetre: b.hors_fenetre,
-  suspendu: b.suspendu, plafond: b.plafond, panne: b.panne, erreurs: b.erreurs, ...(b.erreur ? { error: b.erreur } : {}) });
+  suspendu: b.suspendu, plafond: b.plafond, panne: b.panne, erreurs: b.erreurs, ...(b.erreur ? { error: b.erreur } : {}),
+  ...(b.notifications ? { notifications: b.notifications } : {}) });
 
 // Journal de plus de 60 jours, essais du mode réduit de plus de 90 jours, plafonds échus (passage planifié)
 export async function menageJournal(maintenant = Date.now()) {

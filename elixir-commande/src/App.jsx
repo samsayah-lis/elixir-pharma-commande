@@ -28,6 +28,8 @@ import FocusFenetre from "./components/ui/FocusFenetre.jsx";
 // Assistant Elixir (docs/assistant-conception.md § 1) : panneau chargé à la demande, seuls le bouton et l'état d'ouverture ici
 import { PanneauAssistant, GroupeAide, CoucheAssistant } from "./components/assistant/Entree.jsx";
 import { authAssistant, etatAssistant } from "./assistant-client.js";
+// Notifications de l'appli installable (docs/notifications.md) : entrée du menu et chargement à la demande seulement ici
+import { CarteNotifications, PanneauNotifications, EntreeMenuNotifications, demarrerNotifications, oublierAppareilNotifications } from "./notifications/entree.jsx";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
@@ -866,6 +868,7 @@ export default function App() {
   const [otpBusy, setOtpBusy] = useState(false);
 
   const handleLogout = () => {
+    oublierAppareilNotifications();   // cet appareil ne reçoit plus les notifications de la pharmacie (preuve, sans jeton)
     localStorage.removeItem("session_name");
     localStorage.removeItem("session_email");
     localStorage.removeItem("session_cip");
@@ -1014,6 +1017,28 @@ export default function App() {
   // pharmacies (« ouvert ») : le bouton s'affiche, le panneau propose « Me reconnecter » (pendant le pilote : masqué)
   const assistantDispo = !!assistant?.disponible || (!actingFor && assistant?.raison === "reconnexion" && !!assistant?.ouvert);
   const ouvrirAssistant = (contexte = null) => { setCartOpen(false); setSidebarOpen(false); setShowMyOrders(false); setAssistantContexte(contexte); setAssistantOuvert(true); };
+  // ── Notifications de l'appli (docs/notifications.md) : entrée « Notifications », cloche de l'en-tête et carte de l'accueil
+  // seulement si le serveur les dit disponibles pour cette identité (même identité que l'assistant ; saisie Elixir : panneau
+  // en lecture seule, jamais d'abonnement de l'appareil d'Elixir). Démarrage, carte et panneau chargés à la demande ──
+  const identiteNotif = identiteAssistant;
+  const [notif, setNotif] = useState(null);   // { visible, carte, parcours, statut, acting } (src/notifications/demarrage.js)
+  const [notifOuvert, setNotifOuvert] = useState(false);   // false | true | "telephone" (code QR en tête, ordinateur)
+  useEffect(() => {
+    setNotif(null); setNotifOuvert(false);
+    if (!identiteNotif) return;
+    let annule = false;
+    demarrerNotifications({ appel: appelAuthentifie, identite: identiteNotif, acting: !!actingFor }).then(e => { if (!annule) setNotif(e); });
+    return () => { annule = true; };
+  }, [identiteNotif]);   // eslint-disable-line react-hooks/exhaustive-deps -- actingFor est dans l'identité
+  const ouvrirNotifications = (section) => { setCartOpen(false); setAssistantOuvert(false); setSidebarOpen(false); setShowMyOrders(false); setNotifOuvert(section === "telephone" ? section : true); };
+  // lien direct ?notifications=1 (mailing, message d'Elixir) : panneau ouvert une fois la session prête ; paramètre retiré
+  const lienNotif = useRef((() => { try { return new URLSearchParams(window.location.search).get("notifications") === "1"; } catch { return false; } })());
+  useEffect(() => {
+    if (!lienNotif.current || !notif) return;
+    lienNotif.current = false;
+    try { const u = new URL(window.location.href); u.searchParams.delete("notifications"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
+    if (notif.visible) ouvrirNotifications();
+  }, [notif]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");
@@ -2238,6 +2263,8 @@ export default function App() {
         ))}
         {/* Assistant Elixir : groupe « AIDE » sous « OUTILS » (ouvre le panneau, ce n'est pas un onglet du catalogue) */}
         {assistantDispo && <GroupeAide isDesktop={isDesktop} infos={assistant.infos} onOuvrir={() => ouvrirAssistant()} />}
+        {/* Notifications de l'appli : groupe « MON COMPTE » (accessible aussi sur mobile par le menu ☰) */}
+        {notif?.visible && <EntreeMenuNotifications isDesktop={isDesktop} onOuvrir={() => ouvrirNotifications()} />}
         </nav>
       </aside>
 
@@ -2334,6 +2361,8 @@ export default function App() {
               {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
+            {/* Notifications : grand écran seulement (tablette : la recherche garderait trop peu de place ; menu → MON COMPTE) */}
+            {isDesktop && notif?.visible && <button className="ex-icone-entete ex-cible" onClick={() => ouvrirNotifications()} title="Notifications" aria-label="Notifications" style={btnEntete}><Icone nom="cloche" /></button>}
             {/* Assistant Elixir : avant « Mes commandes » ; data-assistant-ouvrir : le focus y revient à la fermeture du panneau */}
             {assistantDispo && (
               <button className="ex-icone-entete ex-cible" data-assistant-ouvrir onClick={() => (assistantOuvert ? setAssistantOuvert(false) : ouvrirAssistant())}
@@ -2517,6 +2546,7 @@ export default function App() {
                 dateFin={dateFin}
                 suggestions={blocSuggestions}
                 gp={{ autorise: gpAllowed === true && !actingFor, ouvertes: gpOuvertes, attente: gpAllowed === null && !actingFor }}
+                alertes={notif?.carte && !actingFor ? <CarteNotifications appel={appelAuthentifie} identite={identiteNotif} etat={notif} mobile={isMobile} onOuvrir={ouvrirNotifications} onEtat={setNotif} /> : null}
               />
             </React.Suspense>
           )}
@@ -3370,6 +3400,12 @@ export default function App() {
           </>
           </>)}
         </main>
+
+        {/* ── Notifications — fenêtre (chargée à la demande) ; saisie Elixir : lecture seule ── */}
+        {notifOuvert && notif?.visible && (
+          <PanneauNotifications appel={appelAuthentifie} acting={actingFor} pharmacyName={pharmacyName} mobile={isMobile} section={notifOuvert === "telephone" ? "telephone" : null}
+            onClose={() => setNotifOuvert(false)} onReconnecter={actingFor ? null : demanderReconnexion} onEtat={setNotif} />
+        )}
 
         {/* ── Mes commandes — overlay ── */}
         {showMyOrders && (

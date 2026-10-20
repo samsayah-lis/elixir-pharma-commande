@@ -140,6 +140,8 @@ const LOTS = {
   assistantPresentation: { nom: "Assistant Elixir (présentation et lanceur)", repere: "src/components/assistant/presentation.js" },
   // branche accueil-offres (docs/accueil.md), en attente de fusion : page d'accueil et mises en avant de Zineb
   accueil: { nom: "page d'accueil (mises en avant)", repere: "src/components/accueil/Squelette.jsx" },
+  // branche appli-notifications (docs/notifications.md), en attente de fusion : appli installable et notifications Web Push
+  notifications: { nom: "notifications (appli installable)", repere: "src/notifications/regles.js" },
   // Péremption courte, lot 0 (20/10/2026) : mention « Pér. » jusqu'à la commande (ECARTS_AUTORISES, attente
   // « peremptionMention »)
   peremptionMention: { nom: "péremption courte, lot 0 (mention « Pér. »)", repere: "scripts/test-peremption-mention.mjs" },
@@ -182,7 +184,10 @@ const FICHIERS_AUTORISES = {
 // Alertes « M'avertir du retour » (branche alertes-retour, docs/alertes-retour.md) : restock-notify.js (envois et tableau de
 // bord de l'admin), restock-notify-cron.js (passage planifié) et _restock.js (logique) ; seule fonction existante
 // modifiée : restock-alert.js (FICHIERS_AUTORISES, empreinte).
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock)\.js$/;
+// Notifications de l'appli installable (branche appli-notifications, docs/notifications.md) : fonctions NOUVELLES
+// (_push.js, push-abonnement.js, push-admin.js, push-envoi-background.js, push-menage.js) ; seule fonction existante
+// modifiée : _restock.js (crochet « Retour en stock » après l'e-mail, § 9.1), déjà admise ci-dessus avec les alertes retour.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage))\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -205,6 +210,11 @@ const CLES_AUTORISEES = {
   // src/components/accueil/Squelette.jsx, clé accueil_salle : { l, h, s } — hauteur de la salle de la vitrine cinéma
   // mesurée à la dernière visite (largeur et hauteur de la fenêtre), réservée par le squelette (aucun décalage à l'arrivée)
   accueil: { "localStorage.getItem(CLE_SALLE": 1, "localStorage.setItem(CLE_SALLE, memo": 1 },
+  // src/notifications/memo.js, clé notif_carte_<empreinte de l'identité> (aucune adresse e-mail en clair) : date du « Plus tard »
+  // de la carte « Recevez nos alertes » de l'accueil (carte masquée 30 jours pour ce compte) ; AdminNotifications.jsx,
+  // sessionStorage notif_brouillon_annonce : brouillon de l'annonce en cours (onglet) — seuls appels de stockage du lot
+  notifications: { "localStorage.getItem(cleCarte(identite": 1, "localStorage.setItem(cleCarte(identite": 1,
+    'sessionStorage.getItem(CLE_BROUILLON': 1, "sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon": 1, "sessionStorage.removeItem(CLE_BROUILLON": 1 },
 };
 
 // ── lecture ──
@@ -294,7 +304,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : "de l'Assistant Elixir"})`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
@@ -314,7 +324,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications)` : ""}`);
 }
 
 // 3. clés de stockage
@@ -392,7 +402,8 @@ console.log("\nBudget du bundle (dist/assets, octets)");
     const fichiers = readdirSync(dossier).filter(n => /^index-.*\.(js|css)$/.test(n));
     const total = fichiers.reduce((s, n) => s + statSync(join(dossier, n)).size, 0);
     const detail = fichiers.map(n => `${n} ${statSync(join(dossier, n)).size.toLocaleString("fr-FR")}`).join(" · ");
-    const plusRecent = fichiersDe("src").reduce((t, f) => Math.max(t, statSync(join(APP, f)).mtimeMs), 0);
+    // fichiers de l'arbre seulement (une référence plus récente peut en contenir d'autres : alertes retour dans origin/master)
+    const plusRecent = fichiersDe("src").filter(f => existsSync(join(APP, f))).reduce((t, f) => Math.max(t, statSync(join(APP, f)).mtimeMs), 0);
     if (plusRecent > statSync(join(APP, "dist", "index.html")).mtimeMs) console.log("  · dist/ antérieur aux sources : relancer npm run build avant de lire ce chiffre");
     if (total <= BUDGET) ok(`${total.toLocaleString("fr-FR")} octets ≤ ${BUDGET.toLocaleString("fr-FR")} (marge ${(BUDGET - total).toLocaleString("fr-FR")}) — ${detail}`);
     else ko(`${total.toLocaleString("fr-FR")} octets > budget ${BUDGET.toLocaleString("fr-FR")} — ${detail}`);
