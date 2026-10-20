@@ -1,13 +1,16 @@
-import React, { useState } from "react";
-import { T, ui, tone, fmtPct } from "../theme.js";
+import React from "react";
+import { T, ui, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 
 // ── Onglet « Péremptions » de l'admin : parties propres à l'admin (lot 0 de « Odoo facture la remise », 20/10/2026,
 // docs/peremption.md). Importées par AdminPanel seulement (chargé à la demande) : hors du bundle des pharmacies.
-// ShortExpiry les reçoit en prop (admin={PEREMPTIONS_ADMIN}). Odoo ne facture aucune remise péremption : la remise de
-// l'admin devient une « remise notée » (expiry_discounts, comme avant), sans effet sur les prix ni dans Odoo. ──
+// ShortExpiry les reçoit en prop (admin={PEREMPTIONS_ADMIN}). Odoo ne facture aucune remise péremption. Revue du lot 0 :
+// plus aucune saisie ici. expiry_discounts n'est plus écrite : l'ancienne page, encore ouverte dans des onglets non
+// rechargés, l'appliquait comme prix affiché, la table est publique, et la suite (conception § 1 et § 6) ne la reprend
+// pas — une remise notée maintenant serait perdue. Une valeur déjà notée s'affiche en lecture seule. ──
 
-// Remise notée : entier de 0 à 90 (0 = aucune, conception § 1) ; toute autre saisie → null (refusée, rien n'est envoyé)
+// Remise saisie (lot suivant : décision « Appliquer dans Odoo ») : entier de 0 à 90 (0 = aucune, conception § 1) ; toute
+// autre saisie → null (refusée). Plus utilisée par l'onglet au lot 0, gardée et testée pour le lot suivant.
 export const remiseSaisie = (v) => {
   const t = String(v ?? "").trim().replace(",", ".");
   if (!/^\d+(\.0+)?$/.test(t)) return null;
@@ -15,69 +18,28 @@ export const remiseSaisie = (v) => {
   return n >= 0 && n <= 90 ? n : null;
 };
 
-// encart en tête de l'onglet (ton warn) : ce que voient les pharmacies, ce que fait une remise notée
+// encart en tête de l'onglet (ton warn) : ce que voient les pharmacies, pourquoi aucune remise ne se saisit ici
 function Encart({ style }) {
   return (
     <div role="note" style={style}>
       <Icone nom="alerte" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
       <span><strong>Remises non facturées.</strong> Odoo facture le prix de la liste du client tant que la fonction « Odoo facture
         la remise » n'est pas en service. Les pharmacies voient donc le prix habituel (liste n° 5, comme partout sur le site), sans
-        remise ni prix barré, et la date du lot. Une remise notée ici ne change aucun prix, ni sur le site ni dans Odoo.</span>
+        remise ni prix barré, et la date du lot. Les remises ne se saisissent plus ici : elles se décideront dans cet onglet, avec
+        un aperçu des prix dans Odoo, quand la fonction sera en service. Une remise notée auparavant s'affiche, mais ne s'applique
+        à rien et ne sera pas reprise.</span>
     </div>
   );
 }
 
-// cellule « Remise notée » d'un produit : badge (ou « — »), saisie, enregistrement par restock-alert (set_expiry_discount,
-// comme avant) ; réponse vérifiée (avant : état local mis à jour même sur un refus) ; appelAdmin : adminFetch (jeton
-// renouvelé) ou jeton de la session admin. onEnregistree(cip, pct) : met à jour la liste de ShortExpiry
-function CelluleRemise({ p, notee, appelAdmin, onEnregistree }) {
-  const [edition, setEdition] = useState(false);
-  const [saisie, setSaisie] = useState("");
-  const [envoi, setEnvoi] = useState(false);
-  const [erreur, setErreur] = useState(null);
-  const enregistrer = async () => {
-    const pct = remiseSaisie(saisie);
-    if (pct == null) { setErreur("Un nombre entier de 0 à 90 (0 = aucune)"); return; }
-    setEnvoi(true); setErreur(null);
-    try {
-      const res = await appelAdmin("/.netlify/functions/restock-alert", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "set_expiry_discount", cip: p.cip, discount_pct: pct, product_name: p.name }),
-      });
-      if (!res.ok) throw new Error(res.status === 401 || res.status === 403 ? "session admin expirée, reconnectez-vous" : `HTTP ${res.status}`);
-      onEnregistree(p.cip, pct);
-      setEdition(false);
-    } catch (e) { console.warn("[remise notée]", e.message); setErreur(`Non enregistrée : ${e.message}`); }
-    finally { setEnvoi(false); }
-  };
-  const message = erreur && <div role="alert" style={{ marginTop: 4, fontSize: 11, fontWeight: 600, color: T.danger, maxWidth: 200 }}>{erreur}</div>;
-  if (edition) return (
-    <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-        <input type="number" min="0" max="90" step="1" value={saisie} onChange={e => setSaisie(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && enregistrer()} autoFocus aria-label={`Remise notée sur ${p.name} (%), non facturée`}
-          style={{ ...ui.qtyInput(true), width: 48 }} />
-        <span style={{ fontSize: 12 }}>%</span>
-        <button onClick={enregistrer} disabled={envoi} aria-label="Enregistrer la remise notée" title="Enregistrer"
-          style={{ ...ui.rond(26), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={13} epaisseur={2.6} /></button>
-        <button className="ex-btn-discret" onClick={() => { setEdition(false); setErreur(null); }} aria-label="Annuler" title="Annuler"
-          style={ui.rond(26)}><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
-      </div>
-      {message}
-    </div>
-  );
-  // remise notée (ton info, « non facturée ») ; sans remise : « — » (plus de remise d'office)
+// cellule « Remise notée » d'un produit, en lecture seule : valeur déjà notée (sans effet, non reprise), sinon « — »
+function CelluleRemise({ notee }) {
+  if (notee == null) return <span style={{ fontSize: 12, color: T.inkMute }}>—</span>;
   return (
-    <div>
-      <button onClick={() => { setEdition(true); setSaisie(notee != null ? String(notee) : ""); setErreur(null); }}
-        title="Noter une remise (non facturée tant qu'Odoo ne la facture pas)"
-        aria-label={notee != null ? `Remise notée ${notee} %, non facturée : modifier` : `Noter une remise sur ${p.name} (non facturée)`}
-        style={{ ...ui.badge(notee != null ? "info" : "neutral"), fontSize: 12, padding: "3px 10px", border: `1px solid ${notee != null ? tone("info").border : "transparent"}`,
-          cursor: "pointer", fontFamily: "inherit" }}>
-        {notee != null ? <>{fmtPct(notee)} · non facturée</> : "—"}<Icone nom="crayon" taille={12} />
-      </button>
-      {message}
-    </div>
+    <span title="Remise notée avant le 20/10/2026 : ne s'applique à rien, ni sur le site ni dans Odoo, et ne sera pas reprise"
+      style={{ ...ui.badge("neutral"), fontSize: 12, padding: "3px 10px" }}>
+      {fmtPct(notee)} · notée, non reprise
+    </span>
   );
 }
 

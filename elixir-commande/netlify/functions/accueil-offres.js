@@ -10,7 +10,7 @@
 // Mises en avant d'outils (_accueil-outils.js) : lectures des seuls outils mis en avant en ce moment (aucune sans outil),
 // en parallèle du contexte, chacune bornée (DELAI_OUTILS_MS : un outil lent passe en donnees_indisponibles, la réponse
 // part sans lui) ; chiffres publics dans vedettes.items[].chiffres ; admin : outils_etat (les 6 outils, masqués compris,
-// avec les chiffres réservés à l'admin : en_menu, honnetes, correspondance, comptes), pour l'éditeur — sauf ?verifier=
+// avec les chiffres réservés à l'admin : remises_facturees, correspondance, comptes), pour l'éditeur — sauf ?verifier=
 // (recherche « Un produit » de l'éditeur : seule la vérification des produits est lue, aucun outil ; les états des
 // mises en avant d'outils de cette réponse ne sont donc pas significatifs, l'éditeur ne les lit pas).
 // Prix et stock relus à chaque appel (fusion de products-get, sinon règle de la Saisie) : une diapositive passée en

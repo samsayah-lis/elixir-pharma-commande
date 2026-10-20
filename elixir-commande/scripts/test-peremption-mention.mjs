@@ -13,7 +13,11 @@
 //    inchangés ; produit rangé dans un menu : ligne du menu, au prix du menu, sans mention (comme avant) ; panier sans
 //    péremption et paniers enregistrés : identiques à la production ;
 //  • envoi : UNE commande (ni ligne ni commande à part), mention et date dans la ligne enregistrée, e-mail à Elixir ;
-//    lignes lues par le relais (cip, name, qty, pn), total, CSV et relais identiques à la production ; _relais.js inchangé.
+//    lignes lues par le relais (cip, name, qty, pn), total, CSV et relais identiques à la production ; _relais.js inchangé ;
+//  • revue du lot 0 : panier enregistré par l'ancienne page (−50 %) remonté au prix de la page (controlerPrixPanier d'App.jsx,
+//    jamais baissé) ; ajout depuis la page par les règles de la Saisie (ajouterDepuisSaisie : colis, panier ouvert) ; prix
+//    du menu affiché pour un CIP rangé dans un menu ou une campagne (prixDuMenu = prix du panier calculé) ; paliers ; pas
+//    d'ajout sans prix ; remise notée de l'admin en lecture seule (plus aucune écriture de expiry_discounts).
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -67,12 +71,18 @@ const expr = (code) => code.replace(/^\s*const \w+ = /, "").replace(/;\s*$/, "")
 const charge = (code, ctx) => new Function("__ctx", `with (__ctx) { return (${code}); }`)(new Proxy(ctx, { has: (t, k) => k in t }));
 
 // page Péremption courte (handleAdd de ShortExpiry.jsx) et Saisie de commande (handleAdd d'OrderEntry.jsx) → objet envoyé
-function ajoutPage(produit, qty) {
+function ajoutPage(produit, qty, { prixPanier, isAdmin = false } = {}) {
   let envoye = null;
-  const ctx = { ...M, quantities: { [produit.cip]: qty }, setQuantities: () => {}, onAddToCart: (o) => { envoye = o; } };
+  const ctx = { ...M, isAdmin, prixPanier, quantities: { [produit.cip]: qty }, setQuantities: () => {}, onAddToCart: (o) => { envoye = o; } };
+  ctx.prixAffiche = charge(expr(bloc(SHORT, /^  const prixAffiche = /)), ctx);
   ctx.handleAdd = charge(expr(bloc(SHORT, /^  const handleAdd = /)), ctx);
   ctx.handleAdd(produit);
   return envoye;
+}
+// prix affiché par la page (prixAffiche de ShortExpiry.jsx)
+function prixAffichePage(produit, { prixPanier, isAdmin = false } = {}) {
+  const ctx = { ...M, isAdmin, prixPanier };
+  return charge(expr(bloc(SHORT, /^  const prixAffiche = /)), ctx)(produit);
 }
 function ajoutSaisie(produit, qty) {
   let envoye = null;
@@ -112,6 +122,34 @@ eq("prix de la page : liste n° 5 si remise, sinon prix catalogue", [M.prixPage(
 eq("prix de la page : paliers d'Odoo gardés", M.prixPage(PAGE_ZADI).tiers, [{ min_qty: 6, price: 3.4 }]);
 eq("remise notée (admin) : entier de 0 à 90, sinon refusée", ["30", "0", "90", "91", "-5", "12.5", "abc", "", " 15 ", "20,0"].map(M.remiseSaisie), [30, 0, 90, null, null, null, null, null, 15, 20]);
 eq("parties admin : encart et cellule « Remise notée »", Object.keys(M.PEREMPTIONS_ADMIN), ["Encart", "CelluleRemise"]);
+{
+  // revue du lot 0 : lignes d'un panier enregistré par l'ancienne page, remontées au prix de la page (jamais baissées)
+  const page = [PAGE_ZADI, PAGE_EUPHY, PAGE_CHER, { ...PAGE_SANS_REMISE, cip: "3400930000104", list_price: null }];
+  const lignes = [
+    { cip: ZADI, name: "ZADITEN 1 mg/5 ml", qty: 2, pn: 1.92, pv: 3.83, tiers: null },          // ancienne page : 3,83 × 0,5
+    { cip: PAGE_CHER.cip, name: PAGE_CHER.name, qty: 1, pn: 1600, pv: 2000, tiers: null },      // ancienne page : −20 % dès 500 €
+    { cip: EUPHY, name: PAGE_EUPHY.name, qty: 1, pn: 11, pv: 12.31, tiers: null },               // plus cher que la page : gardé
+    { cip: "3400000000077", name: "Hors page", qty: 1, pn: 1, pv: 2, tiers: null },              // absent de la page : gardé
+    { cip: ZADI, name: "Article multi-CIP", qty: 1, pn: 1, pv: 2, tiers: null, supplier_code: "Z1" },   // multi-CIP : gardé
+    { cip: "3400930000104", name: "Sans prix", qty: 1, pn: 0.5, pv: null, tiers: null },        // page sans prix : gardé
+  ];
+  const changes = M.prixARemonter(lignes, page);
+  eq("remontée : ancienne ligne −50 % et −20 % seulement", changes.map(c => [c.cip, c.avant, c.apres, c.ancienneRemise]),
+    [[ZADI, 1.92, 3.6, true], [PAGE_CHER.cip, 1600, 1910, true]]);
+  const apres = M.remonterPrix(lignes, page);
+  eq("remontée : prix, prix catalogue et paliers de la page ; autres lignes intactes", apres.map(x => [x.pn, x.pv, x.tiers]),
+    [[3.6, 3.83, [{ min_qty: 6, price: 3.4 }]], [1910, 2000, null], [11, 12.31, null], [1, 2, null], [1, 2, null], [0.5, null, null]]);
+  eq("remontée : quantités, noms et identité inchangés", apres.map(x => [x.cip, x.qty, x.name, x.supplier_code ?? null]), lignes.map(x => [x.cip, x.qty, x.name, x.supplier_code ?? null]));
+  eq("remontée : rien à faire → même tableau (pas de rendu)", M.remonterPrix(apres, page) === apres, true);
+  eq("remontée : ligne sans prix ou au centime près", M.prixARemonter([{ cip: ZADI, qty: 1, pn: null }, { cip: EUPHY, qty: 1, pn: 9.846 }], page).map(c => [c.cip, c.avant, c.apres]), [[ZADI, null, 3.6]]);
+  eq("remontée : prix d'une autre origine (pas l'ancienne page)", M.prixARemonter([{ cip: EUPHY, qty: 1, pn: 9.5, pv: 12.31 }], page).map(c => c.ancienneRemise), [false]);
+  eq("message : remise péremption non facturée", M.messageRemontee(changes),
+    "Prix mis à jour : la remise péremption affichée auparavant n'était pas facturée par Odoo (ZADITEN 1 mg/5 ml : 3,60 €, PRODUIT À 2 000 € : 1910,00 €)");
+  eq("message : autre origine", M.messageRemontee([{ name: "X", apres: 9.85, ancienneRemise: false }]), "Prix du panier mis à jour au prix actuel, celui de la Saisie de commande (X : 9,85 €)");
+  eq("message : plus de deux lignes", M.messageRemontee([1, 2, 3, 4].map(i => ({ name: `P${i}`, apres: i, ancienneRemise: true }))).endsWith("(P1 : 1,00 €, P2 : 2,00 € et 2 autres)"), true);
+  eq("encart de la ligne", M.detailRemontee(changes[0]), "3,60 € au lieu de 1,92 € : la remise péremption affichée auparavant n'était pas facturée par Odoo");
+  eq("rien à remonter : message vide", [M.messageRemontee([]), M.prixARemonter(null, page), M.prixARemonter(lignes, null)], ["", [], []]);
+}
 
 // ── 2. Page : prix facturé, celui de la Saisie de commande ; mention ──
 {
@@ -125,8 +163,20 @@ eq("parties admin : encart et cellule « Remise notée »", Object.keys(M.PEREMP
   eq("page : plus de −20 % d'office dès 500 € (1 910 € facturés, pas 1 600 €)", ajoutPage(PAGE_CHER, 1).pn, 1910);
   eq("page : lot avec heure → jour seul", ajoutPage(PAGE_EUPHY, 1).peremption, "2027-01-31");
   eq("page : quantité 0, rien d'ajouté", ajoutPage(PAGE_HEC, 0), null);
+  eq("page : produit sans prix, rien d'ajouté (l'envoi planterait sur un prix vide)", ajoutPage({ ...PAGE_SANS_REMISE, list_price: null }, 2), null);
+  eq("page : prix du menu affiché si le CIP est rangé dans un menu (prixPanier), sinon prix de la Saisie ; admin : liste n° 5",
+    [prixAffichePage(PAGE_HEC, { prixPanier: () => ({ pn: 6.54, rayon: "Campagne" }) }).pn, prixAffichePage(PAGE_HEC, { prixPanier: () => null }).pn,
+      prixAffichePage(PAGE_HEC, { prixPanier: () => ({ pn: 6.54 }), isAdmin: true }).pn], [6.54, 9.76, 9.76]);
+  eq("page : ligne de menu sans prix → pas d'ajout", ajoutPage(PAGE_HEC, 2, { prixPanier: () => ({ pn: null, rayon: "Menu" }) }), null);
+  vrai("page : paliers d'Odoo affichés (TierBadge) et « Ajouter » désactivé sans prix", /<TierBadge tiers=\{prix\.tiers\} pn=\{prix\.pn\} bloc \/>/.test(SHORT) && /sansPrix \? \(\s*<button className="ex-peremption-ajouter" disabled/.test(SHORT));
   vrai("page : plus aucune remise d'office ni remise notée dans le calcul du prix (getDiscount, 50/20)", !/getDiscount|>= 500 \? 20 : 50/.test(SHORT));
   vrai("page : remises notées lues par l'admin seulement", /isAdmin \? fetch\("\/\.netlify\/functions\/restock-alert\?action=expiry_discounts"\) : null/.test(SHORT));
+  const PER_ADMIN = lire("src/components/PeremptionsAdmin.jsx");
+  vrai("admin : remise notée en lecture seule, plus aucune écriture de expiry_discounts (ancienne page des onglets non rechargés)",
+    ![SHORT, PER_ADMIN].some(t => /set_expiry_discount|method: "POST"|onEnregistree/.test(t)));
+  const cellule = M.PEREMPTIONS_ADMIN.CelluleRemise;
+  eq("admin : cellule sans valeur → « — », avec valeur → « 30 % · notée, non reprise », sans bouton",
+    [JSON.stringify(cellule({ notee: null })).includes("—"), JSON.stringify(cellule({ notee: 30 })).includes("notée, non reprise"), /onClick/.test(JSON.stringify(cellule({ notee: 30 })))], [true, true, false]);
   const ADMIN = lire("src/AdminPanel.jsx");
   vrai("parties admin hors du bundle des pharmacies : importées par AdminPanel seulement (chargé à la demande)",
     /from "\.\/components\/PeremptionsAdmin\.jsx"/.test(ADMIN) && /admin=\{PEREMPTIONS_ADMIN\}/.test(ADMIN) && !/^import[^\n]*PeremptionsAdmin/m.test(SHORT) && !/^import[^\n]*PeremptionsAdmin/m.test(APP)
@@ -142,7 +192,7 @@ eq("parties admin : encart et cellule « Remise notée »", Object.keys(M.PEREMP
 }
 
 // ── 3. Panier (addItemToCart, setItemQty, cartItems d'App.jsx) ──
-function application(src, { quantities = {}, specialItems = [], justifInfo = {}, catalogue = CATALOGUE } = {}) {
+function application(src, { quantities = {}, specialItems = [], justifInfo = {}, catalogue = CATALOGUE, campagnes = {} } = {}) {
   const S = { quantities, specialItems, justifInfo, cartOpen: false, flashes: [], durees: [], statut: [], minuteries: [] };
   const maj = (k) => (v) => { S[k] = typeof v === "function" ? v(S[k]) : v; };
   const ctx = {
@@ -150,7 +200,7 @@ function application(src, { quantities = {}, specialItems = [], justifInfo = {},
     get quantities() { return S.quantities; }, get specialItems() { return S.specialItems; }, get justifInfo() { return S.justifInfo; },
     setQuantities: maj("quantities"), setSpecialItems: maj("specialItems"), setJustifInfo: maj("justifInfo"), setCartOpen: maj("cartOpen"),
     flash: (m, d) => { S.flashes.push(m); S.durees.push(d); },
-    getCampaign: () => null, buildGroupes: () => [], campGetGroupe: () => null, campGratuite: () => ({ livrées: 0 }),
+    getCampaign: (k) => campagnes[k] || null, buildGroupes: () => [], campGetGroupe: () => null, campGratuite: () => ({ livrées: 0 }),
   };
   for (const nom of ["getStepMin", "getStep", "setQty", "setItemQty", "addItemToCart"]) ctx[nom] = charge(expr(bloc(src, new RegExp(`^  const ${nom} = `))), ctx);
   const calcul = charge(bloc(src, /^  const cartItems = useMemo\(\(\) => \{$/).replace(/^\s*const cartItems = useMemo\(/, "").replace(/, \[[^\]]*\]\);\s*$/, ""), ctx);
@@ -163,6 +213,17 @@ const sansMention = (x) => { const { peremption, note, ...r } = x; return r; }; 
 const arrondi = (n) => Math.round(n * 100) / 100;
 const PER_EUPHY = ajoutPage(PAGE_EUPHY, 2), PER_HEC = ajoutPage(PAGE_HEC, 2), PER_ZADI = ajoutPage(PAGE_ZADI, 6);
 const SAI_EUPHY = ajoutSaisie(PAGE_EUPHY, 3);
+// contrôle des prix du panier (controlerPrixPanier d'App.jsx, vrai code) : lecture de la page simulée (aucun réseau)
+const PAGE_PRODUITS = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI, PAGE_CHER, PAGE_SANS_REMISE];
+async function controle(lignes, { page = PAGE_PRODUITS, echec = false, cache = { current: null } } = {}) {
+  const S = { specialItems: lignes, prixRemontes: {}, flashes: [], lectures: 0 };
+  const maj = (k) => (v) => { S[k] = typeof v === "function" ? v(S[k]) : v; };
+  const ctx = { ...M, pagePeremption: cache, setSpecialItems: maj("specialItems"), setPrixRemontes: maj("prixRemontes"), flash: (m, d) => S.flashes.push([m, d]),
+    fetch: async (url) => { S.lectures++; if (url !== "/.netlify/functions/odoo-catalog?expiry_months=4") throw new Error(url);
+      return echec ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({ products: page }) }; } };
+  await charge(expr(bloc(APP, /^  const controlerPrixPanier = async \(lignes\) => \{$/)), ctx)(lignes);
+  return S;
+}
 {
   // produit hors menu ajouté depuis la page : ligne hors catalogue avec la mention
   const { S, ctx } = application(APP);
@@ -246,11 +307,81 @@ const SAI_EUPHY = ajoutSaisie(PAGE_EUPHY, 3);
   eq("panier enregistré par la production : lignes et totaux", [a.ctx.cartItems.map(i => [i.key, i.qty, i.pn, i.note ?? null]), arrondi(a.ctx.cartTotal)],
     [[["otc-0", 3, 9.76, null], ["otc-1", 12, 1.4, null], [`special-${EUPHY}`, 2, 6.16, null], ["special-3400000000088", 1, 300, null]], arrondi(3 * 9.76 + 12 * 1.4 + 2 * 6.16 + 300)]);
   if (PROD) eq("panier enregistré par la production : même calcul", a.ctx.cartItems, application(PROD, { quantities: q, specialItems: s }).ctx.cartItems);
+  // revue du lot 0 : au chargement, le contrôle des prix (controlerPrixPanier d'App.jsx) relit la page et remonte l'ancienne
+  // ligne au prix de la Saisie (9,85 €, pas 6,16 €) ; puis l'ajout depuis la page s'additionne, avec la mention
+  const c = await controle(a.S.specialItems);
+  eq("ancienne ligne relue : remontée au prix de la Saisie, fauteuil inchangé, message", [c.specialItems.map(x => [x.cip, x.qty, x.pn]), c.flashes.length, c.lectures],
+    [[[EUPHY, 2, 9.85], ["3400000000088", 1, 300]], 1, 1]);
+  a.S.specialItems = c.specialItems;
   a.ctx.addItemToCart(PER_EUPHY);
-  eq("ancienne ligne + ajout depuis la page : une ligne, prix de l'ancienne ligne (comme avant), mention", a.S.specialItems.map(x => [x.cip, x.qty, x.pn, x.peremption ?? null]),
-    [[EUPHY, 4, 6.16, "2027-01-31"], ["3400000000088", 1, 300, null]]);
+  eq("ancienne ligne remontée + ajout depuis la page : une ligne, prix de la Saisie, mention", a.S.specialItems.map(x => [x.cip, x.qty, x.pn, x.peremption ?? null]),
+    [[EUPHY, 4, 9.85, "2027-01-31"], ["3400000000088", 1, 300, null]]);
+  eq("ancienne ligne remontée : total du panier", arrondi(a.ctx.cartTotal), arrondi(3 * 9.76 + 12 * 1.4 + 4 * 9.85 + 300));
   memoire.cart_special = JSON.stringify(a.S.specialItems);
   eq("panier avec mention : relu à l'identique", application(APP, { quantities: q, specialItems: ctxL.readCart(null)[1] }).ctx.cartItems, a.ctx.cartItems);
+}
+{
+  // panier au format de la production (banc de la revue : Zaditen 3,83 × 0,5 = 1,92 €), relu puis complété depuis la page
+  const ancien = [{ cip: ZADI, name: PAGE_ZADI.name, qty: 2, pn: 1.92, pv: 3.83, tiers: null }];
+  const c = await controle(ancien);
+  eq("production relue : Zaditen remonté à 3,60 € avec les paliers d'Odoo", c.specialItems, [{ cip: ZADI, name: PAGE_ZADI.name, qty: 2, pn: 3.6, pv: 3.83, tiers: [{ min_qty: 6, price: 3.4 }] }]);
+  eq("production relue : message et encart de la ligne", [c.flashes[0], c.prixRemontes[ZADI]?.apres, c.prixRemontes[ZADI]?.avant],
+    [[`⚠ Prix mis à jour : la remise péremption affichée auparavant n'était pas facturée par Odoo (${PAGE_ZADI.name} : 3,60 €)`, 9000], 3.6, 1.92]);
+  const a = application(APP, { specialItems: c.specialItems });
+  a.ctx.addItemToCart(ajoutPage(PAGE_ZADI, 1));
+  eq("production relue + 1 boîte depuis la page : 3 × 3,60 €, mention", a.ctx.cartItems.map(i => [i.qty, i.pn, i.total, i.note]), [[3, 3.6, 10.8, "Pér. 31/12/2026"]]);
+  const r = await envoyer(APP, { specialItems: a.S.specialItems });
+  eq("production relue : order-save reçoit 3,60 €", r.appels[0].corps.items.map(i => [i.qty, i.pn]), [[3, 3.6]]);
+  vrai("production relue : e-mail au prix de la Saisie", r.appels[1].corps.template_params.order_lines.includes("Qté : 3  |  PU : 3,60 €"));
+  // contrôles suivants : rien à refaire, lecture partagée (5 min) ; jamais baissé
+  const cache = { current: null };
+  const c1 = await controle(c.specialItems, { cache }), c2 = await controle([{ ...ancien[0], pn: 4.2 }], { cache });
+  eq("contrôle suivant : rien à remonter, aucun message ; lecture partagée ; prix plus haut gardé", [c1.flashes.length, c1.lectures + c2.lectures, c2.specialItems[0].pn, c2.flashes.length], [0, 1, 4.2, 0]);
+  // page illisible : rien ne change, la lecture suivante est retentée ; panier sans ligne hors catalogue : aucune lecture
+  const cacheEchec = { current: null };
+  const e = await controle(ancien, { echec: true, cache: cacheEchec });
+  eq("page illisible : panier inchangé, nouvel essai au contrôle suivant", [e.specialItems, e.flashes.length, cacheEchec.current], [ancien, 0, null]);
+  eq("panier sans ligne hors catalogue (ou seulement multi-CIP) : aucune lecture", [(await controle([])).lectures, (await controle([{ cip: ZADI, qty: 1, pn: 1, supplier_code: "Z" }])).lectures], [0, 0]);
+  vrai("contrôle lancé au chargement, à l'ouverture du panier et au changement de pharmacie, hors des zones protégées",
+    /useEffect\(\(\) => \{ controlerPrixPanier\(specialItems\); \}, \[cartOpen, actingFor\]\);/.test(APP));
+  vrai("encart « Prix mis à jour » sur la ligne remontée, tant qu'elle est à ce prix", /prixRemontes\[item\.cip\] && Math\.abs\(\(item\.basePn \?\? 0\) - prixRemontes\[item\.cip\]\.apres\) < 0\.005/.test(APP));
+}
+{
+  // revue du lot 0 : l'ajout depuis la page passe par les règles de la Saisie (ajouterDepuisSaisie), panier ouvert
+  vrai("page : onAddToCart = ajouterDepuisSaisie(o, { ouvrirPanier: true }), prix du menu par prixDuMenu",
+    /<ShortExpiry[\s\S]{0,200}onAddToCart=\{\(o\) => ajouterDepuisSaisie\(o, \{ ouvrirPanier: true \}\)\}\s*prixPanier=\{prixMenuPeremption\}/.test(APP)
+    && /const prixMenuPeremption = \(cip\) => prixDuMenu\(CATALOG_WITH_ADMIN, cip, getCampaign\);/.test(APP));
+  const STRAT = "3400930000555";
+  const catalogue = { ...CATALOGUE, stratege: { label: "Stratège", products: [{ cip: STRAT, name: "STRATÈGE COLIS 12", pn: 2, pv: 3, colis: 12 }] } };
+  const saisie = (etat = {}) => {
+    const a = application(APP, { catalogue, ...etat });
+    Object.assign(a.ctx, { SECTION_META: {}, justifProducts: {}, needsJustif: M.needsJustif, qtyByCip: M.qtyByCip, loadQuota: async () => null, quotaOver: () => ({ over: [] }) });
+    for (const nom of ["regleSaisie", "arrondiSaisie", "ajouterDepuisSaisie"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
+    return a;
+  };
+  const a = saisie();
+  a.ctx.ajouterDepuisSaisie(ajoutPage({ cip: STRAT, name: "STRATÈGE COLIS 12", list_price: 3, discounted_price: 2, discount_pct: 33, earliest_expiry: "2026-12-31" }, 7), { ouvrirPanier: true });
+  eq("page → produit au colis de 12 : 7 arrondi à 12, comme la Saisie, panier ouvert", [a.S.quantities, a.S.cartOpen, a.S.flashes.at(-1)], [{ "stratege-0": 12 }, true, "✓ 12× STRATÈGE COLIS 12 ajouté au panier · arrondi au colis de 12"]);
+  const b = saisie();
+  b.ctx.ajouterDepuisSaisie(PER_EUPHY, { ouvrirPanier: true });
+  eq("page → hors menu : ligne hors catalogue avec mention, panier ouvert", [b.S.specialItems.map(x => [x.cip, x.qty, x.pn, x.peremption]), b.S.cartOpen], [[[EUPHY, 2, 9.85, "2027-01-31"]], true]);
+  const s = saisie();
+  s.ctx.ajouterDepuisSaisie(SAI_EUPHY);
+  eq("Saisie : panier toujours fermé (option par défaut)", s.S.cartOpen, false);
+  // prix du menu affiché = prix que prend le panier calculé (menu, paliers, campagne pv × (1 − 33 %), menu sans prix)
+  const CAMP = "3400930000666";
+  const cat2 = { ...catalogue, ulabs: { label: "Campagne U-Labs", products: [{ cip: CAMP, name: "CAMPAGNE", pn: 9, pv: 9.76 }, { cip: "3400930000777", name: "SANS PRIX", pn: null, pv: 5 }] } };
+  const campagnes = { ulabs: { palier_remise: 33 } };
+  for (const [cip, qty] of [[HEC, 2], [DOLI, 10], [CAMP, 3], [STRAT, 12]]) {
+    const m = M.prixDuMenu(cat2, cip, (k) => campagnes[k] || null);
+    const x = application(APP, { catalogue: cat2, campagnes });
+    x.ctx.addItemToCart({ cip, name: "x", qty, pn: 99 });
+    const l = x.ctx.cartItems[0];
+    eq(`prix du menu = prix du panier calculé (${cip}, ${qty})`, [m.pn, M.applyTiers(m.pn, m.tiers, qty).pn], [l.basePn, l.pn]);
+  }
+  eq("prix du menu : campagne à 6,54 € (9,76 × 0,67), rayon ; hors menu → null ; menu sans prix → pn null",
+    [M.prixDuMenu(cat2, CAMP, (k) => campagnes[k] || null), M.prixDuMenu(cat2, EUPHY), M.prixDuMenu(cat2, "3400930000777")?.pn],
+    [{ pn: 6.54, pv: 9.76, pct: 0, tiers: null, rayon: "Campagne U-Labs", campagne: true }, null, null]);
 }
 
 // ── 4. Envoi (sendOrder) : une commande, mention dans la ligne enregistrée et l'e-mail ; relais inchangé ──

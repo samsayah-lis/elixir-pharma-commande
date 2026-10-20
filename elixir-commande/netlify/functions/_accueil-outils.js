@@ -9,8 +9,8 @@
 //    (kv « accueil:outils ») ; jamais masquée : sans chiffres récents (36 h), texte seul.
 //  • peremption : règle de la page (ShortExpiry.jsx, odoo-catalog.js expiry_months=4) : en stock, péremption entre J+30
 //    et le dernier jour du 4e mois qui suit (UTC, comme Netlify) ; nb = toutes les lignes (ce que la page montre), mois.
-//    Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix qu'Odoo facture, sans
-//    remise péremption ; tant qu'Odoo n'en facture aucune, la carte n'annonce ni « dès » ni « jusqu'à » (des et jusqua
+//    Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix habituel (liste n° 5,
+//    celui de la Saisie), sans remise péremption ; tant qu'Odoo n'en facture aucune, la carte n'annonce ni « dès » ni « jusqu'à » (des et jusqua
 //    null, conception § 10 : sans produit facturé, le nombre de références seul). Avant : « jusqu'à −50 % » et « dès »
 //    calculés d'une remise d'office (50 %, 20 % dès 500 €) ou de expiry_discounts, qu'Odoo ne facturait pas.
 //    Lecture (3 colonnes, ni prix, ni lots, ni stock) gardée 5 min par instance (clé : jour de Paris et fenêtre) ;

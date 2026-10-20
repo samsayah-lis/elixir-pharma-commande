@@ -12,8 +12,10 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
-// Péremption courte, lot 0 : mention « Pér. <date> » d'une ligne commandée depuis la page (prix, identité et relais inchangés)
-import { estPeremption, notePeremption, champsMention, champsPeremption, mentionCommande, mentionMail } from "./peremption-panier.js";
+// Péremption courte, lot 0 : mention « Pér. <date> » d'une ligne commandée depuis la page (prix, identité et relais inchangés) ;
+// prix du menu affiché par la page (prixDuMenu) ; lignes d'un panier enregistré par l'ancienne page remontées (remonterPrix)
+import { estPeremption, notePeremption, champsMention, champsPeremption, mentionCommande, mentionMail,
+  prixDuMenu, prixARemonter, remonterPrix, messageRemontee, detailRemontee } from "./peremption-panier.js";
 // Renouvellement des jetons (un seul échange à la fois, partagé avec l'Assistant Elixir) : src/jetons.js
 import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
@@ -1316,7 +1318,9 @@ export default function App() {
     return arrondi > 0 && r.min > 0 ? Math.max(r.min, arrondi) : arrondi;
   };
 
-  const ajouterDepuisSaisie = (saisie) => {
+  // ouvrirPanier : Péremption courte (revue du lot 0) ouvre le panier comme avant, avec les règles de la Saisie (colis,
+  // palier, justificatif, contingentement) ; Saisie et accueil ne l'ouvrent pas
+  const ajouterDepuisSaisie = (saisie, { ouvrirPanier = false } = {}) => {
     let item = saisie;
     const regle = item.supplier_code ? null : regleSaisie(item.cip);
     if (regle) {
@@ -1324,7 +1328,7 @@ export default function App() {
       if (q <= 0) { flash(`⚠ ${item.name} se commande par ${regle.multiple} (${regle.rayon}) : saisissez ${Math.max(regle.min, regle.multiple)} ou plus`, 6000); return; }
       if (q !== item.qty) item = { ...item, qty: q };
     }
-    addItemToCart(item, { ouvrirPanier: false });
+    addItemToCart(item, { ouvrirPanier });
     if (regle && item.qty !== saisie.qty) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · arrondi au colis de ${regle.multiple}`);
     const apres = [...cartItems, { cip: item.cip, qty: item.qty }];   // panier avec cet ajout (même CIP additionné)
     if (needsJustif(item, justifProducts, qtyByCip(apres))) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · justificatif à joindre dans le panier`);
@@ -1333,6 +1337,34 @@ export default function App() {
       if (o) flash(`⚠ Contingentement dépassé : ${o.name || item.name} (${o.qty} au panier, reste ${o.remaining} pour cette période)`, 6000);
     });
   };
+
+  // ── Péremption courte, lot 0 : panier enregistré avant la mise en ligne (revue du 20/10/2026 ; conception § 8.3) ──
+  // L'ancienne page mettait au panier −50 % (−20 % dès 500 €), qu'Odoo n'a jamais facturés, et le panier enregistré garde ce
+  // prix. Au chargement, à l'ouverture et à la fermeture du panier et au changement de pharmacie (saisie Elixir), les lignes
+  // hors catalogue dont le CIP est sur la page sont remontées au prix de la page, celui de la Saisie (remonterPrix) ; un prix
+  // n'est jamais baissé. Lecture publique de la page (odoo-catalog?expiry_months=4), partagée 5 min ; en échec, rien ne
+  // change et le contrôle suivant relit. Hors des zones protégées : la ligne change par setSpecialItems, comme une quantité.
+  const [prixRemontes, setPrixRemontes] = useState({});   // cip → changement (encart de la ligne du panier)
+  const pagePeremption = useRef(null);                     // { t, promesse } : lecture de la page partagée
+  const controlerPrixPanier = async (lignes) => {
+    if (!lignes.some(s => s?.cip && !s.supplier_code)) return;
+    let lecture = pagePeremption.current;
+    if (!lecture || Date.now() - lecture.t > 5 * 60e3) {
+      const promesse = fetch("/.netlify/functions/odoo-catalog?expiry_months=4")
+        .then(r => (r.ok ? r.json() : null)).then(j => (Array.isArray(j?.products) ? j.products : null)).catch(() => null);
+      lecture = pagePeremption.current = { t: Date.now(), promesse };
+    }
+    const produits = await lecture.promesse;
+    if (!produits) { if (pagePeremption.current === lecture) pagePeremption.current = null; return; }
+    const changes = prixARemonter(lignes, produits);
+    if (!changes.length) return;
+    setSpecialItems(prev => remonterPrix(prev, produits));
+    setPrixRemontes(prev => ({ ...prev, ...Object.fromEntries(changes.map(c => [c.cip, c])) }));
+    flash(`⚠ ${messageRemontee(changes)}`, 9000);
+  };
+  useEffect(() => { controlerPrixPanier(specialItems); }, [cartOpen, actingFor]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Péremption courte : prix que prendra le panier pour un CIP rangé dans un menu (même recherche qu'addItemToCart)
+  const prixMenuPeremption = (cip) => prixDuMenu(CATALOG_WITH_ADMIN, cip, getCampaign);
 
   // ── Page d'accueil (docs/accueil.md) : mêmes règles que le reste du site, rien de réécrit (le chunk reçoit le
   // catalogue, regleSaisie, ajouterDepuisSaisie et ces deux helpers) ──
@@ -2537,7 +2569,8 @@ export default function App() {
             <ShortExpiry
               isAdmin={showAdmin}
               pharmacyCip={pharmacyCip}
-              onAddToCart={addItemToCart}
+              onAddToCart={(o) => ajouterDepuisSaisie(o, { ouvrirPanier: true })}
+              prixPanier={prixMenuPeremption}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
               couleur={CATALOG_WITH_ADMIN[activeTab].accent}
             />
@@ -3439,11 +3472,18 @@ export default function App() {
                       {/* Nom du produit */}
                       <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
                       {/* Péremption courte (src/peremption-panier.js) : date du lot de la page, gardée jusqu'à la commande ; prix habituel,
-                          celui qu'Odoo facture (aucune remise péremption tant qu'Odoo ne la facture pas) */}
+                          celui de la Saisie, liste n° 5 (aucune remise péremption tant qu'Odoo ne la facture pas) */}
                       {estPeremption(item) && (
                         <div style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
                           <Icone nom="horloge" taille={14} style={iconeEncart} />
                           <span><strong>{notePeremption(item.peremption)}</strong> · péremption courte, au prix habituel</span>
+                        </div>
+                      )}
+                      {/* Prix remonté (panier enregistré par l'ancienne page, controlerPrixPanier) : tant que la ligne est à ce prix */}
+                      {item.isSpecial && prixRemontes[item.cip] && Math.abs((item.basePn ?? 0) - prixRemontes[item.cip].apres) < 0.005 && (
+                        <div role="note" style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
+                          <Icone nom="alerte" taille={14} style={iconeEncart} />
+                          <span><strong>Prix mis à jour</strong> : {detailRemontee(prixRemontes[item.cip])}</span>
                         </div>
                       )}
                       {/* Unités gratuites des campagnes */}

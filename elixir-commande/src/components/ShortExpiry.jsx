@@ -4,12 +4,16 @@ import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 import { prixPage, offrePeremption } from "../peremption-panier.js";
+import { TierBadge } from "../tiers.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
-// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix qu'Odoo facture, celui de
-// la Saisie de commande (prixPage : prix remisé de la liste n° 5, sinon prix catalogue), sans remise péremption ni prix
-// barré — avant, −50 % (−20 % dès 500 €) ou la remise de l'admin, qu'Odoo ne facturait jamais. Le panier reçoit ce prix
-// et la date du lot (offrePeremption : mention « Pér. <date> » jusqu'à la commande).
+// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix habituel, celui de la
+// Saisie de commande (prixPage : prix remisé de la liste n° 5, sinon prix catalogue ; paliers d'Odoo), sans remise
+// péremption ni prix barré — avant, −50 % (−20 % dès 500 €) ou la remise de l'admin, qu'Odoo ne facturait jamais. C'est le
+// prix de la liste n° 5, comme partout sur le site : les clients des listes 15, 1110 et 25 peuvent être facturés plus cher.
+// Produit rangé dans un menu : prix que prendra le panier (prixPanier, celui du menu ou de la campagne). Le panier reçoit
+// l'ajout par les règles de la Saisie (colis, contingentement) avec la date du lot (offrePeremption : mention « Pér. <date> »
+// jusqu'à la commande, ligne hors catalogue seulement). Sans prix : pas d'ajout.
 const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
 
 // En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés), quand l'admin ne passe pas adminFetch
@@ -18,11 +22,12 @@ const adminAuthHeaders = () => {
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
 
-// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises notées, synchro Odoo ;
-// adminFetch : appels authentifiés de l'admin, jeton renouvelé ; admin : encart et cellule « Remise notée » de
+// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises notées en lecture seule,
+// synchro Odoo ; adminFetch : appels authentifiés de l'admin, jeton renouvelé ; admin : encart et cellule « Remise notée » de
 // src/components/PeremptionsAdmin.jsx, passés par AdminPanel — chargés avec l'admin, hors du bundle des pharmacies).
 // icone, couleur : icône et couleur du menu (App) ; absentes dans l'admin → horloge et orange d'origine (filet et pastille).
-export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#ea580c", adminFetch, admin = null }) {
+// prixPanier(cip) : prix du menu qui contient le CIP (prixDuMenu d'App.jsx), null hors menu ; vue pharmacie seulement.
+export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#ea580c", adminFetch, admin = null, prixPanier }) {
   const [products, setProducts] = useState([]);
   const [discounts, setDiscounts] = useState({});
   const [loading, setLoading] = useState(true);
@@ -112,10 +117,14 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
     return T.warn;
   };
 
+  // prix affiché : pharmacie, celui que prendra le panier (menu ou campagne : prixPanier ; sinon prix de la Saisie) ;
+  // admin, prix de la liste n° 5
+  const prixAffiche = (p) => (!isAdmin && prixPanier?.(p.cip)) || prixPage(p);
+
   const handleAdd = (p) => {
     const qty = parseInt(quantities[p.cip]) || 0;
-    if (qty <= 0) return;
-    // prix facturé (celui de la Saisie) et date du lot → mention « Pér. <date> » au panier (src/peremption-panier.js)
+    if (qty <= 0 || !(prixAffiche(p).pn > 0)) return;   // sans prix : pas d'ajout (l'envoi planterait sur un prix vide)
+    // prix de la Saisie et date du lot → mention « Pér. <date> » au panier (src/peremption-panier.js)
     onAddToCart?.(offrePeremption(p, qty));
     setQuantities(prev => ({ ...prev, [p.cip]: 0 }));
   };
@@ -145,7 +154,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
         aside={<CompteurVue chargement={loading} valeur={products.length.toLocaleString("fr-FR")} libelle={loading || products.length > 1 ? "références" : "référence"} />}
       />
 
-      {/* Ce que dit la page : pharmacie, prix facturé sans remise ; admin, remises notées mais non facturées */}
+      {/* Ce que dit la page : pharmacie, prix habituel sans remise ; admin, remises non facturées, plus aucune saisie */}
       {isAdmin ? (admin?.Encart && <admin.Encart style={{ ...encart("warn"), marginBottom: 16 }} />) : (
         <div role="note" style={{ ...encart("info"), marginBottom: 16 }}>
           <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -215,7 +224,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
             <tbody>
               {sorted.map((p) => {
                 const days = daysUntil(p.earliest_expiry);
-                const prix = prixPage(p);
+                const prix = prixAffiche(p);
+                const menu = prix.rayon && Math.abs((prix.pn ?? 0) - (prixPage(p).pn ?? 0)) >= 0.005 ? prix.rayon : null;   // prix du menu ≠ prix de la Saisie
+                const sansPrix = !(prix.pn > 0);
                 const notee = discounts[p.cip] != null && Number(discounts[p.cip]) !== 0 ? Number(discounts[p.cip]) : null;
                 const qty = quantities[p.cip] || 0;
 
@@ -252,16 +263,19 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
                         {fmt(p.list_price)}
                       </td>
                     )}
-                    {/* prix facturé : celui de la Saisie (prix de la liste n° 5), ni prix barré ni remise péremption */}
+                    {/* prix habituel : celui de la Saisie (liste n° 5) ou du menu, ni prix barré ni remise péremption ; paliers d'Odoo */}
                     <td className="ex-per-prix" style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
                       <span style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>{fmt(prix.pn)}</span>
-                      {!isAdmin && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
+                      {!isAdmin && !sansPrix && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
+                      <TierBadge tiers={prix.tiers} pn={prix.pn} bloc />
+                      {menu && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix du menu « {menu} »</div>}
+                      {!isAdmin && sansPrix && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix à confirmer</div>}
                     </td>
                     {isAdmin && (
                       <td className="ex-per-remise" style={{ padding: "10px 10px", textAlign: "left" }}>
                         {admin?.CelluleRemise
-                          ? <admin.CelluleRemise p={p} notee={notee} appelAdmin={appelAdmin} onEnregistree={(cip, pct) => setDiscounts(prev => ({ ...prev, [cip]: pct }))} />
-                          : <span style={{ fontSize: 12, color: T.inkSoft }}>{notee != null ? `${fmtPct(notee)} · non facturée` : "—"}</span>}
+                          ? <admin.CelluleRemise p={p} notee={notee} />
+                          : <span style={{ fontSize: 12, color: T.inkSoft }}>{notee != null ? `${fmtPct(notee)} · notée, non reprise` : "—"}</span>}
                       </td>
                     )}
                     <td className="ex-per-qte" style={{ padding: "10px 10px", textAlign: "center" }}>
@@ -275,12 +289,17 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
                         <button className="ex-qte-plus" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
                           aria-label={`Augmenter la quantité de ${p.name}`} style={pas}><Icone nom="plus" taille={12} epaisseur={2.6} /></button>
                       </div>
-                      {qty > 0 && (
+                      {qty > 0 && (sansPrix ? (
+                        <button className="ex-peremption-ajouter" disabled title="Prix à confirmer : contactez Elixir"
+                          style={{ ...ui.btn("primaire", "s"), height: 26, padding: "0 12px", fontSize: 12, marginTop: 6, opacity: 0.5, cursor: "not-allowed" }}>
+                          Ajouter
+                        </button>
+                      ) : (
                         <button className="ex-btn-petrole ex-peremption-ajouter" onClick={() => handleAdd(p)}
                           style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, height: 26, padding: "0 12px", fontSize: 12, marginTop: 6 }}>
                           Ajouter
                         </button>
-                      )}
+                      ))}
                     </td>
                   </tr>
                 );
