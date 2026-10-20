@@ -1,7 +1,8 @@
 // ── La vitrine cinéma « Offre du moment » : les mises en avant de Zineb, au-dessus des plus commandés (docs/accueil.md § 7) ──
 // Une salle sombre (pétrole profond), un écran lumineux où flotte le produit (ou l'éventail d'un menu promo) ; la lumière
 // de l'écran déborde dans la salle, dans la teinte de l'offre (couleur stockée + miniature floutée agrandie : aucun pixel lu,
-// aucun canvas). Reflet qui balaie le produit, médaillon or de la remise, compte à rebours dans les 7 derniers jours.
+// aucun canvas). Reflet qui balaie le produit, médaillon or de la remise, compte à rebours dans les 7 derniers jours (fin
+// du prix seulement : menu promo daté ; la date de fin d'une mise en avant ne fait que la retirer).
 // Carrousel à onglets (motif APG) dès 2 offres : barres façon « stories » (onglets), précédent / suivant ; défilement
 // automatique sur ordinateur seulement (8 s par offre, deux tours, puis arrêt sur la première ; pause au survol, onglet
 // caché, salle à moins de 50 % à l'écran, tiroir ou fenêtre modale ouverts ; arrêt définitif à la première action) ;
@@ -69,7 +70,9 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
 
   // ── défilement automatique ──
   const possible = !apercu && !mobile && finPointer && !reduit && defilement && n >= 2;
-  const [rotation, setRotation] = useState(() => (possible && !defilementArrete ? "marche" : "arretee"));
+  // « marche » même quand le défilement n'est pas (encore) possible : une 2e offre arrivée après le montage (menu promo
+  // créé depuis la dernière visite, absent du cache local admin_promos) le lance, sauf si l'utilisateur l'a arrêté
+  const [rotation, setRotation] = useState(() => (defilementArrete ? "arretee" : "marche"));
   const [survol, setSurvol] = useState(false);
   const [cache, setCache] = useState(() => typeof document !== "undefined" && document.hidden);
   const [horsVue, setHorsVue] = useState(false);
@@ -249,7 +252,10 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
   const surSortie = () => { const p = pt.current; p.cx = 0; p.cy = 0; p.dedans = false; p.surEcran = false; if (vivant && !p.raf) p.raf = requestAnimationFrame(boucle); };
 
   // ── glissé : au doigt sur la salle (mobile, tablette), à la souris sur l'écran ; suivi du doigt sans setState ──
-  const geste = useRef(null);
+  const geste = useRef(null), dernierGlisse = useRef(0);
+  // appui sur l'écran sans glisser (le geste naturel sur une bannière) : comme « Voir … » ; raccourci du pointeur
+  // seulement, le bouton reste le chemin du clavier
+  const toucheEcran = () => { if (apercu || performance.now() - dernierGlisse.current < 400) return; arreter(); onVoir?.(e); };
   const ecrireGlisse = (dx) => {
     const k = n > 1 ? 1 : 0.25, v = sujetActif(), t = sel(".mea-diapo");
     if (v) v.style.transform = dx ? `translateX(${dx * 0.9 * k}px) rotate(${borne(dx * 0.02 * k, 6)}deg)` : "";
@@ -274,6 +280,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
     const g = geste.current;
     geste.current = null;
     if (!g || g.mode !== "h") return;
+    dernierGlisse.current = performance.now();
     cancelAnimationFrame(g.raf);
     const v = Math.abs(g.dx) / Math.max(1, performance.now() - g.t);
     const seuil = ev.pointerType === "mouse" ? 40 : 56;
@@ -353,7 +360,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
         </div>
       )}
 
-      <div ref={ecranEnv} className="mea-ecran-env" aria-hidden="true">
+      <div ref={ecranEnv} className={`mea-ecran-env${apercu ? "" : " mea-ecran-env--lien"}`} aria-hidden="true" onClick={toucheEcran}>
         <div className="mea-ecran">
           <Lumiere e={lumiere(0)} k={0} devant={calques.devant === 0} ecran /><Lumiere e={lumiere(1)} k={1} devant={calques.devant === 1} ecran />
           <div className="mea-plateau">
@@ -409,12 +416,12 @@ function Textes({ e, titreId, fantome, actif = true, reduit, onExpire, children 
     <div className={`mea-prix-bloc${fantome ? " mea-cache" : ""}`}>
       {o ? (<>
         <span className="mea-prix num"><span className="acc-vh">{prixLu(o)}</span><span aria-hidden="true"><Rouleau texte={fmtEur(o.pn)} /><span className="mea-ht">HT</span></span></span>
-        {o.pv > o.pn && <span className="mea-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)}</span>}
+        {o.pv > o.pn && <span className="mea-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)} HT</span>}
       </>) : (
         <span className="mea-menu-meta num"><span className="acc-vh">{resumeMenuLu(e)}</span><span aria-hidden="true">{e.menu.nb} référence{e.menu.nb > 1 ? "s" : ""}{e.menu.des ? ` · dès ${fmtEur(e.menu.des)} HT` : ""}</span></span>
       )}
     </div>
-    {e.fin && <Rebours fin={e.fin} actif={actif && !fantome} secondes={!reduit} onFin={fantome ? undefined : onExpire} classe={`mea-a${fantome ? " mea-cache" : ""}`} />}
+    {e.finOffre && <Rebours fin={e.finOffre} actif={actif && !fantome} secondes={!reduit} onFin={fantome ? undefined : onExpire} classe={`mea-a${fantome ? " mea-cache" : ""}`} />}
     <div className={`mea-actions mea-actions--${o ? "produit" : "menu"}${fantome ? " mea-cache" : ""}`}>{children}</div>
   </>);
 }

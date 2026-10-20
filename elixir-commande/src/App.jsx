@@ -31,7 +31,7 @@ const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ defaul
 // Page d'accueil « La Tête de gondole » (docs/accueil.md) : chunk Accueil-* chargé à la demande ; ici, le préchargement
 // (chunk + GET des offres), le squelette et l'écran « nouvelle version » seulement
 import { lireOffres } from "./components/accueil/precharge.js";
-import SqueletteAccueil, { AccueilIndisponible } from "./components/accueil/Squelette.jsx";
+import SqueletteAccueil, { AccueilIndisponible, salleProbable } from "./components/accueil/Squelette.jsx";
 const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catch(() => ({ default: AccueilIndisponible })));
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
@@ -2449,7 +2449,7 @@ export default function App() {
           {/* ── PAGE D'ACCUEIL « La Tête de gondole » (docs/accueil.md) : chunk à la demande, squelette en attendant.
               L'ajout passe par ajouterDepuisSaisie (règle du catalogue, justificatif, contingentement), « − » par setItemQty ── */}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "accueil" && (
-            <React.Suspense fallback={<SqueletteAccueil mobile={isMobile} vedettes={promoSections.some(p => p.active && !(p.endDate > "" && p.endDate.slice(0, 10) < new Date().toISOString().slice(0, 10)))} />}>
+            <React.Suspense fallback={<SqueletteAccueil mobile={isMobile} vedettes={salleProbable(promoSections, menuOuvrable)} />}>
               <Accueil
                 identite={identiteAccueil}
                 lireOffres={() => lireOffres(appelAuthentifie, identiteAccueil)}

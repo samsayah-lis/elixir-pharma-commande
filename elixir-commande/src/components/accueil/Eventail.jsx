@@ -17,13 +17,14 @@ const transformDe = ([r, x, y], centre, ouvre) => ouvre
   ? `translate(calc(${x}% * (1 + .3 * var(--ouvre, 0))), calc(${y}% - ${centre ? 10 : 0}px * var(--ouvre, 0))) rotate(calc(${r}deg + ${Math.sign(r) * 4}deg * var(--ouvre, 0)))`
   : `translate(${x}%, ${y}%) rotate(${r}deg)`;
 
-export default function Eventail({ cartes = [], max = 5, taille = "l" }) {
+// balise : "span" dans un bouton (tuile menu de la grille : un <div> n'y est pas permis)
+export default function Eventail({ cartes = [], max = 5, taille = "l", balise: Balise = "div" }) {
   const [ko, setKo] = useState({});
   const liste = cartes.slice(0, max);
   const n = liste.length;
   if (!n) return null;
   return (
-    <div className={`mea-eventail mea-eventail--${taille}`} aria-hidden="true">
+    <Balise className={`mea-eventail mea-eventail--${taille}`} aria-hidden="true">
       {liste.map((c, k) => {
         const slot = PLACE[n][k], g = GEO[n][slot], centre = Math.abs(slot - (n - 1) / 2) < 1;
         const img = c.url && !ko[c.url];
@@ -36,7 +37,7 @@ export default function Eventail({ cartes = [], max = 5, taille = "l" }) {
           </span>
         );
       })}
-    </div>
+    </Balise>
   );
 }
 

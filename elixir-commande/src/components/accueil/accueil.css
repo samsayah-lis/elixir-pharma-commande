@@ -207,6 +207,8 @@
 .acc-lot-sep { padding: 0 .35em; }
 .acc-lot-centre[data-lignes] .acc-lot-sep { display: none; }
 .acc-lot-centre[data-lignes] .acc-lot-montant { font-size: .93em; }
+/* « n au panier » trop large (petite tuile de la grille à la une) : la quantité seule, « au panier » reste lu */
+.acc-lot-centre[data-court] .acc-lot-suffixe { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .acc-lot-note { grid-column: 1 / -1; margin: 5px 0 0; text-align: center; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
 .acc-lot-centre:active:not([aria-disabled]) { transform: scale(.98); }
 .acc-lot[data-plein] .acc-lot-centre { background: var(--mint); color: var(--teal); }

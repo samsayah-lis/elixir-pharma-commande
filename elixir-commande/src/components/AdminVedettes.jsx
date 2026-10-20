@@ -11,7 +11,7 @@ import { teinteDominante } from "./teinte-photo.js";
 import { LIMITES, MAX_VISIBLES, couleurDe, couleurMenu, dateTexte, finEffective, jourParis, menuEnCours, produitsVisibles,
   repliMenus, teintes, titreMenu, titreParDefaut } from "./accueil/vedettes.js";
 import { erreursBrouillon, etatDate } from "./accueil/vedettes-regles.js";
-import { photo } from "./accueil/outils.js";
+import { photo, useMedia } from "./accueil/outils.js";
 
 const ApercuMea = React.lazy(() => import("./accueil/ApercuMea.jsx"));
 const CLE = "accueil_vedettes";
@@ -24,7 +24,7 @@ const STATUTS = {
   rupture: ["warn", "Non visible : rupture"], introuvable: ["danger", "Non visible : introuvable"], sans_prix: ["danger", "Non visible : sans prix"],
   prix_anormal: ["danger", "Non visible : prix anormal"], justificatif: ["danger", "Non visible : sur justificatif labo"], campagne: ["danger", "Non visible : produit de campagne"],
   menu_masque: ["warn", "Non visible : menu masqué"], menu_inactif: ["warn", "Non visible : menu inactif"], menu_echu: ["warn", "Non visible : menu échu"],
-  menu_vide: ["warn", "Non visible : menu vide"], invalide: ["danger", "À corriger"], au_dela_de_5: ["warn", "Au-delà de 5 : ne s'affiche pas"],
+  menu_vide: ["warn", "Non visible : menu vide"], invalide: ["danger", "À corriger"], au_dela_de_5: ["warn", "Au-delà de 5 : en réserve"],
   verification: ["neutral", "Vérification…"], inconnu: ["neutral", "État inconnu"],
 };
 const ALERTE = new Set(["rupture", "introuvable", "sans_prix", "prix_anormal", "justificatif", "campagne", "menu_masque", "menu_inactif", "menu_echu", "menu_vide"]);
@@ -74,10 +74,11 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const lireEtats = () => adminFetch?.(`/.netlify/functions/accueil-offres?_=${Date.now()}`).then(r => (r.ok ? r.json() : null))
     .then(j => { if (Array.isArray(j?.vedettes_etat)) setEtats(Object.fromEntries(j.vedettes_etat.map(x => [x.id, x]))); }).catch(() => {});
   const verifier = async (cips) => {
-    const manquants = [...new Set(cips)].filter(c => /^\d{8,14}$/.test(c || "") && !verifRef.current[c]).slice(0, 20);
+    // à vérifier : jamais vérifiés, ou vérification en échec (429, 502, réseau : refaite au prochain passage)
+    const manquants = [...new Set(cips)].filter(c => /^\d{8,14}$/.test(c || "") && (!verifRef.current[c] || verifRef.current[c].erreur)).slice(0, 20);
     if (!manquants.length || !adminFetch) return;
     setVerif(v => ({ ...v, ...Object.fromEntries(manquants.map(c => [c, { attente: true }])) }));
-    const j = await adminFetch(`/.netlify/functions/accueil-offres?verifier=${manquants.join(",")}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+    const j = await adminFetch(`/.netlify/functions/accueil-offres?verifier=${manquants.join(",")}&_=${Date.now()}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
     setVerif(v => ({ ...v, ...Object.fromEntries(manquants.map(c => [c, j?.verification?.[c] || { erreur: true }])) }));
   };
   useEffect(() => { charger(); lireEtats(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -201,7 +202,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
       const j = await r.json().catch(() => ({}));
       if (r.ok && j.success) {
         setEnLigne({ valeur, maj: j.updated_at ?? null }); setBrouillon(valeur); setConflit(null);
-        setMessage({ ton: "ok", texte: `✓ Publié à ${heure()} : visible chez les pharmacies dans les 5 minutes (ou en rechargeant la page).` });
+        setMessage({ ton: "ok", texte: `✓ Publié à ${heure()} : visible chez les pharmacies dans les 5 minutes, tout de suite en rechargeant la page.` });
         lireEtats();
       } else if (r.status === 409) setConflit({ valeur: lireValeur(j.value), maj: j.updated_at ?? null });
       else setMessage({ ton: "danger", texte: `Non publié : ${j.error || `HTTP ${r.status}`}. Vos modifications sont gardées.`, reessayer: true });
@@ -325,10 +326,11 @@ function Puce({ statut, fin, debut }) {
 
 function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, offre, couleur, ouvert, onOuvrir, onMonter, onDescendre, onMasquer, onSupprimer, ouvrirPromos, children }) {
   const meta = it.type === "menu"
-    ? `MENU PROMO · ${menu ? titreMenu(menu) : "introuvable"} · ${(menu?.products || []).length} p.`
+    ? `MENU PROMO · ${menu ? titreMenu(menu) : "introuvable"} · ${(menu?.products || []).length} produit${(menu?.products || []).length > 1 ? "s" : ""}`
     : `PRODUIT · ${offre?.menu?.label?.replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim() || "…"} · ${offre?.pn > 0 ? `${fmtEur(offre.pn)} HT` : it.cip}${offre?.pct >= 1 ? ` · ${fmtPct(offre.pct)}` : ""}`;
   const dates = it.date_debut || it.date_fin || ev.fin ? `${it.date_debut ? `du ${dateTexte(it.date_debut, { court: true })} ` : ""}${ev.fin ? `${it.date_debut ? "au" : "jusqu'au"} ${dateTexte(ev.fin, { court: true })}` : "sans fin"}` : "";
-  const petit = { ...ui.btn("ligne", "s"), height: 30, padding: "0 10px", fontSize: 12 };
+  const tactile = useMedia("(pointer: coarse)");
+  const petit = { ...ui.btn("ligne", "s"), height: tactile ? 44 : 30, padding: "0 10px", fontSize: 12 };
   return (
     <div className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 10px", flexWrap: "wrap" }}>
@@ -345,8 +347,8 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
         </div>
         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
           <button onClick={onOuvrir} style={petit} aria-expanded={ouvert}>{ouvert ? "Fermer" : "Modifier"}</button>
-          <button onClick={onMonter} disabled={premier} aria-label={`Monter « ${titre} »`} style={{ ...petit, width: 34, padding: 0, opacity: premier ? 0.4 : 1 }}>↑</button>
-          <button onClick={onDescendre} disabled={dernier} aria-label={`Descendre « ${titre} »`} style={{ ...petit, width: 34, padding: 0, opacity: dernier ? 0.4 : 1 }}>↓</button>
+          <button onClick={onMonter} disabled={premier} aria-label={`Monter « ${titre} »`} style={{ ...petit, width: tactile ? 44 : 34, padding: 0, opacity: premier ? 0.4 : 1 }}>↑</button>
+          <button onClick={onDescendre} disabled={dernier} aria-label={`Descendre « ${titre} »`} style={{ ...petit, width: tactile ? 44 : 34, padding: 0, opacity: dernier ? 0.4 : 1 }}>↓</button>
           <button onClick={onMasquer} style={petit}>{it.actif ? "Masquer" : "Afficher"}</button>
           <button onClick={onSupprimer} style={{ ...petit, color: T.danger }}>Supprimer</button>
         </div>
@@ -411,7 +413,8 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
             au <input type="date" value={it.date_fin || ""} onChange={e => onChange({ date_fin: e.target.value || null })} aria-label="Date de fin" style={{ ...champ, width: 160, ...bord("date_fin") }} />
           </span>
           {err("date_fin") && <span style={{ ...aide, display: "block", color: T.danger }}>{err("date_fin").message}</span>}
-          <span style={{ ...aide, display: "block" }}>Vides : tout de suite, sans fin. Jours inclus (heure de Paris). Compte à rebours dans les 7 derniers jours seulement.
+          <span style={{ ...aide, display: "block" }}>Vides : tout de suite, sans fin. Jours inclus (heure de Paris). La date de fin arrête l'affichage sur l'accueil.
+            Le compte à rebours n'apparaît que si le prix lui-même s'arrête (fin du menu promo), dans ses 7 derniers jours.
             {finMenu ? ` Le menu se termine le ${dateTexte(finMenu)} : la mise en avant s'arrête au plus tard ce jour-là.` : ""}</span>
         </span>
       </div>
@@ -500,6 +503,10 @@ function AjoutProduit({ verif, verifier, deja, onChoisir }) {
 function AjoutMenu({ promos, caches, aujourdhui, deja, ouvrirPromos, onChoisir }) {
   const etat = (m) => (!m.active ? "Inactif" : !menuEnCours(m, aujourdhui) ? `Échu le ${dateTexte(String(m.endDate).slice(0, 10), { court: true })}` : caches.has(`promo_${m.id}`) ? "Masqué"
     : m.endDate ? `Actif · fin le ${dateTexte(String(m.endDate).slice(0, 10), { court: true })}` : "Actif");
+  // pourquoi un menu ne s'affichera pas (encore) : inactif, terminé (prolonger sa date), masqué
+  const pasPret = (m) => (!m.active ? "Ne s'affichera qu'une fois le menu activé."
+    : !menuEnCours(m, aujourdhui) ? `Menu terminé le ${dateTexte(String(m.endDate).slice(0, 10), { court: true })} : prolongez sa date dans l'onglet Promos pour l'afficher.`
+      : "Menu masqué : réaffichez-le (icône œil, en haut de cet onglet) pour le montrer.");
   const tries = [...promos].sort((a, b) => (menuEnCours(b, aujourdhui) ? 1 : 0) - (menuEnCours(a, aujourdhui) ? 1 : 0) || (Number(b.id) || 0) - (Number(a.id) || 0));
   return (
     <div style={{ marginTop: 8, padding: 6, background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.s, maxHeight: 340, overflowY: "auto" }}>
@@ -512,7 +519,7 @@ function AjoutMenu({ promos, caches, aujourdhui, deja, ouvrirPromos, onChoisir }
             <span style={{ flex: 1, minWidth: 0 }}>
               <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: T.ink }}>{titreMenu(m)}</span>
               <span style={{ fontSize: 11, color: pret ? T.ok : T.inkMute }}>{etat(m)} · {(m.products || []).length} produit{(m.products || []).length > 1 ? "s" : ""}</span>
-              {!pret && !d && <span style={{ display: "block", fontSize: 11, color: T.warn }}>Ne s'affichera qu'une fois le menu actif. {ouvrirPromos && <button onClick={ouvrirPromos} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Ouvrir l'onglet Promos</button>}</span>}
+              {!pret && !d && <span style={{ display: "block", fontSize: 11, color: T.warn }}>{pasPret(m)} {ouvrirPromos && <button onClick={ouvrirPromos} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Ouvrir l'onglet Promos</button>}</span>}
             </span>
             <button type="button" disabled={!!d} onClick={() => onChoisir(m)} style={{ ...ui.btn("ligne", "s"), opacity: d ? 0.5 : 1 }}>{d ? `Déjà en ${d.emplacement === "vitrine" ? "vitrine" : "grille"}` : "Mettre en avant"}</button>
           </div>

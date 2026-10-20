@@ -13,7 +13,10 @@
 //  • navigateur : repli automatique sur la fixture du 20/10 (vitrine Vaseline, grille Claripharm puis Seringues Covid),
 //    repli coupé, rupture, menu désactivé, fin passée ; montant du bouton = ce que le panier facture (Ventoline au carton,
 //    culotte Claripharm, pot Vaseline sans PV, Dupixent hors menu) ;
-//  • teintes : contrastes du texte de la salle sur 5 teintes extrêmes ; teinte dominante d'une photo (pixels).
+//  • teintes : contrastes du texte de la salle sur 5 teintes extrêmes ; teinte dominante d'une photo (pixels) ;
+//  • compte à rebours sur la fin du PRIX seulement (fin_offre / finOffre : menu promo daté), jamais sur la date de fin
+//    d'une mise en avant (produit d'un menu permanent) ; 3 mises en avant en réserve au-delà de 5 ; justificatifs lus en
+//    parallèle du contexte ; photos réduites (banque d'images, Shopify, Open Beauty Facts).
 import { build } from "esbuild";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,11 +30,11 @@ globalThis.fetch = async (url) => { throw new Error(`réseau interdit dans les t
 
 const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
-  stdin: { contents: 'export * from "./src/components/accueil/vedettes.js"; export * from "./src/components/accueil/vedettes-regles.js"; export { resoudreOffre } from "./src/components/accueil/resolution.js"; export { applyTiers } from "./src/tiers.jsx"; export { teinteDePixels } from "./src/components/teinte-photo.js";', resolveDir: RACINE, loader: "js" },
+  stdin: { contents: 'export * from "./src/components/accueil/vedettes.js"; export * from "./src/components/accueil/vedettes-regles.js"; export { resoudreOffre } from "./src/components/accueil/resolution.js"; export { applyTiers } from "./src/tiers.jsx"; export { teinteDePixels } from "./src/components/teinte-photo.js"; export { photo, photoReconnue } from "./src/components/accueil/outils.js";', resolveDir: RACINE, loader: "js" },
   bundle: true, format: "esm", platform: "neutral", write: false, loader: { ".jsx": "jsx", ".js": "jsx" }, jsx: "transform", logLevel: "silent",
   plugins: [{ name: "sans-react", setup(b) {
     b.onResolve({ filter: /^react$/ }, () => ({ path: "react", namespace: "vide" }));
-    b.onLoad({ filter: /.*/, namespace: "vide" }, () => ({ contents: "export default {};", loader: "js" }));
+    b.onLoad({ filter: /.*/, namespace: "vide" }, () => ({ contents: "export default {}; export const useEffect = () => {}; export const useState = (v) => [v, () => {}];", loader: "js" }));
   } }],
 });
 const dossier = mkdtempSync(join(tmpdir(), "test-vedettes-"));
@@ -161,7 +164,8 @@ const MIDI_20 = paris("2026-10-20");
   const { publiques, etats } = S.evaluerVedettes({ items }, "2026-10-20T05:00:00Z", ctxServeur(), MIDI_20);
   eq("statuts", etats.map(e => e.statut), ["visible", "visible", "rupture", "justificatif", "introuvable", "prix_anormal", "menu_masque", "campagne", "visible", "visible", "visible",
     "menu_inactif", "menu_echu", "menu_vide", "introuvable", "visible", "visible", "introuvable", "au_dela_de_5"]);
-  eq("publiques : 2 en vitrine, 5 dans la grille", [publiques.items.filter(i => i.emplacement === "vitrine").length, publiques.items.filter(i => i.emplacement === "grille").length], [2, 5]);
+  eq("publiques : 2 en vitrine, 5 dans la grille + 1 en réserve (au-delà de 5)", [publiques.items.filter(i => i.emplacement === "vitrine").length, publiques.items.filter(i => i.emplacement === "grille").length,
+    publiques.items.at(-1).offre?.cip], [2, 6, CIP.autre]);
   const v = publiques.items.find(i => i.offre?.cip === CIP.vaseline);
   eq("précommande permise, PV absent permis", [v.offre.menu.key, v.offre.pv, v.offre.pn], [`promo_${VASELINE}`, null, 1.59]);
   const ven = publiques.items[0];
@@ -299,6 +303,58 @@ function factureDuPanier(offre, qty) {
   eq("photo rose sur fond blanc → rose", C.teinteDePixels(pixels(i => (i % 3 ? [190, 24, 93, 255] : [255, 255, 255, 255]))), "#be185d");
   eq("photo transparente et grise → pas de couleur", C.teinteDePixels(pixels(i => (i % 2 ? [128, 128, 128, 255] : [200, 30, 30, 0]))), null);
   eq("dominante pondérée par la saturation", C.teinteDePixels(pixels(i => (i < 200 ? [30, 80, 200, 255] : i < 300 ? [200, 60, 60, 255] : [250, 250, 250, 255]))), "#1e50c8");
+}
+
+// ── 7. Compte à rebours : fin du prix seulement ; réserve au-delà de 5 ; photos réduites ──
+{
+  const promosDatees = PROMOS.map(p => (String(p.id) === CLARI ? { ...p, endDate: "2026-10-25" } : p));
+  const conf = { items: [
+    objet("produit", CIP.ventoline, "vitrine", { date_fin: "2026-10-21" }),                 // Stratège (menu permanent) : fin d'affichage seulement
+    objet("menu", CLARI, "vitrine", { date_fin: "2026-10-22" }),                             // menu daté au 25 : affiché jusqu'au 22, prix jusqu'au 25
+    objet("produit", CIP.culotte, "grille"),                                                 // produit du menu daté : prix jusqu'au 25
+    objet("menu", VASELINE, "grille", { date_fin: "2026-10-31" }),                           // menu sans fin : aucun compte à rebours
+  ] };
+  const ved = S.evaluerVedettes(conf, null, ctxServeur(promosDatees), MIDI_20).publiques;
+  eq("serveur : fin (affichage) et fin_offre (prix)", ved.items.map(i => [i.fin, i.fin_offre]),
+    [["2026-10-21", null], ["2026-10-22", "2026-10-25"], ["2026-10-25", "2026-10-25"], ["2026-10-31", null]]);
+  const p = C.construireMisesEnAvant(ved, ctxPage({ promos: promosDatees }));
+  eq("navigateur : produit Stratège avec date de fin → aucun compte à rebours (finOffre nulle), retiré quand même le 22",
+    [p.vitrine[0].fin, p.vitrine[0].finOffre, C.construireMisesEnAvant(ved, ctxPage({ promos: promosDatees, aujourdhui: "2026-10-22" })).vitrine[0].type], ["2026-10-21", null, "menu"]);
+  eq("navigateur : menu daté → compte à rebours sur sa fin (25), affichage arrêté le 22", [p.vitrine[1].fin, p.vitrine[1].finOffre], ["2026-10-22", "2026-10-25"]);
+  eq("navigateur : produit d'un menu daté → fin du menu ; menu sans fin → rien", [p.grille[0].finOffre, p.grille[1].finOffre], ["2026-10-25", null]);
+  // réserve : le navigateur écarte une mise en avant (justificatif relu), la 6e de la grille prend sa place ; jamais plus de 5
+  const six = { items: [CIP.ventoline, CIP.culotte, CIP.vaseline, CIP.dupixent, CIP.autre].map(c => objet("produit", c, "grille")).concat([objet("menu", SERINGUES, "grille"), objet("menu", CLARI, "grille")]) };
+  const v6 = S.evaluerVedettes(six, null, ctxServeur(), MIDI_20);
+  eq("serveur : 5 visibles + 2 en réserve envoyées, états « au-delà de 5 » gardés", [v6.publiques.items.length, v6.etats.filter(e => e.statut === "au_dela_de_5").length], [7, 2]);
+  eq("navigateur : 5 tuiles au plus", C.construireMisesEnAvant(v6.publiques, ctxPage()).grille.length, 5);
+  eq("navigateur : une tuile écartée (justificatif) → la réserve entre", C.construireMisesEnAvant(v6.publiques, ctxPage({ justifProducts: { [CIP.dupixent]: true } })).grille.map(e => e.cle),
+    [`p:${CIP.ventoline}`, `p:${CIP.culotte}`, `p:${CIP.vaseline}`, `p:${CIP.autre}`, `m:${SERINGUES}`]);
+  // photos : variante réduite chez les hébergeurs connus, sinon l'adresse telle quelle
+  const shop = "https://cdn.shopify.com/s/files/1/0999/8050/9531/files/drb-culotte-v8-regulier-xxs.png?v=1791387621";
+  eq("photo : banque d'images", C.photo("https://assets.medipim.fr/media/medium/ccca.png", "thumbnail"), "https://assets.medipim.fr/media/thumbnail/ccca.png");
+  eq("photo : Shopify (width 200 / 480 / 960, version gardée)", ["thumbnail", "medium", "large"].map(t => C.photo(shop, t)), [`${shop}&width=200`, `${shop}&width=480`, `${shop}&width=960`]);
+  eq("photo : boutique Shopify (/cdn/shop/)", C.photo("https://taminaonline.com/cdn/shop/files/284144.png?v=1731479991", "medium"), "https://taminaonline.com/cdn/shop/files/284144.png?v=1731479991&width=480");
+  eq("photo : Open Beauty Facts (.200 / .400 / .full)", ["thumbnail", "medium", "large"].map(t => C.photo("https://images.openbeautyfacts.org/images/products/000/004/218/2627/front_nl.128.full.jpg", t).split("/").at(-1)),
+    ["front_nl.128.200.jpg", "front_nl.128.400.jpg", "front_nl.128.full.jpg"]);
+  eq("photo : autre hébergeur tel quel, sans srcset ; adresse vide", [C.photo("https://cdn.redcare-pharmacie.fr/images/BE0.jpg", "thumbnail"), C.photoReconnue("https://cdn.redcare-pharmacie.fr/images/BE0.jpg"),
+    C.photoReconnue(shop), C.photo(null, "medium")], ["https://cdn.redcare-pharmacie.fr/images/BE0.jpg", false, true, null]);
+}
+// ── 8. GET : justificatifs lus en parallèle du contexte (pas un aller-retour Supabase de plus en série) ──
+{
+  const ordre = [];
+  const sb = async (path) => {
+    const t = path.split("?")[0];
+    ordre.push(t);
+    await new Promise(r => setTimeout(r, 5));
+    if (t === "elixir_pharmacies") return [{ email: "compte@pharmacie-a.test" }];
+    if (t === "ec_config") return [{ key: "accueil_vedettes", value: { items: [objet("produit", CIP.ventoline, "vitrine")] }, updated_at: "x" }];
+    return [];
+  };
+  const r = await creerHandler({ sb, kvGet: async () => null, kvSet: async () => {}, rateLimit: () => null, verrou: async () => ({ occupe: true }),
+    justifs: async () => { ordre.push("justifs"); return new Set(); }, maintenant: () => MIDI_20, odoo: async () => { throw new Error("Odoo interdit"); },
+    verifierJeton: async () => ({ id: "a", email: "compte@pharmacie-a.test" }) })({ httpMethod: "GET", headers: { authorization: "Bearer x" }, queryStringParameters: {} });
+  eq("GET : réponse 200", r.statusCode, 200);
+  vrai(`GET : justificatifs demandés avant la fin du contexte (${ordre.join(" → ")})`, ordre.indexOf("justifs") >= 0 && ordre.indexOf("justifs") < ordre.indexOf("elixir_campaigns"));
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

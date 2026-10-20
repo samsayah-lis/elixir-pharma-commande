@@ -52,9 +52,11 @@ export function creerHandler(deps = {}) {
       const cache = enCache || await premierCalcul(src, echeance);
       const vedCips = cipsVedettes(conf.vedettes.valeur);
       const aVerifier = user.isAdmin ? cipsAVerifier(event.queryStringParameters?.verifier) : [];
-      const ctx = await lireContexte(src, [...new Set([...(cache ? cipsDuCache(cache) : []), ...vedCips, ...aVerifier])], conf);
-      // justificatifs illisibles : liste vide (le navigateur écarte aussi ces produits avec justifProducts)
-      const justifs = vedCips.length || aVerifier.length ? await src.justifs().catch(() => null) : null;
+      // justificatifs lus en parallèle du contexte ; illisibles : liste vide (le navigateur écarte aussi ces produits avec justifProducts)
+      const [ctx, justifs] = await Promise.all([
+        lireContexte(src, [...new Set([...(cache ? cipsDuCache(cache) : []), ...vedCips, ...aVerifier])], conf),
+        vedCips.length || aVerifier.length ? src.justifs().catch(() => null) : null,
+      ]);
       const ctxV = { ...ctx, justifs: justifs || new Set() };
       const ved = evaluerVedettes(conf.vedettes.valeur, conf.vedettes.maj, ctxV, src.maintenant());
       const corps = cache ? publique(cache, ctx, src.maintenant()) : { version: VERSION, genere_le: null, periode: null, slides: [], reserves: [], perime: true };

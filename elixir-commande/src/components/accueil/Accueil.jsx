@@ -15,7 +15,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./accueil.css";
 import "./mea.css";
 import { Icone } from "../../icons.jsx";
-import SqueletteAccueil from "./Squelette.jsx";
+import SqueletteAccueil, { noterSalle, salleProbable } from "./Squelette.jsx";
 import Vitrine, { SceneCarte } from "./Vitrine.jsx";
 import Etiquette from "./Etiquette.jsx";
 import Cinema from "./Cinema.jsx";
@@ -52,20 +52,31 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   // undefined : chargement ; null : ni classement ni mises en avant (repli automatique des mises en avant)
   const [donnees, setDonnees] = useState(undefined);
   const signature = useRef("");
+  // l'utilisateur a-t-il déjà agi sur la page (appui, touche, molette, glissé) ? une réponse tardive ne remplace alors plus
+  // les mises en avant qu'il a sous les yeux
+  const aAgi = useRef(false);
+  useEffect(() => {
+    const agir = () => { aAgi.current = true; };
+    const evs = ["pointerdown", "keydown", "wheel", "touchmove"];
+    evs.forEach(n => window.addEventListener(n, agir, { passive: true, capture: true }));
+    return () => evs.forEach(n => window.removeEventListener(n, agir, { capture: true }));
+  }, []);
   useEffect(() => {
     let annule = false, tardif = false;
     signature.current = "";
     if (!identite) { setDonnees(null); return undefined; }
-    // plus de 4 s : la page s'affiche avec le repli ; la réponse tardive montre le classement, mais ses mises en avant
-    // attendent le prochain rafraîchissement (jamais une vitrine déjà regardée remplacée sous les yeux)
+    // plus de 4 s : la page s'affiche avec le repli automatique. Réponse tardive : ses mises en avant tout de suite si
+    // l'utilisateur n'a encore rien fait (le repli n'était qu'une attente) ; sinon elles attendent le prochain
+    // rafraîchissement (5 min, retour sur l'onglet), mais le repli coupé par Zineb (repli: false) est respecté
     const minuteur = setTimeout(() => { tardif = true; setDonnees(d => (d === undefined ? null : d)); }, DELAI_MAX_MS);
     lireOffres().then(d => {
       clearTimeout(minuteur);
       if (annule) return;
       const ok = reponseValide(d);
       if (!vitrineValide(d) && import.meta.env.DEV) console.info("[accueil] pas de vitrine :", d ? (d.perime ? "classement périmé" : "aucun produit") : "réponse refusée ou absente");
-      signature.current = ok && !tardif ? JSON.stringify(d) : "";
-      setDonnees(!ok ? null : tardif ? { ...d, vedettes: null } : d);
+      const attendre = ok && tardif && aAgi.current;
+      signature.current = ok && !attendre ? JSON.stringify(d) : "";
+      setDonnees(!ok ? null : attendre ? { ...d, vedettes: { repli: d.vedettes?.repli !== false, defilement: d.vedettes?.defilement !== false, items: [] } } : d);
     });
     // page laissée ouverte : prix et stock relus toutes les 5 min et au retour sur l'onglet (au plus une lecture par
     // minute : lireOffres garde la réponse 60 s) ; réponse invalide ou identique → rien ne change
@@ -108,6 +119,20 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   const menusMontres = new Set([...mea.vitrine, ...mea.grille].filter(x => x.menu).map(x => x.menu.id));
   const offresRestantes = promos.filter(ps => !menusMontres.has(String(ps.id)));
   const [cinemaDefile, setCinemaDefile] = useState(false);
+  // hauteur de la salle notée pour le squelette de la prochaine visite (0 : pas de vitrine), une fois les données là
+  const page = useRef(null);
+  const avecSalle = mea.vitrine.length > 0;
+  useEffect(() => {
+    if (donnees === undefined) return undefined;
+    const salle = page.current?.querySelector(":scope > .mea-cinema");
+    if (!salle) { noterSalle(0); return undefined; }
+    let t = 0;
+    const noter = () => { clearTimeout(t); t = setTimeout(() => noterSalle(salle.offsetHeight), 500); };
+    noter();
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(noter) : null;
+    ro?.observe(salle);
+    return () => { clearTimeout(t); ro?.disconnect(); };
+  }, [donnees === undefined, avecSalle]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // « Voir dans… », offres, accès rapides : changement de menu, puis haut de page (la vue suivante commence en haut)
   const aller = (ok) => { if (ok) window.scrollTo({ top: 0 }); };
@@ -132,8 +157,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
     onVoir: voirVedette, onExpire: () => setMinute(m => m + 1) };
 
   return (
-    <div className="acc-page">
-      {donnees === undefined && <SqueletteAccueil mobile={isMobile} vedettes={promos.length > 0} />}
+    <div ref={page} className="acc-page">
+      {donnees === undefined && <SqueletteAccueil mobile={isMobile} vedettes={salleProbable(menusPromo, menuOuvrable)} />}
       {donnees !== undefined && (montreMea || slides.length === 0) && <h1 className="acc-vh">Accueil</h1>}
       {mea.vitrine.length > 0 && <Cinema items={mea.vitrine} defilement={mea.defilement} pauseExterne={pauseExterne} onDefile={setCinemaDefile} {...proprietesMea} />}
       {mea.grille.length > 0 && <Bento items={mea.grille} depart={mea.vitrine.length ? 1000 : 200} {...proprietesMea} />}

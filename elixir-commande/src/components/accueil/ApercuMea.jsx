@@ -28,7 +28,8 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
   const finMenuDe = (o) => promos.find(p => `promo_${p.id}` === o?.menu?.key)?.endDate;
   const ved = { repli: brouillon.repli, defilement: false, items: brouillon.items.filter(i => statut(i.id) === "visible").sort((a, b) => a.ordre - b.ordre)
     .map(i => { const o = i.type === "produit" ? verif[i.cip]?.offre : undefined;
-      return { id: i.id, type: i.type, emplacement: i.emplacement, titre: i.titre, accroche: i.accroche, badge: i.badge, fin: finEffective(i.date_fin, finMenuDe(o)), image: i.image,
+      return { id: i.id, type: i.type, emplacement: i.emplacement, titre: i.titre, accroche: i.accroche, badge: i.badge, fin: finEffective(i.date_fin, finMenuDe(o)),
+        fin_offre: finMenuDe(o) || null, image: i.image,
         couleur: i.couleur, couleur_auto: i.couleur_auto, offre: o, menu_id: i.menu_id }; }) };
   const mea = construireMisesEnAvant(ved, { catalogue: {}, catalogueCharge: false, stockData: {}, justifProducts: {}, menuOuvrable: (k) => !caches.has(k),
     regleSaisie: () => null, estCampagne: () => false, photos: {}, teinte: () => null, promos, aujourdhui });

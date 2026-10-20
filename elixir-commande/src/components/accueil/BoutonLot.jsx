@@ -6,7 +6,9 @@
 // le panier) ; − et + apparaissent de part et d'autre ; à 0, il redevient « Ajouter ». Catalogue pas encore chargé :
 // bouton désactivé, « Chargement des prix… » (sans lui, un produit d'un menu partirait au mauvais prix).
 // compacte (petites tuiles de la grille à la une) : « Ajouter » seul (lot et montant écrits au-dessus par la tuile, nom
-// accessible complet), puis le même sélecteur − n + ; desactive (aperçu de l'admin) : bouton inerte, « Aperçu : ajout désactivé ».
+// accessible complet), puis le même sélecteur − n + ; « n au panier » trop large pour le bouton (petite tuile : 48 px à
+// 375 px) → la quantité seule (data-court, mesuré comme les deux lignes ; « au panier » reste dans le nom accessible) ;
+// desactive (aperçu de l'admin) : bouton inerte, « Aperçu : ajout désactivé ».
 import React, { useLayoutEffect, useRef } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur } from "../../theme.js";
@@ -33,21 +35,27 @@ export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = 
       ? { onClick: onOuvrirPanier, "aria-label": `${qte} au panier, ouvrir le panier` }
       : { onClick: () => onAjouter(lot.qte), "aria-label": libelleAjout };
 
-  // une ligne si elle tient, sinon deux (attribut posé directement : ce n'est qu'une mise en page)
+  // une ligne si elle tient, sinon deux ; « n au panier » qui ne tient pas : la quantité seule (attributs posés
+  // directement : ce n'est qu'une mise en page). Remesuré à la fin de l'ouverture du sélecteur (colonnes − et + qui
+  // s'élargissent en 200 ms : au premier rendu, le bouton central a encore toute la largeur)
   useLayoutEffect(() => {
     const b = refCentre.current, l = refLot.current;
     if (!b || !l) return undefined;
     const mesure = () => {
-      b.removeAttribute("data-lignes");
-      const t = b.querySelector(".acc-lot-textes");
+      b.removeAttribute("data-lignes"); b.removeAttribute("data-court");
+      const t = b.querySelector(".acc-lot-textes"), q = b.querySelector(".acc-lot-qte");
       if (t && t.scrollWidth > t.clientWidth + 1) b.setAttribute("data-lignes", "2");
+      if (q && q.scrollWidth > q.clientWidth + 1) b.setAttribute("data-court", "");
     };
     mesure();
     let largeur = l.clientWidth;
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => { if (l.clientWidth !== largeur) { largeur = l.clientWidth; mesure(); } }) : null;
     ro?.observe(l);
-    return () => ro?.disconnect();
-  }, [quoi, montant, plein, pret]);
+    const finTransition = (ev) => { if (ev.target === l) mesure(); };
+    l.addEventListener("transitionend", finTransition);
+    const t = setTimeout(mesure, 260);
+    return () => { ro?.disconnect(); l.removeEventListener("transitionend", finTransition); clearTimeout(t); };
+  }, [quoi, montant, plein, pret, qte]);
 
   return (
     <div ref={refLot} className="acc-lot" data-plein={plein ? "" : undefined}>
@@ -55,7 +63,7 @@ export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = 
         aria-label={`Retirer ${unite}`} onClick={retirer}><Icone nom="moins" taille={18} epaisseur={2.4} /></button>
       <button ref={refCentre} type="button" className={`acc-lot-centre${pret ? "" : " acc-lot-centre--attente"}`} tabIndex={tab} {...centre}>
         {!pret ? <span>Chargement des prix…</span>
-          : plein ? <span className="num"><b>{qte}</b> au panier</span>
+          : plein ? <span className="acc-lot-qte num"><b>{qte}</b><span className="acc-lot-suffixe"> au panier</span></span>
           : <><Icone nom="plus" taille={17} epaisseur={2.6} />
             {compacte ? <span className="acc-lot-textes"><span className="acc-lot-quoi">Ajouter</span></span>
               : <span className="acc-lot-textes"><span className="acc-lot-quoi">{quoi}</span><span className="acc-lot-sep" aria-hidden="true">·</span><span className="acc-lot-montant num">{montant}</span></span>}</>}

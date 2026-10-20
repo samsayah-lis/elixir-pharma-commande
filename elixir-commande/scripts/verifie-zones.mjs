@@ -116,6 +116,8 @@ const LOTS = {
   // suite du même projet, demandée par Zineb le 19/10/2026 après la mise en ligne de l'assistant (origin/master contient
   // déjà le lot « assistant ») : fenêtre de présentation et lanceur flottant
   assistantPresentation: { nom: "Assistant Elixir (présentation et lanceur)", repere: "src/components/assistant/presentation.js" },
+  // branche accueil-offres (docs/accueil.md), en attente de fusion : page d'accueil et mises en avant de Zineb
+  accueil: { nom: "page d'accueil (mises en avant)", repere: "src/components/accueil/Squelette.jsx" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -170,6 +172,9 @@ const CLES_AUTORISEES = {
   // ou sur « Ne plus afficher » ; sessionStorage « 1 » — « Plus tard » : plus rien jusqu'à la prochaine session
   assistantPresentation: { "localStorage.getItem(clePresentation(identite": 1, "localStorage.setItem(clePresentation(identite": 1,
     "sessionStorage.getItem(clePresentation(identite": 1, "sessionStorage.setItem(clePresentation(identite": 1 },
+  // src/components/accueil/Squelette.jsx, clé accueil_salle : { l, h, s } — hauteur de la salle de la vitrine cinéma
+  // mesurée à la dernière visite (largeur et hauteur de la fenêtre), réservée par le squelette (aucun décalage à l'arrivée)
+  accueil: { "localStorage.getItem(CLE_SALLE": 1, "localStorage.setItem(CLE_SALLE, memo": 1 },
 };
 
 // ── lecture ──

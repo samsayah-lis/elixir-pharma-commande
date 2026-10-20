@@ -1,5 +1,6 @@
-// ── Fin d'une mise en avant : date, jours restants, puis compte à rebours (docs/accueil.md § 7) ──
-// Fin = jour inclus (heure de Paris) : la cible est le minuit suivant. Pas de fausse urgence : plus de 7 jours → « Jusqu'au
+// ── Fin d'une offre : date, jours restants, puis compte à rebours (docs/accueil.md § 7) ──
+// Seulement la fin du PRIX (menu promo daté : finOffre), jamais la date de fin d'une mise en avant, qui arrête l'affichage
+// et non l'offre. Fin = jour inclus (heure de Paris) : la cible est le minuit suivant. Pas de fausse urgence : plus de 7 jours → « Jusqu'au
 // 31 octobre » ; 2 à 7 jours → « Plus que 5 jours » ; moins de 48 h → « Se termine dans 1 j 14 h 05 min » (minutes qui
 // roulent) ; moins d'une heure → minutes et secondes (secondes : vitrine cinéma seulement). Composant isolé : seul son texte
 // se redessine, et seulement quand « actif » (salle à l'écran, onglet affiché). Ligne animée aria-hidden, texte fixe lu.

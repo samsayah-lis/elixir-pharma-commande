@@ -1,0 +1,87 @@
+// ── Banc d'essai : contrôles de mise en page de la page d'accueil (mises en avant), dans un vrai navigateur ──
+// node scripts/banc/controle-accueil.mjs [adresse du banc, défaut http://localhost:5173/]
+// Le banc doit tourner (npm run dev, données figées : dev-fixtures/accueil-offres.json avec des mises en avant). Chrome sans
+// tête piloté par le protocole DevTools (CHROME=<chemin> sinon l'application Google Chrome de macOS), profil jetable ;
+// session de la pharmacie du banc (valeurs d'essai). Rien n'est envoyé ailleurs qu'au banc local.
+//  1. bouton d'ajout des tuiles de la grille, après l'ajout (« − n au panier + ») : texte jamais rogné à 375, 1024, 1280 px ;
+//  2. aucune animation infinie au repos : 10 s après un clic sur « Ajouter » d'une tuile, souris hors de la page ;
+//  3. entrée en cascade (375 × 812, grille sous la ligne de flottaison) : une tuile n'est jamais vue, puis effacée ;
+//  4. aucun défilement horizontal de la page à 375 px.
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+const BANC = (process.argv[2] || "http://localhost:5173/").replace(/\/?$/, "/");
+if (!/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?\/$/.test(BANC)) { console.error("Banc local seulement (http://localhost:<port>/)"); process.exit(2); }
+const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const PORT = 9300 + Math.floor(Math.random() * 400);
+const profil = mkdtempSync(join(tmpdir(), "controle-accueil-"));
+const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${PORT}`, `--user-data-dir=${profil}`, "--no-first-run", "--no-default-browser-check",
+  "--hide-scrollbars", "--lang=fr-FR", "about:blank"], { stdio: "ignore" });
+const pause = (ms) => new Promise(r => setTimeout(r, ms));
+let ok = 0, ko = 0;
+const vrai = (label, v, detail = "") => { if (v) ok++; else { ko++; console.log("✗", label, detail); } };
+
+let page = null;
+for (let i = 0; i < 50 && !page; i++) { await pause(200); try { page = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find(t => t.type === "page"); } catch { /* démarrage */ } }
+if (!page) { console.error("Chrome injoignable"); chrome.kill(); process.exit(2); }
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+await new Promise(r => { ws.onopen = r; });
+let n = 0; const attente = new Map();
+ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && attente.has(m.id)) { attente.get(m.id)(m); attente.delete(m.id); } };
+const cdp = (method, params = {}) => new Promise((r, x) => { const i = ++n; attente.set(i, m => (m.error ? x(new Error(`${method} : ${m.error.message}`)) : r(m.result))); ws.send(JSON.stringify({ id: i, method, params })); });
+const js = async (expression) => { const r = await cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text); return r.result.value; };
+const attendre = async (sel) => { for (let t = 0; t < 300; t++) { if (await js(`!!document.querySelector(${JSON.stringify(sel)})`)) return; await pause(50); } throw new Error(`introuvable : ${sel}`); };
+const souris = (type, x, y) => cdp("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", clickCount: type === "mouseMoved" ? 0 : 1, pointerType: "mouse" });
+
+async function ouvrir(l, h, mobile = false) {
+  await cdp("Emulation.setDeviceMetricsOverride", { width: l, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
+  await cdp("Emulation.setTouchEmulationEnabled", mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
+  await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+  await cdp("Page.navigate", { url: BANC }); await pause(900);
+  await js(`localStorage.clear(); sessionStorage.clear(); localStorage.setItem("session_email", "banc@pharmacie.test"); localStorage.setItem("session_name", "PHARMACIE DU BANC D'ESSAI");
+    localStorage.setItem("session_cip", "9000001"); localStorage.setItem("pharmacy_token", "essai-jeton"); true`);
+  await cdp("Page.navigate", { url: `${BANC}?menu=accueil` });
+  await attendre(".mea-cinema");
+  await pause(2500);
+}
+
+await cdp("Page.enable"); await cdp("Runtime.enable");
+try {
+  // 1. bouton d'ajout jamais rogné, après l'ajout
+  for (const [l, h, m] of [[375, 812, true], [1024, 768, false], [1280, 800, false]]) {
+    await ouvrir(l, h, m);
+    await js(`document.querySelector(".mea-grille-section").scrollIntoView(); [...document.querySelectorAll(".mea-tuile .acc-lot-centre")].forEach(b => b.click()); true`);
+    await pause(900);
+    const boutons = await js(`[...document.querySelectorAll(".mea-tuile .acc-lot[data-plein] .acc-lot-centre")].map(b => { const s = b.querySelector("span"); return { texte: b.textContent, sw: s.scrollWidth, cw: s.clientWidth, bw: b.scrollWidth, bc: b.clientWidth }; })`);
+    vrai(`${l} px : au moins une tuile produit ajoutée`, boutons.length > 0);
+    for (const b of boutons) vrai(`${l} px : « ${b.texte} » entier`, b.sw <= b.cw + 0.5 && b.bw <= b.bc + 0.5, JSON.stringify(b));
+    if (m) vrai(`${l} px : pas de défilement horizontal`, await js("document.documentElement.scrollWidth <= document.documentElement.clientWidth"));
+  }
+  // 2. aucune animation infinie au repos
+  await ouvrir(1440, 900);
+  await js("window.scrollTo(0, 560); true"); await pause(900);
+  const p = await js(`(() => { const b = document.querySelector(".mea-tuile .acc-lot-centre").getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.top + b.height / 2 }; })()`);
+  await souris("mouseMoved", p.x, p.y); await souris("mousePressed", p.x, p.y); await souris("mouseReleased", p.x, p.y);
+  await souris("mouseMoved", 1, 1);
+  await pause(10000);
+  const infinies = await js(`document.getAnimations().filter(a => a.playState === "running" && a.effect?.getComputedTiming?.().iterations === Infinity).map(a => a.animationName || "web")`);
+  vrai("10 s après un ajout, souris hors de la page : aucune animation infinie", infinies.length === 0, infinies.join(", "));
+  // 3. cascade : jamais vue puis effacée
+  await ouvrir(375, 812, true);
+  const vues = new Set(), rechutes = [];
+  for (let y = 0; y <= 1100; y += 50) {
+    await js(`window.scrollTo(0, ${y}); true`); await pause(45);
+    const op = await js(`[...document.querySelectorAll(".mea-tuile")].map(t => Number(getComputedStyle(t).opacity))`);
+    op.forEach((o, i) => { if (o >= 0.99) vues.add(i); else if (vues.has(i) && o < 0.5) rechutes.push(`tuile ${i + 1} à ${y} px`); });
+  }
+  vrai("cascade : aucune tuile vue puis effacée", rechutes.length === 0, rechutes.join(", "));
+} catch (e) { ko++; console.log("✗", e.message); }
+finally {
+  ws.close();
+  await new Promise(r => { chrome.once("exit", r); chrome.kill(); setTimeout(r, 3000); });
+  try { rmSync(profil, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); } catch { /* profil jetable : laissé dans le dossier temporaire */ }
+}
+console.log(`${ok} OK, ${ko} échec(s)`);
+process.exit(ko ? 1 : 0);

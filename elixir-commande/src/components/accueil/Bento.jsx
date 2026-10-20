@@ -12,7 +12,7 @@ import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail from "./Eventail.jsx";
-import { RESSORT, anime, photo, photoReconnue } from "./outils.js";
+import { RESSORT, anime, photo, photoReconnue, sansEmoji } from "./outils.js";
 import { dateTexte, prixLu, resumeMenuLu } from "./vedettes.js";
 
 let cascadeJouee = false;
@@ -26,10 +26,13 @@ const VARIANTE = { g: "grande", b: "bandeau", c: "large", p: "petite" };
 export const plan = (n, format) => (PLAN[format] || PLAN.l)[Math.max(1, Math.min(5, n))].split(" ").map(x => { const [c, r] = x.slice(0, -1).split("."); return { c: +c, r: +r, v: VARIANTE[x.slice(-1)] }; });
 const varsTeinte = (e) => ({ "--mea-sombre": e.teintes.sombre, "--mea-claire": e.teintes.claire, "--mea-trait": e.teintes.trait });
 const lot = (o) => (o.lot?.qte > 1 ? `${o.menu?.key === "stratege" ? "Carton" : "Lot"} de ${o.lot.qte}` : "1 boîte");
+// rayon où l'ajout range la ligne, comme la vitrine cinéma : « Sélection Stratège », sinon « la Saisie de commande »
+const rayonDe = (o) => (o.menu?.key && o.menu.key !== "saisie" ? sansEmoji(o.menu.label) : "la Saisie de commande");
 
 function Photo({ url, taille, teinte, offre }) {
   const [ko, setKo] = useState(false);
-  if (url && !ko) return <img className="mea-tuile-photo" src={photo(url, taille)} srcSet={photoReconnue(url) ? `${photo(url, taille)} 1x, ${photo(url, "large")} 2x` : undefined}
+  // 2x : la taille au-dessus (vignette → moyenne), jamais la grande pour une petite tuile (1,4 Mo sur téléphone)
+  if (url && !ko) return <img className="mea-tuile-photo" src={photo(url, taille)} srcSet={photoReconnue(url) ? `${photo(url, taille)} 1x, ${photo(url, taille === "thumbnail" ? "medium" : "large")} 2x` : undefined}
     alt="" draggable={false} decoding="async" loading="lazy" onError={() => setKo(true)} />;
   return offre ? <span className="mea-tuile-boite"><Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode="25d" taille="carte" /></span> : null;
 }
@@ -41,28 +44,42 @@ export default function Bento({ items, format = "l", reduit, finPointer, depart 
   const vivant = finPointer && !reduit;
   const places = plan(items.length, format);
 
-  // entrée en cascade (une fois par chargement) : tuiles visibles au montage après l'arrivée de la vitrine, les autres
-  // quand la grille entre à l'écran (20 %) ; un tour de bordure lumineuse par tuile, même décalage
+  // entrée en cascade (une fois par chargement) : tuiles visibles au montage après l'arrivée de la vitrine ; les autres
+  // cachées d'avance (animation créée au montage et mise en pause à son image 0 : une tuile n'est jamais vue, puis effacée,
+  // puis rejouée), chacune lancée à sa première entrée à l'écran (15 %), 80 ms d'écart entre celles qui entrent ensemble ;
+  // un tour de bordure lumineuse par tuile, même décalage. Sans IntersectionObserver : les autres ne sont pas animées.
   useLayoutEffect(() => {
     if (cascadeJouee || reduit || apercu || !liste.current) return undefined;
     cascadeJouee = true;
     const tuiles = [...liste.current.querySelectorAll(".mea-tuile")];
-    const jouer = (els, base) => els.forEach((t, i) => {
-      anime(t, [{ transform: "translateY(28px) scale(.97)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 600, delay: base + i * 80, easing: RESSORT });
-      // un tour de bordure lumineuse : animation CSS du pseudo-élément (classe retirée après le tour)
-      t.style.setProperty("--mea-retard", `${base + i * 80}ms`);
+    const minuteurs = [];
+    const entree = (t, delay) => anime(t, [{ transform: "translateY(28px) scale(.97)", opacity: 0 }, { transform: "none", opacity: 1 }], { duration: 600, delay, easing: RESSORT });
+    // un tour de bordure lumineuse : animation CSS du pseudo-élément (classe retirée après le tour)
+    const tour = (t, retard) => {
+      t.style.setProperty("--mea-retard", `${retard}ms`);
       t.classList.add("mea-tour");
-      setTimeout(() => t.classList.remove("mea-tour"), base + i * 80 + 1200);
-    });
+      minuteurs.push(setTimeout(() => t.classList.remove("mea-tour"), retard + 1200));
+    };
     const h = window.innerHeight;
     const visibles = tuiles.filter(t => t.getBoundingClientRect().top < h);
-    jouer(visibles, depart);
+    visibles.forEach((t, i) => { entree(t, depart + i * 80); tour(t, depart + i * 80); });
     const autres = tuiles.filter(t => !visibles.includes(t));
-    if (!autres.length) return undefined;
-    if (typeof IntersectionObserver === "undefined") return undefined;
-    const io = new IntersectionObserver(([x]) => { if (x.intersectionRatio >= 0.2) { io.disconnect(); jouer(autres, 0); } }, { threshold: [0.2] });
-    io.observe(liste.current);
-    return () => io.disconnect();
+    if (!autres.length || typeof IntersectionObserver === "undefined") return () => minuteurs.forEach(clearTimeout);
+    const attente = new Map();
+    for (const t of autres) { const a = entree(t, 0); if (a) { a.pause(); attente.set(t, a); } }
+    const io = new IntersectionObserver((entrees) => {
+      const entrees15 = entrees.filter(x => x.isIntersecting && x.intersectionRatio >= 0.15 && attente.has(x.target))
+        .map(x => x.target).sort((a, b) => tuiles.indexOf(a) - tuiles.indexOf(b));
+      entrees15.forEach((t, k) => {
+        const a = attente.get(t);
+        attente.delete(t); io.unobserve(t);
+        try { a.effect?.updateTiming?.({ delay: k * 80 }); a.play(); } catch { a.cancel(); }
+        tour(t, k * 80);
+      });
+      if (!attente.size) io.disconnect();
+    }, { threshold: [0, 0.15], rootMargin: "0px 0px -10% 0px" });
+    attente.forEach((_, t) => io.observe(t));
+    return () => { io.disconnect(); attente.forEach(a => a.cancel()); minuteurs.forEach(clearTimeout); };
   }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // relief et projecteur : variables écrites dans un requestAnimationFrame (lissage 0,15), jamais de setState
@@ -137,15 +154,18 @@ function TuileProduit({ e, v, props, id, qte, pret, apercu, onAjouter, onModifie
           <span aria-hidden="true"><b>{fmtEur(o.pn)}</b><small> HT</small></span>
           {o.pct >= 1 && <span className="mea-tuile-remise" aria-hidden="true">{fmtPct(o.pct)}</span>}
         </p>
-        {grand && o.pv > o.pn && <p className="mea-tuile-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)}</p>}
-        {!grand && <p className="mea-tuile-lot num" aria-hidden="true"><span>{lot(o)}</span><span>{fmtEur(o.lot?.total ?? o.pn)} HT</span></p>}
-        {e.fin && <Rebours fin={e.fin} secondes={false} onFin={onExpire} classe="mea-tuile-fin" />}
+        {grand && o.pv > o.pn && <p className="mea-tuile-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)} HT</p>}
+        {/* palier compris dans le lot (Spasfon : 1,70 € la boîte, 240 × 1,67 = 400,80 €) : prix de la boîte au palier écrit,
+            sinon le compte ne tombe pas juste ; le prix lu (prixLu) et le nom du bouton sont déjà complets */}
+        {!grand && <p className="mea-tuile-lot num" aria-hidden="true"><span>{lot(o)}</span><span>{fmtEur(o.lot?.total ?? o.pn)} HT</span>
+          {o.lot?.pu != null && o.pn != null && o.lot.pu < o.pn && <span className="mea-tuile-palier">soit {fmtEur(o.lot.pu)} HT la boîte</span>}</p>}
+        {e.finOffre && <Rebours fin={e.finOffre} secondes={false} onFin={onExpire} classe="mea-tuile-fin" />}
         <div className="mea-tuile-actions">
           <BoutonLot offre={o} nom={e.titre} qte={qte} pret={pret} desactive={apercu} compacte={!grand}
             onAjouter={(q) => onAjouter?.(e, q, ref.current?.querySelector(".mea-tuile-visuel > *") || ref.current)}
             onModifier={(q) => onModifier?.(o.cip, q)} onOuvrirPanier={onOuvrirPanier} />
-          <button type="button" className="mea-voir mea-voir--clair" onClick={() => onVoir?.(e)}>
-            {v === "petite" ? "Voir" : o.menu?.key && o.menu.key !== "saisie" ? `Voir dans ${o.menu.label}` : "Voir dans la Saisie"}<Icone nom="fleche" taille={14} />
+          <button type="button" className="mea-voir mea-voir--clair" onClick={() => onVoir?.(e)} aria-label={v === "petite" ? `Voir ${e.titre} dans ${rayonDe(o)}` : undefined}>
+            {v === "petite" ? "Voir" : `Voir dans ${rayonDe(o)}`}<Icone nom="fleche" taille={14} />
           </button>
         </div>
       </div>
@@ -155,15 +175,17 @@ function TuileProduit({ e, v, props, id, qte, pret, apercu, onAjouter, onModifie
 
 function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
   const m = e.menu, grand = v === "grande" || v === "bandeau";
-  const fin = e.fin ? `, jusqu'au ${dateTexte(e.fin)}` : "";
+  const fin = e.finOffre ? `, jusqu'au ${dateTexte(e.finOffre)}` : "";
   const vignettes = m.cartes.filter(c => c.url).slice(0, 3);
   return (
     <button type="button" {...props} aria-label={`${resumeMenuLu(e)}${fin}, voir le menu`} onClick={() => onVoir?.(e)}>
       <Fond e={e} />
-      <span className="mea-tuile-visuel" aria-hidden="true">
-        {grand ? <Eventail cartes={m.cartes} max={v === "grande" && format !== "s" ? 5 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} />
-          : <span className="mea-pastilles">{vignettes.length ? vignettes.map((c, i) => <span key={i} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" /></span>)
-            : <span className="mea-tuile-icone">{m.icone || <Icone nom="etiquette" taille={20} />}</span>}</span>}
+      <span className={`mea-tuile-visuel${!grand && !vignettes.length && m.cartes.length ? " mea-tuile-visuel--cartes" : ""}`} aria-hidden="true">
+        {grand ? <Eventail cartes={m.cartes} max={v === "grande" && format !== "s" ? 5 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
+          : vignettes.length ? <span className="mea-pastilles">{vignettes.map((c, i) => <span key={i} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" /></span>)}</span>
+            // menu sans photo : ses cartes texte en éventail (nom et prix, filet de la teinte) ; l'icône seulement sans aucune carte
+            : m.cartes.length ? <Eventail cartes={m.cartes} max={3} taille={v === "petite" && format !== "s" ? "s" : "mini"} balise="span" />
+              : <span className="mea-tuile-icone"><Icone nom="etiquette" taille={20} /></span>}
       </span>
       <span className="mea-tuile-corps" aria-hidden="true">
         <span className="mea-tuile-eyebrow">{e.badge || e.rayon}</span>
@@ -173,7 +195,7 @@ function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
           {`${m.nb} ${v === "petite" ? "réf." : `référence${m.nb > 1 ? "s" : ""}`}${m.des ? ` · dès ${fmtEur(m.des)} HT` : ""}`}
           {m.jusqua ? <span className="mea-tuile-remise">jusqu’à {fmtPct(m.jusqua)}</span> : null}
         </span>
-        {e.fin && <Rebours fin={e.fin} secondes={false} onFin={onExpire} classe="mea-tuile-fin" balise="span" />}
+        {e.finOffre && <Rebours fin={e.finOffre} secondes={false} onFin={onExpire} classe="mea-tuile-fin" balise="span" />}
         <span className="mea-tuile-pied">Voir le menu<Icone nom="fleche" taille={16} epaisseur={2.4} /></span>
       </span>
     </button>

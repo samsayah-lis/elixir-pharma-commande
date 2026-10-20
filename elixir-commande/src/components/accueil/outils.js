@@ -48,10 +48,24 @@ export function useDebord(ref, cle) {
 }
 export const POINTEUR_FIN = "(hover: hover) and (pointer: fine)";
 
-// Photos de la banque d'images (taille dans l'adresse : /media/thumbnail|medium|large/) ; autre adresse : telle quelle
+// Photos en taille réduite, chez les hébergeurs qui en servent une (sinon l'original : 2000 px et 1,3 Mo pour une carte
+// de 100 px) : banque d'images (taille dans l'adresse : /media/thumbnail|medium|large/), Shopify (paramètre width,
+// cdn.shopify.com et les boutiques /cdn/shop/), Open Beauty Facts (.200.jpg, .400.jpg, .full.jpg) ; autre adresse : telle quelle
 const RE_TAILLE = /\/media\/(thumbnail|medium|large)\//;
-export const photoReconnue = (url) => RE_TAILLE.test(url || "");
-export const photo = (url, taille) => (url && RE_TAILLE.test(url) ? url.replace(RE_TAILLE, `/media/${taille}/`) : url || null);
+const RE_SHOPIFY = /^https:\/\/(cdn\.shopify\.com\/s\/files\/|[^/?#]+\/cdn\/shop\/)/;
+const RE_OBF = /^(https:\/\/images\.openbeautyfacts\.org\/images\/products\/[^?#]+\.\d+\.)(full|100|200|400)(\.jpg)$/;
+const LARGEUR_SHOPIFY = { thumbnail: 200, medium: 480, large: 960 };
+const TAILLE_OBF = { thumbnail: "200", medium: "400", large: "full" };
+export const photoReconnue = (url) => !!url && (RE_TAILLE.test(url) || RE_SHOPIFY.test(url) || RE_OBF.test(url));
+export function photo(url, taille) {
+  if (!url) return null;
+  if (RE_TAILLE.test(url)) return url.replace(RE_TAILLE, `/media/${taille}/`);
+  if (RE_SHOPIFY.test(url)) {
+    try { const u = new URL(url); u.searchParams.set("width", String(LARGEUR_SHOPIFY[taille] || 480)); return u.href; } catch { return url; }
+  }
+  const m = RE_OBF.exec(url);
+  return m ? `${m[1]}${TAILLE_OBF[taille] || "400"}${m[3]}` : url;
+}
 
 // Textes
 export const sansEmoji = (s) => String(s || "").replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim();

@@ -2,11 +2,15 @@
 // Validation (mêmes règles que src/components/accueil/vedettes.js, recopiées comme applyTiers : les fonctions
 // n'importent pas le code du navigateur ; scripts/test-vedettes.mjs compare les deux), visibilité au moment présent
 // (dates de Paris, jours inclus ; produit : prix, stock, menu de rangement, justificatif, campagne ; menu : actif, pas
-// échu, pas masqué, non vide), et réponse du GET accueil-offres : vedettes visibles (5 au plus par emplacement) pour
-// tous, états de toutes les mises en avant et vérification d'un brouillon (?verifier=) pour l'admin seulement.
+// échu, pas masqué, non vide), et réponse du GET accueil-offres : vedettes visibles pour tous (5 par emplacement, plus
+// 3 en réserve : le navigateur en écarte parfois une, avec un stock plus récent, un justificatif ou un menu non ouvrable,
+// et prend alors la suivante), états de toutes les mises en avant et vérification d'un brouillon (?verifier=) pour
+// l'admin seulement. fin : fin effective (la mise en avant disparaît) ; fin_offre : fin du PRIX (menu promo daté, celui
+// de l'objet ou celui où le produit est rangé), seule montrée aux pharmacies (compte à rebours) : une date de fin posée
+// sur un produit d'un menu permanent arrête l'affichage, pas le prix (pas de fausse urgence).
 import { offreDynamique, premierMenu, jourParis } from "./_accueil-selection.js";
 
-export const MAX_ITEMS = 20, MAX_VISIBLES = 5;
+export const MAX_ITEMS = 20, MAX_VISIBLES = 5, RESERVE = 3;
 const LIMITES = { titre: 60, accroche: 140, badge: 24 };
 const EMPLACEMENTS = ["vitrine", "grille"];
 const RE_ID = /^mea_[a-z0-9_]{4,32}$/, RE_CIP = /^\d{8,14}$/, RE_MENU = /^[\w-]{1,40}$/, RE_COULEUR = /^#[0-9a-f]{6}$/;
@@ -92,7 +96,7 @@ export function evaluerMenu(menuId, ctx, aujourdhui) {
 }
 
 // ── Toutes les mises en avant au moment présent ──
-// → { publiques: { maj, repli, defilement, items (visibles, triées, 5 au plus par emplacement) }, etats: [{ id, statut, detail? }] }
+// → { publiques: { maj, repli, defilement, items (visibles, triées, 5 par emplacement + 3 en réserve) }, etats: [{ id, statut, detail? }] }
 export function evaluerVedettes(valeur, majCle, ctx, maintenant = Date.now()) {
   const aujourdhui = jourParis(maintenant);
   const { conf, ignores } = validerVedettes(valeur);
@@ -106,9 +110,10 @@ export function evaluerVedettes(valeur, majCle, ctx, maintenant = Date.now()) {
     const statut = !it.actif ? "masquee" : it.date_debut && aujourdhui < it.date_debut ? "programmee" : motifMenu || (fin && aujourdhui > fin ? "terminee"
       : ev.raisons[0] || (parPlace[it.emplacement] >= MAX_VISIBLES ? "au_dela_de_5" : "visible"));
     etats.push({ id: it.id, statut, ...(fin ? { fin } : {}) });
-    if (statut !== "visible") continue;
+    // au-delà de 5 : envoyée quand même, en réserve (3 au plus), le navigateur ne montre que les 5 premières qu'il garde
+    if (statut !== "visible" && !(statut === "au_dela_de_5" && parPlace[it.emplacement] < MAX_VISIBLES + RESERVE)) continue;
     parPlace[it.emplacement]++;
-    items.push({ id: it.id, type: it.type, emplacement: it.emplacement, titre: it.titre, accroche: it.accroche, badge: it.badge, fin, image: it.image,
+    items.push({ id: it.id, type: it.type, emplacement: it.emplacement, titre: it.titre, accroche: it.accroche, badge: it.badge, fin, fin_offre: jour10(ev.finMenu), image: it.image,
       couleur: it.couleur, couleur_auto: it.couleur_auto, ...(it.type === "produit" ? { offre: ev.offre } : { menu_id: it.menu_id }) });
   }
   return { publiques: { maj: majCle || null, repli: conf.repli, defilement: conf.defilement, items }, etats };

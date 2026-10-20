@@ -153,7 +153,8 @@ export function construireMisesEnAvant(ved, ctx) {
   }
   return out;
 }
-// entrée commune : { id, cle, type, auto, titre, accroche, badge, fin, couleur, teintes, halo, rayon, ... }
+// entrée commune : { id, cle, type, auto, titre, accroche, badge, fin, finOffre, couleur, teintes, halo, rayon, ... }
+// fin : fin effective (l'entrée disparaît) ; finOffre : fin du prix (menu promo daté), seule affichée (compte à rebours)
 const commun = (v, cle, couleur, halo) => ({ id: v.id, cle, type: v.type, auto: !!v.auto, accroche: v.accroche || "", badge: v.badge || "",
   couleur: couleur.hex, source: couleur.source, teintes: teintes(couleur.hex), halo: halo || null });
 function entreeProduit(v, ctx) {
@@ -170,7 +171,10 @@ function entreeProduit(v, ctx) {
   const accent = rkey.startsWith("promo_") || rkey === "saisie" ? null : (t?.accent || ctx.catalogue?.[rkey]?.accent);
   const e = commun(v, `p:${o.cip}`, couleurDe(v, { menu: menuPromo, accent }), r.image_url);
   const b = o.boite || {};
-  return { ...e, titre: v.titre || titreParDefaut(o), offre: r, fin: v.fin || null, rayon: sansEmoji(r.menu?.label) || "Saisie de commande",
+  // finOffre (compte à rebours) : fin du prix seulement, celle du menu promo où l'ajout range la ligne ; la date de fin de
+  // la mise en avant (fin) ne fait que la retirer de la page
+  const finOffre = menuPromo ? jour10(menuPromo.endDate) : rkey.startsWith("promo_") ? jour10(v.fin_offre) : null;
+  return { ...e, titre: v.titre || titreParDefaut(o), offre: r, fin: v.fin || null, finOffre, rayon: sansEmoji(r.menu?.label) || "Saisie de commande",
     sousLigne: [[b.dosage, b.forme].filter(Boolean).join(" · ") || (o.nom_court !== titreParDefaut(o) ? o.nom_court : ""), b.labo].filter(Boolean).join(" · ") };
 }
 function entreeMenu(v, ctx, aj) {
@@ -180,7 +184,7 @@ function entreeMenu(v, ctx, aj) {
   const res = resumeMenu(m, { stockData: ctx.stockData, catalogue: ctx.catalogue, image: v.image });
   if (!res.nb) return null;
   const e = commun(v, `m:${m.id}`, couleurDe(v, { menu: m }), res.cartes.find(c => c.url)?.url);
-  return { ...e, titre: v.titre || titreMenu(m), accroche: v.accroche || String(m.description || "").trim(), fin: finEffective(v.fin, m.endDate),
+  return { ...e, titre: v.titre || titreMenu(m), accroche: v.accroche || String(m.description || "").trim(), fin: finEffective(v.fin, m.endDate), finOffre: jour10(m.endDate),
     rayon: m.sansStock ? "Précommande" : "Menu promo", menu: { id: String(m.id), key, nom: titreMenu(m), icone: m.icon || "", sansStock: !!m.sansStock, ...res } };
 }
 

@@ -6,7 +6,9 @@
 let offres = null;   // { cle, at, promesse }
 export function lireOffres(appel, cle) {
   if (offres?.cle === cle && Date.now() - offres.at < 60e3) return offres.promesse;
-  const promesse = appel("/.netlify/functions/accueil-offres").then(r => (r.ok ? r.json() : null)).catch(() => null);
+  // sans le cache HTTP du navigateur (private, max-age=60) : une page rechargée juste après « Publier » montre la nouvelle
+  // version ; la réponse reste gardée 60 s en mémoire pour la page ouverte
+  const promesse = appel("/.netlify/functions/accueil-offres", { cache: "no-store" }).then(r => (r.ok ? r.json() : null)).catch(() => null);
   offres = { cle, at: Date.now(), promesse };
   return promesse;
 }
