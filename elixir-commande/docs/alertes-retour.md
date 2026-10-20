@@ -10,6 +10,10 @@ Question de Zineb (20/10/2026) : « est-ce que tu es sûr que la fonctionnalité
   - L'e-mail n'est envoyé qu'**une fois par demande**. Pour être averti de nouveau, la pharmacie reclique sur « M'avertir du retour ».
   - Le pied de l'e-mail dit pourquoi elle le reçoit, qu'il ne sera pas renvoyé, et comment retirer une autre alerte : « Alerte activée » dans la Saisie, ou une réponse à l'e-mail (l'équipe la retire depuis l'admin).
   - Mise en page sur une colonne (lisible sur téléphone), bouton qui tient dans Outlook, police Inter, or seulement en filet et en badge de remise.
+- **La pharmacie, sur son téléphone** (si elle a activé les notifications de l'appli Elixir, `docs/notifications.md`). Juste après l'e-mail, une notification « De retour en stock » : le nom du produit (jamais le prix), qui ouvre le produit dans la Saisie ; plusieurs produits : « 3 produits de retour en stock », qui ouvre la Saisie et son bandeau.
+  - Une seule notification par pharmacie et par passage, même si deux adresses de la pharmacie reçoivent chacune leur e-mail.
+  - Seulement après un e-mail réellement parti : jamais pour une demande close sans e-mail, refusée, ou dont l'envoi est incertain.
+  - L'e-mail ne l'attend jamais : une notification lente ou en panne ne retarde ni n'empêche aucun e-mail. Clés de l'appli absentes, ouverture « Fermée », pharmacie hors pilote, alerte « Retour en stock » coupée : pas de notification, l'e-mail part comme avant.
 - **La pharmacie, dans la Saisie de commande.** La ligne d'un produit attendu et revenu porte la mention « De retour en stock » (ton sarcelle, comme « Alerte activée »). Un bandeau liste aussi ces produits : alerte avertie depuis moins de 14 jours, produit toujours en stock.
   - Pendant une recherche, le bandeau ne répète pas les produits déjà affichés dessous : le produit ouvert par le lien de l'e-mail reste en haut de l'écran, même sur téléphone.
   - Clic sur un nom : le produit s'affiche. Croix : la mention disparaît (la demande déjà avertie est retirée ; message si le serveur refuse).
@@ -81,7 +85,7 @@ Question de Zineb (20/10/2026) : « est-ce que tu es sûr que la fonctionnalité
 
 ## Fichiers
 
-- `netlify/functions/_restock.js` : logique (passage, envoi Resend, e-mail, aperçu de l'admin, mention de la Saisie).
+- `netlify/functions/_restock.js` : logique (passage, envoi Resend, e-mail, aperçu de l'admin, mention de la Saisie) ; notification « Retour en stock » après l'e-mail (`notifierPharmacie` de `_push.js`, chargé seulement si les clés VAPID sont en place ; `docs/notifications.md` § 9.1). Le journal des passages de l'onglet indique les pharmacies prévenues aussi sur téléphone.
 - `netlify/functions/restock-notify.js` : HTTP (GitHub Action, admin : aperçu, envoyer, activer, relancer).
 - `netlify/functions/restock-notify-cron.js` : passage planifié.
 - `netlify/functions/restock-alert.js` : fonction existante.

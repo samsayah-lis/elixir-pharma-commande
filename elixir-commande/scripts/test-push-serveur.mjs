@@ -10,11 +10,12 @@
 //  • push-abonnement, push-admin, push-envoi-background : identité du jeton, ouverture, plafond, idempotence, aperçu ;
 //    aucune réponse ne contient endpoint, p256dh, auth ni la clé privée ;
 //  • notifierPharmacie ne lève jamais ; creerStockPush (chemins PostgREST, tables absentes) ;
-//  • empaquetage esbuild des trois fonctions (comme Netlify) puis import du résultat.
+//  • empaquetage esbuild des trois fonctions (comme Netlify) puis import du résultat ; restock-notify et restock-notify-cron
+//    (crochet « Retour en stock » de _restock.js) : notifierPharmacie et web-push dans le paquet.
 import crypto from "node:crypto";
 import http from "node:http";
 import { build } from "esbuild";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -59,6 +60,10 @@ for (const [u, attendu] of [["/", "/"], ["/?menu=promo_12", "/?menu=promo_12"], 
   eq("catégories illisibles → null", R.filtrerCategories("stock"), null);
   eq("aide des offres selon le plafond", [R.aideOffres(2), R.aideOffres(1), R.aideOffres(0)],
     ["Nos offres et nouveaux produits, 2 par semaine au plus.", "Nos offres et nouveaux produits, 1 par semaine au plus.", "Nos offres et nouveaux produits (aucun envoi en ce moment)."]);
+  // « Retour en stock » branché (_restock.js, docs/notifications.md § 9.1) : plus de « bientôt » ; « Mes commandes » : pas encore (§ 9.2)
+  const aideDe = (id) => R.CATEGORIES.find((c) => c.id === id)?.aide || "";
+  eq("Retour en stock : branché, sans « bientôt », bouton de la Saisie nommé ; Mes commandes : « bientôt »",
+    [/bientôt/.test(aideDe("stock")), aideDe("stock").includes("M’avertir du retour"), /bientôt/.test(aideDe("commandes"))], [false, true, true]);
 }
 
 // ── 2. Configuration ──
@@ -852,7 +857,7 @@ eq("aucune réponse ne contient de secret auth d'appareil", toutesReponses.filte
 {
   const dossier = mkdtempSync(join(tmpdir(), "test-push-paquet-"));
   try {
-    for (const nom of ["push-abonnement", "push-admin", "push-envoi-background"]) {
+    for (const nom of ["push-abonnement", "push-admin", "push-envoi-background", "restock-notify", "restock-notify-cron"]) {
       const sortie = join(dossier, `${nom}.mjs`);
       await build({ entryPoints: [join(RACINE, "netlify/functions", `${nom}.js`)], bundle: true, platform: "node", target: "node18", format: "esm", outfile: sortie,
         logLevel: "silent", banner: { js: 'import { createRequire as ___creerRequire } from "module"; const require = ___creerRequire(import.meta.url);' } });
@@ -862,6 +867,8 @@ eq("aucune réponse ne contient de secret auth d'appareil", toutesReponses.filte
         const r = await m.handler({ httpMethod: "GET", headers: {} });
         eq("push-abonnement empaqueté, sans variables : GET indisponible, sans erreur", corpsDe(r), { disponible: false, cle_publique: null, ouverture: "fermee" });
       }
+      // alertes retour : notifierPharmacie (chargée à la demande par _restock.js) et web-push dans le paquet de la fonction
+      if (nom.startsWith("restock-notify")) eq(`${nom} : notifierPharmacie et web-push empaquetés`, [readFileSync(sortie, "utf8").includes("notifierPharmacie"), readFileSync(sortie, "utf8").includes("generateRequestDetails")], [true, true]);
     }
   } finally { rmSync(dossier, { recursive: true, force: true }); }
 }

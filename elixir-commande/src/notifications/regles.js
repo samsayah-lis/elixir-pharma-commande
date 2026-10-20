@@ -6,10 +6,10 @@
 
 // Catégories qu'une pharmacie choisit (interrupteurs du panneau). Libellés et aides affichés tels quels.
 export const CATEGORIES = [
-  // « bientôt » : rien n'envoie encore cette catégorie tant que le crochet du retour en stock n'est pas branché
-  // (docs/notifications.md § 9.1) ; retirer la mention en même temps que le branchement
+  // « stock » : envoyée après l'e-mail « De retour en stock » des alertes retour (netlify/functions/_restock.js,
+  // docs/notifications.md § 9.1) ; « commandes » : « bientôt » tant que la sortie d'entrepôt n'est pas branchée (§ 9.2)
   { id: "stock", libelle: "Retour en stock",
-    aide: "Les produits pour lesquels vous avez demandé une alerte (cloche), dès leur retour en stock (bientôt)." },
+    aide: "Les produits pour lesquels vous avez cliqué «\u00a0M’avertir du retour\u00a0», dès leur retour en stock." },
   { id: "commandes", libelle: "Mes commandes",
     aide: "La sortie d'entrepôt de vos commandes (bientôt)." },
   { id: "offres", libelle: "Offres et nouveautés",

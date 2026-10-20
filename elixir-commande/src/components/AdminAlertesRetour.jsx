@@ -34,6 +34,8 @@ const resumePassage = (p) => [
   p.echecs ? `${p.echecs} envoi(s) refusé(s), réessayé(s) plus tard` : "",
   p.reportes ? `${p.reportes} reporté(s) : adresse déjà avertie depuis moins de 24 h` : "",
   p.restants ? `${p.restants} en attente${p.suspendu ? " (envois automatiques suspendus)" : p.hors_fenetre ? " (hors 7 h – 21 h)" : p.plafond ? " (plafond du jour)" : ""}` : "",
+  // notification « Retour en stock » de l'appli (onglet « 🔔 Notifications », docs/notifications.md § 9.1)
+  p.notifications?.servies ? `${pl(p.notifications.servies, "pharmacie")} prévenue${p.notifications.servies > 1 ? "s" : ""} aussi sur téléphone` : "",
 ].filter(Boolean).join(" · ");
 
 export default function AdminAlertesRetour({ adminFetch, flash }) {
@@ -68,7 +70,7 @@ export default function AdminAlertesRetour({ adminFetch, flash }) {
       !d?.reglages?.actif ? "• envois automatiques suspendus : « Envoyer maintenant » envoie quand même" : "",
     ].filter(Boolean).join("\n");
     if (!window.confirm(`Envoyer maintenant les alertes retour ?\n\n${lignes}`)) return;
-    const total = { envoyes: 0, produits: 0, closes: 0, echecs: 0, reportes: 0, erreurs: [] };
+    const total = { envoyes: 0, produits: 0, closes: 0, echecs: 0, reportes: 0, telephones: 0, erreurs: [] };
     setEnvoi("Envoi en cours…");
     try {
       for (let i = 0; i < 30; i++) {   // 4 s de travail par appel : rappelé tant qu'il en reste
@@ -77,11 +79,12 @@ export default function AdminAlertesRetour({ adminFetch, flash }) {
         if (!r.ok || j.error) throw new Error(j.error || `HTTP ${r.status}`);
         total.envoyes += j.envoyes || 0; total.produits += j.produits || 0; total.closes += somme(j.closes); total.echecs += j.echecs || 0;
         total.reportes = j.reportes || total.reportes;
+        total.telephones += j.notifications?.servies || 0;
         total.erreurs.push(...(j.erreurs || []));
         setEnvoi(`Envoi en cours… ${pl(total.envoyes, "e-mail")}`);
         if (j.done !== false) break;
       }
-      const msg = `✓ ${pl(total.envoyes, "e-mail")} envoyé(s) (${pl(total.produits, "produit")}), ${total.closes} demande(s) close(s)${total.echecs ? `, ${total.echecs} refusé(s)` : ""}${total.reportes ? `, ${total.reportes} reporté(s) à 24 h` : ""}`;
+      const msg = `✓ ${pl(total.envoyes, "e-mail")} envoyé(s) (${pl(total.produits, "produit")}), ${total.closes} demande(s) close(s)${total.echecs ? `, ${total.echecs} refusé(s)` : ""}${total.reportes ? `, ${total.reportes} reporté(s) à 24 h` : ""}${total.telephones ? `, ${pl(total.telephones, "pharmacie")} prévenue(s) aussi sur téléphone` : ""}`;
       setEnvoi(total.erreurs.length ? `${msg} — ${[...new Set(total.erreurs)].slice(0, 3).join(" ; ")}` : msg);
       flash?.(msg);
     } catch (e) { setEnvoi(`⚠ ${e.message}`); }

@@ -434,6 +434,15 @@ const ENTREE = readFileSync(join(RACINE, "src/notifications/entree.jsx"), "utf8"
 const ACCUEIL = readFileSync(join(RACINE, "src/components/accueil/Accueil.jsx"), "utf8");
 eq("accueil : carte des alertes APRÈS les accès rapides (aucun décalage des tuiles)", ACCUEIL.indexOf("{alertes}") > ACCUEIL.indexOf('aria-labelledby="acc-acces-titre"'), true);
 eq("bundle principal : aucun import statique de client.js ni de Notifications.jsx", /^import .*(client\.js|Notifications\.jsx)/m.test(ENTREE), false);
+// fusion avec origin/master (alertes retour, outils de l'accueil) : rien de perdu d'un côté ni de l'autre
+eq("accueil : outils (gp) ET carte des alertes passés par App et reçus par l'accueil",
+  [APP.includes("gp={{ autorise: gpAllowed === true && !actingFor"), /suggestions = null, gp = null, alertes = null \}\) \{/.test(ACCUEIL)], [true, true]);
+const ADMIN = readFileSync(join(RACINE, "src/AdminPanel.jsx"), "utf8");
+eq("admin : onglets « Alertes retour » et « Notifications » distincts, chacun son composant",
+  [ADMIN.includes('{k:"alertes",   label:"🔔 Alertes retour"'), ADMIN.includes('{k:"notifications",label:"🔔 Notifications"'), /tab==="alertes"&&\(\s*<AdminAlertesRetour/.test(ADMIN), /tab==="notifications"&&\(\s*<AdminNotifications/.test(ADMIN)],
+  [true, true, true, true]);
+const NOTIF = readFileSync(join(RACINE, "src/notifications/Notifications.jsx"), "utf8");
+eq("carte : retour en stock branché (plus de « bientôt »)", [/bientôt/.test(NOTIF), NOTIF.includes("Vos produits attendus dès leur retour en stock")], [false, true]);
 eq("aucun module chargé à la demande nommé index.*", /import\(["'][^"']*\/index(\.jsx?)?["']\)/.test(ENTREE + readFileSync(join(RACINE, "src/notifications/demarrage.js"), "utf8")), false);
 
 console.log(`\n${ok} OK, ${ko} échec(s)`);

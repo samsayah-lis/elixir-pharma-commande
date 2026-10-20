@@ -19,7 +19,11 @@
 //  • e-mail : échappement HTML, lien ?cip=, prix, mention de désinscription ;
 //  • restock-alert : « retour » (14 jours, en stock), sans adresse ; nouvelle demande : suivi remis à zéro, repli sans colonnes ;
 //  • restock-notify : admin (aperçu sans adresse, envoyer, relancer), secret de la GitHub Action (chiffres seulement), refus ;
-//  • restock-notify-cron : passage et ménage du journal.
+//  • restock-notify-cron : passage et ménage du journal ;
+//  • notification « Retour en stock » (docs/notifications.md § 9.1) : après un e-mail réellement parti seulement, une par
+//    pharmacie et par passage (deux adresses : produits réunis), jamais attendue par les e-mails suivants, attente de fin
+//    bornée (limite de la fonction), jamais relancée ; exception, rejet, clés refusées, tables absentes, ouverture fermée,
+//    aucun appareil : rien, sans erreur ; clés VAPID absentes : comportement d'avant, _push.js jamais sollicité.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
 process.env.ADMIN_EMAIL = "admin@elixir.test";
@@ -637,6 +641,211 @@ resend = async () => { remis++; throw Object.assign(new Error("timeout"), { name
 for (let k = 0; k < 3; k++) await R.passage({ source: "planifie", maintenant: () => T0 + k * 3 * H, attendre: sansPause });
 resend = null;
 eq("délai dépassé de bout en bout : une seule tentative par demande, « interrompu »", [remis, ligneDe("2000001", P1).outcome, ligneDe("2000002", P1).outcome], [2, "interrompu", "interrompu"]);
+
+// ════════ 20. notification « Retour en stock » sur le téléphone (docs/notifications.md § 9.1) ════════
+// Doublure notifier(cip de la pharmacie, contenu) → { envoyes, echecs, retires, raison } ; aucune notification réelle.
+{
+  const pousse = (rep = { envoyes: 1, echecs: 0, retires: 0, raison: null }) => {
+    const appelsPush = [];
+    const f = async (cip, contenu) => { appelsPush.push({ cip, contenu, mails: mails.length }); return typeof rep === "function" ? rep(cip, contenu) : rep; };
+    return { f, appelsPush };
+  };
+  const pushDb = () => appels.filter(a => a.url.includes("/rest/v1/push_"));
+
+  // a. clés VAPID absentes (comme aujourd'hui) : comportement inchangé, _push.js jamais sollicité
+  vrai("notification : clés VAPID absentes dans les tests existants", !R.pushDisponible());
+  initialiser();
+  mails = [];
+  b = await lance();
+  eq("sans clés VAPID : e-mails comme avant, aucune notification, aucune table push lue", [mails.length, b.envoyes, "notifications" in b, pushDb().length, "notifications" in R.chiffres(b)], [2, 2, false, 0, false]);
+
+  // b. après chaque e-mail parti : une notification par pharmacie, produits regroupés comme l'e-mail
+  initialiser();
+  mails = [];
+  let n = pousse({ envoyes: 2, echecs: 0, retires: 0, raison: null });
+  b = await lance({ notifier: n.f });
+  eq("notification : une par pharmacie servie (A puis B)", n.appelsPush.map(x => x.cip), ["2000001", "2000002"]);
+  const pa = n.appelsPush[0]?.contenu, pb = n.appelsPush[1]?.contenu;
+  eq("A (2 produits) : titre, texte, lien vers la Saisie, étiquette stable", [pa?.titre, pa?.corps, pa?.url, /^stock-lot-[0-9a-f]{16}$/.test(pa?.tag || "")],
+    ["2 produits de retour en stock", "DOLIPRANE 1000MG CPR B/8 et VENTOLINE 100µG SUSP INH sont de nouveau disponibles chez Elixir.", "/?outil=saisie", true]);
+  eq("B (1 produit) : titre, texte, lien vers le produit, étiquette du produit", [pb?.titre, pb?.corps, pb?.url, pb?.tag],
+    ["De retour en stock", "DOLIPRANE 1000MG CPR B/8 est de nouveau disponible chez Elixir.", `/?cip=${P1}`, `stock-${P1}`]);
+  eq("notification lancée juste après l'e-mail de la pharmacie (avant celui de la suivante)", n.appelsPush.map(x => x.mails), [1, 2]);
+  eq("bilan des notifications (nombres seulement)", b.notifications, { pharmacies: 2, servies: 2, appareils: 4, sans_appareil: 0, ecartees: 0, echecs: 0, indisponible: 0, en_retard: 0, abandonnees: 0 });
+  eq("chiffres (GitHub Action, admin) : notifications comprises, ni nom ni adresse", [R.chiffres(b).notifications?.servies, /@|Pharmacie|VENTOLINE/.test(JSON.stringify(R.chiffres(b)))], [2, false]);
+  vrai("journal : notifications notées, aucune adresse", (() => { const d = JSON.parse(db.kv_store.find(k => k.key === R.CLE_DERNIER).value); return d.notifications?.pharmacies === 2 && !JSON.stringify(d).includes("@"); })());
+  const libres = [];
+  for (const contenu of [pa, pb]) libres.push(!/€|prix|\d+,\d\d/.test(`${contenu.titre} ${contenu.corps}`));
+  eq("notification : jamais de prix sur l'écran verrouillé", libres, [true, true]);
+  // second passage : rien de neuf, aucune notification (jamais de doublon)
+  b = await lance({ notifier: n.f });
+  eq("second passage : aucune nouvelle notification", [n.appelsPush.length, "notifications" in b], [2, false]);
+
+  // c. « deja » (Resend avait déjà l'envoi), refus, panne, débit, issue incertaine : aucune notification
+  for (const [nom, envoyer] of [
+    ["409 d'idempotence (« deja »)", async (m) => { mails.push(m); return { sent: false, status: 409, name: "invalid_idempotent_request", reason: "x" }; }],
+    ["refus propre à la demande (422)", async () => ({ sent: false, status: 422, name: "validation_error", reason: "Invalid `to` field" })],
+    ["panne générale (401)", async () => ({ sent: false, status: 401, name: "validation_error", reason: "API key is invalid" })],
+    ["limite de débit (429)", async () => ({ sent: false, status: 429, name: "rate_limit_exceeded", reason: "Too many requests" })],
+    ["issue incertaine (exception)", async () => { throw new Error("socket hang up"); }],
+  ]) {
+    initialiser();
+    mails = [];
+    n = pousse();
+    b = await lance({ envoyer, notifier: n.f });
+    eq(`${nom} : aucune notification`, [n.appelsPush.length, "notifications" in b], [0, false]);
+  }
+
+  // d. notification lente ou bloquée : les e-mails ne l'attendent jamais ; fin du passage : attente bornée
+  initialiser();
+  mails = [];
+  const bloque = pousse(() => new Promise(() => {}));
+  let t0 = Date.now();
+  b = await lance({ notifier: bloque.f });
+  let duree = Date.now() - t0;
+  eq("notification bloquée : tous les e-mails partent, passage terminé normalement", [mails.length, b.envoyes, b.done, b.erreur, bloque.appelsPush.length], [2, 2, true, null, 2]);
+  vrai(`notification bloquée : attente bornée à ${R.PUSH_ATTENTE_MS} ms (${duree} ms)`, duree >= R.PUSH_ATTENTE_MS - 50 && duree < R.PUSH_ATTENTE_MS + 1500, String(duree));
+  eq("notification bloquée : comptée « en retard », jamais relancée", [b.notifications.en_retard, b.notifications.servies], [2, 0]);
+  // limite de la fonction déjà atteinte (horloge du passage) : aucune attente
+  initialiser();
+  mails = [];
+  let h = T0;
+  const tardive = pousse((cip) => { if (cip === "2000002") h = T0 + 9000; return new Promise(() => {}); });
+  t0 = Date.now();
+  b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: tardive.f, limiteMs: 9000 });
+  duree = Date.now() - t0;
+  vrai(`limite atteinte : aucune attente des notifications (${duree} ms)`, duree < 1000 && b.envoyes === 2 && b.notifications.en_retard === 2, `${duree} ${JSON.stringify(b.notifications)}`);
+  // lente (300 ms) : l'e-mail suivant part sans l'attendre, la notification finit dans l'attente de fin
+  initialiser();
+  mails = [];
+  const ordre = [];
+  const envoiNote = async (m) => { ordre.push(`mail ${m.to.includes("pharmacie-a") ? "A" : "B"}`); return envoiOk(m); };
+  const lente = pousse(async (cip) => { await new Promise(r => setTimeout(r, 300)); ordre.push(`notif ${cip === "2000001" ? "A" : "B"}`); return { envoyes: 1, echecs: 0, retires: 0, raison: null }; });
+  b = await lance({ envoyer: envoiNote, notifier: lente.f });
+  eq("notification lente : l'e-mail de B part avant la fin de la notification de A", ordre, ["mail A", "mail B", "notif A", "notif B"]);
+  eq("notification lente : terminée pendant l'attente de fin", [b.notifications.servies, b.notifications.en_retard], [2, 0]);
+
+  // e. notification en erreur (exception synchrone, rejet) : jamais une erreur du passage ni des e-mails
+  for (const [nom, f] of [["exception synchrone", () => { throw new Error("boum"); }], ["rejet", async () => { throw new Error("module absent"); }]]) {
+    initialiser();
+    mails = [];
+    let essais = 0;
+    b = await lance({ notifier: (...a) => { essais++; return f(...a); } });
+    eq(`notification en ${nom} : e-mails partis, passage sans erreur, plus d'essai ensuite`, [mails.length, b.envoyes, b.erreur, b.erreurs, essais, b.notifications.indisponible], [2, 2, null, [], 1, 1]);
+  }
+  // clés refusées ou tables absentes (réponse de notifierPharmacie) : plus aucun essai dans ce passage
+  for (const raison of ["configuration", "schema"]) {
+    initialiser();
+    mails = [];
+    n = pousse({ envoyes: 0, echecs: 0, retires: 0, raison });
+    b = await lance({ notifier: n.f });
+    eq(`notifierPharmacie « ${raison} » : une seule tentative, e-mails partis`, [n.appelsPush.length, mails.length, b.notifications.indisponible, b.erreurs], [1, 2, 1, []]);
+  }
+  // raisons ordinaires : comptées, sans effet sur les autres pharmacies
+  initialiser();
+  mails = [];
+  n = pousse((cip) => ({ envoyes: 0, echecs: cip === "2000001" ? 0 : 1, retires: 0, raison: cip === "2000001" ? "fermee" : null }));
+  b = await lance({ notifier: n.f });
+  eq("ouverture fermée (A), échec des appareils (B) : comptés à part", [n.appelsPush.length, b.notifications.ecartees, b.notifications.echecs, b.notifications.servies], [2, 1, 1, 0]);
+
+  // f. pharmacie à deux adresses (deux comptes, deux e-mails) : UNE notification avec tous les produits
+  initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 2 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 3 * J),
+    alerte("2000002", P1, "compte@pharmacie-b.test", 3 * J)] });
+  db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
+  mails = [];
+  n = pousse();
+  b = await lance({ notifier: n.f });
+  // ordre des e-mails : A (adjoint, 3 j), B (3 j), A (compte, 2 j) → B notifiée tout de suite, A après son second e-mail
+  eq("deux adresses pour A : trois e-mails, une notification pour B, puis une pour A (2 produits)", [mails.length, n.appelsPush.map(x => [x.cip, x.contenu.titre, x.mails])],
+    [3, [["2000002", "De retour en stock", 2], ["2000001", "2 produits de retour en stock", 3]]]);
+  eq("deux adresses : une seule notification pour A", n.appelsPush.filter(x => x.cip === "2000001").length, 1);
+  // la seconde adresse de A attend (avertie depuis moins de 24 h) : notification de A avec le seul produit parti, en fin de passage
+  initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 3 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 2 * J)] });
+  db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
+  db.kv_store.push(kvLigne(`${R.PREFIXE_DEST}${R.empreinteAdresse("adjoint@pharmacie-a.test")}`, { at: iso(T0 - H) }));
+  mails = [];
+  n = pousse();
+  b = await lance({ notifier: n.f });
+  eq("seconde adresse reportée : un e-mail, une notification (produit parti seulement)", [mails.length, b.reportes, n.appelsPush.length, n.appelsPush[0]?.contenu.url], [1, 1, 1, `/?cip=${P1}`]);
+  // notification gardée pour la fin, mais la limite est trop proche : abandonnée (l'e-mail est parti), jamais lancée plus tard
+  initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 3 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 2 * J)] });
+  db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
+  db.kv_store.push(kvLigne(`${R.PREFIXE_DEST}${R.empreinteAdresse("adjoint@pharmacie-a.test")}`, { at: iso(T0 - H) }));
+  mails = [];
+  n = pousse();
+  h = T0;
+  const avance = async (m) => { const r = await envoiOk(m); h = T0 + 8000; return r; };   // l'e-mail laisse 1 s avant la limite
+  b = await R.passage({ maintenant: () => h, envoyer: avance, attendre: sansPause, notifier: n.f, limiteMs: 9000 });
+  eq("limite trop proche : notification gardée abandonnée, e-mail parti", [mails.length, n.appelsPush.length, b.notifications?.abandonnees], [1, 0, 1]);
+
+  // g. vraie fonction (notifierPharmacie) avec des clés VAPID d'essai générées en mémoire : tables absentes, ouverture fermée,
+  // aucun appareil — rien n'est envoyé à Google, Apple ni Mozilla, aucune erreur
+  const webpush = (await import("web-push")).default;
+  const cles = webpush.generateVAPIDKeys();
+  const env0 = { ...process.env };
+  Object.assign(process.env, { VAPID_PUBLIC_KEY: cles.publicKey, VAPID_PRIVATE_KEY: cles.privateKey, VAPID_SUBJECT: "mailto:pharmacien@elixirpharma.fr", SUPABASE_SERVICE_ROLE_KEY: "cle-serveur-de-test" });
+  const fetchBase = globalThis.fetch;
+  let tablesPush = null;   // null : tables absentes (404 PGRST205) ; sinon { push_reglages: [...], push_abonnements: [...] }
+  const horsSupabase = [];
+  globalThis.fetch = async (url, o = {}) => {
+    const u = String(url);
+    if (u.includes("/rest/v1/push_")) {
+      appels.push({ url: u, methode: o.method || "GET", corps: o.body || null });
+      const table = new URL(u).pathname.replace("/rest/v1/", "");
+      if (!tablesPush) return reponse({ code: "PGRST205", message: `Could not find the table 'public.${table}' in the schema cache` }, 404);
+      return reponse(tablesPush[table] ?? []);
+    }
+    if (!u.startsWith("https://supabase.test/") && u !== "https://api.resend.com/emails") horsSupabase.push(u);
+    return fetchBase(url, o);
+  };
+  try {
+    vrai("clés VAPID d'essai : notification possible", R.pushDisponible());
+    initialiser();
+    mails = [];
+    b = await lance();
+    // la première notification charge _push.js (web-push) : celle de B peut partir avant la réponse « tables absentes »
+    eq("tables push absentes : e-mails partis, aucune erreur, notifications « indisponibles »", [mails.length, b.erreurs, b.erreur, b.notifications?.indisponible === b.notifications?.pharmacies, b.notifications?.servies], [2, [], null, true, 0]);
+    vrai("tables push absentes : une lecture des réglages par notification lancée, rien d'autre", pushDb().length === b.notifications?.pharmacies && pushDb().every(a => a.url.includes("push_reglages")), JSON.stringify(pushDb().map(a => a.url)));
+    initialiser();
+    mails = [];
+    b = await lance();
+    eq("tables push absentes (module déjà chargé) : une seule tentative dans le passage", [mails.length, pushDb().length, b.notifications?.indisponible], [2, 1, 1]);
+    tablesPush = { push_reglages: [] };   // aucune ligne : ouverture « fermée » par défaut
+    initialiser();
+    mails = [];
+    b = await lance();
+    eq("ouverture fermée : écartées, aucun appareil lu", [mails.length, b.notifications?.ecartees, pushDb().filter(a => a.url.includes("push_abonnements")).length], [2, 2, 0]);
+    tablesPush = { push_reglages: [{ valeur: JSON.stringify({ ouverture: "toutes", pilote_cips: [], plafond_offres_7j: 2 }) }], push_abonnements: [] };
+    initialiser();
+    mails = [];
+    b = await lance();
+    eq("ouverte, aucun appareil : rien envoyé, comptées « sans appareil »", [mails.length, b.notifications?.sans_appareil, b.notifications?.servies], [2, 2, 0]);
+    vrai("appareils de la pharmacie lus par son CIP (catégorie « stock » ensuite)", pushDb().some(a => a.url.includes("push_abonnements?role=eq.pharmacie&pharmacy_cip=eq.2000001")));
+    eq("aucun appel hors Supabase et Resend simulés", horsSupabase, []);
+  } finally {
+    globalThis.fetch = fetchBase;
+    for (const k of ["VAPID_PUBLIC_KEY", "VAPID_PRIVATE_KEY", "VAPID_SUBJECT", "SUPABASE_SERVICE_ROLE_KEY"]) { if (k in env0) process.env[k] = env0[k]; else delete process.env[k]; }
+  }
+
+  // h. contenu : noms coupés, trois produits et plus, CIP illisible
+  const c3 = R.contenuRetour([{ cip: P1, nom: "A" }, { cip: P2, nom: "B" }, { cip: P5, nom: "C" }, { cip: P3, nom: "D" }]);
+  eq("4 produits : deux nommés et « 2 autres »", [c3.titre, c3.corps], ["4 produits de retour en stock", "A, B et 2 autres sont de nouveau disponibles chez Elixir."]);
+  eq("3 produits : « 1 autre »", R.contenuRetour([{ cip: P1, nom: "A" }, { cip: P2, nom: "B" }, { cip: P5, nom: "C" }]).corps, "A, B et 1 autre sont de nouveau disponibles chez Elixir.");
+  eq("étiquette d'un lot : même produits → même étiquette, quel que soit l'ordre", R.contenuRetour([{ cip: P2, nom: "B" }, { cip: P1, nom: "A" }]).tag, R.contenuRetour([{ cip: P1, nom: "A" }, { cip: P2, nom: "B" }]).tag);
+  eq("nom long coupé (80 caractères)", [...R.contenuRetour([{ cip: P1, nom: "X".repeat(300) }]).corps].length, 80 + " est de nouveau disponible chez Elixir.".length);
+  eq("CIP illisible : lien vers la Saisie", R.contenuRetour([{ cip: "ABC", nom: "Produit" }]).url, "/?outil=saisie");
+  const { lienValide } = await import("../src/notifications/regles.js");
+  eq("liens toujours admis par les règles des notifications", [lienValide(R.contenuRetour([{ cip: P1, nom: "A" }]).url), lienValide(c3.url)], [`/?cip=${P1}`, "/?outil=saisie"]);
+
+  // i. restock-notify (GitHub Action) : notification passée par la fonction, chiffres seulement
+  const { creerHandler: creerNotify } = await import("../netlify/functions/restock-notify.js");
+  initialiser();
+  mails = [];
+  n = pousse();
+  const rn = await creerNotify({ maintenant: () => T0, envoyer: envoiOk, attendre: sansPause, notifier: n.f })({ httpMethod: "GET", headers: { "x-cron-secret": "secret-cron-de-test" }, queryStringParameters: { action: "envoyer" } });
+  const cn = JSON.parse(rn.body);
+  eq("restock-notify : notifications dans les chiffres, ni nom ni adresse", [rn.statusCode, cn.envoyes, cn.notifications?.servies, /@|Pharmacie|DOLIPRANE/.test(rn.body)], [200, 2, 2, false]);
+}
 
 // ════════ 13. règles ════════
 eq("prix net : remise, catalogue, invalides", [R.prixNet({ list_price: 20, discounted_price: 18, discount_pct: 10 }), R.prixNet({ list_price: 9.32, discounted_price: 9.32, discount_pct: 0 }),

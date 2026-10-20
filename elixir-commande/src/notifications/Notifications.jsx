@@ -245,7 +245,7 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
   const texte = p === "installer_ios" ? `Sur ${a.ipad ? "iPad" : "iPhone"}, les alertes arrivent par l'application Elixir\u00a0: ajoutez-la à votre écran d'accueil, c'est gratuit et cela prend 30 secondes.`
     : p === "ouvrir_safari" ? "Cette page est ouverte dans une autre application. Copiez le lien, puis ouvrez Safari, touchez la barre d'adresse et collez-le\u00a0: vous pourrez y installer l'application Elixir."
     : a.mobile ? (dejaJoints ? `${dejaJoints > 1 ? `${dejaJoints} appareils de votre pharmacie reçoivent` : "Un appareil de votre pharmacie reçoit"} déjà nos alertes\u00a0: les recevoir aussi sur ce téléphone\u00a0?`
-      : "Nos offres et nouveautés, et bientôt vos retours en stock\u00a0: vous êtes prévenu sur votre téléphone, même quand le site est fermé.")
+      : "Vos produits attendus dès leur retour en stock, et nos offres\u00a0: vous êtes prévenu sur votre téléphone, même quand le site est fermé.")
     : "Le plus pratique\u00a0: sur votre téléphone, en visant un code avec l'appareil photo. Vous pouvez aussi les recevoir sur cet ordinateur, tant que le navigateur est ouvert.";
   return (
     <section className="acc-section" aria-labelledby="acc-notif-titre">
