@@ -105,7 +105,7 @@ export default function AdminNotifications({ adminFetch, flash, promos = [], sec
       {etat.apercu && <div role="status" style={ui.encart("warn")}>Aperçu&nbsp;: aucune notification n'est envoyée, aucun réglage n'est enregistré.</div>}
       <p style={{ ...sourdine, margin: 0 }}>
         Notifications de l'appli Elixir&nbsp;: les pharmacies les activent sur leur téléphone ou leur ordinateur («&nbsp;Notifications&nbsp;» dans le menu, carte de l'accueil).
-        L'e-mail reste la voie des informations importantes. Mode d'emploi&nbsp;: docs/notifications.md.
+        «&nbsp;Retour en stock&nbsp;» part juste après l'e-mail de l'onglet «&nbsp;🔔 Alertes retour&nbsp;». L'e-mail reste la voie des informations importantes. Mode d'emploi&nbsp;: docs/notifications.md.
       </p>
       {erreur && <Erreur texte={erreur} />}
       <EtatService etat={etat} onActualiser={charger} busy={busy} />
@@ -310,7 +310,9 @@ function MesAppareils({ etat, api, flash, onChange }) {
             <Bouton principal onClick={remplacer} disabled={busy}>Oui, pour l'admin</Bouton><Bouton onClick={() => setDe(null)}>Annuler</Bouton>
           </div>
         ) : actuel ? null
-        : p === "activer" ? <Bouton principal onClick={activer} disabled={busy}><Icone nom="cloche" taille={15} />{busy ? "Activation…" : "Recevoir les notifications sur cet appareil"}</Bouton>
+        // libellé long : passe à la ligne sur téléphone (375 px) au lieu de déborder de l'écran
+        : p === "activer" ? <Bouton principal onClick={activer} disabled={busy} style={{ whiteSpace: "normal", height: "auto", minHeight: 40, maxWidth: "100%", textAlign: "left", lineHeight: 1.3, paddingTop: 8, paddingBottom: 8 }}>
+          <Icone nom="cloche" taille={15} style={{ flexShrink: 0 }} />{busy ? "Activation…" : "Recevoir les notifications sur cet appareil"}</Bouton>
         : p === "installer_ios" ? (
           <div style={ui.encart("info")}>
             <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b> depuis cette page&nbsp;: Safari → Partager → <b>Sur l'écran d'accueil</b> → Ajouter. Ouvrez ensuite l'icône

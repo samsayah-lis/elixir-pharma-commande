@@ -147,6 +147,7 @@ export default function AdminAlertesRetour({ adminFetch, flash }) {
             Une demande reste valable jusqu’au retour du produit ; seules celles déjà vieilles de plus de {d.regles.age_max_jours} jours à la mise en service
             sont closes sans e-mail{seuil ? <> (enregistrées avant le {jour(seuil)})</> : null}. Plafonds : un e-mail par adresse sur {d.regles.adresse_heures} h,
             {" "}{d.regles.plafond_jour} e-mails par jour. La pharmacie voit aussi « De retour en stock » dans sa Saisie pendant {d.regles.recent_jours} jours.
+            {" "}Si elle a activé les notifications de l’appli (onglet « 🔔 Notifications »), elle reçoit aussi une notification sur son téléphone, juste après l’e-mail.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
