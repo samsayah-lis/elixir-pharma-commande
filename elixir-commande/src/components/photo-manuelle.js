@@ -1,15 +1,16 @@
 // ── Admin, page d'accueil : photo ajoutée à la main (« Ajouter une photo », demande de Zineb du 20/10/2026) ──
 // Une photo choisie sur l'ordinateur (JPG, PNG ou WebP, 15 Mo au plus) est réduite dans le navigateur (900 px au plus sur
-// le grand côté, qualité 0,85 ; PNG ou WebP : transparence gardée ; JPG toujours réencodé : ses métadonnées, lieu de prise
-// de vue compris, ne partent pas), puis envoyée par product-upload-image, la fonction de l'admin du catalogue (inchangée) :
-// Storage elixir-images/products/<clé>.<ext> (écrasé s'il existe), puis image_url des lignes du catalogue
-// (elixir_products) dont le CIP est cette clé, s'il y en a. L'adresse renvoyée reçoit ?v=<instant> : une photo remplacée
-// (même fichier) se montre tout de suite, sans attendre la fin du cache des navigateurs ; pour un produit du catalogue,
-// un second appel (image_url, sans fichier) y range aussi cette adresse (le site préfère la photo du catalogue).
+// le grand côté, qualité 0,85 ; PNG ou WebP : transparence gardée) et toujours réencodée : ses métadonnées (EXIF, XMP, lieu
+// de prise de vue) ne partent jamais. Elle est envoyée par product-upload-image, la fonction de l'admin du catalogue
+// (inchangée) : Storage elixir-images/products/<clé>.<ext> (écrasé s'il existe), puis image_url des lignes du catalogue
+// (elixir_products) dont le CIP est cette clé, s'il y en a. Clé = CIP du dosage montré seulement pour un produit rangé dans
+// un menu du catalogue (la photo y devient aussi la sienne, après confirmation) ; sinon « accueil-<CIP>-<instant> » : le
+// catalogue n'est pas touché. L'adresse renvoyée reçoit ?v=<instant> : une photo remplacée (même fichier) se montre tout
+// de suite ; pour un produit du catalogue, un second appel (image_url, sans fichier) y range aussi cette adresse.
 // Parties pures (contrôle du fichier, dimensions, adresse, clés, dosages visés, menus) : scripts/test-photo-manuelle.mjs.
 
 export const TYPES = { "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WebP" };
-export const MAX_OCTETS = 15 * 1024 * 1024;
+export const MAX_OCTETS = 15e6;   // 15 Mo comme le Finder les compte (Mo décimaux)
 export const COTE_MAX = 900;
 export const QUALITE = 0.85;
 export const ACCEPT = "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
@@ -23,18 +24,23 @@ export const MENUS_AVEC_PHOTOS = ["otc", "molnlycke", "obeso", "covid", "blanche
 export const auCatalogue = (o) => MENUS_CATALOGUE.includes(o?.menu?.key);
 
 const EXTENSIONS = { jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", webp: "image/webp" };
+// types déclarés hors norme (Windows, glisser-déposer depuis certaines applications)
+const ALIAS = { "image/jpg": "image/jpeg", "image/pjpeg": "image/jpeg", "image/x-png": "image/png" };
 const RE_HTTPS = /^https:\/\/[^\s"'()<>\\]+$/;
 // banc d'essai local (npm run dev) seulement : la fausse fonction range la photo sur le banc et renvoie une adresse locale
 // (scripts/banc/plugin.mjs) ; jamais en production
 const RE_LOCALE = /^\/banc-photos\/[^\s"'()<>\\]+$/;
 const DEV = typeof import.meta !== "undefined" && !!import.meta.env?.DEV;
-const mo = (n) => `${(n / 1048576).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`;
+// poids en Mo décimaux, arrondi au dixième supérieur : le chiffre du Finder, jamais « 15 Mo » pour un fichier refusé
+const mo = (n) => `${(Math.ceil(n / 1e5) / 10).toLocaleString("fr-FR")} Mo`;
 
-// Type du fichier : type déclaré par le navigateur, sinon (type vide) l'extension ; null : pas une photo prise en charge
+// Type du fichier : type déclaré par le navigateur (alias hors norme compris) ; type vide, générique ou image d'un type
+// inconnu (sauf HEIC/HEIF) : l'extension ; null : pas une photo prise en charge (le décodage écarte ensuite un faux)
 export function typeDuFichier(f) {
-  const t = String(f?.type || "").toLowerCase();
+  const declare = String(f?.type || "").trim().toLowerCase();
+  const t = ALIAS[declare] || declare;
   if (TYPES[t]) return t;
-  if (t && t !== "application/octet-stream") return null;
+  if (t && t !== "application/octet-stream" && !(t.startsWith("image/") && !/hei[cf]/.test(t))) return null;
   const ext = /\.([a-z0-9]+)$/i.exec(String(f?.name || ""))?.[1]?.toLowerCase();
   return EXTENSIONS[ext] || null;
 }
@@ -72,30 +78,47 @@ export function adresseRecue(url, dev = DEV) {
 
 // Photo envoyée par « Ajouter une photo » (rangée dans elixir-images/products/), par opposition à une photo de la banque
 export const estPhotoEnvoyee = (url) => /\/elixir-images\/products\//.test(String(url || ""));
-const sansRequete = (url) => String(url || "").split(/[?#]/)[0];
-// Photo du catalogue posée d'ici : même fichier que la photo envoyée de l'accueil (display_config.accueil.photos)
-export const poseeIci = (urlCatalogue, urlIci) => !!urlCatalogue && estPhotoEnvoyee(urlIci) && sansRequete(urlCatalogue) === sansRequete(urlIci);
+// Clé du fichier d'une photo envoyée (products/<clé>.<ext>) ; null pour une autre adresse
+export const cleDuFichier = (url) => /\/elixir-images\/products\/([\w-]{1,80})\.(?:jpg|png|webp)(?:[?#]|$)/.exec(String(url || ""))?.[1] || null;
+// Dosage dont la photo envoyée d'ici est aussi celle du catalogue : produit d'un menu du catalogue dont la photo de l'accueil
+// (display_config.accueil.photos, stable) est le fichier rangé sous son propre CIP. Ne dépend pas d'image_url du GET (qui
+// peut être en retard) : elle se remplace d'ici, elle ne s'en retire pas.
+export const liee = (o, photos = {}) => !!o?.cip && auCatalogue(o) && cleDuFichier(photos[o.cip]) === String(o.cip);
 
-// Clé d'une mise en avant (éditeur) : « accueil-… », jamais un CIP (le catalogue n'est pas modifié) et nouvelle à chaque
-// envoi (la version en ligne garde son fichier jusqu'à « Publier »)
+// Clé d'une photo de l'accueil seul (mise en avant, produit hors catalogue) : « accueil-… », jamais un CIP (le catalogue
+// n'est pas modifié) et nouvelle à chaque envoi (la version en ligne garde son fichier jusqu'à « Publier »)
 export function cleMiseEnAvant(it, t = Date.now()) {
   const objet = it?.type === "menu" ? `menu-${String(it.menu_id ?? "").replace(/[^\w-]/g, "").slice(0, 40)}` : String(it?.cip ?? "").replace(/\D/g, "").slice(0, 14);
   return `accueil-${objet}-${t.toString(36)}`;
 }
+// Clé d'envoi d'une ligne des plus commandés : CIP du dosage montré s'il est au catalogue (photo du produit), sinon accueil seul
+export const cleEnvoi = (s, t = Date.now()) => (auCatalogue(s) ? String(s.cip) : cleMiseEnAvant({ type: "produit", cip: s.cip }, t));
 
-// Dosages d'une ligne des plus commandés qui reçoivent la photo : le dosage montré, toujours ; chaque autre dosage sans
-// photo au catalogue, sauf s'il a ici sa propre photo de la banque d'images ; chaque dosage dont la photo du catalogue a
-// été posée d'ici (remplacée avec la famille). Une photo du catalogue venue d'ailleurs (fiche produit) est gardée.
-export function ciblesFamille(s, photos = {}) {
-  const vus = new Set(), out = [];
+// Même forme de boîte (« Stylo prérempli » ≠ « Seringue préremplie ») ; forme inconnue d'un côté : même famille, acceptée
+const forme = (o) => String(o?.boite?.forme || "").trim().toLowerCase();
+export const memeForme = (a, b) => !forme(a) || !forme(b) || forme(a) === forme(b);
+
+// Dosages d'une ligne des plus commandés et la photo envoyée pour le dosage montré :
+//  • cibles : le dosage montré, toujours ; chaque autre dosage de même forme sans photo, ou dont la photo a été envoyée
+//    d'ici pour l'accueil seul (remplacée avec la famille). Les autres dosages ne la reçoivent que sur l'accueil : seul le
+//    dosage montré est écrit au catalogue (jamais la boîte du 5 mg sur la ligne du 2,5 mg dans un menu).
+//  • gardees : { cip, libelle, raison } — "catalogue" (photo du catalogue, venue d'ailleurs ou posée d'ici quand ce dosage
+//    était montré), "forme" (autre forme de boîte), "banque" (sa propre photo de la banque d'images).
+export function repartitionFamille(s, photos = {}) {
+  const vus = new Set(), cibles = [], gardees = [];
   for (const o of [s, ...(s?.variantes || [])]) {
     if (!o?.cip || vus.has(o.cip)) continue;
     vus.add(o.cip);
-    const ici = photos[o.cip];
-    if (o.cip === s.cip || (o.image_url ? poseeIci(o.image_url, ici) : !ici || estPhotoEnvoyee(ici))) out.push(o.cip);
+    const ici = photos[o.cip], garder = (raison) => gardees.push({ cip: o.cip, libelle: o.libelle || o.nom_court || o.cip, raison });
+    if (o.cip === s.cip) cibles.push(o.cip);
+    else if (liee(o, photos) || o.image_url) garder("catalogue");
+    else if (!memeForme(o, s)) garder("forme");
+    else if (ici && !estPhotoEnvoyee(ici)) garder("banque");
+    else cibles.push(o.cip);
   }
-  return out;
+  return { cibles, gardees };
 }
+export const ciblesFamille = (s, photos = {}) => repartitionFamille(s, photos).cibles;
 
 // Où la photo envoyée se voit, pour le message : menus du catalogue concernés (avec ou sans photos)
 // membres : dosages visés (objets du GET accueil-offres, avec leur menu)
@@ -105,6 +128,37 @@ export function portee(membres) {
     catalogue: cat.length > 0,
     menus: [...new Set(cat.filter(o => MENUS_AVEC_PHOTOS.includes(o.menu.key)).map(o => o.menu.label).filter(Boolean))],
   };
+}
+
+// Question posée avant le premier envoi d'un produit du catalogue (la photo y devient la sienne, sans retour possible d'ici)
+export function questionCatalogue(s, nbAutres = 0) {
+  const nom = s?.nom_court || s?.nom || "ce produit", menu = s?.menu?.label;
+  const ou = MENUS_AVEC_PHOTOS.includes(s?.menu?.key) && menu ? `dans le menu « ${menu} » du catalogue` : "au catalogue (fiche du produit)";
+  return `Cette photo deviendra aussi celle de « ${nom} » ${ou} et ne pourra plus en être retirée d'ici (seulement remplacée).`
+    + (nbAutres ? `\n\n${nbAutres > 1 ? `Les ${nbAutres} autres dosages la reçoivent` : "L'autre dosage la reçoit"} seulement sur l'accueil.` : "")
+    + "\n\nContinuer ?";
+}
+
+// ── envois et recherches en cours, hors des composants ──
+// Un onglet quitté puis rouvert (ou l'écran de connexion après expiration du jeton) montre toujours « Envoi… » et ses
+// boutons restent désactivés : pas de second envoi croisé sur la même famille. Un envoi en cours fait aussi demander
+// confirmation avant de fermer ou recharger la page (beforeunload) et de quitter l'admin (AdminPanel).
+const lignes = new Map();   // CIP du dosage montré → { occupe: "recherche" | "envoi" | null, message, ton, n }
+const abonnes = new Set();
+let enCours = 0, numero = 0;
+const avantDeQuitter = (e) => { e.preventDefault(); e.returnValue = ""; };
+export const etatLigne = (cip) => lignes.get(cip) || null;
+export function noterLigne(cip, e = {}) {
+  lignes.set(cip, { occupe: null, message: "", ton: "neutral", ...e, n: ++numero });   // n : un refus répété est relu
+  abonnes.forEach(f => f());
+}
+export function abonnerLignes(f) { abonnes.add(f); return () => { abonnes.delete(f); }; }
+export const envoisEnCours = () => enCours > 0;
+export async function suivre(promesse) {
+  if (enCours++ === 0 && typeof window !== "undefined") window.addEventListener("beforeunload", avantDeQuitter);
+  try { return await promesse; } finally {
+    if (--enCours === 0 && typeof window !== "undefined") window.removeEventListener("beforeunload", avantDeQuitter);
+  }
 }
 
 // ── navigateur : décodage, réduction, envoi ──
@@ -137,13 +191,14 @@ export async function preparerPhoto(fichier) {
   try { d = await decoder(fichier); } catch { throw new Error("Photo illisible : le fichier est peut-être abîmé. Essayez-en une autre."); }
   try {
     if (!(d.largeur > 0 && d.hauteur > 0)) throw new Error("Photo illisible : dimensions inconnues. Essayez-en une autre.");
-    const { largeur, hauteur, reduite } = dimensions(d.largeur, d.hauteur);
+    const { largeur, hauteur } = dimensions(d.largeur, d.hauteur);
     const canvas = document.createElement("canvas");
     canvas.width = largeur; canvas.height = hauteur;
     const ctx = canvas.getContext("2d");
     ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
     ctx.drawImage(d.source, 0, 0, largeur, hauteur);
-    // JPG → JPG ; PNG ou WebP (transparence possible) → WebP, ou PNG si le navigateur ne sait pas écrire le WebP
+    // JPG → JPG ; PNG ou WebP (transparence possible) → WebP, ou PNG si le navigateur ne sait pas écrire le WebP.
+    // Toujours le fichier réencodé, même un peu plus lourd que l'original : rien de ses métadonnées ne part.
     let blob = null;
     if (type === "image/jpeg") blob = await versBlob(canvas, "image/jpeg", QUALITE);
     else {
@@ -151,9 +206,7 @@ export async function preparerPhoto(fichier) {
       if (!blob || blob.type !== "image/webp") blob = await versBlob(canvas, "image/png");
     }
     if (!blob || !TYPES[blob.type]) throw new Error("Réduction de la photo impossible dans ce navigateur : essayez avec Chrome.");
-    // PNG ou WebP déjà assez petit et plus léger tel quel : envoyé sans changement (JPG : toujours réencodé, sans métadonnées)
-    const final = !reduite && type !== "image/jpeg" && fichier.size <= blob.size ? fichier : blob;
-    return { base64: await enBase64(final), mimeType: final === fichier ? type : blob.type, largeur, hauteur, octets: final.size };
+    return { base64: await enBase64(blob), mimeType: blob.type, largeur, hauteur, octets: blob.size };
   } finally { d.fermer(); }
 }
 

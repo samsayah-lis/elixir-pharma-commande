@@ -7,7 +7,9 @@
 // locales pour les dates et les menus). Repli automatique montré avec la règle de la page (repliMenus).
 // Photo : banque d'images, adresse https, ou « Ajouter une photo » de l'ordinateur (photo-manuelle.js : réduite, envoyée
 // par product-upload-image sous une clé « accueil-… » neuve à chaque envoi : catalogue intact, version en ligne inchangée
-// jusqu'à « Publier »).
+// jusqu'à « Publier »). État de la photo de chaque mise en avant tenu ici, pas dans le formulaire : fermé puis rouvert
+// pendant un envoi, il montre toujours « Envoi… » ; un jeton par mise en avant fait ignorer une réponse dépassée (envoi
+// ou recherche plus ancien, adresse collée ou retour au catalogue entre-temps) : le dernier choix l'emporte.
 import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { T, R, fmtEur, fmtPct, tone, ui } from "../theme.js";
 import { teinteDominante } from "./teinte-photo.js";
@@ -15,7 +17,7 @@ import { LIMITES, MAX_VISIBLES, couleurDe, couleurMenu, dateTexte, finEffective,
   repliMenus, teintes, titreMenu, titreParDefaut } from "./accueil/vedettes.js";
 import { erreursBrouillon, etatDate } from "./accueil/vedettes-regles.js";
 import { photo, useMedia } from "./accueil/outils.js";
-import { ACCEPT, AIDE, cleMiseEnAvant, controlerFichier, envoyerPhoto, preparerPhoto } from "./photo-manuelle.js";
+import { ACCEPT, AIDE, cleMiseEnAvant, controlerFichier, envoyerPhoto, preparerPhoto, suivre } from "./photo-manuelle.js";
 
 const ApercuMea = React.lazy(() => import("./accueil/ApercuMea.jsx"));
 const CLE = "accueil_vedettes";
@@ -49,6 +51,8 @@ const heure = (iso) => { const d = new Date(iso || Date.now()); return `${d.getH
 const intertitre = { fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", color: T.inkMute };
 const champ = { ...ui.input, minHeight: 36, padding: "7px 10px", fontSize: 13 };
 const COULEUR_MESSAGE = { ok: T.ok, warn: T.warn, danger: T.danger };
+// zone de message de la photo : toujours présente (lue dès son premier message), masquée vide
+const CACHE = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", clipPath: "inset(50%)", whiteSpace: "nowrap" };
 
 // accents : couleur de chaque rayon (clé → accent, celle du catalogue du site) pour la teinte « Auto » d'un produit
 export default function AdminVedettes({ adminFetch, promos = [], displayConfig = {}, accents = {}, setTab, onDirtyChange }) {
@@ -62,6 +66,8 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const [etats, setEtats] = useState({});             // publiés : id → { statut }
   const [verif, setVerif] = useState({});             // CIP → { offre, raisons } | { erreur }
   const [couleurMsg, setCouleurMsg] = useState({});   // id → message de la couleur automatique
+  const [photoEtats, setPhotoEtats] = useState({});   // id → { occupe: "recherche" | "envoi" | null, texte, ton, n }
+  const jetons = useRef(new Map());                   // id → numéro de la dernière opération sur la photo
   const [apercu, setApercu] = useState(false);
   const verifRef = useRef(verif); verifRef.current = verif;
   const aujourdhui = jourParis();
@@ -183,6 +189,45 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
         : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
     });
   };
+  // ── photo d'une mise en avant : banque d'images, ordinateur, adresse ; la dernière opération lancée l'emporte ──
+  const photoDefaut = (it) => (it.type === "produit" ? offreDe(it)?.image_url : (menuDe(it)?.products || []).find(p => p.image_url)?.image_url);
+  const changerImage = (it, image) => { modifier(it.id, { image }); calculerTeinte(it.id, image || photoDefaut(it)); };
+  const noterPhoto = (id, e) => setPhotoEtats(x => ({ ...x, [id]: e ? { occupe: null, texte: "", ton: "neutral", ...e, n: (x[id]?.n || 0) + 1 } : null }));
+  const jeton = (id) => { const n = (jetons.current.get(id) || 0) + 1; jetons.current.set(id, n); return () => jetons.current.get(id) === n; };
+  // adresse collée, retour à la photo du catalogue, carte retirée : choix explicite, une réponse en cours ne l'écrase plus
+  const imageManuelle = (it, image) => { jeton(it.id); noterPhoto(it.id, null); if ((it.image || null) !== image) changerImage(it, image); };
+  const chercherPhoto = async (it) => {
+    const actuel = jeton(it.id);
+    noterPhoto(it.id, { occupe: "recherche", texte: "Recherche…" });
+    try {
+      const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(it.cip)}`);
+      if (!actuel()) return;
+      if (r.status === 429 || r.status === 503) { noterPhoto(it.id, { texte: "Base d'images saturée : réessayez dans une minute.", ton: "warn" }); return; }
+      const j = r.ok ? await r.json().catch(() => null) : null;
+      if (!actuel()) return;
+      if (j?.image_url && /^https:\/\//.test(j.image_url)) { changerImage(it, j.image_url); noterPhoto(it.id, { texte: "Photo trouvée." }); } else noterPhoto(it.id, { texte: "Aucune photo trouvée." });
+    } catch { if (actuel()) noterPhoto(it.id, { texte: "Base d'images injoignable.", ton: "warn" }); }
+  };
+  // photo de l'ordinateur : réduite, envoyée (clé « accueil-… » : le catalogue n'est pas touché), mise dans le brouillon
+  const ajouterPhoto = (it, fichier) => {
+    const refus = controlerFichier(fichier);
+    if (refus) { noterPhoto(it.id, { texte: refus, ton: "danger" }); return undefined; }
+    const actuel = jeton(it.id);
+    return suivre((async () => {
+      noterPhoto(it.id, { occupe: "envoi", texte: "Préparation de la photo…" });
+      try {
+        const prete = await preparerPhoto(fichier);
+        if (!actuel()) return;
+        noterPhoto(it.id, { occupe: "envoi", texte: "Envoi de la photo…" });
+        const url = await envoyerPhoto(adminFetch, cleMiseEnAvant(it), prete);
+        if (!actuel()) return;
+        changerImage(it, url);
+        // banc d'essai : adresse locale, que la règle des mises en avant (https) refuse à la publication
+        noterPhoto(it.id, { texte: /^https:\/\//.test(url) ? `✓ Photo ajoutée : visible sur l'accueil après « Publier »${it.type === "produit" ? " (le catalogue n'est pas modifié)" : ""}.`
+          : "✓ Photo ajoutée (banc d'essai : adresse locale, refusée à la publication ; en ligne, l'adresse est en https).", ton: "ok" });
+      } catch (e) { if (actuel()) noterPhoto(it.id, { texte: e.message, ton: "danger" }); }
+    })());
+  };
   const ajouter = (type, place, objet) => {
     const dernier = Math.max(0, ...items.filter(i => i.emplacement === place).map(i => i.ordre));
     const it = { id: nouvelId(), type, cip: type === "produit" ? objet.cip : null, menu_id: type === "menu" ? String(objet.id) : null, emplacement: place,
@@ -267,9 +312,9 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
                 menu={menuDe(it)} offre={offreDe(it)} couleur={couleur(it)} ouvert={ouvert === it.id} onOuvrir={() => setOuvert(o => (o === it.id ? null : it.id))}
                 onMonter={() => deplacer(it.id, -1)} onDescendre={() => deplacer(it.id, 1)} onMasquer={() => modifier(it.id, { actif: !it.actif })} onSupprimer={() => supprimer(it)} ouvrirPromos={ouvrirPromos}>
                 {ouvert === it.id && <Formulaire it={it} titreDefaut={it.type === "menu" ? titreMenu(menuDe(it)) : titreParDefaut(offreDe(it))} menu={menuDe(it) || menuRangement(it)}
-                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]} adminFetch={adminFetch}
-                  onChange={(patch) => { modifier(it.id, patch); if ("image" in patch) calculerTeinte(it.id, patch.image || (it.type === "produit" ? offreDe(it)?.image_url : (menuDe(it)?.products || []).find(p => p.image_url)?.image_url)); }}
-                  onPlace={(p) => changerPlace(it.id, p)} />}
+                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]}
+                  nom={titreDe(it)} photoEtat={photoEtats[it.id]} onChercher={() => chercherPhoto(it)} onFichier={(f) => ajouterPhoto(it, f)} onImage={(image) => imageManuelle(it, image)}
+                  onChange={(patch) => modifier(it.id, patch)} onPlace={(p) => changerPlace(it.id, p)} />}
               </Ligne>
             ))}
             {auto[place].length > 0 && (
@@ -365,46 +410,29 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
 
 function Compteur({ v, max }) { return <span style={{ fontSize: 11, fontWeight: 600, color: v > max ? T.danger : T.inkMute }}>{v}/{max}</span>; }
 
-function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, adminFetch, onChange, onPlace }) {
+function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, nom, photoEtat, onChercher, onFichier, onImage, onChange, onPlace }) {
   const [adresse, setAdresse] = useState(it.image || "");
-  const [banque, setBanque] = useState(null);   // message de la photo : { texte, ton }
-  const dire = (texte, ton = "neutral") => setBanque(texte ? { texte, ton } : null);
-  const [envoi, setEnvoi] = useState(false);
+  useEffect(() => { setAdresse(it.image || ""); }, [it.image]);   // photo trouvée ou envoyée, même formulaire rouvert
+  const etat = photoEtat || {}, occupe = !!etat.occupe, envoi = etat.occupe === "envoi";
   const fichierRef = useRef(null);
   const err = (k) => erreurs.find(e => e.champ === k);
   // même propriété que le champ (border) : rien de mélangé quand l'erreur disparaît (avertissement de React, bordure perdue)
   const bord = (k) => (err(k) ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 1px ${T.danger}` } : {});
   const medicament = it.type === "produit" && /^34009/.test(it.cip || "");
   const finMenu = menu?.endDate ? String(menu.endDate).slice(0, 10) : null;
-  const chercher = async () => {
-    dire("Recherche…");
-    try {
-      const r = await adminFetch(`/.netlify/functions/medipim-lookup?cip=${encodeURIComponent(it.cip)}`);
-      if (r.status === 429 || r.status === 503) { dire("Base d'images saturée : réessayez dans une minute", "warn"); return; }
-      const j = r.ok ? await r.json() : null;
-      if (j?.image_url && /^https:\/\//.test(j.image_url)) { onChange({ image: j.image_url }); setAdresse(j.image_url); dire("Photo trouvée"); } else dire("Aucune photo trouvée");
-    } catch { dire("Base d'images injoignable", "warn"); }
-  };
-  // photo de l'ordinateur : réduite, envoyée (clé « accueil-… » : le catalogue n'est pas touché), mise dans le brouillon
-  const ajouterPhoto = async (fichier) => {
-    const refus = controlerFichier(fichier);
-    if (refus) { dire(refus, "danger"); return; }
-    setEnvoi(true); dire("Préparation de la photo…");
-    try {
-      const prete = await preparerPhoto(fichier);
-      dire("Envoi de la photo…");
-      const url = await envoyerPhoto(adminFetch, cleMiseEnAvant(it), prete);
-      onChange({ image: url }); setAdresse(url);
-      // banc d'essai : adresse locale, que la règle des mises en avant (https) refuse à la publication
-      dire(/^https:\/\//.test(url) ? `✓ Photo ajoutée : visible sur l'accueil après « Publier »${it.type === "produit" ? " (le catalogue n'est pas modifié)" : ""}.`
-        : "✓ Photo ajoutée (banc d'essai : adresse locale, refusée à la publication ; en ligne, l'adresse est en https).", "ok");
-    } catch (e) { dire(e.message, "danger"); }
-    setEnvoi(false);
-  };
   const choisir = () => { if (fichierRef.current) { fichierRef.current.value = ""; fichierRef.current.click(); } };
+  const quoi = it.type === "menu" ? "la carte de devant" : "la photo";
+  const libelleFichier = it.image ? "Remplacer la photo" : "Ajouter une photo";
   const boutonFichier = (<>
-    <button type="button" onClick={choisir} disabled={envoi} title={AIDE} style={ui.btn("ligne", "s")}>{envoi ? "Envoi…" : it.image ? "Remplacer la photo" : "Ajouter une photo"}</button>
-    <input ref={fichierRef} type="file" accept={ACCEPT} hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) ajouterPhoto(f); }} />
+    <button type="button" onClick={choisir} disabled={occupe} aria-busy={envoi} title={AIDE} style={ui.btn("ligne", "s")}
+      aria-label={envoi ? `Envoi de ${quoi} de « ${nom} » en cours` : `${it.image ? "Remplacer" : "Ajouter"} ${quoi} de « ${nom} »`}>{envoi ? "Envoi…" : libelleFichier}</button>
+    <input ref={fichierRef} type="file" accept={ACCEPT} hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) onFichier(f); }} />
+  </>);
+  const refus = etat.texte && etat.ton === "danger";
+  const styleMessage = { fontSize: 11, color: COULEUR_MESSAGE[etat.ton] || T.inkMute };
+  const message = (<>
+    <span role="status" aria-live="polite" style={etat.texte && !refus ? styleMessage : CACHE}>{refus ? "" : etat.texte}</span>
+    {refus && <span key={etat.n} role="alert" style={styleMessage}>{etat.texte}</span>}
   </>);
   const ligne = { display: "grid", gridTemplateColumns: "120px minmax(0, 1fr)", gap: 10, alignItems: "start", marginBottom: 10 };
   const etiquette = { fontSize: 12, fontWeight: 700, color: T.inkSoft, paddingTop: 8 };
@@ -454,20 +482,20 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
             <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {(it.image || offre?.image_url) ? <img src={photo(it.image || offre.image_url, "thumbnail")} alt="" style={{ width: 44, height: 44, objectFit: "contain", background: "#fff", borderRadius: 6, border: `1px solid ${T.line}` }} />
                 : <span style={{ fontSize: 12, color: T.inkMute }}>Boîte générée (marque, dosage, forme)</span>}
-              <button type="button" onClick={chercher} disabled={envoi} style={ui.btn("ligne", "s")}>Chercher dans la banque d'images</button>
+              <button type="button" onClick={onChercher} disabled={occupe} aria-busy={etat.occupe === "recherche"} style={ui.btn("ligne", "s")}>{etat.occupe === "recherche" ? "Recherche…" : "Chercher dans la banque d'images"}</button>
               {boutonFichier}
-              {it.image && <button type="button" onClick={() => { onChange({ image: null }); setAdresse(""); dire(""); }} disabled={envoi} style={ui.btn("ligne", "s")}>Revenir à la photo du catalogue</button>}
-              {banque && <span role="status" style={{ fontSize: 11, color: COULEUR_MESSAGE[banque.ton] || T.inkMute }}>{banque.texte}</span>}
+              {it.image && <button type="button" onClick={() => onImage(null)} disabled={occupe} style={ui.btn("ligne", "s")}>Revenir à la photo du catalogue</button>}
+              {message}
             </span>
-            <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => onChange({ image: adresse.trim() || null })} placeholder="Coller une adresse https://…" style={{ ...champ, marginTop: 6, ...bord("image") }} />
+            <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => { if (adresse.trim() !== (it.image || "")) onImage(adresse.trim() || null); }} placeholder="Coller une adresse https://…" aria-label="Adresse https de la photo" style={{ ...champ, marginTop: 6, ...bord("image") }} />
           </>) : (<>
             <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
               {it.image && <img src={photo(it.image, "thumbnail")} alt="" style={{ width: 44, height: 44, objectFit: "contain", background: "#fff", borderRadius: 6, border: `1px solid ${T.line}` }} />}
               {boutonFichier}
-              {it.image && <button type="button" onClick={() => { onChange({ image: null }); setAdresse(""); dire(""); }} disabled={envoi} style={ui.btn("ligne", "s")}>Retirer la carte de devant</button>}
-              {banque && <span role="status" style={{ fontSize: 11, color: COULEUR_MESSAGE[banque.ton] || T.inkMute }}>{banque.texte}</span>}
+              {it.image && <button type="button" onClick={() => onImage(null)} disabled={occupe} style={ui.btn("ligne", "s")}>Retirer la carte de devant</button>}
+              {message}
             </span>
-            <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => onChange({ image: adresse.trim() || null })} placeholder="Carte de devant : adresse https://… (facultatif)" style={{ ...champ, ...bord("image") }} />
+            <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => { if (adresse.trim() !== (it.image || "")) onImage(adresse.trim() || null); }} placeholder="Carte de devant : adresse https://… (facultatif)" aria-label="Adresse https de la carte de devant" style={{ ...champ, ...bord("image") }} />
             <span style={{ ...aide, display: "block" }}>L'éventail montre les photos du menu dans son ordre ; moins de 3 photos : complété par des cartes texte.</span>
           </>)}
         </span>

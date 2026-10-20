@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { T } from "../theme.js";
 import AdminAccueil from "./AdminAccueil.jsx";
 
-export default function AdminDisplay({ displayConfig, saveDisplayConfig, orderedKeys, allMeta, allSectionKeys, hiddenTabs, defaultTab, syncConfigToSupabase, flash, setTab, adminFetch, promos, onVedettesDirty }) {
+export default function AdminDisplay({ displayConfig, saveDisplayConfig, orderedKeys, allMeta, allSectionKeys, hiddenTabs, defaultTab, syncConfigToSupabase, flash, setTab, adminFetch, promos, onVedettesDirty, majAccueil }) {
   // Local state
   const [dragIdx, setDragIdx] = useState(null);
   const [editingSubtitle, setEditingSubtitle] = useState(null);
@@ -73,7 +73,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
             </div>
 
             {/* Page d'accueil (docs/accueil.md) : réglages et aperçu du classement */}
-            <AdminAccueil displayConfig={displayConfig} saveDisplayConfig={saveDisplayConfig} adminFetch={adminFetch} promos={promos} setTab={setTab} onVedettesDirty={onVedettesDirty}
+            <AdminAccueil displayConfig={displayConfig} majAccueil={majAccueil} adminFetch={adminFetch} promos={promos} setTab={setTab} onVedettesDirty={onVedettesDirty}
               accents={Object.fromEntries(Object.entries(allMeta || {}).map(([k, m]) => [k, m?.accent]))} />
 
             {/* Ordre + visibilité des onglets */}

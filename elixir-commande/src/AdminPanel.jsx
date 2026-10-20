@@ -12,6 +12,7 @@ import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
 import AdminAssistant from "./components/AdminAssistant.jsx";
+import { envoisEnCours } from "./components/photo-manuelle.js";
 import { T, R, tone, alpha, adm } from "./theme.js";
 import { Icone, CroixElixir } from "./icons.jsx";
 
@@ -96,7 +97,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const quitterAssistant = (suite) => !assistantDirtyRef.current || window.confirm(`Des réglages de l'Assistant ne sont pas enregistrés. ${suite}`);
   const vedettesDirtyRef = useRef(false);   // mises en avant de l'accueil modifiées, non publiées (onglet Affichage)
   const onVedettesDirty = useCallback((d) => { vedettesDirtyRef.current = d; }, []);
-  const quitterVedettes = (suite) => !vedettesDirtyRef.current || window.confirm(`Des mises en avant de l'accueil ne sont pas publiées. ${suite}`);
+  // + photo de la page d'accueil en cours d'envoi (photo-manuelle.js) : quitter ne l'annule pas, mais son résultat ne se voit plus
+  const quitterVedettes = (suite) => (!vedettesDirtyRef.current || window.confirm(`Des mises en avant de l'accueil ne sont pas publiées. ${suite}`))
+    && (!envoisEnCours() || window.confirm(`Une photo de la page d'accueil est en cours d'envoi : attendez quelques secondes pour voir si elle a réussi. ${suite}`));
   const adminFetch = useCallback(async (url, options = {}) => {
     const token = localStorage.getItem("admin_token") || "";
     const headers = { "Authorization": `Bearer ${token}`, ...(options.headers || {}) };
@@ -215,6 +218,21 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     localStorage.setItem("display_config", JSON.stringify(merged));
     publier("display_config", merged).then(signalerPublication);
   };
+
+  // Page d'accueil (AdminAccueil) : changement de display_config.accueil calculé sur la DERNIÈRE version de ce navigateur
+  // (fn : accueil → nouvel accueil), même si l'onglet Affichage a été quitté ou remonté pendant un envoi de photo ou une
+  // recherche : jamais un accueil ni une saveDisplayConfig d'un ancien rendu (qui republieraient des réglages périmés).
+  // Deux appels avant le rendu suivant s'enchaînent (dcRef mis à jour tout de suite). Publié par la saveDisplayConfig du
+  // dernier rendu (base / 409 inchangés) → promesse du résultat de cette publication ({ ok } ou { conflit | bloque | erreur },
+  // déjà signalé par signalerPublication) : la file des écritures de display_config porte cette publication en dernier.
+  const dcRef = useRef(displayConfig); dcRef.current = displayConfig;
+  const saveDcRef = useRef(saveDisplayConfig); saveDcRef.current = saveDisplayConfig;
+  const majAccueil = useCallback((fn) => {
+    const accueil = fn(dcRef.current.accueil || {});
+    dcRef.current = { ...dcRef.current, accueil };
+    saveDcRef.current({ accueil });
+    return fileConfig.current.display_config || Promise.resolve({ ok: false, erreur: "publication non lancée" });
+  }, []);
 
   const fetchProducts = async () => {
     setProductsLoading(true);
@@ -1754,7 +1772,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             orderedKeys={orderedKeys} allMeta={allMeta} allSectionKeys={allSectionKeys}
             hiddenTabs={hiddenTabs} defaultTab={defaultTab}
             syncConfigToSupabase={syncConfigToSupabase} flash={flash} setTab={setTab} adminFetch={adminFetch}
-            promos={promos} onVedettesDirty={onVedettesDirty}
+            promos={promos} onVedettesDirty={onVedettesDirty} majAccueil={majAccueil}
           />
         )}
 

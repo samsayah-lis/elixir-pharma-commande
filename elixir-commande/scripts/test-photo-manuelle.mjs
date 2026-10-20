@@ -1,12 +1,14 @@
 // Tests de « Ajouter une photo » (admin, page d'accueil) : node scripts/test-photo-manuelle.mjs
 // Hors ligne, sans navigateur ni réseau : parties pures de src/components/photo-manuelle.js (contrôle du fichier, taille
-// d'arrivée, anti-cache ?v=, adresse renvoyée, clés de rangement, dosages visés d'une famille, menus du catalogue) et envoi
-// par product-upload-image avec un adminFetch simulé (corps envoyé, réponses de la fonction, messages d'erreur, second
-// appel qui range l'adresse avec ?v= au catalogue). La réduction
+// d'arrivée, anti-cache ?v=, adresse renvoyée, clés de rangement, lien au catalogue, dosages visés d'une famille, menus du
+// catalogue, question avant l'envoi, état des lignes hors des composants) et envoi par product-upload-image avec un
+// adminFetch simulé (corps envoyé, réponses de la fonction, messages d'erreur, second appel qui range l'adresse avec ?v= au
+// catalogue). La réduction
 // elle-même (canvas) se vérifie au banc, dans un vrai navigateur. L'adresse produite passe la règle des mises en avant
 // du serveur (netlify/functions/_accueil-vedettes.js : https, 500 caractères au plus).
-import { adresseRecue, auCatalogue, avecVersion, ciblesFamille, cleMiseEnAvant, controlerFichier, dimensions, envoyerPhoto, estPhotoEnvoyee,
-  MAX_OCTETS, MENUS_AVEC_PHOTOS, MENUS_CATALOGUE, poseeIci, portee, typeDuFichier, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
+import { abonnerLignes, adresseRecue, auCatalogue, avecVersion, ciblesFamille, cleDuFichier, cleEnvoi, cleMiseEnAvant, controlerFichier, dimensions,
+  envoisEnCours, envoyerPhoto, estPhotoEnvoyee, etatLigne, liee, MAX_OCTETS, memeForme, MENUS_AVEC_PHOTOS, MENUS_CATALOGUE, noterLigne, portee,
+  questionCatalogue, repartitionFamille, suivre, typeDuFichier, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
 import { ORDRE_MENUS } from "../netlify/functions/_accueil-selection.js";
 
 process.env.SUPABASE_URL = "https://supabase.test";
@@ -36,8 +38,20 @@ egal("PDF : message clair", controlerFichier(fichier("tarifs.pdf", "application/
 egal("HEIC d'iPhone : message propre", controlerFichier(fichier("IMG_0042.HEIC", "image/heic")), "Photo HEIC (iPhone) non prise en charge : enregistrez-la en JPG, puis réessayez.");
 egal("HEIC sans type déclaré", controlerFichier(fichier("IMG_0042.heic", "")), "Photo HEIC (iPhone) non prise en charge : enregistrez-la en JPG, puis réessayez.");
 egal("fichier vide", controlerFichier(fichier("a.png", "image/png", 0)), "Fichier vide : choisissez une autre photo.");
-egal("15 Mo pile : accepté", controlerFichier(fichier("a.png", "image/png", MAX_OCTETS)), null);
-egal("plus de 15 Mo : refusé avec le poids", controlerFichier(fichier("a.png", "image/png", 23.4 * 1048576)), "Photo trop lourde (23,4 Mo) : 15 Mo au plus.");
+egal("type déclaré hors norme image/jpg (Windows)", typeDuFichier(fichier("a.jpg", "image/jpg")), "image/jpeg");
+egal("type déclaré hors norme image/pjpeg", typeDuFichier(fichier("a.jpg", "image/pjpeg")), "image/jpeg");
+egal("type déclaré hors norme image/x-png", typeDuFichier(fichier("a.png", "image/x-png")), "image/png");
+egal("type déclaré en capitales", typeDuFichier(fichier("a.jpg", "IMAGE/JPEG")), "image/jpeg");
+egal("image d'un type inconnu nommée .jpg : extension (le décodage tranche)", typeDuFichier(fichier("a.jpg", "image/x-citrix-jpeg")), "image/jpeg");
+egal("image d'un type inconnu sans extension connue : refusée", typeDuFichier(fichier("a.bmp", "image/bmp")), null);
+egal("HEIC renommé .jpg : refusé", typeDuFichier(fichier("IMG_1.jpg", "image/heic")), null);
+egal("SVG refusé", typeDuFichier(fichier("logo.svg", "image/svg+xml")), null);
+egal(".jpg en image/jpg : accepté sans message", controlerFichier(fichier("a.jpg", "image/jpg")), null);
+egal("15 Mo pile (15 000 000 octets) : acceptée", controlerFichier(fichier("a.png", "image/png", MAX_OCTETS)), null);
+egal("15 Mo et 1 octet : jamais « (15 Mo) : 15 Mo au plus »", controlerFichier(fichier("a.png", "image/png", 15e6 + 1)), "Photo trop lourde (15,1 Mo) : 15 Mo au plus.");
+egal("15 Mio + 20 Ko : 15,8 Mo comme le Finder", controlerFichier(fichier("a.png", "image/png", 15 * 1048576 + 20480)), "Photo trop lourde (15,8 Mo) : 15 Mo au plus.");
+egal("16 000 000 octets : « 16 Mo » comme le Finder", controlerFichier(fichier("a.png", "image/png", 16e6)), "Photo trop lourde (16 Mo) : 15 Mo au plus.");
+egal("plus de 15 Mo : refusé avec le poids", controlerFichier(fichier("a.png", "image/png", 23.4e6)), "Photo trop lourde (23,4 Mo) : 15 Mo au plus.");
 
 // ── taille d'arrivée (900 px au plus sur le grand côté, jamais agrandie) ──
 egal("paysage 4000 × 3000", dimensions(4000, 3000), { largeur: 900, hauteur: 675, reduite: true });
@@ -69,10 +83,10 @@ vrai("photo envoyée reconnue (Storage)", estPhotoEnvoyee(`${PROD}?v=1`));
 vrai("photo envoyée reconnue (banc)", estPhotoEnvoyee("/banc-photos/elixir-images/products/a.png?v=1"));
 egal("photo de la banque d'images : pas envoyée ici", estPhotoEnvoyee("https://assets.medipim.fr/media/medium/abc.jpg"), false);
 egal("pas d'adresse", estPhotoEnvoyee(undefined), false);
-vrai("photo du catalogue posée d'ici (même fichier, ?v= différent ou absent)", poseeIci(PROD, `${PROD}?v=9`));
-egal("photo du catalogue d'un autre fichier : pas posée d'ici", poseeIci(PROD.replace("2914", "2907"), `${PROD}?v=9`), false);
-egal("photo d'ici de la banque d'images : jamais posée au catalogue", poseeIci("https://assets.medipim.fr/media/medium/abc.jpg", "https://assets.medipim.fr/media/medium/abc.jpg"), false);
-egal("pas de photo au catalogue", poseeIci(null, `${PROD}?v=9`), false);
+egal("clé du fichier envoyé", cleDuFichier(`${PROD}?v=9`), "3400930292914");
+egal("clé du fichier sur le banc", cleDuFichier("/banc-photos/elixir-images/products/accueil-3400930292914-mh0abc12.png?v=1"), "accueil-3400930292914-mh0abc12");
+egal("clé : photo de la banque d'images", cleDuFichier("https://assets.medipim.fr/media/medium/abc.jpg"), null);
+egal("clé : pas d'adresse", cleDuFichier(undefined), null);
 
 // ── clés de rangement des mises en avant : jamais un CIP (catalogue intact), neuve à chaque envoi ──
 const t0 = 1760950000000;
@@ -82,24 +96,54 @@ egal("caractères inattendus retirés", cleMiseEnAvant({ type: "menu", menu_id: 
 vrai("clé acceptée par la fonction et le banc", /^[\w-]{1,80}$/.test(cleMiseEnAvant({ type: "produit", cip: "34009302929141234" }, t0)));
 vrai("deux envois : deux clés", cleMiseEnAvant({ type: "produit", cip: "1" }, t0) !== cleMiseEnAvant({ type: "produit", cip: "1" }, t0 + 1));
 
-// ── dosages visés d'une ligne des plus commandés ──
+// ── lien au catalogue : lu dans accueil.photos (stable), jamais dans l'image_url du GET (cache, PATCH en cours) ──
 const STO = "https://abcdefgh.supabase.co/storage/v1/object/public/elixir-images/products";
-const famille = (photos = {}, catalogue = {}, montre = "B") => {
-  const v = (cip) => ({ cip, image_url: catalogue[cip] || null });
-  const s = { ...v(montre), variantes: ["A", "B", "C", "D", "E"].map(v) };
-  return ciblesFamille(s, photos);
-};
-egal("aucun dosage avec photo : tous, sans doublon du dosage montré", famille(), ["B", "A", "C", "D", "E"]);
-egal("dosage avec photo au catalogue : laissé", famille({}, { E: "https://x.test/e.jpg" }), ["B", "A", "C", "D"]);
-egal("photo de la banque propre à un dosage : gardée", famille({ C: "https://assets.medipim.fr/media/medium/c.jpg" }), ["B", "A", "D", "E"]);
-egal("photo envoyée à la main (accueil seul) : remplacée avec la famille", famille({ A: `${PROD}?v=1`, B: `${PROD}?v=1` }), ["B", "A", "C", "D", "E"]);
-egal("dosage montré : toujours, même avec une photo de la banque", famille({ B: "https://assets.medipim.fr/media/medium/b.jpg" }), ["B", "A", "C", "D", "E"]);
-egal("famille du catalogue posée d'ici (Mounjaro, après rechargement) : tous remplacés",
-  famille(Object.fromEntries("ABCDE".split("").map(c => [c, `${STO}/${c}.webp?v=1`])), Object.fromEntries("ABCDE".split("").map(c => [c, `${STO}/${c}.webp?v=1`]))), ["B", "A", "C", "D", "E"]);
-egal("photo du catalogue venue de la fiche produit (même dossier, pas posée d'ici) : gardée",
-  famille({ B: `${STO}/B.webp?v=1` }, { B: `${STO}/B.webp?v=1`, D: `${STO}/D.jpg` }), ["B", "A", "C", "E"]);
-egal("photo du catalogue d'ailleurs malgré une photo de la banque choisie ici : gardée", famille({ C: "https://assets.medipim.fr/media/medium/c.jpg" }, { C: `${STO}/C.jpg` }), ["B", "A", "D", "E"]);
+const MEDIPIM = "https://assets.medipim.fr/media/medium/c.jpg";
+const OBESO = { key: "obeso", label: "Mounjaro / Wegovy" }, SAISIE = { key: "saisie", label: "Saisie de commande" };
+vrai("Mounjaro (obeso), GET sans image_url, photo envoyée sous son CIP : liée au catalogue", liee({ cip: "3400930292914", image_url: null, menu: OBESO }, { "3400930292914": `${STO}/3400930292914.webp?v=1` }));
+vrai("liée aussi quand le GET a déjà l'image_url", liee({ cip: "3400930292914", image_url: `${STO}/3400930292914.webp?v=1`, menu: OBESO }, { "3400930292914": `${STO}/3400930292914.webp?v=1` }));
+vrai("sur le banc", liee({ cip: "3400930292914", menu: OBESO }, { "3400930292914": "/banc-photos/elixir-images/products/3400930292914.jpg?v=2" }));
+egal("autre dosage avec la photo du dosage montré (accueil seul) : pas liée", liee({ cip: "3400930292907", menu: OBESO }, { "3400930292907": `${STO}/3400930292914.webp?v=1` }), false);
+egal("clé « accueil-… » : pas liée", liee({ cip: "3400930292914", menu: OBESO }, { "3400930292914": `${STO}/accueil-3400930292914-mh0abc12.webp?v=1` }), false);
+egal("photo de la banque d'images : pas liée", liee({ cip: "3400930292914", menu: OBESO }, { "3400930292914": MEDIPIM }), false);
+egal("Saisie : jamais au catalogue", liee({ cip: "3400930199190", menu: SAISIE }, { "3400930199190": `${STO}/3400930199190.webp?v=1` }), false);
+egal("sans photo d'ici", liee({ cip: "3400930292914", menu: OBESO }, {}), false);
+
+// ── clé d'envoi : CIP (catalogue) pour un produit d'un menu du catalogue, sinon accueil seul ──
+egal("Mounjaro (obeso) : son CIP", cleEnvoi({ cip: "3400930292914", menu: OBESO }, t0), "3400930292914");
+egal("Dupixent (Saisie) : clé « accueil-… », catalogue intact", cleEnvoi({ cip: "3400930199190", menu: SAISIE }, t0), `accueil-3400930199190-${t0.toString(36)}`);
+egal("sans menu : accueil seul", cleEnvoi({ cip: "3400930303122" }, t0), `accueil-3400930303122-${t0.toString(36)}`);
+
+// ── dosages visés d'une ligne des plus commandés (photo envoyée une fois, pour le dosage montré) ──
+const v = (cip, { img = null, forme = "KwikPen", menu = OBESO, libelle = cip } = {}) => ({ cip, image_url: img, boite: { forme }, menu, libelle });
+const mounjaro = (opt = {}) => ({ ...v("B", opt.B), variantes: ["A", "B", "C", "D", "E"].map(c => v(c, opt[c])) });
+egal("aucun dosage avec photo : tous, sans doublon du dosage montré", repartitionFamille(mounjaro(), {}), { cibles: ["B", "A", "C", "D", "E"], gardees: [] });
+egal("dosage avec photo au catalogue (fiche produit) : gardé", repartitionFamille(mounjaro({ E: { img: `${STO}/E.jpg` } }), {}),
+  { cibles: ["B", "A", "C", "D"], gardees: [{ cip: "E", libelle: "E", raison: "catalogue" }] });
+egal("photo de la banque propre à un dosage : gardée", repartitionFamille(mounjaro(), { C: MEDIPIM }),
+  { cibles: ["B", "A", "D", "E"], gardees: [{ cip: "C", libelle: "C", raison: "banque" }] });
+egal("photo envoyée d'ici pour l'accueil seul : remplacée avec la famille", ciblesFamille(mounjaro(), { A: `${STO}/B.webp?v=1`, B: `${STO}/B.webp?v=1` }), ["B", "A", "C", "D", "E"]);
+egal("dosage montré : toujours, même avec une photo de la banque", ciblesFamille(mounjaro(), { B: MEDIPIM }), ["B", "A", "C", "D", "E"]);
+egal("dosage montré lié au catalogue (après rechargement) : remplacé avec les dosages de l'accueil seul",
+  ciblesFamille(mounjaro({ B: { img: `${STO}/B.webp?v=1` } }), Object.fromEntries("ABCDE".split("").map(c => [c, `${STO}/B.webp?v=1`]))), ["B", "A", "C", "D", "E"]);
+egal("autre dosage lié au catalogue (montré lors d'un envoi précédent), GET sans image_url : gardé, jamais réécrit",
+  repartitionFamille(mounjaro(), { B: `${STO}/accueil-B-x.webp?v=2`, D: `${STO}/D.webp?v=1` }), { cibles: ["B", "A", "C", "E"], gardees: [{ cip: "D", libelle: "D", raison: "catalogue" }] });
+egal("photo du catalogue d'ailleurs malgré une photo de la banque choisie ici : gardée", ciblesFamille(mounjaro({ C: { img: `${STO}/C.jpg` } }), { C: MEDIPIM }), ["B", "A", "D", "E"]);
+// Dupixent : 300 mg stylo montré ; 200 mg (forme inconnue) la reçoit ; 300 mg seringue (autre forme) ne la reçoit pas
+const dupixent = { ...v("STY", { forme: "Stylo prérempli", menu: SAISIE }), variantes: [v("200", { forme: null, menu: SAISIE, libelle: "200 mg" }),
+  v("STY", { forme: "Stylo prérempli", menu: SAISIE, libelle: "300 mg · stylo" }), v("SER", { forme: "Seringue préremplie", menu: SAISIE, libelle: "300 mg · seringue" })] };
+egal("autre forme de boîte (stylo / seringue) : gardée", repartitionFamille(dupixent, {}), { cibles: ["STY", "200"], gardees: [{ cip: "SER", libelle: "300 mg · seringue", raison: "forme" }] });
+vrai("même forme", memeForme({ boite: { forme: "KwikPen" } }, { boite: { forme: " kwikpen " } }));
+vrai("forme inconnue : même famille", memeForme({ boite: { forme: null } }, { boite: { forme: "Stylo prérempli" } }));
+egal("formes différentes", memeForme({ boite: { forme: "Seringue préremplie" } }, { boite: { forme: "Stylo prérempli" } }), false);
 egal("produit seul", ciblesFamille({ cip: "3400930303122", image_url: null }), ["3400930303122"]);
+
+// ── question avant le premier envoi d'un produit du catalogue ──
+egal("menu en grille, 5 autres dosages", questionCatalogue({ nom_court: "MOUNJARO 5mg", menu: OBESO }, 5),
+  "Cette photo deviendra aussi celle de « MOUNJARO 5mg » dans le menu « Mounjaro / Wegovy » du catalogue et ne pourra plus en être retirée d'ici (seulement remplacée)."
+  + "\n\nLes 5 autres dosages la reçoivent seulement sur l'accueil.\n\nContinuer ?");
+egal("tableau sans photo (Sélection Expert), produit seul", questionCatalogue({ nom_court: "VENTOLINE", menu: { key: "expert", label: "Sélection Expert" } }, 0),
+  "Cette photo deviendra aussi celle de « VENTOLINE » au catalogue (fiche du produit) et ne pourra plus en être retirée d'ici (seulement remplacée).\n\nContinuer ?");
 
 // ── menus du catalogue : où la photo se voit ──
 egal("menus du catalogue = ordre des menus du serveur (ORDRE_MENUS)", MENUS_CATALOGUE, ORDRE_MENUS);
@@ -140,6 +184,27 @@ egal("catalogue : adresse avec ?v= rangée", await versionnerAuCatalogue(simule(
 egal("catalogue : corps { cip, image_url }, aucun fichier renvoyé", JSON.parse(appels.at(-1).options.body), { cip: "3400930292914", image_url: `${PROD}?v=42` });
 egal("catalogue : refus sans erreur levée", await versionnerAuCatalogue(simule(500, { error: "DB update: x" }), "1", PROD), false);
 egal("catalogue : réseau coupé sans erreur levée", await versionnerAuCatalogue(simule(0, {}, { jette: true }), "1", PROD), false);
+
+// ── état des lignes et envois en cours : hors des composants (onglet quitté puis rouvert) ──
+let vus = 0;
+const desabonner = abonnerLignes(() => { vus++; });
+noterLigne("B", { occupe: "envoi", message: "Envoi de la photo…" });
+egal("état gardé hors du composant", [etatLigne("B").occupe, etatLigne("B").message, etatLigne("B").ton], ["envoi", "Envoi de la photo…", "neutral"]);
+const n1 = etatLigne("B").n;
+noterLigne("B", { message: "« a.pdf » n'est pas une photo JPG, PNG ou WebP : choisissez une photo.", ton: "danger" });
+vrai("même refus répété : nouveau numéro (relu par le lecteur d'écran)", etatLigne("B").n > n1 && etatLigne("B").occupe === null);
+desabonner();
+noterLigne("B", {});
+egal("abonnés prévenus, puis plus après désabonnement", vus, 2);
+egal("ligne inconnue", etatLigne("Z"), null);
+let liberer;
+const enVol = suivre(new Promise(ok => { liberer = ok; }));
+vrai("envoi en cours compté (confirmation avant de quitter l'admin)", envoisEnCours());
+liberer("fini");
+egal("résultat transmis", await enVol, "fini");
+egal("plus rien en cours", envoisEnCours(), false);
+await suivre(Promise.reject(new Error("x"))).catch(() => {});
+egal("échec : plus rien en cours non plus", envoisEnCours(), false);
 
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);
