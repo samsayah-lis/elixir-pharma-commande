@@ -193,9 +193,10 @@ const adresse = (chemin) => `http://${HOTE}${chemin}`;
 }
 
 // ── Stock en mémoire (même interface que creerStockPush) ──
-function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], envois = [] } = {}) {
+// comptes : Map(e-mail → CIP actuel dans elixir_pharmacies) ; absent : chaque e-mail d'abonnement rattaché à son CIP
+function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], envois = [], comptes = null } = {}) {
   const db = { ab: lignes.map((l) => ({ failures: 0, created_at: new Date().toISOString(), categories: ["stock", "commandes", "offres"], ...l })), reglages: R.fusionnerReglages(reglages),
-    annonces: [], envois: envois.map((e, i) => ({ id: i + 1, ...e })), appels: [] };
+    annonces: [], envois: envois.map((e, i) => ({ id: i + 1, ...e })), appels: [], comptes, hotes: new Map(), supprimes: [] };
   const copie = (x) => (x ? JSON.parse(JSON.stringify(x)) : x);
   const trace = (n) => db.appels.push(n);
   return {
@@ -211,7 +212,8 @@ function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], envois 
         db.ab.push(n); return copie(n);
       },
       async modifier(id, champs) { trace("modifier"); const l = db.ab.find((x) => x.id === id); if (l) Object.assign(l, champs); return copie(l) || null; },
-      async supprimerIds(ids) { trace("supprimerIds"); db.ab = db.ab.filter((l) => !ids.includes(l.id)); },
+      async supprimerIds(ids) { trace("supprimerIds"); db.supprimes.push(...ids); db.ab = db.ab.filter((l) => !ids.includes(l.id)); },
+      async purgerInactifs(avant) { trace("purgerInactifs"); db.ab = db.ab.filter((l) => l.role !== "pharmacie" || (l.last_seen_at || l.created_at) >= avant); },
       async succes(ids, quand) { trace("succes"); for (const l of db.ab) if (ids.includes(l.id)) Object.assign(l, { last_success_at: quand, failures: 0, last_error: null }); },
       async echec(id, failures, quand, erreur) { trace("echec"); const l = db.ab.find((x) => x.id === id); if (l) Object.assign(l, { failures, last_failure_at: quand, last_error: erreur }); },
       async dePharmacie(cip) { return copie(db.ab.filter((l) => l.role === "pharmacie" && l.pharmacy_cip === cip)); },
@@ -227,20 +229,44 @@ function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], envois 
       async parIdem(idem) { return copie(db.annonces.find((a) => a.idem === idem)) || null; },
       async lire(id) { return copie(db.annonces.find((a) => a.id === id)) || null; },
       async enCours(depuis) { return copie(db.annonces.filter((a) => ["en_file", "en_cours"].includes(a.statut) && a.created_at >= depuis)); },
-      async reclamer(id) { const a = db.annonces.find((x) => x.id === id && x.statut === "en_file"); if (!a) return null; a.statut = "en_cours"; return copie(a); },
+      // index unique push_annonces_une_en_cours : une seule annonce « en_cours »
+      async reclamer(id) {
+        const a = db.annonces.find((x) => x.id === id && x.statut === "en_file");
+        if (!a || db.annonces.some((x) => x.statut === "en_cours")) return null;
+        a.statut = "en_cours"; a.started_at = new Date().toISOString(); return copie(a);
+      },
+      async diffusionEnCours() { return copie(db.annonces.filter((a) => a.statut === "en_cours")); },
+      async liberer(avant) { for (const a of db.annonces) if (a.statut === "en_cours" && a.started_at < avant) Object.assign(a, { statut: "erreur", erreur: "Envoi interrompu" }); },
       async terminer(id, champs) { Object.assign(db.annonces.find((a) => a.id === id), champs, { finished_at: new Date().toISOString() }); },
       async lister() { return copie(db.annonces.slice().reverse()); },
     },
     envois: {
       async ajouter(l) { for (const e of l) db.envois.push({ id: db.envois.length + 1, created_at: new Date().toISOString(), ...e }); },
+      async corriger(annonceId, reussis) { for (const e of db.envois) if (e.annonce_id === annonceId && reussis.has(e.pharmacy_cip)) e.nb_reussis = reussis.get(e.pharmacy_cip); },
       async plafond(depuis) { const n = new Map(); for (const e of db.envois) if (e.categorie === "offres" && e.nb_reussis > 0 && e.created_at >= depuis) n.set(e.pharmacy_cip, (n.get(e.pharmacy_cip) || 0) + 1); return n; },
       async dejaEnvoye(cip, tag) { return db.envois.some((e) => e.pharmacy_cip === cip && e.tag === tag && e.nb_reussis > 0); },
       async purger(avant) { db.envois = db.envois.filter((e) => e.created_at >= avant); },
     },
     async nomPharmacie() { return "PHARMACIE DU TEST"; },
+    async comptes(emails) {
+      trace("comptes");
+      const m = new Map();
+      for (const e of emails) {
+        if (db.comptes) { if (db.comptes.has(e)) m.set(e, db.comptes.get(e)); }
+        else { const l = db.ab.find((x) => x.role === "pharmacie" && String(x.compte_email || "").toLowerCase() === e); if (l) m.set(e, l.pharmacy_cip); }
+      }
+      return m;
+    },
+    hotes: {
+      async noter(h) { db.hotes.set(h, new Date().toISOString()); },
+      async lister() { return [...db.hotes].map(([hote, vu_le]) => ({ hote, vu_le })); },
+      async purger(avant) { for (const [h, d] of db.hotes) if (d < avant) db.hotes.delete(h); },
+    },
   };
 }
-const ligneDe = (ap, extra) => ({ id: crypto.randomUUID(), endpoint: ap.abonnement.endpoint, ...ap.abonnement.keys, role: "pharmacie", ...extra });
+// ligne d'abonnement d'essai ; e-mail de compte par défaut : p<CIP>@pharma.fr
+const ligneDe = (ap, extra = {}) => ({ id: crypto.randomUUID(), endpoint: ap.abonnement.endpoint, ...ap.abonnement.keys, role: "pharmacie",
+  ...(extra.pharmacy_cip && !extra.compte_email ? { compte_email: `p${extra.pharmacy_cip}@pharma.fr` } : {}), ...extra });
 
 {
   // statuts du service push : 404/410 → supprimée ; 429, 500, 403 → échec compté ; aucune réponse → délai dépassé
@@ -617,9 +643,13 @@ const lancements = [];
   eq("pourAnnonce : catégorie offres, CIP filtrés", [appels[2].u.includes("categories=cs.%7Boffres%7D"), appels[2].u.includes('pharmacy_cip=in.("2000001")')], [true, true]);
   eq("pourAnnonce : liste vide → aucun appel", [await s.abonnements.pourAnnonce({ cips: [] }), appels.length], [[], 3]);
   await s.annonces.reclamer("00000000-0000-4000-8000-000000000000");
-  eq("reclamer : écriture conditionnelle (statut en_file)", [appels[3].init.method, appels[3].u.includes("statut=eq.en_file")], ["PATCH", true]);
+  eq("reclamer : annonce bloquée « en_cours » libérée d'abord, puis écriture conditionnelle (statut en_file)",
+    [appels[3].init.method, /statut=eq\.en_cours&started_at=lt\./.test(appels[3].u), appels[4].init.method, appels[4].u.includes("statut=eq.en_file")], ["PATCH", true, "PATCH", true]);
   await s.envois.plafond("2026-10-13T00:00:00.000Z");
-  eq("plafond : offres réussies depuis 7 jours", /categorie=eq\.offres&nb_reussis=gt\.0&created_at=gte\./.test(appels[4].u), true);
+  eq("plafond : offres réussies depuis 7 jours", /categorie=eq\.offres&nb_reussis=gt\.0&created_at=gte\./.test(appels[5].u), true);
+  const s409 = P.creerStockPush({ url: "u", cle: "k", fetch: async (u, init) => new Response(init.method === "PATCH" && u.includes("statut=eq.en_file")
+    ? JSON.stringify({ code: "23505", message: "duplicate key value violates unique constraint" }) : "[]", { status: u.includes("statut=eq.en_file") ? 409 : 200 }) });
+  eq("reclamer : autre annonce en cours (index unique, 23505) → null, l'annonce reste en file", await s409.annonces.reclamer("00000000-0000-4000-8000-000000000000"), null);
   const s404 = P.creerStockPush({ url: "https://essai.supabase.co", cle: "k", fetch: fauxFetch(404, JSON.stringify({ code: "PGRST205", message: "table push_reglages absente" })) });
   let err = null;
   try { await s404.reglages.lire(); } catch (e) { err = e; }
@@ -628,6 +658,190 @@ const lancements = [];
   try { await P.creerStockPush({ url: "https://essai.supabase.co", cle: "" }).reglages.lire({ frais: true }); } catch (e) { errCle = e.code; }
   eq("clé serveur absente → configuration", errCle, "configuration");
   eq("réglages lus : défauts si la ligne est vide", await P.creerStockPush({ url: "u", cle: "k", fetch: fauxFetch(200, "[]") }).reglages.lire(), R.REGLAGES_DEFAUT);
+}
+
+// ── 12. Correctifs de la revue (sécurité, fiabilité) ──
+{
+  // S1 : CIP sentinelles (« 0 », « false ») jamais une identité ; CIP avec espaces nettoyé (même identité que le pilote)
+  const U2 = { ...UTILISATEURS, "jeton-cip0-a": { email: "a0@pharma.fr", isAdmin: false, cip: "0" }, "jeton-cip0-b": { email: "b0@pharma.fr", isAdmin: false, cip: "0" },
+    "jeton-false": { email: "f@pharma.fr", isAdmin: false, cip: "false" }, "jeton-espaces": { email: "e@pharma.fr", isAdmin: false, cip: " 2000001 " },
+    "jeton-num0": { email: "n@pharma.fr", isAdmin: false, cip: 0 } };
+  const verif2 = async (t) => U2[t] || null;
+  const stock = stockMemoire({ reglages: { ouverture: "pilote", pilote_cips: ["2000001"] } });
+  const h = avecTrace(handlerAbonnement({ stock, config: () => CONF, verifierJeton: verif2, transport: async () => new Response(null, { status: 201 }), hotesEssai: ESSAI, journal: () => {} }));
+  for (const j of ["jeton-cip0-a", "jeton-false", "jeton-num0"]) {
+    eq(`CIP sentinelle (${j}) : statut → 403 fiche`, corpsDe(await h(EVT({ action: "statut" }, { jeton: j }))), { error: "fiche" });
+    eq(`CIP sentinelle (${j}) : abonner → 403 fiche, rien d'enregistré`, [corpsDe(await h(EVT({ action: "abonner", abonnement: nouvelAppareil(adresse(`/s1/${j}`)).abonnement, appareil: {} }, { jeton: j }))), stock.db.ab.length],
+      [{ error: "fiche" }, 0]);
+  }
+  const ap = nouvelAppareil(adresse("/s1/esp"));
+  const r = await h(EVT({ action: "abonner", abonnement: ap.abonnement, appareil: {} }, { jeton: "jeton-espaces" }));
+  eq("CIP « 2000001 » avec espaces : nettoyé (pilote reconnu, identité 2000001)", [r.statusCode, stock.db.ab[0]?.pharmacy_cip], [200, "2000001"]);
+  eq("deux officines sans CIP ne se voient jamais (statut de B → 403, appareil de A intact)",
+    [(await h(EVT({ action: "retirer", id: stock.db.ab[0].id }, { jeton: "jeton-cip0-b" }))).statusCode, stock.db.ab.length], [403, 1]);
+  eq("notifierPharmacie : « 0 », « false », espaces", [(await P.notifierPharmacie("0", "stock", { titre: "t" }, { stock, config: CONF })).raison,
+    (await P.notifierPharmacie("false", "stock", { titre: "t" }, { stock, config: CONF })).raison], ["aucun_appareil", "aucun_appareil"]);
+  const vus = [];
+  const rn = await P.notifierPharmacie(" 2000001 ", "stock", { titre: "t" }, { stock, config: CONF, hotesEssai: ESSAI, transport: async (u) => { vus.push(u); return new Response(null, { status: 201 }); } });
+  eq("notifierPharmacie(« 2000001 » avec espaces) : appareil trouvé", [rn.raison, rn.envoyes], [null, 1]);
+}
+{
+  // S2 : une configuration refusée par web-push n'est jamais « prête » et ne supprime AUCUN abonnement
+  for (const sujet of ["https://elixir%pharma.fr", "https://elixirpharma.fr:99999", "https://[elixir]"]) {
+    const c = P.configPush({ ...ENV, VAPID_SUBJECT: sujet });
+    eq(`sujet ${sujet} : configuration non prête, défaut affiché`, [c.ok, c.service.sujet, c.defauts.some((d) => /VAPID_SUBJECT/.test(d)), c.cles], [false, false, true, null]);
+  }
+  const aps = [1, 2, 3].map((i) => nouvelAppareil(adresse(`/s2/${i}`)));
+  const stock = stockMemoire({ lignes: aps.map((ap) => ligneDe(ap, { pharmacy_cip: "2000001" })) });
+  let appels = 0, code = null;
+  const transport = async () => { appels++; return new Response(null, { status: 201 }); };
+  try { await P.envoyerAAppareils(stock.db.ab, P.charge({ titre: "t" }), { cles: { ...CONF.cles, subject: "https://elixir%pharma.fr" } }, { stock, transport, hotesEssai: ESSAI }); }
+  catch (e) { code = e.code; }
+  eq("envoi avec un sujet refusé : exception configuration, aucun appel, aucune suppression", [code, appels, stock.db.supprimes.length, stock.db.ab.length], ["configuration", 0, 0, 3]);
+  const id = (await stock.annonces.creer({ titre: "t", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce.id;
+  const rd = await P.diffuserAnnonce(id, { stock, config: { ...CONF, cles: { ...CONF.cles, subject: "https://[elixir]" } }, transport, hotesEssai: ESSAI });
+  eq("annonce avec un sujet refusé : erreur « configuration », abonnements intacts", [rd.statut, /Configuration VAPID/.test(stock.db.annonces[0].erreur), stock.db.ab.length, appels], ["erreur", true, 3, 0]);
+  // clés d'appareil : point hors de la courbe → refusé à l'abonnement, retiré à l'envoi (seul cas de retrait avant l'envoi)
+  const horsCourbe = b64u(Buffer.concat([Buffer.from([4]), Buffer.alloc(64, 1)]));
+  eq("p256dh hors de la courbe P-256 : refusé à l'abonnement", P.validerAbonnement({ ...aps[0].abonnement, keys: { ...aps[0].abonnement.keys, p256dh: horsCourbe } }).ok, false);
+  const ligneMauvaise = { ...ligneDe(aps[0], { pharmacy_cip: "2000001" }), id: "mauvaise", p256dh: horsCourbe };
+  const rm = await P.envoyerAAppareils([ligneMauvaise], P.charge({ titre: "t" }), { cles: CONF.cles }, { transport, hotesEssai: ESSAI });
+  eq("clés d'appareil illisibles : retiré, jamais appelé", [rm.retires, rm.parLigne.get("mauvaise").erreur, appels], [1, "clés de l'appareil illisibles", 0]);
+}
+{
+  // S3 : abonnement d'un compte qui n'a plus accès à la pharmacie → jamais servi, supprimé
+  const aps = [1, 2, 3].map((i) => nouvelAppareil(adresse(`/s3/${i}`)));
+  const lignes = [ligneDe(aps[0], { pharmacy_cip: "5000001", compte_email: "titulaire@p1.fr" }), ligneDe(aps[1], { pharmacy_cip: "5000001", compte_email: "ancien@p1.fr" }),
+    ligneDe(aps[2], { pharmacy_cip: "5000001", compte_email: "deplace@p1.fr" })];
+  const comptes = new Map([["titulaire@p1.fr", "5000001"], ["deplace@p1.fr", "5000002"]]);   // ancien@ : disparu ; deplace@ : autre CIP
+  const stock = stockMemoire({ lignes, comptes });
+  const vus = [];
+  const transport = async (u) => { vus.push(new URL(u).pathname); return new Response(null, { status: 201 }); };
+  const r = await P.notifierPharmacie("5000001", "stock", { titre: "t" }, { stock, config: CONF, transport, hotesEssai: ESSAI });
+  eq("notifierPharmacie : seul le compte toujours rattaché est servi ; les deux autres supprimés", [r.envoyes, vus, stock.db.ab.map((l) => l.compte_email)],
+    [1, ["/s3/1"], ["titulaire@p1.fr"]]);
+  const stock2 = stockMemoire({ lignes: lignes.map((l) => ({ ...l, categories: ["offres"] })), comptes });
+  const id = (await stock2.annonces.creer({ titre: "t", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce.id;
+  vus.length = 0;
+  const est = await P.destinataires(stock2, { audience: "toutes" });
+  eq("estimation (lecture seule) : comptes retirés écartés, rien supprimé", [est.appareils, stock2.db.ab.length], [1, 3]);
+  await P.diffuserAnnonce(id, { stock: stock2, config: CONF, transport, hotesEssai: ESSAI });
+  eq("annonce : seul le compte rattaché reçoit, les autres supprimés", [vus, stock2.db.ab.length], [["/s3/1"], 1]);
+  const panne = { ...stockMemoire({ lignes }), comptes: async () => { throw new Error("réseau"); } };
+  eq("lecture des comptes impossible : rien n'est envoyé (raison erreur)", (await P.notifierPharmacie("5000001", "stock", { titre: "t" }, { stock: panne, config: CONF, transport, hotesEssai: ESSAI })).raison, "erreur");
+  // ménage : 12 mois sans visite, comptes, envois > 90 jours, annonce bloquée, hôtes
+  const jour = 86400e3, il = (j) => new Date(Date.now() - j * jour).toISOString();
+  const stock3 = stockMemoire({ lignes: [
+    ligneDe(nouvelAppareil(adresse("/m/1")), { pharmacy_cip: "6000001", last_seen_at: il(400), created_at: il(500) }),
+    ligneDe(nouvelAppareil(adresse("/m/2")), { pharmacy_cip: "6000002", last_seen_at: null, created_at: il(370) }),
+    ligneDe(nouvelAppareil(adresse("/m/3")), { pharmacy_cip: "6000003", last_seen_at: il(10), created_at: il(500) }),
+    ligneDe(nouvelAppareil(adresse("/m/4")), { pharmacy_cip: "6000004", compte_email: "parti@x.fr", last_seen_at: il(1) }),
+    { ...ligneDe(nouvelAppareil(adresse("/m/5")), {}), role: "admin", pharmacy_cip: null, compte_email: "pharmacien@elixirpharma.fr", created_at: il(800) },
+  ], envois: [{ categorie: "stock", pharmacy_cip: "6000003", nb_reussis: 1, created_at: il(95) }, { categorie: "stock", pharmacy_cip: "6000003", nb_reussis: 1, created_at: il(5) }] });
+  stock3.db.comptes = new Map([["p6000001@pharma.fr", "6000001"], ["p6000002@pharma.fr", "6000002"], ["p6000003@pharma.fr", "6000003"]]);
+  stock3.db.annonces.push({ id: "bloquee", statut: "en_cours", started_at: il(1), created_at: il(1) });
+  stock3.db.hotes.set("vieux.example.com", il(100));
+  const { creerHandler: handlerMenage } = await import("../netlify/functions/push-menage.js");
+  const journalMenage = [];
+  await handlerMenage({ stock: stock3, config: () => CONF, journal: (o) => journalMenage.push(o) })();
+  eq("ménage : 12 mois sans visite → supprimés (dernière visite, sinon création) ; compte parti → supprimé ; admin gardé",
+    stock3.db.ab.map((l) => l.pharmacy_cip || l.role), ["6000003", "admin"]);
+  eq("ménage : envois > 90 jours purgés, annonce bloquée libérée, hôtes > 90 jours purgés",
+    [stock3.db.envois.length, stock3.db.annonces[0].statut, stock3.db.hotes.size, journalMenage.at(-1).code], [1, "erreur", 0, "ok"]);
+}
+{
+  // S4 : une seule diffusion à la fois ; plafond tenu même pour deux diffusions simultanées ; relance bornée
+  const ap = nouvelAppareil(adresse("/s4/1"));
+  const stock = stockMemoire({ reglages: { ouverture: "toutes", plafond_offres_7j: 2 }, lignes: [ligneDe(ap, { pharmacy_cip: "7000001", categories: ["offres"] })],
+    envois: [{ categorie: "offres", pharmacy_cip: "7000001", nb_reussis: 1, created_at: new Date(Date.now() - 86400e3).toISOString() }] });
+  const a1 = (await stock.annonces.creer({ titre: "a", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce.id;
+  const a2 = (await stock.annonces.creer({ titre: "b", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce.id;
+  let recues = 0, envoisPendant = null;
+  const transport = async () => { recues++; envoisPendant ??= stock.db.envois.filter((e) => e.annonce_id).map((e) => [e.pharmacy_cip, e.nb_reussis]); await pause(30); return new Response(null, { status: 201 }); };
+  const [r1, r2] = await Promise.all([P.diffuserAnnonce(a1, { stock, config: CONF, transport, hotesEssai: ESSAI }), P.diffuserAnnonce(a2, { stock, config: CONF, transport, hotesEssai: ESSAI })]);
+  eq("deux diffusions simultanées : une seule part, l'autre reste en file", [[r1.lancee, r2.lancee].sort(), recues, stock.db.annonces.map((a) => a.statut).sort()],
+    [[false, true], 1, ["en_file", "envoyee"]]);
+  eq("push_envois écrit AVANT l'envoi (compté dans le plafond même si la fonction est coupée)", envoisPendant, [["7000001", 1]]);
+  const enFile = stock.db.annonces.find((a) => a.statut === "en_file");
+  const r3 = await P.diffuserAnnonce(enFile.id, { stock, config: CONF, transport, hotesEssai: ESSAI });
+  eq("relancée ensuite : plafond 2/7 j atteint → personne (jamais 3 sur 7 jours)", [r3.statut, recues, stock.db.annonces.find((a) => a.id === enFile.id).nb_plafonnees], ["envoyee", 1, 1]);
+  // nombres réels corrigés après l'envoi (échec → 0 : non compté dans le plafond)
+  const stockE = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligneDe(nouvelAppareil(adresse("/s4/e")), { pharmacy_cip: "7000002", categories: ["offres"] })] });
+  const ae = (await stockE.annonces.creer({ titre: "e", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce.id;
+  await P.diffuserAnnonce(ae, { stock: stockE, config: CONF, transport: async () => new Response(null, { status: 500 }), hotesEssai: ESSAI });
+  eq("envoi en échec : ligne corrigée à 0 réussi (non comptée)", stockE.db.envois.map((e) => e.nb_reussis), [0]);
+  // relancer : jamais pendant une autre diffusion, jamais au-delà de 24 h
+  const verifierAdmin = async () => ({ admin: { email: "pharmacien@elixirpharma.fr", isAdmin: true } });
+  const lanc = [];
+  const hA = handlerAdmin({ stock, config: () => CONF, verifierAdmin, lancer: async (e, id) => { lanc.push(id); return null; }, journal: () => {} });
+  const vieille = (await stock.annonces.creer({ titre: "v", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce;
+  stock.db.annonces.find((a) => a.id === vieille.id).created_at = new Date(Date.now() - 25 * 3600e3).toISOString();
+  eq("relancer après 24 h → 409 trop_ancienne", corpsDe(await hA(EVT({ action: "relancer", id: vieille.id }, { jeton: "jeton-admin" }))).error, "trop_ancienne");
+  const autre = (await stock.annonces.creer({ titre: "x", corps: "c", url: "/", audience: "toutes", statut: "en_file" })).annonce;
+  stock.db.annonces.find((a) => a.id === autre.id).created_at = new Date(Date.now() - 20 * 60e3).toISOString();
+  stock.db.annonces.find((a) => a.id === vieille.id).statut = "en_cours";
+  eq("relancer pendant une autre diffusion → 409 en_cours, rien lancé", [corpsDe(await hA(EVT({ action: "relancer", id: autre.id }, { jeton: "jeton-admin" }))).error, lanc.length], ["en_cours", 0]);
+  eq("envoyer pendant une diffusion (même ancienne) → 409 en_cours",
+    corpsDe(await hA(EVT({ action: "envoyer", annonce: { titre: "t", corps: "c", url: "/", audience: "toutes" }, idem: "idem-s4-000001" }, { jeton: "jeton-admin" }))).error, "en_cours");
+}
+{
+  // S5 : une redirection du service push n'est jamais suivie (aucun autre hôte appelé)
+  const autreRecu = [];
+  const cibleInterne = http.createServer((req, res) => { autreRecu.push(req.url); res.statusCode = 201; res.end(); });
+  await new Promise((ok) => cibleInterne.listen(0, "127.0.0.1", ok));
+  const relais = http.createServer((req, res) => { req.resume(); res.statusCode = 307; res.setHeader("Location", `http://localhost:${cibleInterne.address().port}/interne/metadata`); res.end(); });
+  await new Promise((ok) => relais.listen(0, "127.0.0.1", ok));
+  const hoteRelais = `127.0.0.1:${relais.address().port}`;
+  const ap = nouvelAppareil(`http://${hoteRelais}/push/1`);
+  const stock = stockMemoire({ lignes: [ligneDe(ap, { pharmacy_cip: "2000001" })] });
+  const r = await P.envoyerAAppareils(stock.db.ab, P.charge({ titre: "t" }), { cles: CONF.cles }, { stock, hotesEssai: [hoteRelais] });
+  const p = [...r.parLigne.values()][0];
+  eq("307 vers un hôte non admis : non suivie, échec « redirection », abonnement gardé, l'autre hôte ne reçoit rien",
+    [p.ok, p.erreur, p.statut, stock.db.ab.length, autreRecu], [false, "redirection", 307, 1, []]);
+  cibleInterne.close(); relais.close();
+}
+{
+  // F2 : URL PostgREST bornées (tranches de 100), même pour 1 000 appareils et 500 pharmacies ; une tranche en échec n'arrête pas les autres
+  const urls = [];
+  let echouer = 0;
+  const fauxFetch = async (u) => { urls.push(u); if (echouer && urls.length === echouer) return new Response("{}", { status: 500 }); return new Response("[]", { status: 200 }); };
+  const s = P.creerStockPush({ url: "https://essai.supabase.co", cle: "k", fetch: fauxFetch });
+  const ids = Array.from({ length: 1000 }, () => crypto.randomUUID());
+  const cips = Array.from({ length: 500 }, (_, i) => String(3400000 + i));
+  await s.abonnements.supprimerIds(ids);
+  await s.abonnements.succes(ids);
+  await s.abonnements.pourAnnonce({ cips });
+  await s.comptes(cips.map((c) => `pharmacie.${c}@exemple-officine.fr`));
+  await s.envois.corriger("00000000-0000-4000-8000-000000000000", new Map(cips.map((c, i) => [c, i % 3])));
+  const longueurs = urls.map((u) => new URL(u).href.length);
+  eq("1 000 appareils, 500 CIP : aucune URL au-delà de 6 Ko", [Math.max(...longueurs) <= 6000, urls.length === 10 + 10 + 5 + 10 + 6], [true, true]);
+  urls.length = 0; echouer = 2;
+  let err = null;
+  try { await s.abonnements.supprimerIds(ids.slice(0, 300)); } catch (e) { err = e.message; }
+  eq("tranche 2 sur 3 en échec : les 3 tranches tentées, erreur levée à la fin", [urls.length, /1 tranche\(s\) sur 3/.test(err || "")], [3, true]);
+}
+{
+  // F8 : service push hors liste → hôte noté (jamais le chemin), visible dans l'état de l'admin
+  const stock = stockMemoire({ reglages: { ouverture: "toutes" } });
+  const h = handlerAbonnement({ stock, config: () => CONF, verifierJeton, hotesEssai: ESSAI, journal: () => {} });
+  const ap = nouvelAppareil("https://push.exemple-navigateur.com/sub/JETON-SECRET-123");
+  eq("hôte hors liste : 400 abonnement", (await h(EVT({ action: "abonner", abonnement: ap.abonnement, appareil: {} }))).statusCode, 400);
+  eq("hôte noté sans chemin ni jeton", [...stock.db.hotes.keys()], ["push.exemple-navigateur.com"]);
+  const verifierAdmin = async () => ({ admin: { email: "pharmacien@elixirpharma.fr", isAdmin: true } });
+  const e = corpsDe(await handlerAdmin({ stock, config: () => CONF, verifierAdmin, journal: () => {} })(EVT({ action: "etat" }, { jeton: "jeton-admin" })));
+  eq("admin : services push refusés listés", [e.hotes_refuses.map((x) => x.hote), JSON.stringify(e).includes("JETON-SECRET")], [["push.exemple-navigateur.com"], false]);
+}
+{
+  // S6c : l'admin retire les appareils d'une pharmacie (demande d'effacement, appareil perdu)
+  const aps = [1, 2, 3].map((i) => nouvelAppareil(adresse(`/s6/${i}`)));
+  const stock = stockMemoire({ lignes: [ligneDe(aps[0], { pharmacy_cip: "8000001" }), ligneDe(aps[1], { pharmacy_cip: "8000001" }), ligneDe(aps[2], { pharmacy_cip: "8000002" })] });
+  const verifierAdmin = async () => ({ admin: { email: "pharmacien@elixirpharma.fr", isAdmin: true } });
+  const hA = avecTrace(handlerAdmin({ stock, config: () => CONF, verifierAdmin, journal: () => {} }));
+  const A = (c) => EVT(c, { jeton: "jeton-admin" });
+  eq("retirer_pharmacie : CIP illisible → 400", (await hA(A({ action: "retirer_pharmacie", cip: "0" }))).statusCode, 400);
+  eq("retirer_pharmacie { id } d'une autre pharmacie → rien", [corpsDe(await hA(A({ action: "retirer_pharmacie", cip: "8000001", id: stock.db.ab[2].id }))).retires, stock.db.ab.length], [0, 3]);
+  eq("retirer_pharmacie { id } → cet appareil", [corpsDe(await hA(A({ action: "retirer_pharmacie", cip: "8000001", id: stock.db.ab[0].id }))).retires, stock.db.ab.length], [1, 2]);
+  eq("retirer_pharmacie { cip } → tous ses appareils, pas ceux des autres", [corpsDe(await hA(A({ action: "retirer_pharmacie", cip: "8000001" }))).retires, stock.db.ab.map((l) => l.pharmacy_cip)], [1, ["8000002"]]);
 }
 
 // ── 10. Aucune réponse de la pharmacie ne contient de secret ──

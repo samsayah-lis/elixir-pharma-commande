@@ -11,12 +11,18 @@
 //    (scripts/test-push-serveur.mjs, hotesEssai). 404/410 du service push : abonnement supprimé (téléphone réinitialisé,
 //    appli supprimée, autorisation retirée).
 //  • Adresses des services push admises (anti-SSRF : le serveur appelle l'adresse donnée par le navigateur) : https sans
-//    port ni identifiants, hôtes de Google (FCM), Mozilla, Apple et Microsoft (WNS) seulement.
+//    port ni identifiants, hôtes de Google (FCM), Mozilla, Apple et Microsoft (WNS) seulement (HOTES_PUSH, regles.js) ;
+//    aucune redirection suivie (redirect: "manual"). Hôte refusé : noté sans chemin ni jeton (push_hotes_refuses).
+//  • Une erreur de CONFIGURATION (sujet VAPID, clés) n'est jamais imputée aux appareils : aucun abonnement supprimé.
+//    Seuls 404/410 du service push, une adresse hors liste ou des clés d'appareil illisibles retirent un abonnement.
+//  • Identité revérifiée à chaque envoi (lignesDesComptesActuels) : l'e-mail du compte doit toujours être rattaché au
+//    CIP de l'abonnement dans elixir_pharmacies ; sinon (pharmacie retirée, e-mail corrigé, ancien salarié) : supprimé.
+//  • Écritures groupées par tranches de 100 identifiants (URL PostgREST bornée, ~4 Ko).
 // Code compatible Node 18 (NODE_VERSION du build) : pas de toSorted, Object.groupBy, Promise.withResolvers.
 import crypto from "node:crypto";
 import webpush from "web-push";
 import {
-  CATEGORIES_DEFAUT, IDS_CATEGORIES, fusionnerReglages, raisonOuverture, lienValide, texteNet, couper, RE_CIP,
+  CATEGORIES_DEFAUT, IDS_CATEGORIES, fusionnerReglages, raisonOuverture, lienValide, texteNet, couper, RE_CIP, cipPropre, HOTES_PUSH,
 } from "../../src/notifications/regles.js";
 
 export const TTL = { offres: 86400, stock: 43200, commandes: 86400, test: 600 };
@@ -26,6 +32,11 @@ export const MAX_APPAREILS = 10;          // appareils par pharmacie
 export const ECHECS_EN_ALERTE = 3;        // « ⚠ ne répond plus » dans les listes
 const ECHECS_SUPPRESSION = 10;            // filet : supprimé après 10 échecs sans succès depuis 30 jours
 const JOUR = 86400e3;
+export const CONSERVATION = { envois_jours: 90, inactif_jours: 365, hotes_jours: 90 };   // ménage quotidien (push-menage)
+export const TRANCHE = 100;               // identifiants par écriture groupée (≈ 4,3 Ko d'URL encodée)
+export const TRANCHE_EMAILS = 50;         // e-mails par lecture de elixir_pharmacies
+export const ANNONCE_BLOQUEE_MIN = 20;    // annonce « en_cours » depuis plus longtemps : interrompue (fonction coupée à 15 min)
+const tranches = (liste, n = TRANCHE) => { const out = []; for (let i = 0; i < liste.length; i += n) out.push(liste.slice(i, i + n)); return out; };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const estUuid = (v) => UUID.test(String(v || ""));
 
@@ -60,6 +71,20 @@ const sansEgal = (s) => String(s ?? "").trim().replace(/=+$/, "");
 
 // ── Configuration (variables Netlify) ──
 const sujetValide = (s) => /^mailto:[^\s@<>"]+@[^\s@<>"]+\.[a-z]{2,}$/i.test(s) || /^https:\/\/[^\s]+$/.test(s);
+// La configuration est-elle acceptée par web-push lui-même ? (jeton VAPID d'essai, rien n'est envoyé) — même contrôle que
+// celui de l'envoi : un sujet https que web-push refuse (« https://elixir%pharma.fr », port invalide…) n'est jamais « prêt ».
+// Gardé par instance (sujet + clé publique).
+const verifsWebpush = new Map();
+function accepteeParWebpush(sujet, pub, priv) {
+  const cle = `${sujet}|${pub}|${empreinte(priv)}`;
+  if (!verifsWebpush.has(cle)) {
+    let ok = true;
+    try { webpush.getVapidHeaders("https://fcm.googleapis.com", sujet, pub, priv, "aes128gcm"); } catch { ok = false; }
+    if (verifsWebpush.size > 20) verifsWebpush.clear();
+    verifsWebpush.set(cle, ok);
+  }
+  return verifsWebpush.get(cle);
+}
 // → { ok, service: { vapid_publique, vapid_privee, vapid_paire, sujet, sujet_defaut, cle_serveur, cron_secret }, defauts: [textes],
 //     cles: { publicKey, privateKey, subject } | null, cle_publique } — défauts et service ne contiennent AUCUNE valeur de clé
 export function configPush(env = process.env) {
@@ -80,8 +105,9 @@ export function configPush(env = process.env) {
     if (!service.vapid_paire) defauts.push("VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY ne vont pas ensemble (les deux doivent venir de la même génération)");
   }
   const sujet = sujetBrut || SUJET_DEFAUT;
-  if (sujetValide(sujet)) service.sujet = true;
-  else defauts.push("VAPID_SUBJECT illisible (mailto:adresse ou https://… attendu)");
+  if (!sujetValide(sujet)) defauts.push("VAPID_SUBJECT illisible (mailto:adresse ou https://… attendu)");
+  else if (service.vapid_paire && !accepteeParWebpush(sujet, pub, priv)) defauts.push("VAPID_SUBJECT refusé par web-push : mettez « mailto:pharmacien@elixirpharma.fr »");
+  else service.sujet = true;
   if (!env.SUPABASE_SERVICE_ROLE_KEY) defauts.push("SUPABASE_SERVICE_ROLE_KEY absente");
   if (!env.SUPABASE_URL) defauts.push("SUPABASE_URL absente");
   const ok = service.vapid_paire && service.sujet && service.cle_serveur;
@@ -90,8 +116,6 @@ export function configPush(env = process.env) {
 }
 
 // ── Abonnement envoyé par le navigateur (PushSubscription.toJSON()) ──
-const HOTES = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/, /^push\.services\.mozilla\.com$/,
-  /^([a-z0-9-]+\.)*push\.apple\.com$/, /^([a-z0-9-]+\.)*notify\.windows\.com$/];
 // hotesEssai : ["127.0.0.1:<port>"] — tests seulement (faux service push en http) ; jamais passé en production
 export function endpointValide(endpoint, hotesEssai = null) {
   const s = String(endpoint || "");
@@ -100,17 +124,29 @@ export function endpointValide(endpoint, hotesEssai = null) {
   if (u.username || u.password || u.hash) return false;
   if (Array.isArray(hotesEssai) && hotesEssai.length && u.protocol === "http:" && hotesEssai.includes(u.host)) return true;
   if (u.protocol !== "https:" || u.port) return false;
-  return HOTES.some((re) => re.test(u.hostname));
+  return HOTES_PUSH.some((re) => re.test(u.hostname));
 }
-// → { ok: true, endpoint, p256dh, auth } | { ok: false, erreur }
+// hôte d'une adresse refusée, pour le journal et l'admin (jamais le chemin ni le jeton qu'il contient) ; null si illisible
+export function hoteDe(endpoint) {
+  try { const h = new URL(String(endpoint || "")).hostname.toLowerCase(); return /^[a-z0-9.-]{1,100}$/.test(h) ? h : null; } catch { return null; }
+}
+// Clés de l'appareil utilisables pour chiffrer : p256dh = point P-256 non compressé SUR la courbe, auth = 16 octets
+let ecdhEssai = null;
+export function clesAppareilValides(p256dh, auth) {
+  const p = b64u(sansEgal(p256dh)), a = b64u(sansEgal(auth));
+  if (!p || p.length !== 65 || p[0] !== 4 || !a || a.length !== 16) return false;
+  try { (ecdhEssai ||= (() => { const e = crypto.createECDH("prime256v1"); e.generateKeys(); return e; })()).computeSecret(p); return true; } catch { return false; }
+}
+// → { ok: true, endpoint, p256dh, auth } | { ok: false, erreur, hote? } (hote : adresse hors liste des services push)
 export function validerAbonnement(sub, { hotesEssai = null } = {}) {
   if (!sub || typeof sub !== "object") return { ok: false, erreur: "abonnement absent" };
   const endpoint = String(sub.endpoint || "");
-  if (!endpointValide(endpoint, hotesEssai)) return { ok: false, erreur: "adresse du service push refusée" };
+  if (!endpointValide(endpoint, hotesEssai)) return { ok: false, erreur: "adresse du service push refusée", hote: hoteDe(endpoint) };
   const p256dh = sansEgal(sub.keys?.p256dh), auth = sansEgal(sub.keys?.auth);
   const p = b64u(p256dh), a = b64u(auth);
   if (!p || p.length !== 65 || p[0] !== 4) return { ok: false, erreur: "clé p256dh illisible" };
   if (!a || a.length !== 16) return { ok: false, erreur: "secret auth illisible" };
+  if (!clesAppareilValides(p256dh, auth)) return { ok: false, erreur: "clé p256dh hors de la courbe P-256" };
   return { ok: true, endpoint, p256dh, auth };
 }
 // comparaison à temps constant (preuve de possession : secret auth de l'abonnement, connu du navigateur et de la base seulement)
@@ -152,25 +188,34 @@ export const sujetDe = (tag) => etiquette(tag, 32);
 // lignes : lignes de push_abonnements ({ id, endpoint, p256dh, auth, failures, last_success_at }) ; chargeTexte : charge()
 // opts : { cles (configPush().cles), ttl, urgence, sujet, delaiMs, parallele } ; deps : { stock, transport, hotesEssai, maintenant, journal }
 // → { envoyes, echecs, retires, parLigne: Map(id → { ok, statut, retiree, erreur }) } ; base mise à jour si deps.stock
+// Configuration VAPID refusée par web-push : exception { code: "configuration" } AVANT tout envoi, aucune ligne touchée.
+// Transport par défaut : fetch sans suivre les redirections (une redirection = échec, jamais un autre hôte appelé).
 export async function envoyerAAppareils(lignes, chargeTexte, opts = {}, deps = {}) {
   const { cles, ttl = 3600, urgence = "normal", sujet = null, delaiMs = 5000, parallele = 20 } = opts;
   if (!cles) throw Object.assign(new Error("clés VAPID absentes"), { code: "configuration" });
-  const transport = deps.transport || ((u, init) => fetch(u, init));
+  // configuration commune (sujet, clés) contrôlée une fois : jamais comptée comme une erreur des appareils
+  try { webpush.getVapidHeaders("https://fcm.googleapis.com", cles.subject, cles.publicKey, cles.privateKey, "aes128gcm"); }
+  catch { throw Object.assign(new Error("configuration VAPID refusée par web-push"), { code: "configuration" }); }
+  const transport = deps.transport || ((u, init) => fetch(u, { ...init, redirect: "manual" }));
   const maintenant = deps.maintenant || (() => new Date());
+  const journal = deps.journal || (() => {});
   const topic = sujetDe(sujet);
   const parLigne = new Map();
   const un = async (l) => {
-    if (!endpointValide(l.endpoint, deps.hotesEssai)) return { ok: false, statut: 0, retiree: true, erreur: "adresse refusée" };
+    if (!endpointValide(l.endpoint, deps.hotesEssai)) return { ok: false, statut: 0, retiree: true, erreur: "adresse refusée", hote: hoteDe(l.endpoint) };
+    // clés de l'appareil illisibles : l'abonnement ne pourra jamais servir (seul cas de retrait avant l'envoi)
+    if (!clesAppareilValides(l.p256dh, l.auth)) return { ok: false, statut: 0, retiree: true, erreur: "clés de l'appareil illisibles" };
     let d;
     try {
       d = webpush.generateRequestDetails({ endpoint: l.endpoint, keys: { p256dh: l.p256dh, auth: l.auth } }, chargeTexte,
         { vapidDetails: cles, TTL: ttl, urgency: urgence, ...(topic ? { topic } : {}) });
-    } catch { return { ok: false, statut: 0, retiree: true, erreur: "clés de l'appareil illisibles" }; }
+    } catch { return { ok: false, statut: 0, erreur: "préparation" }; }   // jamais imputé à l'appareil : rien de retiré
     const headers = { ...d.headers };
     delete headers["Content-Length"];   // calculé par fetch
     try {
       const r = await transport(d.endpoint, { method: d.method, headers, body: d.body, signal: AbortSignal.timeout(delaiMs) });
       try { await r.text(); } catch { /* corps illisible : sans importance */ }
+      if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400)) return { ok: false, statut: r.status, erreur: "redirection" };
       if (r.status >= 200 && r.status < 300) return { ok: true, statut: r.status };
       if (r.status === 404 || r.status === 410) return { ok: false, statut: r.status, retiree: true, erreur: `HTTP ${r.status}` };
       return { ok: false, statut: r.status, erreur: `HTTP ${r.status}` };
@@ -192,10 +237,12 @@ export async function envoyerAAppareils(lignes, chargeTexte, opts = {}, deps = {
     else if (r.retiree) { retires++; aRetirer.push(l.id); }
     else { echecs++; enEchec.push([l, r]); }
   }
+  // hôtes hors liste rencontrés en base (lignes anciennes) : journal et admin, sans chemin ni jeton
+  const hotes = [...new Set([...parLigne.values()].map((r) => r.hote).filter(Boolean))];
+  for (const hote of hotes) journal({ evt: "push_envoi", code: "hote_refuse", hote });
   if (deps.stock) {
     const iso = maintenant().toISOString();
     const limite = maintenant().getTime() - 30 * JOUR;
-    const journal = deps.journal || (() => {});
     const a = deps.stock.abonnements;
     // filet : trop d'échecs d'affilée et aucun succès depuis 30 jours → supprimé
     for (const [l] of enEchec) if ((l.failures || 0) + 1 >= ECHECS_SUPPRESSION && !(Date.parse(l.last_success_at || "") > limite)) aRetirer.push(l.id);
@@ -204,9 +251,32 @@ export async function envoyerAAppareils(lignes, chargeTexte, opts = {}, deps = {
       aRetirer.length ? a.supprimerIds(aRetirer).catch((e) => journal({ evt: "push_base", code: "retrait", erreur: e.message })) : null,
       ...enEchec.filter(([l]) => !aRetirer.includes(l.id)).map(([l, r]) =>
         a.echec(l.id, (l.failures || 0) + 1, iso, r.erreur).catch((e) => journal({ evt: "push_base", code: "echec", erreur: e.message }))),
+      ...hotes.map((h) => deps.stock.hotes?.noter(h).catch(() => {})),
     ]);
   }
   return { envoyes, echecs, retires, parLigne };
+}
+
+// Lignes « pharmacie » dont l'e-mail du compte est TOUJOURS rattaché au CIP de l'abonnement (elixir_pharmacies, clé
+// serveur) ; les autres (pharmacie retirée par la synchro, e-mail corrigé ou passé à une autre officine, ancien salarié)
+// sont supprimées. Lignes admin : gardées (tests et aperçus de l'admin qui les demande). Lecture impossible : exception
+// (rien n'est envoyé plutôt qu'envoyé à un appareil qui n'a plus le droit).
+export async function lignesDesComptesActuels(stock, lignes, { journal = () => {}, supprimer = true } = {}) {
+  const pharmacie = lignes.filter((l) => l.role === "pharmacie");
+  if (!pharmacie.length) return lignes;
+  const emailDe = (l) => String(l.compte_email || "").trim().toLowerCase();
+  const actuels = await stock.comptes([...new Set(pharmacie.map(emailDe).filter(Boolean))]);
+  const garder = [], retirer = [];
+  for (const l of lignes) {
+    if (l.role !== "pharmacie") garder.push(l);
+    else if (actuels.get(emailDe(l)) === String(l.pharmacy_cip)) garder.push(l);
+    else retirer.push(l.id);
+  }
+  if (retirer.length && supprimer) {
+    await stock.abonnements.supprimerIds(retirer).catch((e) => journal({ evt: "push_base", code: "retrait", erreur: e.message }));
+    journal({ evt: "push_abonnement", code: "compte_retire", n: retirer.length });
+  }
+  return garder;
 }
 
 // ── Stockage Supabase (tables push_*, clé serveur) ──
@@ -248,6 +318,15 @@ export function creerStockPush(deps = {}) {
     return out;
   }
   const doublon = (e) => e?.status === 409 || e?.pg === "23505";
+  // une écriture par tranche de TRANCHE identifiants (URL bornée) ; une tranche en échec n'arrête pas les autres,
+  // l'erreur est levée à la fin (« n tranches sur m en échec »)
+  async function parTranches(liste, fn, n = TRANCHE) {
+    const t = tranches(liste, n);
+    let echecs = 0, derniere = null;
+    for (const morceau of t) { try { await fn(morceau); } catch (e) { echecs++; derniere = e; } }
+    if (echecs) throw Object.assign(new Error(`${echecs} tranche(s) sur ${t.length} en échec : ${derniere?.message || derniere}`), { code: derniere?.code });
+    return null;
+  }
 
   const abonnements = {
     async parEndpoint(endpoint) {
@@ -271,9 +350,14 @@ export function creerStockPush(deps = {}) {
         body: { ...champs, updated_at: iso() } })) || [];
       return r || null;
     },
-    supprimerIds(ids) { return ids.length ? sb(`push_abonnements?id=in.${listeIn(ids)}`, { method: "DELETE" }) : null; },
+    supprimerIds(ids) { return ids.length ? parTranches(ids, (t) => sb(`push_abonnements?id=in.${listeIn(t)}`, { method: "DELETE" })) : null; },
     succes(ids, quand = iso()) {
-      return sb(`push_abonnements?id=in.${listeIn(ids)}`, { method: "PATCH", body: { last_success_at: quand, failures: 0, last_error: null } });
+      return parTranches(ids, (t) => sb(`push_abonnements?id=in.${listeIn(t)}`, { method: "PATCH", body: { last_success_at: quand, failures: 0, last_error: null } }));
+    },
+    // ménage : appareils de pharmacie sans ouverture du site depuis `avant` (ISO) — dernière ouverture, sinon création
+    purgerInactifs(avant) {
+      const a = enc(avant);
+      return sb(`push_abonnements?role=eq.pharmacie&or=(last_seen_at.lt.${a},and(last_seen_at.is.null,created_at.lt.${a}))`, { method: "DELETE" });
     },
     echec(id, failures, quand = iso(), erreur = null) {
       return sb(`push_abonnements?id=eq.${enc(id)}`, { method: "PATCH", body: { failures, last_failure_at: quand, last_error: erreur ? String(erreur).slice(0, 60) : null } });
@@ -282,10 +366,12 @@ export function creerStockPush(deps = {}) {
     dePharmacie(cip) { return sb(`push_abonnements?role=eq.pharmacie&pharmacy_cip=eq.${enc(cip)}&select=${COLS}&limit=50`).then((r) => r || []); },
     // annonce « offres » : appareils des pharmacies abonnées aux offres (audience : CIP choisis, ou toutes)
     async pourAnnonce({ cips = null } = {}) {
-      const liste = cips ? cips.map(String).filter((c) => RE_CIP.test(c)) : null;
-      if (liste && !liste.length) return [];
-      const filtre = liste ? `&pharmacy_cip=in.${listeIn(liste)}` : "";
-      return tout(`push_abonnements?role=eq.pharmacie&categories=cs.${enc("{offres}")}${filtre}&select=${COLS}&order=id.asc`);
+      const base = `push_abonnements?role=eq.pharmacie&categories=cs.${enc("{offres}")}`;
+      if (!cips) return tout(`${base}&select=${COLS}&order=id.asc`);
+      const liste = [...new Set(cips.map(String).filter((c) => RE_CIP.test(c)))];
+      const out = [];
+      for (const t of tranches(liste)) out.push(...await tout(`${base}&pharmacy_cip=in.${listeIn(t)}&select=${COLS}&order=id.asc`));
+      return out;
     },
     tous() { return tout(`push_abonnements?select=${COLS}&order=id.asc`); },
   };
@@ -322,19 +408,37 @@ export function creerStockPush(deps = {}) {
     async lire(id) { if (!estUuid(id)) return null; const [r] = (await sb(`push_annonces?id=eq.${id}&select=${COLS_ANNONCE}&limit=1`)) || []; return r || null; },
     // annonces en file ou en cours, créées depuis `depuis` (ISO)
     enCours(depuis) { return sb(`push_annonces?statut=in.(en_file,en_cours)&created_at=gte.${enc(depuis)}&select=id,statut,created_at&limit=5`).then((r) => r || []); },
-    // en_file → en_cours, une seule fois (double lancement sans effet)
+    // annonce en cours de diffusion (une seule à la fois : index unique push_annonces_une_en_cours), quelle que soit sa date
+    diffusionEnCours() { return sb("push_annonces?statut=eq.en_cours&select=id,statut,created_at,started_at&limit=5").then((r) => r || []); },
+    // annonce « en_cours » depuis plus de ANNONCE_BLOQUEE_MIN (fonction coupée) : passée en erreur, le verrou est libéré
+    liberer(avant) {
+      return sb(`push_annonces?statut=eq.en_cours&started_at=lt.${enc(avant)}`, { method: "PATCH",
+        body: { statut: "erreur", erreur: "Envoi interrompu (fonction coupée) : une partie des pharmacies a pu la recevoir.", finished_at: iso() } });
+    },
+    // en_file → en_cours, une seule fois (double lancement sans effet) ; une autre annonce déjà en cours (index unique,
+    // 409/23505) : null, l'annonce reste « en_file » (« Relancer » plus tard) — deux diffusions ne se chevauchent jamais
     async reclamer(id) {
       if (!estUuid(id)) return null;
-      const [r] = (await sb(`push_annonces?id=eq.${id}&statut=eq.en_file&select=${COLS_ANNONCE}`, { method: "PATCH",
-        prefer: "return=representation", body: { statut: "en_cours", started_at: iso() } })) || [];
-      return r || null;
+      await annonces.liberer(new Date(maintenant().getTime() - ANNONCE_BLOQUEE_MIN * 60e3).toISOString()).catch(() => {});
+      try {
+        const [r] = (await sb(`push_annonces?id=eq.${id}&statut=eq.en_file&select=${COLS_ANNONCE}`, { method: "PATCH",
+          prefer: "return=representation", body: { statut: "en_cours", started_at: iso() } })) || [];
+        return r || null;
+      } catch (e) { if (doublon(e)) return null; throw e; }
     },
     terminer(id, champs) { return sb(`push_annonces?id=eq.${id}`, { method: "PATCH", body: { ...champs, finished_at: iso() } }); },
     lister(limite = 50) { return sb(`push_annonces?select=${COLS_ANNONCE}&order=created_at.desc&limit=${Math.max(1, Math.min(200, limite | 0))}`).then((r) => r || []); },
   };
 
   const envois = {
-    ajouter(lignes) { return lignes.length ? sb("push_envois", { method: "POST", prefer: "return=minimal", body: lignes }) : null; },
+    ajouter(lignes) { return lignes.length ? parTranches(lignes, (t) => sb("push_envois", { method: "POST", prefer: "return=minimal", body: t }), 500) : null; },
+    // nombres réels d'une annonce après l'envoi : reussis = Map(cip → appareils joints) ; une écriture par valeur et par tranche
+    async corriger(annonceId, reussis) {
+      const parValeur = new Map();
+      for (const [cip, n] of reussis) { if (!parValeur.has(n)) parValeur.set(n, []); parValeur.get(n).push(cip); }
+      for (const [n, cips] of parValeur)
+        await parTranches(cips, (t) => sb(`push_envois?annonce_id=eq.${enc(annonceId)}&pharmacy_cip=in.${listeIn(t)}`, { method: "PATCH", body: { nb_reussis: n } }));
+    },
     // CIP → nombre d'envois « offres » réussis (≥ 1 appareil joint) depuis `depuis` (ISO)
     async plafond(depuis) {
       const rows = await tout(`push_envois?categorie=eq.offres&nb_reussis=gt.0&created_at=gte.${enc(depuis)}&select=pharmacy_cip&order=id.asc`);
@@ -354,8 +458,25 @@ export function creerStockPush(deps = {}) {
     const [r] = (await sb(`elixir_pharmacies?email=eq.${enc(String(email || "").toLowerCase())}&select=name&limit=1`).catch(() => [])) || [];
     return r?.name ? String(r.name).slice(0, 120) : null;
   }
+  // e-mails de compte → CIP actuel (nettoyé, null si illisible) dans elixir_pharmacies (email unique : on_conflict de la
+  // synchro) ; e-mail absent de la table : absent de la Map. Exception si la lecture échoue.
+  async function comptes(emails) {
+    const out = new Map();
+    for (const t of tranches(emails, TRANCHE_EMAILS)) {
+      const rows = (await sb(`elixir_pharmacies?email=in.${enc(listeIn(t))}&select=email,cip`)) || [];
+      for (const r of rows) out.set(String(r.email || "").trim().toLowerCase(), cipPropre(r.cip));
+    }
+    return out;
+  }
 
-  return { abonnements, reglages, annonces, envois, nomPharmacie };
+  // services push refusés (hôte seulement) : admin → État du service, pour élargir HOTES_PUSH à bon escient
+  const hotes = {
+    noter(hote) { return sb("push_hotes_refuses?on_conflict=hote", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: { hote, vu_le: iso() } }); },
+    lister(limite = 10) { return sb(`push_hotes_refuses?select=hote,vu_le&order=vu_le.desc&limit=${Math.max(1, Math.min(50, limite | 0))}`).then((r) => r || []); },
+    purger(avant) { return sb(`push_hotes_refuses?vu_le=lt.${enc(avant)}`, { method: "DELETE" }); },
+  };
+
+  return { abonnements, reglages, annonces, envois, nomPharmacie, comptes, hotes };
 }
 
 // ── Statistiques de l'admin ──
@@ -395,12 +516,15 @@ export function statistiques(lignes, maintenant = new Date()) {
 // ── Annonces « Offres et nouveautés » ──
 // Destinataires d'une annonce : appareils abonnés aux offres, ouverture et audience respectées, plafond appliqué.
 // → { visees, plafonnees, recevront, appareils, lignes (retenues), parCip: Map(cip → lignes retenues), fermee }
-export async function destinataires(stock, { audience = "toutes", cips = null } = {}, { maintenant = () => new Date() } = {}) {
+// Comptes revérifiés (lignesDesComptesActuels) : envoi réel → appareils dont le compte n'est plus rattaché au CIP écartés ET
+// supprimés ; estimation de l'admin (lecture seule) → seulement écartés.
+export async function destinataires(stock, { audience = "toutes", cips = null } = {}, { maintenant = () => new Date(), supprimer = false, journal } = {}) {
   const reglages = await stock.reglages.lire({ frais: true });
   if (reglages.ouverture === "fermee") return { visees: 0, plafonnees: 0, recevront: 0, appareils: 0, lignes: [], parCip: new Map(), fermee: true, reglages };
   let lignes = await stock.abonnements.pourAnnonce({ cips: audience === "liste" ? (cips || []) : null });
   lignes = lignes.filter((l) => l.role === "pharmacie" && l.pharmacy_cip && (l.categories || []).includes("offres")
     && (reglages.ouverture === "toutes" || reglages.pilote_cips.includes(l.pharmacy_cip)));
+  lignes = await lignesDesComptesActuels(stock, lignes, { journal, supprimer });
   const tous = new Map();
   for (const l of lignes) { if (!tous.has(l.pharmacy_cip)) tous.set(l.pharmacy_cip, []); tous.get(l.pharmacy_cip).push(l); }
   const deja = reglages.plafond_offres_7j > 0 ? await stock.envois.plafond(new Date(maintenant().getTime() - 7 * JOUR).toISOString()) : new Map();
@@ -410,7 +534,9 @@ export async function destinataires(stock, { audience = "toutes", cips = null } 
   return { visees: tous.size, plafonnees: tous.size - parCip.size, recevront: parCip.size, appareils: retenues.length, lignes: retenues, parCip, fermee: false, reglages };
 }
 
-// Envoi d'une annonce (push-envoi-background) : réclamation, destinataires, envoi, push_envois, clôture, purge 90 jours.
+// Envoi d'une annonce (push-envoi-background) : réclamation (une diffusion à la fois), destinataires (comptes revérifiés),
+// push_envois écrits AVANT l'envoi (le plafond compte l'annonce même si la fonction est coupée), envoi, nombres réels,
+// clôture, purge 90 jours.
 // deps : { stock, config, transport, hotesEssai, maintenant, parallele, delaiMs, journal } → { lancee, statut, ... }
 export async function diffuserAnnonce(id, deps = {}) {
   const stock = deps.stock || creerStockPush();
@@ -424,32 +550,68 @@ export async function diffuserAnnonce(id, deps = {}) {
       await stock.annonces.terminer(a.id, { statut: "erreur", erreur: "Configuration incomplète (clés VAPID ou clé serveur)." });
       return { lancee: true, statut: "erreur" };
     }
-    const d = await destinataires(stock, { audience: a.audience, cips: a.cips }, { maintenant });
+    const d = await destinataires(stock, { audience: a.audience, cips: a.cips }, { maintenant, supprimer: true, journal });
     if (d.fermee) {
       await stock.annonces.terminer(a.id, { statut: "erreur", erreur: "Ouverture « fermée » : aucune pharmacie ne reçoit encore les annonces.",
         nb_visees: 0, nb_plafonnees: 0, nb_pharmacies: 0, nb_appareils: 0, nb_reussis: 0, nb_echecs: 0, nb_retires: 0 });
       return { lancee: true, statut: "erreur" };
     }
     const tag = `offre-${String(a.id).slice(0, 8)}`;
+    // plafond : une ligne par pharmacie AVANT l'envoi, comptée comme servie (provisoire) ; écriture impossible → rien ne part
+    await stock.envois.ajouter([...d.parCip].map(([cip, ls]) => ({ categorie: "offres", pharmacy_cip: cip, annonce_id: a.id, tag,
+      nb_appareils: ls.length, nb_reussis: ls.length })));
     const r = d.lignes.length
       ? await envoyerAAppareils(d.lignes, charge({ categorie: "offres", titre: a.titre, corps: a.corps, url: a.url, tag, id: a.id }, maintenant().getTime()),
         { cles: conf.cles, ttl: TTL.offres, urgence: URGENCE.offres, sujet: tag, delaiMs: deps.delaiMs ?? 5000, parallele: deps.parallele ?? 20 },
         { stock, transport: deps.transport, hotesEssai: deps.hotesEssai, maintenant, journal })
       : { envoyes: 0, echecs: 0, retires: 0, parLigne: new Map() };
-    const lignesEnvois = [...d.parCip].map(([cip, ls]) => ({ categorie: "offres", pharmacy_cip: cip, annonce_id: a.id, tag,
-      nb_appareils: ls.length, nb_reussis: ls.filter((l) => r.parLigne.get(l.id)?.ok).length }));
-    await stock.envois.ajouter(lignesEnvois).catch((e) => journal({ evt: "push_annonce", code: "envois", erreur: e.message }));
+    // nombres réels (seulement ceux qui diffèrent du provisoire)
+    const reussis = new Map();
+    let servies = 0;
+    for (const [cip, ls] of d.parCip) {
+      const n = ls.filter((l) => r.parLigne.get(l.id)?.ok).length;
+      if (n > 0) servies++;
+      if (n !== ls.length) reussis.set(cip, n);
+    }
+    if (reussis.size) await stock.envois.corriger(a.id, reussis).catch((e) => journal({ evt: "push_annonce", code: "envois", erreur: e.message }));
     await stock.annonces.terminer(a.id, { statut: "envoyee", erreur: null, nb_visees: d.visees, nb_plafonnees: d.plafonnees,
-      nb_pharmacies: lignesEnvois.filter((e) => e.nb_reussis > 0).length, nb_appareils: d.lignes.length,
-      nb_reussis: r.envoyes, nb_echecs: r.echecs, nb_retires: r.retires });
-    await stock.envois.purger(new Date(maintenant().getTime() - 90 * JOUR).toISOString()).catch(() => {});
+      nb_pharmacies: servies, nb_appareils: d.lignes.length, nb_reussis: r.envoyes, nb_echecs: r.echecs, nb_retires: r.retires });
+    await stock.envois.purger(new Date(maintenant().getTime() - CONSERVATION.envois_jours * JOUR).toISOString()).catch(() => {});
     return { lancee: true, statut: "envoyee", envoyes: r.envoyes, echecs: r.echecs, retires: r.retires };
   } catch (e) {
     journal({ evt: "push_annonce", code: e?.code || "erreur", erreur: String(e?.message || e).slice(0, 120) });
-    await stock.annonces.terminer(a.id, { statut: "erreur", erreur: e?.code === "schema" ? "Tables absentes : exécutez sql/push-schema.sql." : "Erreur technique pendant l'envoi." })
+    await stock.annonces.terminer(a.id, { statut: "erreur", erreur: e?.code === "schema" ? "Tables absentes : exécutez sql/push-schema.sql."
+      : e?.code === "configuration" ? "Configuration VAPID refusée (VAPID_SUBJECT ?) : aucun abonnement n'a été touché." : "Erreur technique pendant l'envoi." })
       .catch(() => {});
     return { lancee: true, statut: "erreur" };
   }
+}
+
+// ── Ménage quotidien (push-menage, planifié) ──
+// envois > 90 jours ; appareils de pharmacie sans ouverture du site depuis 12 mois ; appareils dont le compte n'est plus
+// rattaché au CIP ; annonce bloquée « en_cours » (fonction coupée) ; services push refusés > 90 jours.
+// → bilan { envois, inactifs, comptes, annonces, hotes } (« ok » ou « erreur » par étape : une étape en échec n'arrête pas
+// les suivantes)
+export async function menage(deps = {}) {
+  const stock = deps.stock || creerStockPush();
+  const maintenant = deps.maintenant || (() => new Date());
+  const journal = deps.journal || (() => {});
+  const avant = (jours) => new Date(maintenant().getTime() - jours * JOUR).toISOString();
+  const bilan = {};
+  const etape = async (nom, fn) => {
+    try { bilan[nom] = (await fn()) ?? "ok"; }
+    catch (e) { bilan[nom] = "erreur"; journal({ evt: "push_menage", etape: nom, code: e?.code || "erreur", erreur: String(e?.message || e).slice(0, 120) }); }
+  };
+  await etape("envois", () => stock.envois.purger(avant(CONSERVATION.envois_jours)).then(() => "ok"));
+  await etape("inactifs", () => stock.abonnements.purgerInactifs(avant(CONSERVATION.inactif_jours)).then(() => "ok"));
+  await etape("comptes", async () => {
+    const lignes = (await stock.abonnements.tous()).filter((l) => l.role === "pharmacie");
+    const gardees = await lignesDesComptesActuels(stock, lignes, { journal });
+    return lignes.length - gardees.length;
+  });
+  await etape("annonces", () => stock.annonces.liberer(new Date(maintenant().getTime() - ANNONCE_BLOQUEE_MIN * 60e3).toISOString()).then(() => "ok"));
+  await etape("hotes", () => stock.hotes.purger(avant(CONSERVATION.hotes_jours)).then(() => "ok"));
+  return bilan;
 }
 
 // ── Point d'accroche des envois automatiques (retour en stock, sortie d'entrepôt : docs/notifications.md § « Suites ») ──
@@ -459,31 +621,34 @@ export async function diffuserAnnonce(id, deps = {}) {
 //          | "aucun_appareil" | "erreur"
 // opts : { delaiMs (4000 par défaut), unique (ne pas renvoyer la même étiquette à la même pharmacie), stock, config,
 //          transport, hotesEssai, maintenant, journal }
-// Appareils : ceux de la pharmacie (rôle pharmacie, CIP du jeton à l'abonnement) qui ont gardé la catégorie.
+// Appareils : ceux de la pharmacie (rôle pharmacie, CIP du jeton à l'abonnement) qui ont gardé la catégorie et dont le
+// compte est toujours rattaché à ce CIP (lignesDesComptesActuels : sinon supprimés, jamais servis).
 export async function notifierPharmacie(cip, categorie, { titre, corps, url, tag } = {}, opts = {}) {
   const rien = (raison) => ({ envoyes: 0, echecs: 0, retires: 0, raison });
   try {
     if (!IDS_CATEGORIES.includes(categorie)) return rien("categorie");
-    if (!RE_CIP.test(String(cip || ""))) return rien("aucun_appareil");
+    const c = cipPropre(cip);   // « 0 », « false », espaces : jamais une identité
+    if (!c) return rien("aucun_appareil");
     const conf = opts.config || configPush();
     if (!conf.ok) return rien("configuration");
     const stock = opts.stock || creerStockPush();
     const maintenant = opts.maintenant || (() => new Date());
     const reglages = await stock.reglages.lire();
-    const fermee = raisonOuverture(reglages, cip);
+    const fermee = raisonOuverture(reglages, c);
     if (fermee) return rien(fermee);
     const t = etiquette(tag, 64);
-    if (opts.unique && t && await stock.envois.dejaEnvoye(String(cip), t)) return rien("deja_envoye");
+    if (opts.unique && t && await stock.envois.dejaEnvoye(c, t)) return rien("deja_envoye");
     if (categorie === "offres") {
       const deja = await stock.envois.plafond(new Date(maintenant().getTime() - 7 * JOUR).toISOString());
-      if ((deja.get(String(cip)) || 0) >= reglages.plafond_offres_7j) return rien("plafond");
+      if ((deja.get(c) || 0) >= reglages.plafond_offres_7j) return rien("plafond");
     }
-    const lignes = (await stock.abonnements.dePharmacie(String(cip))).filter((l) => (l.categories || []).includes(categorie));
+    let lignes = (await stock.abonnements.dePharmacie(c)).filter((l) => (l.categories || []).includes(categorie));
+    if (lignes.length) lignes = await lignesDesComptesActuels(stock, lignes, { journal: opts.journal });
     if (!lignes.length) return rien("aucun_appareil");
     const r = await envoyerAAppareils(lignes, charge({ categorie, titre, corps, url, tag: t }, maintenant().getTime()),
       { cles: conf.cles, ttl: TTL[categorie], urgence: URGENCE[categorie], sujet: t, delaiMs: opts.delaiMs ?? 4000 },
       { stock, transport: opts.transport, hotesEssai: opts.hotesEssai, maintenant, journal: opts.journal });
-    await stock.envois.ajouter([{ categorie, pharmacy_cip: String(cip), tag: t, nb_appareils: lignes.length, nb_reussis: r.envoyes }]).catch(() => {});
+    await stock.envois.ajouter([{ categorie, pharmacy_cip: c, tag: t, nb_appareils: lignes.length, nb_reussis: r.envoyes }]).catch(() => {});
     return { envoyes: r.envoyes, echecs: r.echecs, retires: r.retires, raison: null };
   } catch (e) {
     return rien(e?.code === "schema" ? "schema" : e?.code === "configuration" ? "configuration" : "erreur");

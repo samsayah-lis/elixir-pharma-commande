@@ -68,3 +68,8 @@
 # les 3 h de 6 h 40 à 21 h 40 heure de Paris en hiver (après les synchros de stock), lecture Odoo seule (docs/accueil.md)
 [functions."accueil-offres-refresh"]
   schedule = "40 5-20/3 * * *"
+
+# Notifications de l'appli : ménage quotidien (≈ 5 h 35, heure de Paris) — envois de plus de 90 jours, appareils sans visite
+# depuis 12 mois ou dont le compte n'est plus rattaché à la pharmacie, annonce bloquée (docs/notifications.md § 8)
+[functions."push-menage"]
+  schedule = "35 3 * * *"

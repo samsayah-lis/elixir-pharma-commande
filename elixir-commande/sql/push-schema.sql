@@ -7,7 +7,8 @@
 -- présente dans le navigateur) : un abonnement Web Push (endpoint + clés) permettrait d'envoyer des notifications au
 -- téléphone d'une pharmacie avec la clé privée VAPID. Seules les fonctions push-*.js y accèdent, avec la clé serveur
 -- SUPABASE_SERVICE_ROLE_KEY (déjà en place pour l'Assistant Elixir). Ne jamais ajouter de policy ni désactiver le RLS ici.
--- Aucune donnée patient ; libellé d'appareil sans user-agent ; envois purgés après 90 jours.
+-- Aucune donnée patient ; libellé d'appareil sans user-agent. Conservation (push-menage, chaque nuit) : envois 90 jours ;
+-- appareil supprimé sans ouverture du site depuis 12 mois, ou dès que l'e-mail du compte n'est plus rattaché à la pharmacie.
 
 -- Un appareil (navigateur ou appli installée) abonné : une pharmacie (CIP du jeton) ou un admin (tests et aperçus)
 create table if not exists push_abonnements (
@@ -65,6 +66,10 @@ create table if not exists push_annonces (
   finished_at    timestamptz
 );
 create index if not exists push_annonces_created on push_annonces (created_at desc);
+-- Une seule annonce en cours de diffusion à la fois : deux diffusions simultanées liraient le même plafond des offres.
+-- La seconde reste « en_file » (bouton « Relancer » de l'admin) ; une annonce bloquée « en_cours » (fonction coupée) est
+-- libérée après 20 minutes.
+create unique index if not exists push_annonces_une_en_cours on push_annonces ((true)) where statut = 'en_cours';
 
 -- Envois par pharmacie (plafond des offres, traçabilité des envois automatiques) ; purgés après 90 jours
 create table if not exists push_envois (
@@ -80,10 +85,19 @@ create table if not exists push_envois (
 create index if not exists push_envois_plafond on push_envois (categorie, created_at, pharmacy_cip);
 create index if not exists push_envois_tag     on push_envois (pharmacy_cip, tag);
 
+-- Services push refusés (hôte seulement, jamais l'adresse complète qui contient le jeton de l'appareil) : un navigateur a
+-- proposé une adresse hors de la liste admise (regles.js, HOTES_PUSH). Affiché dans l'admin (État du service) pour élargir
+-- la liste à bon escient ; purgé après 90 jours.
+create table if not exists push_hotes_refuses (
+  hote   text primary key check (char_length(hote) <= 100),
+  vu_le  timestamptz not null default now()
+);
+
 -- RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated par précaution.
-alter table push_abonnements enable row level security;
-alter table push_reglages    enable row level security;
-alter table push_annonces    enable row level security;
-alter table push_envois      enable row level security;
-revoke all on table push_abonnements, push_reglages, push_annonces, push_envois from anon, authenticated;
+alter table push_abonnements   enable row level security;
+alter table push_reglages      enable row level security;
+alter table push_annonces      enable row level security;
+alter table push_envois        enable row level security;
+alter table push_hotes_refuses enable row level security;
+revoke all on table push_abonnements, push_reglages, push_annonces, push_envois, push_hotes_refuses from anon, authenticated;
 revoke all on sequence push_envois_id_seq from anon, authenticated;

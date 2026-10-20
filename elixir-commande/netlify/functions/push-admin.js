@@ -1,7 +1,8 @@
 // ── Notifications de l'appli Elixir : API de l'onglet admin « 🔔 Notifications » (verifyAdmin sur toutes les routes) ──
 // POST { action, … } :
 //   etat          { endpoint? }  → { service (coches, sans aucune valeur de clé), disponible, sujet_affiche, cle_publique, reglages,
-//                                    stats, pharmacies (500 au plus), mes_appareils (appareils admin de CET admin) }
+//                                    stats, pharmacies (500 au plus), mes_appareils (appareils admin de CET admin), hotes_refuses,
+//                                    appareil_inconnu (endpoint donné et inconnu de TOUTE identité : abonnement local à désinscrire) }
 //   reglages      { reglages: { ouverture, pilote_cips, plafond_offres_7j } } → { reglages } · 400 { erreurs }
 //   abonner_admin { abonnement, appareil, remplacer? } → { success, appareil } (rôle admin : tests et aperçus seulement)
 //   retirer_admin { id } | { endpoint } → { success } (ses propres appareils seulement)
@@ -10,9 +11,12 @@
 //   estimer       { audience, cips? } → { visees, plafonnees, recevront, appareils, fermee }
 //   envoyer       { annonce: { titre, corps, url, audience, cips? }, idem } → 202 { annonce } (envoi par push-envoi-background)
 //                 · même idem → l'annonce déjà créée (200, deja) · 409 en_cours | fermee | configuration · 502 lancement (« Relancer »)
-//   relancer      { id } → 202 (annonce restée « en file » depuis 2 min au moins)
+//   relancer      { id } → 202 (annonce restée « en file » depuis 2 min au moins et moins de 24 h) · 409 en_cours (une autre
+//                 annonce est en cours de diffusion) | trop_tot | trop_ancienne | statut
 //   historique    { limite? } → { annonces }
 //   pharmacie     { cip } → { appareils, raison } (saisie « Commander pour une pharmacie » : lecture seule)
+//   retirer_pharmacie { cip, id? } → { success, retires } (demande d'effacement, appareil perdu : un appareil ou tous ceux
+//                 de la pharmacie ; journal sans contenu)
 // Jamais de 401/403 pour une raison métier (adminFetch déconnecterait l'admin) : 400 / 409. Aucune réponse ne contient endpoint,
 // p256dh, auth ni la clé privée. Hôte d'aperçu (fonctions branchées sur la production) : réponses fictives, rien n'est envoyé.
 import { getCors } from "./cors.js";
@@ -23,8 +27,10 @@ import {
 } from "./_push.js";
 import { verifierAnnonce, verifierReglages, raisonOuverture, REGLAGES_DEFAUT, RE_CIP } from "../../src/notifications/regles.js";
 
-const ACTIONS = new Set(["etat", "reglages", "abonner_admin", "retirer_admin", "test", "apercu", "estimer", "envoyer", "relancer", "historique", "pharmacie"]);
+const ACTIONS = new Set(["etat", "reglages", "abonner_admin", "retirer_admin", "test", "apercu", "estimer", "envoyer", "relancer", "historique", "pharmacie",
+  "retirer_pharmacie"]);
 const MINUTE = 60e3;
+const RELANCE_MAX_H = 24;   // au-delà, une annonce restée « en file » n'est plus relancée : la recomposer
 
 // Lancement de push-envoi-background (comme chat.js → chat-tour-background) → null si elle est partie, sinon la raison
 async function lancerEnvoi(event, id) {
@@ -55,6 +61,7 @@ function apercu(cors, action) {
     case "envoyer": return json(cors, 202, { apercu: true, annonce: { id: "apercu", statut: "envoyee", created_at: maintenant } });
     case "historique": return json(cors, 200, { apercu: true, annonces: [] });
     case "pharmacie": return json(cors, 200, { apercu: true, appareils: [], raison: null });
+    case "retirer_pharmacie": return json(cors, 200, { apercu: true, success: true, retires: 0 });
     case "test": case "apercu": return json(cors, 200, { apercu: true, envoyes: 0, echecs: 0, retires: 0 });
     default: return json(cors, 200, { apercu: true, success: true });
   }
@@ -93,19 +100,21 @@ export function creerHandler(deps = {}) {
     try {
       switch (action) {
         case "etat": {
-          let tables = false, absentes = false, reglages = REGLAGES_DEFAUT, lignes = [];
+          let tables = false, absentes = false, reglages = REGLAGES_DEFAUT, lignes = [], hotesRefuses = [];
           if (conf.service.cle_serveur) {
             try { reglages = await stock.reglages.lire({ frais: true }); tables = true; lignes = await stock.abonnements.tous(); }
             catch (e) { absentes = e?.code === "schema"; journal({ evt: "push_admin", action, code: e?.code || "erreur" }); }
+            if (tables) hotesRefuses = await stock.hotes.lister(10).catch(() => []);
           }
           const { stats, pharmacies } = statistiques(lignes, maintenant());
           const endpoint = typeof body.endpoint === "string" ? body.endpoint : null;
+          const appareilInconnu = tables && endpoint && endpoint.length <= 1024 ? !(await stock.abonnements.parEndpoint(endpoint).catch(() => true)) : null;
           const defauts = [...conf.defauts,
             ...(conf.service.cle_serveur && !tables ? [absentes ? "Tables absentes : exécutez sql/push-schema.sql dans Supabase" : "Tables illisibles (Supabase injoignable ?)"] : []),
             ...(conf.service.cron_secret ? [] : ["CRON_SECRET absent : les annonces ne peuvent pas partir"])];
           return json(cors, 200, { disponible: conf.ok && tables, service: { ...conf.service, tables, defauts }, sujet_affiche: conf.sujet_affiche,
-            cle_publique: conf.cle_publique, reglages, stats, pharmacies,
-            mes_appareils: lignes.filter((l) => l.role === "admin" && l.compte_email === email).map((l) => appareilPublic(l, endpoint)) });
+            cle_publique: conf.cle_publique, reglages, stats, pharmacies, hotes_refuses: hotesRefuses,
+            mes_appareils: lignes.filter((l) => l.role === "admin" && l.compte_email === email).map((l) => appareilPublic(l, endpoint)), appareil_inconnu: appareilInconnu });
         }
         case "reglages": {
           const v = verifierReglages(body.reglages || {});
@@ -117,7 +126,10 @@ export function creerHandler(deps = {}) {
         case "abonner_admin": {
           if (!conf.ok) return json(cors, 409, { error: "configuration" });
           const v = validerAbonnement(body.abonnement, { hotesEssai: deps.hotesEssai });
-          if (!v.ok) return json(cors, 400, { error: "abonnement", message: v.erreur });
+          if (!v.ok) {
+            if (v.hote) { journal({ evt: "push_admin", action, code: "hote_refuse", hote: v.hote }); await stock.hotes.noter(v.hote).catch(() => {}); }
+            return json(cors, 400, { error: "abonnement", message: v.erreur });
+          }
           const ex = await stock.abonnements.parEndpoint(v.endpoint);
           const meme = !!ex && ex.role === "admin" && ex.compte_email === email;
           if (ex && !meme && body.remplacer !== true)
@@ -170,7 +182,8 @@ export function creerHandler(deps = {}) {
           if (!conf.ok) return json(cors, 409, { error: "configuration" });
           const deja = await stock.annonces.parIdem(idem);
           if (deja) return json(cors, 200, { annonce: resumeAnnonce(deja), deja: true });
-          if ((await stock.annonces.enCours(new Date(maintenant().getTime() - 15 * MINUTE).toISOString())).length) return json(cors, 409, { error: "en_cours" });
+          if ((await stock.annonces.enCours(new Date(maintenant().getTime() - 15 * MINUTE).toISOString())).length
+            || (await stock.annonces.diffusionEnCours()).length) return json(cors, 409, { error: "en_cours" });
           if ((await stock.reglages.lire({ frais: true })).ouverture === "fermee") return json(cors, 409, { error: "fermee" });
           const { annonce, existante } = await stock.annonces.creer({ idem, titre: v.annonce.titre, corps: v.annonce.corps, url: v.annonce.url,
             audience: v.annonce.audience, cips: v.annonce.cips, admin_email: email, statut: "en_file" });
@@ -184,7 +197,11 @@ export function creerHandler(deps = {}) {
           if (!estUuid(body.id)) return json(cors, 400, { error: "id" });
           const a = await stock.annonces.lire(body.id);
           if (!a || a.statut !== "en_file") return json(cors, 409, { error: "statut" });
-          if (maintenant().getTime() - Date.parse(a.created_at) < 2 * MINUTE) return json(cors, 409, { error: "trop_tot" });
+          const age = maintenant().getTime() - Date.parse(a.created_at);
+          if (age < 2 * MINUTE) return json(cors, 409, { error: "trop_tot" });
+          if (!(age <= RELANCE_MAX_H * 60 * MINUTE)) return json(cors, 409, { error: "trop_ancienne" });
+          // une seule diffusion à la fois (plafond des offres) : jamais pendant qu'une autre annonce part
+          if ((await stock.annonces.diffusionEnCours()).some((x) => x.id !== a.id)) return json(cors, 409, { error: "en_cours" });
           const echec = await lancer(event, a.id);
           if (echec) return json(cors, 502, { error: "lancement", detail: echec, annonce: resumeAnnonce(a) });
           return json(cors, 202, { annonce: resumeAnnonce(a) });
@@ -198,6 +215,15 @@ export function creerHandler(deps = {}) {
           if (!RE_CIP.test(cip)) return json(cors, 400, { error: "cip" });
           const [lignes, reglages] = await Promise.all([stock.abonnements.deIdentite({ role: "pharmacie", cip }), stock.reglages.lire()]);
           return json(cors, 200, { appareils: lignes.map((l) => appareilPublic(l)), raison: raisonOuverture(reglages, cip), disponible: conf.ok });
+        }
+        case "retirer_pharmacie": {
+          const cip = String(body.cip || "").trim();
+          if (!RE_CIP.test(cip)) return json(cors, 400, { error: "cip" });
+          const lignes = await stock.abonnements.deIdentite({ role: "pharmacie", cip });
+          const ids = (typeof body.id === "string" ? lignes.filter((l) => l.id === body.id) : lignes).map((l) => l.id);
+          if (ids.length) await stock.abonnements.supprimerIds(ids);
+          journal({ evt: "push_admin", action, n: ids.length, tous: typeof body.id !== "string" });
+          return json(cors, 200, { success: true, retires: ids.length });
         }
       }
       return json(cors, 400, { error: "action" });

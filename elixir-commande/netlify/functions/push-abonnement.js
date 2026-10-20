@@ -15,8 +15,9 @@
 //              → toujours 200 { success: true, role: "pharmacie" | "admin" | null } (admin : rien supprimé)
 //   renouveler { ancien: { endpoint, auth }, abonnement } SANS jeton (service worker, changement de clés VAPID) : la ligne
 //              prouvée garde son identité et ses catégories → { success } (preuve fausse : { success: false }, pas d'oracle)
-// Identité = le jeton (auth.js : CIP résolu par l'e-mail vérifié), jamais le corps. Jeton admin (saisie « Commander pour une
-// pharmacie ») → 403 admin : l'appareil d'Elixir n'est jamais abonné au nom d'une pharmacie. Ouverture (admin) : « fermee » →
+// Identité = le jeton (auth.js : CIP résolu par l'e-mail vérifié), jamais le corps ; CIP nettoyé et lisible (7 à 14 chiffres),
+// sinon 403 fiche : « 0 », « false » (lignes manuelles sans CIP) ne sont jamais une identité partagée. Jeton admin (saisie
+// « Commander pour une pharmacie ») → 403 admin : l'appareil d'Elixir n'est jamais abonné au nom d'une pharmacie. Ouverture (admin) : « fermee » →
 // 403 fermee, « pilote » hors liste → 403 hors_pilote (statut répond 200 avec disponible: false et la raison). Désabonnement
 // toujours possible. Aucune réponse ne contient endpoint, p256dh, auth ni la clé privée. Hôte d'aperçu : réponses fictives.
 import { getCors } from "./cors.js";
@@ -26,7 +27,7 @@ import {
   configPush, creerStockPush, validerAbonnement, envoyerAAppareils, charge, appareilPublic, libelleNet, plateformeNette,
   memeSecret, creerLimiteur, estApercu, json, jetonDe, TTL, URGENCE, MAX_APPAREILS,
 } from "./_push.js";
-import { CATEGORIES_DEFAUT, categoriesAffichees, filtrerCategories, raisonOuverture, PLAFOND_DEFAUT } from "../../src/notifications/regles.js";
+import { CATEGORIES_DEFAUT, categoriesAffichees, filtrerCategories, raisonOuverture, PLAFOND_DEFAUT, cipPropre } from "../../src/notifications/regles.js";
 
 const ACTIONS = new Set(["statut", "abonner", "categories", "test", "retirer", "oublier", "renouveler"]);
 // [requêtes, fenêtre en s] par IP (une officine partage souvent une IP entre plusieurs postes)
@@ -86,6 +87,12 @@ export function creerHandler(deps = {}) {
     const stock = stockDe();
     const iso = () => maintenant().toISOString();
     const endpoint = typeof body.endpoint === "string" && body.endpoint.length <= 1024 ? body.endpoint : null;
+    // service push hors liste : hôte seulement (jamais le chemin ni le jeton), journal + admin (État du service)
+    const noterHote = async (hote) => {
+      if (!hote) return;
+      journal({ evt: "push_abonnement", action, code: "hote_refuse", hote });
+      await stock.hotes?.noter(hote).catch(() => {});
+    };
     try {
       // ── Sans jeton : preuve de possession (secret auth de l'abonnement) ──
       if (action === "oublier") {
@@ -100,7 +107,7 @@ export function creerHandler(deps = {}) {
         const r = typeof anc.endpoint === "string" && anc.endpoint.length <= 1024 ? await stock.abonnements.parEndpoint(anc.endpoint) : null;
         if (!r || !memeSecret(r.auth, anc.auth)) return json(cors, 200, { success: false });
         const v = validerAbonnement(body.abonnement, { hotesEssai: deps.hotesEssai });
-        if (!v.ok) return json(cors, 400, { error: "abonnement" });
+        if (!v.ok) { await noterHote(v.hote); return json(cors, 400, { error: "abonnement" }); }
         if (v.endpoint === r.endpoint) await stock.abonnements.modifier(r.id, { p256dh: v.p256dh, auth: v.auth, failures: 0, last_error: null });
         else {
           const deja = await stock.abonnements.parEndpoint(v.endpoint);
@@ -121,8 +128,8 @@ export function creerHandler(deps = {}) {
       }
       if (!user) return json(cors, 401, { error: "reconnexion" });
       if (user.isAdmin) return json(cors, 403, { error: "admin" });
-      if (!user.cip) return json(cors, 403, { error: "fiche" });
-      const cip = String(user.cip), email = String(user.email || "").toLowerCase();
+      const cip = cipPropre(user.cip), email = String(user.email || "").trim().toLowerCase();
+      if (!cip) return json(cors, 403, { error: "fiche" });
       if (!conf.ok) return action === "statut" ? json(cors, 200, { disponible: false, raison: null }) : json(cors, 503, { error: "indisponible" });
       const reglages = await stock.reglages.lire();
       const raison = raisonOuverture(reglages, cip);
@@ -144,7 +151,7 @@ export function creerHandler(deps = {}) {
         case "abonner": {
           if (raison) return json(cors, 403, { error: raison });
           const v = validerAbonnement(body.abonnement, { hotesEssai: deps.hotesEssai });
-          if (!v.ok) return json(cors, 400, { error: "abonnement", message: v.erreur });
+          if (!v.ok) { await noterHote(v.hote); return json(cors, 400, { error: "abonnement", message: v.erreur }); }
           const existante = await stock.abonnements.parEndpoint(v.endpoint);
           if (existante && !meme(existante) && body.remplacer !== true)
             return json(cors, 409, { error: "autre_identite", de: existante.role === "admin" ? "Elixir (admin)" : "une autre pharmacie" });

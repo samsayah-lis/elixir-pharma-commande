@@ -6,8 +6,10 @@
 
 // Catégories qu'une pharmacie choisit (interrupteurs du panneau). Libellés et aides affichés tels quels.
 export const CATEGORIES = [
+  // « bientôt » : rien n'envoie encore cette catégorie tant que le crochet du retour en stock n'est pas branché
+  // (docs/notifications.md § 9.1) ; retirer la mention en même temps que le branchement
   { id: "stock", libelle: "Retour en stock",
-    aide: "Les produits pour lesquels vous avez demandé une alerte (cloche) sont de nouveau disponibles." },
+    aide: "Les produits pour lesquels vous avez demandé une alerte (cloche), dès leur retour en stock (bientôt)." },
   { id: "commandes", libelle: "Mes commandes",
     aide: "La sortie d'entrepôt de vos commandes (bientôt)." },
   { id: "offres", libelle: "Offres et nouveautés",
@@ -39,6 +41,18 @@ export const PLAFOND_DEFAUT = 2, PLAFOND_MAX = 7;
 export const OUVERTURES = ["fermee", "pilote", "toutes"];
 export const REGLAGES_DEFAUT = { ouverture: "fermee", pilote_cips: [], plafond_offres_7j: PLAFOND_DEFAUT };
 export const RE_CIP = /^\d{7,14}$/;
+// CIP d'une pharmacie, nettoyé (espaces) ; null si absent ou illisible (« 0 », « false », lignes manuelles sans CIP…)
+export const cipPropre = (v) => { const s = String(v ?? "").trim(); return RE_CIP.test(s) ? s : null; };
+
+// Services push admis (anti-SSRF côté serveur, abonnement local périmé côté site) : https, hôtes de Google (FCM), Mozilla,
+// Apple et Microsoft (WNS) seulement. Un hôte refusé est noté (admin → État du service) pour élargir la liste à bon escient.
+export const HOTES_PUSH = [/^fcm\.googleapis\.com$/, /^android\.googleapis\.com$/, /^updates\.push\.services\.mozilla\.com$/,
+  /^push\.services\.mozilla\.com$/, /^([a-z0-9-]+\.)*push\.apple\.com$/, /^([a-z0-9-]+\.)*notify\.windows\.com$/];
+// adresse d'abonnement (endpoint) chez un service push admis ? (https, sans port ni identifiants)
+export function hotePushConnu(endpoint) {
+  let u; try { u = new URL(String(endpoint || "")); } catch { return false; }
+  return u.protocol === "https:" && !u.port && !u.username && !u.password && HOTES_PUSH.some((re) => re.test(u.hostname));
+}
 
 // Outils ouvrables par un lien (= OUTILS_LIEN d'App.jsx : ?outil=)
 export const OUTILS_LIEN = ["saisie", "peremption", "fauteuil", "transfert", "groupees", "justificatif"];

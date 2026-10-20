@@ -155,8 +155,8 @@ const FICHIERS_AUTORISES = {
 // Page d'accueil « La Tête de gondole » (branche accueil-offres, docs/accueil.md) : fonctions NOUVELLES seulement
 // (accueil-offres.js, accueil-offres-refresh.js, _accueil-*.js) ; aucune fonction existante n'est modifiée.
 // Notifications de l'appli installable (branche appli-notifications, docs/notifications.md) : fonctions NOUVELLES seulement
-// (_push.js, push-abonnement.js, push-admin.js, push-envoi-background.js) ; aucune fonction existante n'est modifiée.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background))\.js$/;
+// (_push.js, push-abonnement.js, push-admin.js, push-envoi-background.js, push-menage.js) ; aucune fonction existante n'est modifiée.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage))\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -179,9 +179,11 @@ const CLES_AUTORISEES = {
   // src/components/accueil/Squelette.jsx, clé accueil_salle : { l, h, s } — hauteur de la salle de la vitrine cinéma
   // mesurée à la dernière visite (largeur et hauteur de la fenêtre), réservée par le squelette (aucun décalage à l'arrivée)
   accueil: { "localStorage.getItem(CLE_SALLE": 1, "localStorage.setItem(CLE_SALLE, memo": 1 },
-  // src/notifications/memo.js, clé notif_carte_<identite> : date du « Plus tard » de la carte « Recevez nos alertes » de
-  // l'accueil (carte masquée 30 jours pour ce compte) — seuls appels de stockage du lot notifications
-  notifications: { "localStorage.getItem(cleCarte(identite": 1, "localStorage.setItem(cleCarte(identite": 1 },
+  // src/notifications/memo.js, clé notif_carte_<empreinte de l'identité> (aucune adresse e-mail en clair) : date du « Plus tard »
+  // de la carte « Recevez nos alertes » de l'accueil (carte masquée 30 jours pour ce compte) ; AdminNotifications.jsx,
+  // sessionStorage notif_brouillon_annonce : brouillon de l'annonce en cours (onglet) — seuls appels de stockage du lot
+  notifications: { "localStorage.getItem(cleCarte(identite": 1, "localStorage.setItem(cleCarte(identite": 1,
+    'sessionStorage.getItem(CLE_BROUILLON': 1, "sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon": 1, "sessionStorage.removeItem(CLE_BROUILLON": 1 },
 };
 
 // ── lecture ──
