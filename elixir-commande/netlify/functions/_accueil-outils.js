@@ -11,11 +11,16 @@
 //    et le dernier jour du 4e mois qui suit (UTC, comme Netlify) ; remise propre au produit, sinon 50 % (20 % dès 500 €).
 //    nb = toutes les lignes (ce que la page montre) ; « dès » et « jusqu'à » sur le sous-ensemble honnête seulement :
 //    rangé dans aucun menu, campagne ni menu promo actif (sinon le panier le facture au prix du menu : défaut existant
-//    d'addItemToCart, zone protégée, lot séparé), moins cher que le prix habituel du site, au moins 0,05 €. Lectures
-//    gardées 5 min par instance (clé : jour de Paris et fenêtre) ; fenêtre recalculée à chaque évaluation.
+//    d'addItemToCart, zone protégée, lot séparé ; sections ajoutées dans l'admin comprises : display_config.customSections),
+//    moins cher que le prix habituel du site, au moins 0,05 €. Lectures gardées 5 min par instance (clé : jour de Paris et
+//    fenêtre) ; fenêtre recalculée à chaque évaluation.
+// Délai (GET) : chaque lecture d'outil est bornée (delaiMs) : au-delà, seul cet outil passe en donnees_indisponibles, la
+// réponse de l'accueil part sans l'attendre (une lecture finie plus tard reste gardée 5 min : elle est complète).
 //  • fauteuil, transfert : correspondance code fournisseur → CIP (plus ancien d'abord) calculée par la fonction planifiée
-//    (copie en lecture seule de supplier-code-refs.cipsByCode), sinon CIP de repli ; prix et stock relus à chaque GET
-//    (9 CIP) : par taille, la première référence en stock donne le prix (priceOf de WheelchairOrder).
+//    (copie en lecture seule de supplier-code-refs.cipsByCode), sinon CIP de repli (clé absente ou correspondance pas
+//    encore calculée : signalé à l'admin, admin.correspondance) ; kv illisible : donnees_indisponibles (jamais le repli,
+//    qui sous-compterait les largeurs) ; prix et stock relus à chaque GET (9 CIP) : par taille, la première référence en
+//    stock donne le prix (priceOf de WheelchairOrder).
 //  • justificatif : labos dont site !== false (comme lab-justif?action=products), médicaments = marques distinctes.
 //  • groupees : aucune lecture (accès et opérations ouvertes : par pharmacie, dans le navigateur) → selon_pharmacie.
 // Aucune écriture ici (la fonction planifiée écrit « accueil:outils »).
@@ -126,19 +131,37 @@ export function labosDeConfig(cfg) {
   return out;
 }
 
-// ── Lectures d'un GET : seulement ce que demandent `cles` (outils masqués par l'admin : rien à lire), tout en parallèle ;
-// une lecture en échec ne fait échouer que son outil → { plan, fauteuilsCat, peremption, labos } (partie : { erreur })
-export async function lireOutils(src, cles, conf = null) {
-  const caches = new Set(conf?.displayConfig?.hiddenTabs || []);
+// sections ajoutées dans l'admin (display_config.customSections) : App y range les produits de elixir_products de même
+// section, et addItemToCart les facture au prix de la section, comme un menu du catalogue
+export const sectionsPerso = (displayConfig) => (Array.isArray(displayConfig?.customSections) ? displayConfig.customSections : [])
+  .map(cs => String(cs?.key || "").trim()).filter(Boolean);
+
+// ── Lectures d'un GET : seulement ce que demandent `cles`, tout en parallèle ; une lecture en échec (ou plus lente que
+// delaiMs, délai commun à toutes) ne fait échouer que son outil → { plan, fauteuilsCat, peremption, labos, perso }
+// (partie : { erreur }). Outils masqués par l'admin : rien à lire, sauf lireMasques (GET de l'admin : l'éditeur montre
+// leurs chiffres, prêts quand Zineb les réaffiche).
+export async function lireOutils(src, cles, conf = null, { delaiMs = 0, lireMasques = false } = {}) {
+  const caches = new Set(lireMasques ? [] : conf?.displayConfig?.hiddenTabs || []);
   const veut = (k) => cles.includes(k) && !caches.has(k);
-  const garde = (p) => Promise.resolve().then(() => p()).catch(e => ({ erreur: String(e?.message || e).slice(0, 200) }));
+  const limite = delaiMs > 0 ? Date.now() + delaiMs : 0;
+  // la course contre le délai : la lecture continue (et peut finir en mémoire), sa partie vaut { erreur } tout de suite
+  const borne = (p) => {
+    if (!limite) return p;
+    let minuteur;
+    const delai = new Promise(ok => { minuteur = setTimeout(() => ok({ erreur: "délai dépassé" }), Math.max(0, limite - Date.now())); });
+    return Promise.race([p, delai]).finally(() => clearTimeout(minuteur));
+  };
+  const garde = (p) => borne(Promise.resolve().then(() => p()).catch(e => ({ erreur: String(e?.message || e).slice(0, 200) })));
   const fauteuils = ["fauteuil", "transfert"].filter(veut);
   const planP = veut("saisie") || fauteuils.length ? garde(async () => (await src.kvGet(CLE_OUTILS)) || null) : Promise.resolve(undefined);
-  const catP = fauteuils.length ? planP.then(plan => garde(() => lireFauteuilsCat(src, fauteuils, plan && !plan.erreur ? plan : null))) : Promise.resolve(undefined);
+  // kv illisible : pas de repli sur les anciens CIP (les largeurs seraient sous-comptées) → donnees_indisponibles ;
+  // clé absente (null) : CIP de repli, signalés à l'admin
+  const catP = fauteuils.length ? planP.then(plan => (plan?.erreur ? { erreur: `correspondance illisible (${plan.erreur})` }
+    : garde(() => lireFauteuilsCat(src, fauteuils, plan)))) : Promise.resolve(undefined);
   const [plan, fauteuilsCat, peremption, labos] = await Promise.all([planP, catP,
     veut("peremption") ? garde(() => lirePeremption(src)) : undefined,
     veut("justificatif") ? garde(async () => src.labosJustif()) : undefined]);
-  return { plan, fauteuilsCat, peremption, labos };
+  return { plan, fauteuilsCat, peremption, labos, perso: sectionsPerso(conf?.displayConfig) };
 }
 
 // ── Évaluation d'un outil au moment présent ──
@@ -152,8 +175,13 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
   if (cle === "groupees") return { raisons, chiffres: null, selon_pharmacie: true };
   if (cle === "saisie") {
     const s = plan?.saisie;
-    const frais = s && Number(s.references) > 0 && ageMs(s.maj, maintenant) <= AGE_MAX_MS;
-    return { raisons, chiffres: frais ? { references: Number(s.references), en_stock: Number(s.en_stock) || 0, maj: s.maj } : null };
+    const age = s ? ageMs(s.maj, maintenant) : Infinity;
+    const frais = s && Number(s.references) > 0 && age <= AGE_MAX_MS;
+    // admin : pourquoi la carte est en texte seul (comptes absents : pas encore calculés ou kv illisible ; anciens : la
+    // fonction planifiée ne les met plus à jour)
+    const comptes = frais ? "frais" : o.plan?.erreur ? "illisibles" : !(s && Number(s.references) > 0) ? "absents" : "anciens";
+    return { raisons, chiffres: frais ? { references: Number(s.references), en_stock: Number(s.en_stock) || 0, maj: s.maj } : null,
+      admin: { comptes, ...(Number.isFinite(age) ? { age_h: Math.floor(age / 3600e3) } : {}) } };
   }
   if (cle === "peremption") {
     const P = o.peremption;
@@ -165,9 +193,11 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
     if (ageMs(maj, maintenant) > AGE_MAX_MS) raisons.push("donnees_anciennes");
     let enMenu = 0;
     const honnetes = [];
+    const perso = new Set((o.perso || []).map(String));
+    const enSectionPerso = (cip) => perso.size > 0 && (P.curees || []).some(c => String(c.cip) === cip && perso.has(String(c.section)));
     for (const r of rows) {
       const m = premierMenu(String(r.cip), P.curees || [], ctx.menus || { libelle: (k) => k, caches: new Set(), promos: [], campagnes: new Set() });
-      if (m.source !== "saisie") { enMenu++; continue; }
+      if (m.source !== "saisie" || enSectionPerso(String(r.cip))) { enMenu++; continue; }
       const remise = remisePeremption(r, P.remises), prix = prixPeremption(r, remise), habituel = prixSaisie(r).pn;
       if (!(prix >= 0.05) || !(habituel > 0) || !(prix < habituel)) continue;
       honnetes.push({ prix, remise: REMISE_REFERENCE === "habituel" ? (1 - prix / habituel) * 100 : remise });
@@ -179,7 +209,11 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
   }
   if (cle === "fauteuil" || cle === "transfert") {
     const F = FAUTEUILS[cle], cat = o.fauteuilsCat;
-    if (!cat || cat.erreur || !cat.parCip) return { raisons: [...raisons, "donnees_indisponibles"], chiffres: null };
+    // admin : correspondance code fournisseur → CIP de la fonction planifiée pour toutes les tailles (« odoo »), pour
+    // certaines (« partielle »), ou aucune (« repli » : anciens CIP, largeurs peut-être sous-comptées)
+    const nCodes = F.sizes.filter(s => cipsTaille(F, s, plan).length).length;
+    const admin = { correspondance: nCodes === F.sizes.length ? "odoo" : nCodes ? "partielle" : "repli", calculee_le: plan?.at || null };
+    if (!cat || cat.erreur || !cat.parCip) return { raisons: [...raisons, "donnees_indisponibles"], chiffres: null, admin };
     const tailles = [], prix = [];
     for (const s of F.sizes) {
       const parCode = cipsTaille(F, s, plan).map(c => cat.parCip[c]).filter(Boolean);
@@ -190,8 +224,8 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
       if (!(p > 0)) continue;
       tailles.push(sizeLabel(s)); prix.push(p);
     }
-    if (!tailles.length) return { raisons: [...raisons, "rupture"], chiffres: null };
-    return { raisons, chiffres: { tailles, des: Math.min(...prix), a: Math.max(...prix), modele: F.model } };
+    if (!tailles.length) return { raisons: [...raisons, "rupture"], chiffres: null, admin };
+    return { raisons, chiffres: { tailles, des: Math.min(...prix), a: Math.max(...prix), modele: F.model }, admin };
   }
   if (cle === "justificatif") {
     const L = o.labos;
@@ -227,8 +261,10 @@ export async function correspondanceFauteuils(src) {
   return out;
 }
 export async function comptesSaisie(src) {
+  // dernière mise à jour : lignes datées seulement (en PostgreSQL, « desc » met les NULL en tête : une seule ligne sans
+  // date effacerait l'heure, et la Saisie perdrait ses chiffres sans bruit)
   const [references, enStock, derniere] = await Promise.all([src.compter("odoo_catalog?select=cip"), src.compter("odoo_catalog?select=cip&in_stock=eq.true"),
-    src.sb("odoo_catalog?select=updated_at&order=updated_at.desc&limit=1")]);
+    src.sb("odoo_catalog?select=updated_at&updated_at=not.is.null&order=updated_at.desc.nullslast&limit=1")]);
   if (!(references > 0)) throw new Error("catalogue vide");
   return { references, en_stock: enStock || 0, maj: (Array.isArray(derniere) && derniere[0]?.updated_at) || null };
 }
@@ -242,6 +278,7 @@ export async function calculerOutilsPlanifies(src, precedent = null, journal = [
   const nCips = new Set(Object.values(v.fauteuils || {}).flat()).size;
   const heure = (iso) => { const t = Date.parse(iso || ""); if (!Number.isFinite(t)) return "?"; const [h, m] = new Date(t).toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).split(":"); return `${Number(h)} h ${m}`; };
   journal.push(`outils : ${f.status === "fulfilled" ? `${Object.keys(v.fauteuils).length} codes → ${nCips} CIP` : `correspondance des fauteuils gardée (${String(f.reason?.message || f.reason).slice(0, 120)})`}`
-    + ` · ${s.status === "fulfilled" ? `catalogue ${v.saisie.references.toLocaleString("fr-FR")} réf., màj ${heure(v.saisie.maj)}` : `comptes du catalogue gardés (${String(s.reason?.message || s.reason).slice(0, 120)})`}`);
+    + ` · ${s.status === "fulfilled" ? `catalogue ${v.saisie.references.toLocaleString("fr-FR")} réf., ${v.saisie.maj ? `màj ${heure(v.saisie.maj)}` : "comptes sans date de mise à jour (Saisie en texte seul)"}`
+      : `comptes du catalogue gardés (${String(s.reason?.message || s.reason).slice(0, 120)})`}`);
   return v;
 }

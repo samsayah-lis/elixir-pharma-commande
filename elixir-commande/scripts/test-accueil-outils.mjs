@@ -16,7 +16,11 @@
 // 10. GET : sans outil, mêmes lectures qu'avant ; Péremption seule ; outils_etat et en_menu réservés à l'admin ; aucune
 //     écriture ; une lecture en échec n'écarte que son outil ;
 // 11. fonction planifiée : écriture d'accueil:outils, Odoo en panne, échecs indépendants du classement ;
-// 12. navigateur : bouton, teinte, compositions, médaillon, texte lu, type inconnu ignoré.
+// 12. navigateur : bouton, teinte, compositions, médaillon, texte lu, type inconnu ignoré ;
+// 13. correctifs de la revue : kv illisible (fauteuils : jamais le repli), correspondance signalée à l'admin, sections
+//     ajoutées dans l'admin (customSections), valeur précédente illisible (fonction planifiée), lecture lente (délai),
+//     ?verifier= sans lecture d'outil, admin : outil masqué lu quand même, lj:config lue une fois, date de mise à jour
+//     des comptes, typographie (insécables), accord outilsAEvaluer / evaluerVedettes (propriété).
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -227,8 +231,11 @@ const sbPeremption = (compte, { echec = false } = {}) => async (path) => {
 
 // ── 6. Saisie ──
 {
-  eq("sans accueil:outils → visible, sans chiffres", O.evaluerOutil("saisie", { outils: { plan: null } }, MAINTENANT), { raisons: [], chiffres: null });
-  eq("comptes de plus de 36 h → visible, sans chiffres", O.evaluerOutil("saisie", { outils: { plan: { saisie: { ...COMPTES, maj: "2026-10-18T20:00:00Z" } } } }, MAINTENANT).chiffres, null);
+  const sans = O.evaluerOutil("saisie", { outils: { plan: null } }, MAINTENANT);
+  eq("sans accueil:outils → visible, sans chiffres (admin : comptes absents)", [sans.raisons, sans.chiffres, sans.admin.comptes], [[], null, "absents"]);
+  const vieux = O.evaluerOutil("saisie", { outils: { plan: { saisie: { ...COMPTES, maj: "2026-10-18T20:00:00Z" } } } }, MAINTENANT);
+  eq("comptes de plus de 36 h → visible, sans chiffres (admin : anciens, 37 h)", [vieux.raisons, vieux.chiffres, vieux.admin], [[], null, { comptes: "anciens", age_h: 37 }]);
+  eq("kv illisible → texte seul (admin : illisibles)", O.evaluerOutil("saisie", { outils: { plan: { erreur: "panne" } } }, MAINTENANT).admin.comptes, "illisibles");
   eq("comptes récents → chiffres", O.evaluerOutil("saisie", { outils: { plan: { saisie: COMPTES } } }, MAINTENANT).chiffres, COMPTES);
 }
 
@@ -260,8 +267,9 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   const caches = contexteMenus({ displayConfig: { hiddenTabs: ["peremption"] }, promos: PROMOS });
   eq("serveur : outil masqué → outil_masque", V.evaluerVedettes({ items: [objet("outil", "peremption", "vitrine")] }, null, { ...ctxS, menus: caches }, MAINTENANT).etats[0].statut, "outil_masque");
   eq("navigateur : rubrique non ouvrable → écarté", C.construireMisesEnAvant(r.publiques, ctxPage({ menuOuvrable: (k) => k !== "fauteuil" })).vitrine.map(e => e.cle).includes("o:fauteuil"), false);
-  eq("lireOutils : outil masqué, rien n'est lu", Object.values(await O.lireOutils({ sb: async () => { throw new Error("rien à lire"); }, kvGet: async () => { throw new Error("rien"); }, maintenant: () => MAINTENANT },
-    ["peremption"], { displayConfig: { hiddenTabs: ["peremption"] } })).filter(Boolean).length, 0);
+  const rienLu = await O.lireOutils({ sb: async () => { throw new Error("rien à lire"); }, kvGet: async () => { throw new Error("rien"); }, maintenant: () => MAINTENANT },
+    ["peremption"], { displayConfig: { hiddenTabs: ["peremption"] } });
+  eq("lireOutils : outil masqué, rien n'est lu", [rienLu.plan, rienLu.fauteuilsCat, rienLu.peremption, rienLu.labos].filter(Boolean).length, 0);
   // ordre des statuts : masquée, programmée, terminée passent avant le motif de l'outil ; non demandés à lireOutils
   const dates = { items: [objet("outil", "peremption", "grille", { actif: false }), objet("outil", "fauteuil", "grille", { date_debut: "2026-10-21" }),
     objet("outil", "transfert", "grille", { date_fin: "2026-10-19" }), objet("outil", "justificatif", "grille", { date_debut: "2026-10-01", date_fin: "2026-10-20" })] };
@@ -377,33 +385,187 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   eq("péremption : plaque et 2 cartes-chiffres, aucun nom ni photo de produit", per.outil.cartes.map(c => c.type || esp(c.chiffre)), ["plaque", "9", "0,44 €"]);
   vrai("… aucune carte avec un nom ou une photo", per.outil.cartes.every(c => !c.url && !c.nom));
   eq("médaillon : Péremption seulement ; jamais de fin d'offre", [per.outil.jusqua, fau.outil.jusqua, jus.outil.jusqua, sai.outil.jusqua, ...m.vitrine.map(e => e.finOffre)], [50, null, null, null, null, null, null]);
-  eq("texte lu exact", C.resumeOutilLu(per), "Péremption courte, petits prix, 9 références, dès 0,44 € HT, jusqu'à −50 %");
+  eq("texte lu exact", esp(C.resumeOutilLu(per)), "Péremption courte, petits prix, 9 références, dès 0,44 € HT, jusqu'à −50 %");
   eq("teintes : outil (justificatif : sarcelle, violet écarté)", [per.couleur, fau.couleur, jus.couleur, jus.source, sai.couleur], ["#ea580c", "#3b82f6", "#3c7782", "rayon", "#2d9cbc"]);
   eq("justificatif : rubrique sans emoji, chiffres recalculés, cartes des labos", [jus.rayon, esp(jus.outil.meta), jus.outil.cartes.map(c => c.type || `${c.chiffre}:${c.legende}`), jus.accroche.split(" : ")[0]],
     ["Commande labo sur justificatif", "6 médicaments · 17 présentations", ["plaque", "Takeda:4 médicaments", "Pfizer:2 médicaments"], "Takeda et Pfizer"]);
   eq("fauteuil sans photo : éventail de 3 photos du fabricant (fond blanc), halo sur la 1re", [fau.outil.photo, fau.outil.cartes.length, fau.outil.cartes.every(c => /^https:\/\/www\.dhcare\.fr\//.test(c.url) && c.nom === "Action 2NG"), fau.halo === fau.outil.cartes[0].url],
     [null, 3, true, true]);
-  eq("fauteuil : textes", [esp(fau.outil.meta), fau.outil.cta, fau.accroche.split(" : ")[0]], ["4 largeurs en stock, de 40,5 à 48 cm · 210,08 € HT", "Choisir la largeur", "Invacare Action 2NG"]);
+  eq("fauteuil : textes (étendue des largeurs en seconde ligne)", [esp(fau.outil.meta), esp(fau.outil.meta2), esp(fau.outil.lu), fau.outil.cta, fau.accroche.split(" : ")[0]],
+    ["4 largeurs en stock · 210,08 € HT", "Largeurs d'assise : de 40,5 à 48 cm", "Le bon fauteuil, à la bonne largeur, 4 largeurs en stock, de 40,5 à 48 cm, 210,08 € HT", "Choisir la largeur", "Invacare Action 2NG"]);
   eq("photo de Zineb → composition A (photo, halo)", [tra.outil.photo, tra.halo, esp(tra.outil.meta)], ["https://exemple.test/photo-zineb.jpg", "https://exemple.test/photo-zineb.jpg", "2 largeurs en stock · dès 175,70 € HT"]);
   const casse = C.construireMisesEnAvant(pub, ctxPage({ justifProducts: JUSTIF_PRODUITS, illisibles: new Set(["https://exemple.test/photo-zineb.jpg"]) })).grille[1];
   eq("photo de Zineb illisible → composition automatique", [casse.outil.photo, casse.outil.cartes[0].nom], [null, "Transit Lite"]);
-  const sansPhotos = C.cartesOutil("fauteuil", { des: 210.08 }, { illisibles: new Set(C.cartesOutil("fauteuil", null).map(c => c.url)) });
-  eq("photos du fabricant toutes illisibles → carte texte « Action 2NG » avec le prix", sansPhotos, [{ url: null, nom: "Action 2NG", pn: 210.08, ouvert: true }]);
+  // photos du fabricant toutes illisibles (jeton du fabricant changé) : composition plaque et chiffres, prix exact (« dès »
+  // pour le transfert : « le plus bas »), jamais une carte blanche presque vide (écart au § 6.6 de la spécification)
+  const photosFab = (k) => new Set(C.cartesOutil(k, null).map(c => c.url));
+  eq("photos du fabricant toutes illisibles → plaque, largeurs en stock, prix", C.cartesOutil("fauteuil", { tailles: ["40,5 cm", "43 cm", "45,5 cm", "48 cm"], des: 210.08, a: 210.08 }, { illisibles: photosFab("fauteuil") }).map(c => c.type || `${esp(c.chiffre)}:${c.legende}`),
+    ["plaque", "4:largeurs en stock", "210,08 €:HT"]);
+  eq("… transfert : 2 largeurs, prix le plus bas", C.cartesOutil("transfert", { tailles: ["43 cm", "45,5 cm"], des: 175.7, a: 179.52 }, { illisibles: photosFab("transfert") }).map(c => c.type || `${esp(c.chiffre)}:${c.legende}`),
+    ["plaque", "2:largeurs en stock", "175,70 €:HT, le plus bas"]);
+  const fauBloque = C.construireMisesEnAvant(pub, ctxPage({ justifProducts: JUSTIF_PRODUITS, illisibles: photosFab("fauteuil") })).vitrine[1];
+  eq("… sur la page : éventail « outil » (plaque devant), aucun halo de photo cassée", [fauBloque.outil.cartes[0].type, fauBloque.halo ?? null], ["plaque", null]);
   eq("saisie : plaque avec champ, chiffres, mise à jour", [sai.outil.cartes[0], esp(sai.outil.meta), sai.outil.meta2, sai.outil.cta, sai.outil.ctaCourt],
-    [{ type: "plaque", icone: "crayon", champ: true }, "27 871 références · 4 526 en stock", "Stock mis à jour le 20 oct. à 8 h 38", "Ouvrir la Saisie de commande", "Ouvrir la Saisie"]);
-  eq("groupées : 2 opérations ouvertes", [grp.outil.meta, grp.outil.cartes.map(c => c.chiffre || c.type)], ["2 opérations ouvertes", ["plaque", "2"]]);
+    [{ type: "plaque", icone: "crayon", champ: true }, "27 871 références · 4 526 réf. en stock", "Stock mis à jour le 20 oct. à 8 h 38", "Ouvrir la Saisie de commande", "Ouvrir la Saisie"]);
+  eq("saisie : cartes « références » et « réf. en stock » (un nombre de références, jamais une quantité)", sai.outil.cartes.slice(1).map(c => c.legende), ["références", "réf. en stock"]);
+  eq("groupées : 2 opérations ouvertes", [esp(grp.outil.meta), grp.outil.cartes.map(c => c.chiffre || c.type)], ["2 opérations ouvertes", ["plaque", "2"]]);
+  eq("pieds de tuile : court, et verbe seul (petite tuile sur téléphone), contenu dans le court", [per.outil.ctaCourt, per.outil.ctaMini, fau.outil.ctaMini, sai.outil.ctaMini, jus.outil.ctaMini, grp.outil.ctaMini],
+    ["Voir les produits", "Voir", "Choisir", "Ouvrir", "Commander", "Voir"]);
+  vrai("… verbe seul inclus dans le texte court (nom accessible)", Object.values(C.OUTILS).every(d => d.ctaCourt.startsWith(d.ctaMini)));
   eq("aperçu de l'admin : groupées montrées sans compte de la pharmacie", C.construireMisesEnAvant(pub, ctxPage({ apercu: true, gp: { autorise: true, ouvertes: null } })).grille[2].outil.meta, "Vos opérations ouvertes");
   const sansComptes = C.construireMisesEnAvant({ items: [{ ...pub.items.find(i => i.outil === "saisie"), chiffres: null }] }, ctxPage()).grille[0];
   eq("saisie sans chiffres : texte seul, plaque seule", [sansComptes.outil.meta, sansComptes.outil.cartes.length, sansComptes.accroche.length > 0], ["", 1, true]);
   eq("chiffres exigés absents → écarté (péremption sans chiffres)", C.construireMisesEnAvant({ repli: false, items: [{ ...pub.items[0], chiffres: null }] }, ctxPage()).vitrine.length, 0);
   eq("texte vide de Zineb → défaut ; texte saisi → gardé", [per.accroche.startsWith("Produits en stock"), C.construireMisesEnAvant({ items: [{ ...pub.items[0], titre: "Mon titre", accroche: "Mon texte" }] }, ctxPage()).vitrine[0].accroche], [true, "Mon texte"]);
   eq("une seule taille en stock", esp(C.chiffresTexte("transfert", { tailles: ["43 cm"], des: 179.52, a: 179.52 }).meta), "Largeur 43 cm en stock · 179,52 € HT");
+  // typographie : un nombre ne quitte jamais son unité ; « dès » colle à son prix ; titres sans mot seul en fin de ligne
+  const NB = "\u00a0", FN = "\u202f";
+  const tx = (k, ch, o) => C.chiffresTexte(k, ch, o).meta;
+  eq("insécables : nombre et unité, « dès » et prix", [tx("justificatif", { medicaments: 6, presentations: 17 }), tx("peremption", { nb: 167, des: 0.44 }, { court: true }), tx("transfert", { tailles: ["43 cm", "45,5 cm"], des: 175.7, a: 179.52 }),
+    tx("saisie", { references: 27871, en_stock: 4526 }), tx("groupees", { ouvertes: 2 })],
+    [`6${NB}médicaments · 17${NB}présentations`, `167${NB}réf. · dès${NB}0,44${NB}€${NB}HT`, `2${NB}largeurs en stock · dès${NB}175,70${NB}€${NB}HT`,
+      `27${FN}871${NB}références · 4${FN}526${NB}réf.${NB}en${NB}stock`, `2${NB}opérations ouvertes`]);
+  eq("titres et accroche : « à la », « Transit Lite », « 4 mois » insécables", [C.OUTILS.fauteuil.titre, C.OUTILS.transfert.titre, C.OUTILS.peremption.accroche().includes(`4${NB}mois`)],
+    [`Le bon fauteuil, à${NB}la bonne${NB}largeur`, `Fauteuil de transfert Transit${NB}Lite`, true]);
   eq("péremption sur un seul mois ; un seul produit", [C.chiffresTexte("peremption", { nb: 1, des: 2, mois: ["2027-01", "2027-01"] }).meta2, C.OUTILS.peremption.cta({ nb: 1 })], ["Péremption en janv. 2027", "Voir le produit"]);
   let erreur = null;
   try { eq("type inconnu (« assistant ») ignoré sans erreur, comme une page restée sur l'ancien code", C.construireMisesEnAvant({ items: [{ id: "mea_x_1234", type: "assistant", emplacement: "vitrine" }, pub.items[0]] }, ctxPage()).vitrine.map(e => e.cle), ["o:peremption"]); }
   catch (e) { erreur = e; }
   eq("… aucune exception", erreur, null);
   eq("outil inconnu du registre ignoré", C.construireMisesEnAvant({ repli: false, items: [{ ...pub.items[0], outil: "ulabs" }] }, ctxPage()).vitrine.length, 0);
+}
+
+// ── 13. Correctifs de la revue ──
+{
+  O.oublierMemo();
+  // (a) kv « accueil:outils » illisible : fauteuils en donnees_indisponibles (jamais les anciens CIP : 2 largeurs à tort)
+  const srcPanneKv = { kvGet: async () => { throw new Error("kv en panne"); }, sb: async (p) => (p.includes("select=cip,list_price,discounted_price,discount_pct,in_stock") ? FAUT_CAT : []),
+    labosJustif: async () => [], maintenant: () => MAINTENANT };
+  const lusKv = await O.lireOutils(srcPanneKv, ["fauteuil", "saisie"], { displayConfig: {} });
+  eq("kv illisible : fauteuil → donnees_indisponibles (pas de repli)", O.evaluerOutil("fauteuil", { outils: lusKv, menus: MENUS }, MAINTENANT).raisons, ["donnees_indisponibles"]);
+  eq("kv illisible : Saisie en texte seul", O.evaluerOutil("saisie", { outils: lusKv, menus: MENUS }, MAINTENANT).chiffres, null);
+  const srcSansCle = { ...srcPanneKv, kvGet: async () => null };
+  const lusSansCle = await O.lireOutils(srcSansCle, ["fauteuil"], { displayConfig: {} });
+  const repli = O.evaluerOutil("fauteuil", { outils: lusSansCle, menus: MENUS }, MAINTENANT);
+  eq("clé absente (avant le 1er passage) : CIP de repli, signalés à l'admin", [repli.chiffres.tailles.length, repli.admin.correspondance], [2, "repli"]);
+  eq("correspondance sans fauteuils (Odoo toujours en échec) → admin « repli »",
+    O.evaluerOutil("fauteuil", { outils: { plan: { at: "x", fauteuils: null, saisie: COMPTES }, fauteuilsCat: { parCip: parCip(FAUT_CAT) } } }, MAINTENANT).admin.correspondance, "repli");
+  eq("correspondance complète → « odoo » (date du calcul) ; partielle → « partielle »", [
+    O.evaluerOutil("fauteuil", { outils: { plan: { at: "2026-10-20T06:40:00Z", fauteuils: CORRESPONDANCE }, fauteuilsCat: { parCip: parCip(FAUT_CAT) } } }, MAINTENANT).admin,
+    O.evaluerOutil("fauteuil", { outils: { plan: { fauteuils: { BR1538205: CORRESPONDANCE.BR1538205 } }, fauteuilsCat: { parCip: parCip(FAUT_CAT) } } }, MAINTENANT).admin.correspondance],
+    [{ correspondance: "odoo", calculee_le: "2026-10-20T06:40:00Z" }, "partielle"]);
+  vrai("admin des fauteuils absent de la réponse publique", !("admin" in (V.evaluerVedettes({ items: [objet("outil", "fauteuil", "vitrine")] }, null,
+    { menus: MENUS, outils: { plan: { fauteuils: CORRESPONDANCE }, fauteuilsCat: { parCip: parCip(FAUT_CAT) } } }, MAINTENANT).publiques.items[0] || {})));
+
+  // (b) section ajoutée dans l'admin (customSections) : le panier la facture au prix de la section → hors « dès »
+  const peremption = await O.lirePeremption({ sb: sbPeremption([]), maintenant: () => MAINTENANT });
+  const perso = { ...peremption, curees: [...peremption.curees, { cip: "3400930000101", section: "maSection" }] };
+  const sansPerso = O.evaluerOutil("peremption", { outils: { peremption: perso, perso: [] }, menus: MENUS }, MAINTENANT);
+  const avecPerso = O.evaluerOutil("peremption", { outils: { peremption: perso, perso: O.sectionsPerso({ customSections: [{ key: "maSection", label: "Ma section" }] }) }, menus: MENUS }, MAINTENANT);
+  eq("section perso : produit à 0,44 € exclu du « dès », compté dans en_menu", [sansPerso.chiffres.des, avecPerso.chiffres.des, avecPerso.admin.en_menu, avecPerso.chiffres.nb], [0.44, 5, 4, 9]);
+  eq("lireOutils : clés des sections perso", (await O.lireOutils({ sb: sbPeremption([]), maintenant: () => MAINTENANT }, ["peremption"], { displayConfig: { customSections: [{ key: "maSection" }, { label: "sans clé" }] } })).perso, ["maSection"]);
+
+  // (c) fonction planifiée : valeur précédente illisible + Odoo en panne → accueil:outils inchangé
+  const kv = new Map([["accueil:outils", { at: "2026-10-20T03:40:00.000Z", fauteuils: CORRESPONDANCE, saisie: COMPTES }]]);
+  const ecrits = [];
+  const depsR = (extra = {}) => ({ odoo: async () => { throw new Error("Odoo injoignable"); },
+    kvGet: async (k) => { if (k === "accueil:outils") throw new Error("kv en panne"); return kv.get(k) ?? null; }, kvSet: async (k, v) => { ecrits.push(k); kv.set(k, v); },
+    compter: async (c) => (c.includes("in_stock") ? 4500 : 27900), sb: async (p) => (p.startsWith("odoo_catalog?select=updated_at") ? [{ updated_at: COMPTES.maj }] : []),
+    quotaProducts: async () => [], justifs: async () => new Set(), maintenant: () => MAINTENANT, ...extra });
+  await creerRefresh(depsR())();
+  eq("valeur précédente illisible, Odoo en panne : accueil:outils non réécrit (correspondance gardée)", [ecrits.includes("accueil:outils"), kv.get("accueil:outils").fauteuils], [false, CORRESPONDANCE]);
+  vrai("… journal : rien réécrit", /valeur précédente illisible, rien réécrit/.test(kv.get("accueil:dernier_passage").journal.join(" ")));
+  const variantes = Object.entries(CORRESPONDANCE).flatMap(([code], i) => CORRESPONDANCE[code].map((cip, j) => ({ id: 100 * (i + 1) + j, default_code: cip, barcode: false, product_tmpl_id: [i + 1, code], create_date: `2025-0${j + 1}-01 10:00:00` })));
+  const odooOk = async (model, method) => (model === "product.supplierinfo" ? Object.keys(CORRESPONDANCE).map((code, i) => ({ product_code: code, product_tmpl_id: [i + 1, code], product_id: false }))
+    : model === "product.product" ? variantes : []);
+  ecrits.length = 0;
+  await creerRefresh(depsR({ odoo: odooOk }))();
+  eq("valeur précédente illisible, tout calculé : écrit (rien à perdre)", [ecrits.includes("accueil:outils"), kv.get("accueil:outils").saisie.references], [true, 27900]);
+  // dernière mise à jour des comptes : lignes datées seulement ; sans date : signalé au journal
+  const chemins = [];
+  const j = [];
+  const v = await O.calculerOutilsPlanifies({ odoo: odooOk, compter: async () => 10, sb: async (p) => { chemins.push(p); return [{ updated_at: null }]; }, maintenant: () => MAINTENANT }, null, j);
+  eq("comptes : lecture de la date sans NULL en tête", chemins[0], "odoo_catalog?select=updated_at&updated_at=not.is.null&order=updated_at.desc.nullslast&limit=1");
+  eq("comptes sans date : maj nulle, signalé au journal", [v.saisie.maj, /comptes sans date de mise à jour/.test(j.join(" "))], [null, true]);
+
+  // (d) GET : lecture d'un outil lente, ?verifier= sans outils, admin : outil masqué lu quand même
+  let valeur = { items: [objet("produit", "3400934438738", "vitrine"), objet("outil", "peremption", "vitrine"), objet("outil", "saisie", "grille")] };
+  let display = DISPLAY, lente = false;
+  const lectures = [], cles = [];
+  const sb = async (path) => {
+    lectures.push(path.split("?")[0]);
+    if (path.startsWith("elixir_pharmacies")) return [{ email: "compte@pharmacie-a.test" }];
+    if (path.startsWith("ec_config")) return [{ key: "display_config", value: display }, { key: "admin_promos", value: PROMOS }, { key: "accueil_vedettes", value: JSON.stringify(valeur), updated_at: "x" }];
+    if (path.startsWith("odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry")) return lente ? new Promise(() => {}) : PER;
+    if (path.startsWith("odoo_catalog?cip=in.")) return path.includes("in_stock&") || path.endsWith("in_stock") ? FAUT_CAT
+      : [{ cip: "3400934438738", name: "VENTOLINE", list_price: 3.24, discounted_price: 3.01, discount_pct: 7.1, in_stock: true, available: 5000 }];
+    if (path.startsWith("expiry_discounts")) return REMISES;
+    if (path.startsWith("elixir_products")) return path.includes("select=cip,section") ? CUREES : [];
+    if (path.startsWith("elixir_campaigns")) return [{ id: "camp1", active: true }];
+    throw new Error(`table inattendue ${path}`);
+  };
+  const kvG = new Map([["accueil:offres", { version: 1, genere_le: new Date(MAINTENANT - 3600e3).toISOString(), periode: null, slides: [], reserves: [] }], ["accueil:outils", { at: "x", saisie: COMPTES, fauteuils: CORRESPONDANCE }]]);
+  const deps = { sb, kvGet: async (k) => { cles.push(k); return kvG.get(k) ?? null; }, kvSet: async () => { throw new Error("écriture kv interdite"); }, rateLimit: () => null,
+    justifs: async () => new Set(), labosJustif: async () => O.labosDeConfig(CONFIG_LJ), maintenant: () => MAINTENANT, odoo: async () => { throw new Error("Odoo interdit"); },
+    compter: async () => { throw new Error("compte interdit au GET"); }, delaiOutilsMs: 60,
+    verifierJeton: async (t) => ({ "jeton-a": { id: "a", email: "compte@pharmacie-a.test" }, "jeton-admin": { id: "adm", email: "equipe@elixir.test", isAdmin: true } })[t] || null };
+  const appel = async (jeton, q = {}) => { lectures.length = 0; cles.length = 0; const r = await creerHandler(deps)({ httpMethod: "GET", headers: { authorization: `Bearer ${jeton}` }, queryStringParameters: q });
+    return { statut: r.statusCode, corps: JSON.parse(r.body) }; };
+  O.oublierMemo(); lente = true;
+  const t0 = Date.now();
+  let r = await appel("jeton-a");
+  eq("péremption qui ne répond jamais : 200, les autres mises en avant sortent (délai des outils)", [r.statut, r.corps.vedettes.items.map(i => i.outil || i.type)], [200, ["produit", "saisie"]]);
+  vrai(`… sans attendre la lecture lente (${Date.now() - t0} ms)`, Date.now() - t0 < 1500);
+  lente = false; O.oublierMemo();
+  r = await appel("jeton-admin", { verifier: "3400934438738" });
+  eq("admin ?verifier= : aucune lecture d'outil, ni outils_etat ; la vérification est là", [lectures.includes("expiry_discounts"), cles.includes("accueil:outils"), "outils_etat" in r.corps, Object.keys(r.corps.verification || {})],
+    [false, false, false, ["3400934438738"]]);
+  display = { hiddenTabs: ["ulabs", "peremption"] };
+  r = await appel("jeton-admin");
+  eq("admin, Péremption masquée : chiffres lus quand même, motif outil_masque (rien d'autre)", [r.corps.outils_etat.peremption.raisons, r.corps.outils_etat.peremption.chiffres?.nb], [["outil_masque"], 9]);
+  eq("… et l'état de sa mise en avant reste « outil masqué »", r.corps.vedettes_etat.find(e => e.id === valeur.items[1].id).statut, "outil_masque");
+  r = await appel("jeton-a");
+  eq("pharmacie, Péremption masquée : rien lu pour elle, absente", [lectures.includes("expiry_discounts"), r.corps.vedettes.items.map(i => i.outil || i.type)], [false, ["produit", "saisie"]]);
+  display = DISPLAY;
+
+  // (e) configuration des justificatifs (kv « lj:config ») lue une fois pour justifs et labosJustif
+  const fetchAvant = globalThis.fetch;
+  let lecturesConfig = 0;
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("kv_store?key=eq.lj%3Aconfig")) { lecturesConfig++; return new Response(JSON.stringify([{ value: JSON.stringify(CONFIG_LJ) }]), { status: 200 }); }
+    throw new Error(`réseau interdit dans les tests : ${url}`);
+  };
+  try {
+    const src = creerSources({});
+    const [js, labos] = await Promise.all([src.justifs(), src.labosJustif()]);
+    eq("lj:config lue une seule fois (justifs : tous les labos ; labosJustif : ceux du site)", [lecturesConfig, js.size, labos.map(l => l.nom)], [1, 18, ["Takeda", "Pfizer"]]);
+  } finally { globalThis.fetch = fetchAvant; }
+
+  // (f) propriété : tout objet outil que evaluerVedettes évalue (aucun statut de date) a sa clé dans outilsAEvaluer
+  let graine = 20261020;
+  const hasard = () => { graine = (graine * 1103515245 + 12345) % 2147483648; return graine / 2147483648; };
+  const parmi = (l) => l[Math.floor(hasard() * l.length)];
+  const JOURS = [null, "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-20T08:00:00Z", "2026-13-01", ""];
+  let contreExemples = [], nEvalues = 0;
+  for (let k = 0; k < 400; k++) {
+    const items = Array.from({ length: 1 + Math.floor(hasard() * 8) }, () => objet(parmi(["outil", "outil", "outil", "produit"]), parmi([...O.OUTILS_MEA, " saisie ", "ulabs"]), parmi(["vitrine", "grille", "ailleurs"]),
+      { actif: parmi([true, true, false, undefined]), date_debut: parmi(JOURS), date_fin: parmi(JOURS), ...(hasard() < 0.1 ? { id: "invalide" } : {}) }))
+      .map(x => (x.type === "produit" ? { ...x, cip: "3400934438738", outil: undefined } : x));
+    const valeur = { items };
+    const demandes = new Set(O.outilsAEvaluer(valeur, "2026-10-20"));
+    const evalues = [];
+    const espion = { menus: MENUS, get outils() { return OUTILS_LUS; } };
+    const etats = V.evaluerVedettes(valeur, null, espion, MAINTENANT).etats;
+    for (const e of etats) {
+      const it = items.find(i => i.id === e.id);
+      if (it?.type === "outil" && !["masquee", "programmee", "terminee", "invalide"].includes(e.statut)) evalues.push(String(it.outil).trim());
+    }
+    nEvalues += evalues.length;
+    const manquants = evalues.filter(x => !demandes.has(x));
+    if (manquants.length) contreExemples.push({ items: items.map(i => [i.type, i.outil, i.emplacement, i.actif, i.date_debut, i.date_fin]), manquants });
+  }
+  eq("propriété (400 tirages) : outil évalué ⇒ demandé à lireOutils", contreExemples.slice(0, 2), []);
+  vrai(`… tirages non vides (${nEvalues} outils évalués)`, nEvalues > 100);
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

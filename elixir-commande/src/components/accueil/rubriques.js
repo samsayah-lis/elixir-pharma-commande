@@ -17,7 +17,10 @@ export const OUTILS_MEA = ["saisie", "peremption", "fauteuil", "transfert", "jus
 export const RUBRIQUES_HORS_CATALOGUE = ["accueil", "saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"];
 
 // ── Formats (affichage : espaces insécables comme theme.js ; texte lu : comme prixLu de vedettes.js) ──
+// Typographie : un nombre ne quitte jamais son unité (« 17 présentations », « dès 0,44 € HT ») : espace insécable ; les
+// segments d'une méta (« · ») passent à la ligne entiers (SegmentsMeta d'outils.js, dans Cinema.jsx et Bento.jsx)
 const FINE = "\u202f", NBSP = "\u00a0";
+const avecUnite = (n, unite) => `${entier(n)}${NBSP}${unite}`;
 export const entier = (n) => String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, FINE);
 const eurHT = (n) => `${fmtEur(n)}${NBSP}HT`;
 const eurLu = (n) => `${Number(n).toFixed(2).replace(".", ",")} € HT`;
@@ -53,49 +56,51 @@ function accrocheJustif(ch) {
 }
 
 // ── Registre : libellé (barre latérale), icône au trait (ICONES_RAYON), teinte (accent du menu ; le violet par défaut
-// du justificatif est remplacé par la sarcelle dans vedettes.js), textes par défaut, bouton de la vitrine (cta) et pied de
-// tuile (ctaCourt), composition automatique, chiffres exigés (sans eux, la carte reste cachée) ──
+// du justificatif est remplacé par la sarcelle dans vedettes.js), textes par défaut, bouton de la vitrine (cta, et
+// ctaCourt quand il ne tient pas sur une ligne), pied de tuile (ctaCourt ; ctaMini : petite tuile sur téléphone, contenu
+// dans ctaCourt pour le nom accessible), composition automatique, chiffres exigés (sans eux, la carte reste cachée).
+// Titres : espaces insécables (« à la », « Transit Lite ») contre les mots seuls en fin de ligne ──
 export const OUTILS = {
   saisie: {
     libelle: "Saisie de commande", icone: "crayon", accent: "#2d9cbc", composition: "plaque", chiffresRequis: false,
     titre: "Commandez par CIP, EAN ou nom",
     accroche: () => "Tout le catalogue Elixir dans un seul champ : quelques lettres du nom, le CIP ou le code EAN, et la boîte part au panier.",
-    badge: "Tout le catalogue", cta: () => "Ouvrir la Saisie de commande", ctaCourt: "Ouvrir la Saisie",
+    badge: "Tout le catalogue", cta: () => "Ouvrir la Saisie de commande", ctaCourt: "Ouvrir la Saisie", ctaMini: "Ouvrir",
     sansPhoto: "plaque de l'outil et chiffres du catalogue",
   },
   peremption: {
     libelle: "Péremption courte", icone: "horloge", accent: "#ea580c", composition: "plaque", chiffresRequis: true,
     titre: "Péremption courte, petits prix",
-    accroche: () => "Produits en stock à péremption entre J+30 et 4 mois : la remise est déjà dans le prix affiché.",
-    badge: "Petits prix", cta: (ch) => (ch?.nb === 1 ? "Voir le produit" : ch?.nb > 1 ? `Voir les ${ch.nb} produits` : "Voir les produits"), ctaCourt: "Voir les produits",
+    accroche: () => `Produits en stock à péremption entre J+30 et 4${NBSP}mois : la remise est déjà dans le prix affiché.`,
+    badge: "Petits prix", cta: (ch) => (ch?.nb === 1 ? "Voir le produit" : ch?.nb > 1 ? `Voir les ${ch.nb} produits` : "Voir les produits"), ctaCourt: "Voir les produits", ctaMini: "Voir",
     sansPhoto: "plaque de l'outil et chiffres du moment",
   },
   fauteuil: {
     libelle: "Fauteuil roulant", icone: "fauteuil", accent: "#3b82f6", composition: "photos", chiffresRequis: true,
-    titre: "Le bon fauteuil, à la bonne largeur",
+    titre: `Le bon fauteuil, à${NBSP}la bonne${NBSP}largeur`,
     accroche: () => `${modeleLong("fauteuil")} : la largeur d'assise se déduit d'une mesure ou du poids, puis le bon modèle s'affiche avec son prix.`,
-    badge: "Aide au choix", cta: () => "Choisir la largeur", ctaCourt: "Choisir la largeur",
+    badge: "Aide au choix", cta: () => "Choisir la largeur", ctaCourt: "Choisir la largeur", ctaMini: "Choisir",
     sansPhoto: "éventail des photos du fabricant",
   },
   transfert: {
     libelle: "Fauteuil de transfert", icone: "chaise", accent: "#3b82f6", composition: "photos", chiffresRequis: true,
-    titre: `Fauteuil de transfert ${modeleCourt("transfert")}`,
+    titre: `Fauteuil de transfert ${modeleCourt("transfert").replace(/ /g, NBSP)}`,
     accroche: () => `${modeleLong("transfert")}, en ${taillesLINES("transfert")} : la largeur d'assise se déduit d'une mesure ou du poids.`,
-    badge: "Aide au choix", cta: () => "Choisir la largeur", ctaCourt: "Choisir la largeur",
+    badge: "Aide au choix", cta: () => "Choisir la largeur", ctaCourt: "Choisir la largeur", ctaMini: "Choisir",
     sansPhoto: "éventail des photos du fabricant",
   },
   justificatif: {
     libelle: "Commande labo sur justificatif", icone: "document", accent: "#7c3aed", composition: "plaque", chiffresRequis: true,
     titre: "Commande labo sur justificatif",
     accroche: accrocheJustif,
-    badge: "Suivi pas à pas", cta: () => "Commander sur justificatif", ctaCourt: "Commander",
+    badge: "Suivi pas à pas", cta: () => "Commander sur justificatif", ctaCourt: "Commander", ctaMini: "Commander",
     sansPhoto: "plaque de l'outil et laboratoires du moment",
   },
   groupees: {
     libelle: "Commandes groupées", icone: "groupe", accent: "#2d9cbc", composition: "plaque", chiffresRequis: false,
     titre: "Vos commandes groupées",
     accroche: () => "Achats groupés et précommandes aux conditions négociées : saisissez vos quantités avant la clôture.",
-    badge: "Conditions négociées", cta: () => "Voir les opérations", ctaCourt: "Voir les opérations",
+    badge: "Conditions négociées", cta: () => "Voir les opérations", ctaCourt: "Voir les opérations", ctaMini: "Voir",
     sansPhoto: "plaque de l'outil et opérations ouvertes",
   },
 };
@@ -124,51 +129,58 @@ export function chiffresJustif(justifProducts) {
   return { labos: labos.map(({ nom, medicaments }) => ({ nom, medicaments })), medicaments: labos.reduce((s, l) => s + l.medicaments, 0), presentations };
 }
 
-// ── Textes des chiffres : { meta (ligne sous le titre ; court : petite tuile), meta2 (seconde ligne), lu (lecture) } ──
+// ── Textes des chiffres : { meta (ligne sous le titre ; court : petite tuile), meta2 (seconde ligne, vitrine), lu (lecture) } ──
+// Saisie : « réf. en stock » (un nombre de références, jamais une quantité en stock) ; fauteuils : l'étendue des largeurs
+// en seconde ligne (la méta reste courte : « 4 largeurs en stock · 210,08 € HT »)
 const VIDE = { meta: "", meta2: "", lu: "" };
 export function chiffresTexte(cle, ch, { court = false } = {}) {
   if (cle === "groupees") {
     if (ch?.ouvertes === null || ch?.ouvertes === undefined) return { meta: "Vos opérations ouvertes", meta2: "", lu: "vos opérations ouvertes" };
     const n = Number(ch.ouvertes) || 0;
     if (n <= 0) return VIDE;
-    const t = `${entier(n)} ${pluriel(n, "opération ouverte", "opérations ouvertes")}`;
+    const t = avecUnite(n, pluriel(n, "opération ouverte", "opérations ouvertes"));
     return { meta: t, meta2: "", lu: t };
   }
   if (!ch || typeof ch !== "object") return VIDE;
   if (cle === "saisie") {
     if (!(ch.references > 0)) return VIDE;
-    const r = entier(ch.references), s = entier(ch.en_stock);
     const maj = heureMaj(ch.maj);
-    return { meta: `${r} ${court ? "réf." : pluriel(ch.references, "référence", "références")} · ${s} en stock`, meta2: maj ? `Stock mis à jour ${maj}` : "",
-      lu: [`${r} ${pluriel(ch.references, "référence", "références")}`, `${s} en stock`, maj ? `stock mis à jour ${maj}` : ""].filter(Boolean).join(", ") };
+    return { meta: `${avecUnite(ch.references, court ? "réf." : pluriel(ch.references, "référence", "références"))} · ${avecUnite(ch.en_stock, `réf.${NBSP}en${NBSP}stock`)}`,
+      meta2: maj ? `Stock mis à jour ${maj}` : "",
+      lu: [avecUnite(ch.references, pluriel(ch.references, "référence", "références")), `${avecUnite(ch.en_stock, pluriel(ch.en_stock, "référence", "références"))} en stock`,
+        maj ? `stock mis à jour ${maj}` : ""].filter(Boolean).join(", ") };
   }
   if (cle === "peremption") {
     if (!(ch.nb > 0)) return VIDE;
-    const n = entier(ch.nb), refs = pluriel(ch.nb, "référence", "références");
+    const refs = pluriel(ch.nb, "référence", "références");
     const [m0, m1] = Array.isArray(ch.mois) ? ch.mois : [];
     const meta2 = m0 && m1 && m0 !== m1 ? `Péremptions de ${moisTexte(m0)} à ${moisTexte(m1)}` : m0 ? `Péremption en ${moisTexte(m0)}` : "";
-    return { meta: [`${n} ${court ? "réf." : refs}`, ch.des > 0 ? `dès ${eurHT(ch.des)}` : ""].filter(Boolean).join(" · "), meta2,
-      lu: [`${n} ${refs}`, ch.des > 0 ? `dès ${eurLu(ch.des)}` : "", ch.jusqua >= 1 ? `jusqu'à −${virgule(ch.jusqua)} %` : ""].filter(Boolean).join(", ") };
+    return { meta: [avecUnite(ch.nb, court ? "réf." : refs), ch.des > 0 ? `dès${NBSP}${eurHT(ch.des)}` : ""].filter(Boolean).join(" · "), meta2,
+      lu: [avecUnite(ch.nb, refs), ch.des > 0 ? `dès ${eurLu(ch.des)}` : "", ch.jusqua >= 1 ? `jusqu'à −${virgule(ch.jusqua)} %` : ""].filter(Boolean).join(", ") };
   }
   if (cle === "fauteuil" || cle === "transfert") {
     const t = Array.isArray(ch.tailles) ? ch.tailles : [];
     if (!t.length || !(ch.des > 0)) return VIDE;
     const egal = !(ch.a > ch.des);
-    const prix = egal ? eurHT(ch.des) : `dès ${eurHT(ch.des)}`, prixLu = egal ? eurLu(ch.des) : `dès ${eurLu(ch.des)}`;
-    if (t.length === 1) return { meta: `${court ? "" : "Largeur "}${t[0]} en stock · ${prix}`, meta2: "", lu: `largeur ${t[0]} en stock, ${prixLu}` };
-    const etendue = egal && !court ? `, de ${t[0].replace(/\s*cm$/, "")} à ${t.at(-1)}` : "";
-    return { meta: `${t.length} largeurs en stock${etendue} · ${prix}`, meta2: "", lu: `${t.length} largeurs en stock${egal ? `, de ${t[0].replace(/\s*cm$/, "")} à ${t.at(-1)}` : ""}, ${prixLu}` };
+    const ins = (x) => String(x).replace(/ /g, NBSP);   // « 45,5 cm » insécable
+    const prix = egal ? eurHT(ch.des) : `dès${NBSP}${eurHT(ch.des)}`, prixLu = egal ? eurLu(ch.des) : `dès ${eurLu(ch.des)}`;
+    if (t.length === 1) return { meta: `${court ? "" : "Largeur "}${ins(t[0])} en stock · ${prix}`, meta2: "", lu: `largeur ${t[0]} en stock, ${prixLu}` };
+    const sansCm = (x) => String(x).replace(/\s*cm$/, "");
+    const etendue = t.length >= 3 ? `de ${sansCm(t[0])} à ${ins(t.at(-1))}` : `${t.slice(0, -1).map(sansCm).join(", ")} et ${ins(t.at(-1))}`;
+    return { meta: `${avecUnite(t.length, "largeurs")} en stock · ${prix}`, meta2: `Largeurs d'assise : ${etendue}`,
+      lu: `${t.length} largeurs en stock, ${t.length >= 3 ? `de ${sansCm(t[0])} à ${t.at(-1)}` : `${t.slice(0, -1).map(sansCm).join(", ")} et ${t.at(-1)}`}, ${prixLu}` };
   }
   if (cle === "justificatif") {
     if (!(ch.presentations > 0)) return VIDE;
-    const m = `${entier(ch.medicaments)} ${pluriel(ch.medicaments, "médicament", "médicaments")}`, p = `${entier(ch.presentations)} ${pluriel(ch.presentations, "présentation", "présentations")}`;
+    const m = avecUnite(ch.medicaments, pluriel(ch.medicaments, "médicament", "médicaments")), p = avecUnite(ch.presentations, pluriel(ch.presentations, "présentation", "présentations"));
     return { meta: `${m} · ${p}`, meta2: "", lu: `${m}, ${p}` };
   }
   return VIDE;
 }
 
 // ── Cartes de la composition automatique (Eventail.jsx) ──
-// Fauteuils : 3 photos du fabricant (fond blanc, carte texte « Action 2NG » quand aucune ne s'affiche) ; autres outils :
+// Fauteuils : 3 photos du fabricant (fond blanc) ; aucune ne s'affiche (jeton du fabricant changé…) : la composition des
+// autres outils, plaque et chiffres (largeurs en stock, prix), plutôt qu'une carte blanche presque vide. Autres outils :
 // plaque (carte 0, devant, au centre) puis cartes-chiffres { chiffre, legende, mot } (aucun nom ni photo de produit).
 // illisibles : adresses en erreur sur la page (illisibles.js), retirées comme une photo absente.
 export function cartesOutil(cle, ch, { illisibles } = {}) {
@@ -179,10 +191,15 @@ export function cartesOutil(cle, ch, { illisibles } = {}) {
     // tuile ; les photos suivantes du Transit Lite sont des photos d'ambiance (personnes, fond non blanc)
     const photos = (MEDIA[cle]?.photos || []).filter(p => p?.src && !p.thumb).slice(0, 3).filter(p => !illisibles?.has?.(p.src))
       .map(p => ({ url: p.src, nom: modeleCourt(cle), pn: null, ouvert: true }));
-    return photos.length ? photos : [{ url: null, nom: modeleCourt(cle), pn: ch?.des > 0 ? ch.des : null, ouvert: true }];
+    if (photos.length) return photos;
+    const t = Array.isArray(ch?.tailles) ? ch.tailles : [];
+    return [{ type: "plaque", icone: def.icone },
+      ...(t.length ? [{ chiffre: String(t.length), legende: pluriel(t.length, "largeur en stock", "largeurs en stock") }] : []),
+      ...(ch?.des > 0 ? [{ chiffre: fmtEur(ch.des), legende: ch.a > ch.des ? "HT, le plus bas" : "HT", ...(fmtEur(ch.des).length > 6 ? { mot: true } : {}) }] : [])];
   }
   const cartes = [{ type: "plaque", icone: def.icone, champ: cle === "saisie" }];
-  if (cle === "saisie" && ch?.references > 0) cartes.push({ chiffre: entier(ch.references), legende: pluriel(ch.references, "référence", "références") }, { chiffre: entier(ch.en_stock), legende: "en stock" });
+  // chiffre long (« 175,70 € ») : en plus petit, comme un nom de laboratoire (sinon son début passe sous la plaque)
+  if (cle === "saisie" && ch?.references > 0) cartes.push({ chiffre: entier(ch.references), legende: pluriel(ch.references, "référence", "références") }, { chiffre: entier(ch.en_stock), legende: "réf. en stock" });
   if (cle === "peremption" && ch?.nb > 0) {
     cartes.push({ chiffre: entier(ch.nb), legende: pluriel(ch.nb, "référence", "références") });
     if (ch.des > 0) cartes.push({ chiffre: fmtEur(ch.des), legende: "HT, le plus bas" });
@@ -192,5 +209,5 @@ export function cartesOutil(cle, ch, { illisibles } = {}) {
     if (ch.labos.length > 2) cartes.push({ chiffre: `+${ch.labos.length - 2}`, legende: pluriel(ch.labos.length - 2, "laboratoire", "laboratoires") });
   }
   if (cle === "groupees" && ch?.ouvertes > 0) cartes.push({ chiffre: entier(ch.ouvertes), legende: pluriel(ch.ouvertes, "opération ouverte", "opérations ouvertes") });
-  return cartes;
+  return cartes.map(c => (c.chiffre != null && !c.mot && String(c.chiffre).length > 6 ? { ...c, mot: true } : c));
 }

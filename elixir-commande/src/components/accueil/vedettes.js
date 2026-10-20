@@ -219,7 +219,7 @@ function entreeOutil(v, ctx) {
   const e = commun(v, `o:${cle}`, couleurDe(v, { accent: accentOutil(cle, ctx.catalogue) }), photo || cartes.find(c => c.url)?.url);
   const long = chiffresTexte(cle, ch), court = chiffresTexte(cle, ch, { court: true });
   const titre = v.titre || def.titre;
-  const outil = { cle, cta: def.cta(ch), ctaCourt: def.ctaCourt, icone: def.icone, photo, cartes, meta: long.meta, metaCourt: court.meta, meta2: long.meta2,
+  const outil = { cle, cta: def.cta(ch), ctaCourt: def.ctaCourt, ctaMini: def.ctaMini || def.ctaCourt, icone: def.icone, photo, cartes, meta: long.meta, metaCourt: court.meta, meta2: long.meta2,
     chiffresLu: long.lu, jusqua: cle === "peremption" && ch?.jusqua >= 1 ? ch.jusqua : null };
   outil.lu = resumeOutilLu({ titre, outil });
   return { ...e, titre, accroche: v.accroche || def.accroche(ch), fin: v.fin || null, finOffre: null, rayon: rayonOutil(cle, ctx.catalogue), outil };

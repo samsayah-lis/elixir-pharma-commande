@@ -93,6 +93,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const [couleurMsg, setCouleurMsg] = useState({});   // id → message de la couleur automatique
   const [photoEtats, setPhotoEtats] = useState({});   // id → { occupe: "recherche" | "envoi" | null, texte, ton, n }
   const jetons = useRef(new Map());                   // id → numéro de la dernière opération sur la photo
+  const jetonsTeinte = useRef(new Map());             // id → numéro de la dernière lecture de couleur (une lecture dépassée est ignorée)
   const [apercu, setApercu] = useState(false);
   const [reverif, setReverif] = useState(null);       // « Vérifier de nouveau » : null | "en cours" | bilan
   const verifRef = useRef(verif); verifRef.current = verif;
@@ -124,6 +125,16 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     setVerif(v => ({ ...v, ...Object.fromEntries(manquants.map(c => [c, j?.verification?.[c] || { erreur: true }])) }));
   };
   useEffect(() => { charger(); lireEtats(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  // outil masqué ou réaffiché (icône œil, plus bas dans l'onglet) : états et chiffres relus peu après la publication de
+  // l'affichage (« en ligne : … ») ; le masquage lui-même se lit tout de suite dans displayConfig (caches)
+  const clesCaches = [...caches].sort().join("|");
+  const cachesVus = useRef(clesCaches);
+  useEffect(() => {
+    if (cachesVus.current === clesCaches) return undefined;
+    cachesVus.current = clesCaches;
+    const t = setTimeout(() => lireEtats(), 1500);
+    return () => clearTimeout(t);
+  }, [clesCaches]);   // eslint-disable-line react-hooks/exhaustive-deps
   const nbProduits = brouillon?.items.filter(i => i.type === "produit").map(i => i.cip).join(",");
   useEffect(() => { if (nbProduits) verifier(nbProduits.split(",")); }, [nbProduits]);   // eslint-disable-line react-hooks/exhaustive-deps
   // photos choisies (brouillon et version en ligne) : chacune contrôlée une fois ; illisible → notée (illisibles.js)
@@ -169,7 +180,8 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
       if (it.outil !== "groupees" && caches.has(it.outil)) return { statut: "outil_masque", fin };
       const o = outilsEtat?.[it.outil];
       if (!o) return { statut: outilsEtat ? "inconnu" : "verification", fin };
-      return { statut: o.raisons?.[0] || "visible", fin, selon: !!o.selon_pharmacie };
+      // masquage : l'état vivant (caches) seulement, jamais celui lu par le serveur au dernier GET (outil réaffiché depuis)
+      return { statut: (o.raisons || []).filter(r => r !== "outil_masque")[0] || "visible", fin, selon: !!o.selon_pharmacie };
     }
     const m = menuDe(it), v = it.type === "produit" ? verif[it.cip] : null;
     const fin = finEffective(it.date_fin, (m || menuRangement(it))?.endDate);
@@ -199,8 +211,10 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const visibles = (p) => liste(p).filter(i => evalues.get(i.id).statut === "visible");
   const titreDe = (it) => it.titre || (it.type === "outil" ? OUTILS[it.outil]?.titre || "Outil inconnu" : it.type === "menu" ? titreMenu(menuDe(it)) || "Menu introuvable"
     : offreDe(it) ? titreParDefaut(offreDe(it)) : `Produit ${it.cip}`);
-  // teinte d'un outil : accent de sa rubrique (celui du catalogue du site), le violet par défaut remplacé par la sarcelle
-  const catalogueAccents = Object.fromEntries(Object.entries(accents || {}).map(([k, a]) => [k, { accent: a }]));
+  // teinte d'un outil : accent de sa rubrique (celui du catalogue du site), le violet par défaut remplacé par la sarcelle ;
+  // libellé renommé dans l'admin (sur-titre de l'aperçu, comme sur la page des pharmacies)
+  const catalogueAccents = Object.fromEntries([...new Set([...Object.keys(accents || {}), ...Object.keys(displayConfig.labels || {})])]
+    .map(k => [k, { ...(accents?.[k] ? { accent: accents[k] } : {}), ...(displayConfig.labels?.[k] ? { label: displayConfig.labels[k] } : {}) }]));
   const accentDe = (it) => { if (it.type === "outil") return accentOutil(it.outil, catalogueAccents); const k = offreDe(it)?.menu?.key || ""; return k && !k.startsWith("promo_") && k !== "saisie" ? accents[k] : null; };
   const couleur = (it) => couleurDe(it, { menu: menuDe(it) || menuRangement(it), accent: accentDe(it) });
   // repli automatique (même règle que la page) : menus actifs non montrés
@@ -237,26 +251,39 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     return { ...b, items: renumeroter(b.items.map(i => (i.id === id ? { ...i, emplacement: place, ordre: dernier + 10 } : { ...i }))) };
   });
   const supprimer = (it) => { if (window.confirm(`Supprimer la mise en avant « ${titreDe(it)} » ? (rien ne part avant « Publier »)`)) setBrouillon(b => ({ ...b, items: b.items.filter(i => i.id !== it.id) })); };
-  const calculerTeinte = (id, url) => {
+  // la dernière lecture lancée pour une mise en avant l'emporte (photo changée ou retirée entre-temps : résultat ignoré) ;
+  // url vide : aucune lecture, celle en cours est abandonnée. type : « couleur de l'outil » pour un outil
+  const calculerTeinte = (id, url, type) => {
+    const n = (jetonsTeinte.current.get(id) || 0) + 1;
+    jetonsTeinte.current.set(id, n);
+    const actuelle = () => jetonsTeinte.current.get(id) === n;
     if (!url) return;
+    const repli = type === "outil" ? "couleur de l'outil" : "couleur du menu ou du rayon";
     setCouleurMsg(m => ({ ...m, [id]: "Lecture de la couleur de la photo…" }));
     teinteDominante(url).then(async r => {
+      if (!actuelle()) return;
       modifier(id, { couleur_auto: r.hex || null });
       // photo trop lente (2 s) : ni l'hébergeur ni la photo en cause, « Relire la couleur » ; lecture refusée : hébergeur sans
       // en-tête CORS (la photo s'affiche), ou photo qui ne s'affiche pas du tout (à dire autrement)
-      const relire = { texte: "La photo a mis trop de temps à se charger : couleur du menu ou du rayon utilisée pour l'instant.", relire: url };
+      const relire = { texte: `La photo a mis trop de temps à se charger : ${repli} utilisée pour l'instant.`, relire: url };
       if (r.erreur === "delai") { setCouleurMsg(m => ({ ...m, [id]: relire })); return; }
       const verdict = r.erreur ? (estIllisible(url) ? "illisible" : await controlerAffichage(url, { variante: photo(url, "thumbnail") })) : null;
-      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : verdict === "illisible" ? "Photo illisible : couleur du menu ou du rayon utilisée."
-        : verdict === "ok" ? "L'hébergeur de cette photo ne permet pas d'en lire la couleur : couleur du menu ou du rayon utilisée. Choisissez-en une si vous préférez."
-          : r.erreur ? { ...relire, texte: "Couleur de la photo non lue (photo lente ou injoignable) : couleur du menu ou du rayon utilisée pour l'instant." }
-            : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
+      if (!actuelle()) return;
+      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : verdict === "illisible" ? `Photo illisible : ${repli} utilisée.`
+        : verdict === "ok" ? `L'hébergeur de cette photo ne permet pas d'en lire la couleur : ${repli} utilisée. Choisissez-en une si vous préférez.`
+          : r.erreur ? { ...relire, texte: `Couleur de la photo non lue (photo lente ou injoignable) : ${repli} utilisée pour l'instant.` }
+            : `Photo sans couleur dominante (produit blanc ou gris) : ${repli} utilisée.` }));
     });
   };
   // ── photo d'une mise en avant : banque d'images, ordinateur, adresse ; la dernière opération lancée l'emporte ──
   // outil : aucune photo par défaut (photos du fabricant sans CORS) ; retour à la composition : teinte de l'outil
   const photoDefaut = (it) => (it.type === "outil" ? null : it.type === "produit" ? offreDe(it)?.image_url : (menuDe(it)?.products || []).find(p => p.image_url)?.image_url);
-  const changerImage = (it, image) => { modifier(it.id, { image, ...(it.type === "outil" && !image ? { couleur_auto: null } : {}) }); calculerTeinte(it.id, image || photoDefaut(it)); };
+  const changerImage = (it, image) => {
+    modifier(it.id, { image, ...(it.type === "outil" && !image ? { couleur_auto: null } : {}) });
+    // outil revenu à la composition automatique : plus de photo, plus de message sur sa couleur (lecture en cours abandonnée)
+    if (it.type === "outil" && !image) setCouleurMsg(m => ({ ...m, [it.id]: "" }));
+    calculerTeinte(it.id, image || photoDefaut(it), it.type);
+  };
   const noterPhoto = (id, e) => setPhotoEtats(x => ({ ...x, [id]: e ? { occupe: null, texte: "", ton: "neutral", ...e, n: (x[id]?.n || 0) + 1 } : null }));
   const jeton = (id) => { const n = (jetons.current.get(id) || 0) + 1; jetons.current.set(id, n); return () => jetons.current.get(id) === n; };
   // adresse collée, retour à la photo du catalogue, carte retirée : choix explicite, une réponse en cours ne l'écrase plus
@@ -345,6 +372,14 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const libelleOutil = (cle) => sansEmoji(displayConfig.labels?.[cle]) || OUTILS[cle]?.libelle || cle;
   const chiffresOutil = (cle) => outilsEtat?.[cle]?.chiffres || null;
   const resumeOutil = (cle) => (cle === "groupees" ? "pharmacies inscrites seulement" : chiffresTexte(cle, chiffresOutil(cle)).meta.split(" · ")[0] || (outilsEtat ? "sans chiffres en ce moment" : "…"));
+  // ce que Zineb doit savoir d'un outil mis en avant : correspondance des fauteuils pas calculée (largeurs peut-être
+  // sous-comptées), comptes de la Saisie plus mis à jour
+  const avertissementOutil = (cle) => {
+    const a = outilsEtat?.[cle]?.admin;
+    if ((cle === "fauteuil" || cle === "transfert") && a?.correspondance && a.correspondance !== "odoo") return AVERTISSEMENT_CORRESPONDANCE;
+    if (cle === "saisie" && (a?.comptes === "anciens" || a?.comptes === "illisibles")) return TEXTE_SEUL_SAISIE[a.comptes];
+    return "";
+  };
   const ouvrirPromos = setTab ? () => { if (!modifs || window.confirm("Des mises en avant ne sont pas publiées. Ouvrir l'onglet Promos quand même ?")) setTab("promos"); } : null;
   return (
     <div>
@@ -397,11 +432,11 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
             {liste(place).map((it, k, l) => (
               <Ligne key={it.id} it={it} titre={titreDe(it)} eval={evalues.get(it.id)} publie={etats[it.id]} premier={k === 0} dernier={k === l.length - 1} place={place}
                 menu={menuDe(it)} offre={offreDe(it)} couleur={couleur(it)} ouvert={ouvert === it.id} onOuvrir={() => setOuvert(o => (o === it.id ? null : it.id))}
-                outil={it.type === "outil" ? { libelle: libelleOutil(it.outil), resume: resumeOutil(it.outil), chiffres: chiffresOutil(it.outil) } : null}
+                outil={it.type === "outil" ? { libelle: libelleOutil(it.outil), resume: resumeOutil(it.outil), chiffres: chiffresOutil(it.outil), avertissement: avertissementOutil(it.outil) } : null}
                 onMonter={() => deplacer(it.id, -1)} onDescendre={() => deplacer(it.id, 1)} onMasquer={() => modifier(it.id, { actif: !it.actif })} onSupprimer={() => supprimer(it)} ouvrirPromos={ouvrirPromos}>
                 {ouvert === it.id && <Formulaire it={it} titreDefaut={it.type === "outil" ? OUTILS[it.outil]?.titre : it.type === "menu" ? titreMenu(menuDe(it)) : titreParDefaut(offreDe(it))}
                   accrocheDefaut={it.type === "outil" ? OUTILS[it.outil]?.accroche(chiffresOutil(it.outil)) : it.type === "menu" ? String(menuDe(it)?.description || "") : ""} menu={menuDe(it) || menuRangement(it)}
-                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]} onRelireCouleur={(u) => calculerTeinte(it.id, u)}
+                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]} onRelireCouleur={(u) => calculerTeinte(it.id, u, it.type)}
                   nom={titreDe(it)} photoEtat={photoEtats[it.id]} onChercher={() => chercherPhoto(it)} onFichier={(f) => ajouterPhoto(it, f)} onImage={(image) => imageManuelle(it, image)}
                   onChange={(patch) => modifier(it.id, patch)} onPlace={(p) => changerPlace(it.id, p)} />}
               </Ligne>
@@ -509,6 +544,7 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titre}{premier && place === "grille" ? <span style={{ ...ui.badge("neutral"), marginLeft: 6 }}>En grand</span> : null}</div>
           <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>{meta}</div>
+          {outil?.avertissement && <div style={{ fontSize: 11, color: T.warn, marginTop: 2 }}>⚠ {outil.avertissement}</div>}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start", minWidth: 150 }}>
           <Puce statut={ev.statut} fin={ev.fin} debut={it.date_debut} selon={ev.selon} />
@@ -542,7 +578,8 @@ function Formulaire({ it, titreDefaut, accrocheDefaut, menu, offre, couleur, acc
   const bord = (k) => (err(k) ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 1px ${T.danger}` } : {});
   const medicament = it.type === "produit" && /^34009/.test(it.cip || "");
   const outil = it.type === "outil" ? OUTILS[it.outil] : null;
-  const badges = outil ? [...new Set([outil.badge, ...BADGES])] : BADGES;
+  // outil : badges sans prix (« Précommande », « Prix de lancement » n'ont pas de sens pour un outil)
+  const badges = outil ? [...new Set([outil.badge, "Nouveau", "Exclusivité Elixir"])] : BADGES;
   const finMenu = menu?.endDate ? String(menu.endDate).slice(0, 10) : null;
   const choisir = () => { if (fichierRef.current) { fichierRef.current.value = ""; fichierRef.current.click(); } };
   const quoi = it.type === "menu" ? "la carte de devant" : "la photo";
@@ -704,22 +741,35 @@ function AjoutProduit({ verif, verifier, deja, onChoisir }) {
 }
 
 // Les 6 outils du site, avec leur état du moment (outils_etat) ; ajout permis même non visible (comme un menu inactif)
+// l'icône œil est dans le bloc « Ordre et visibilité des onglets », sous l'éditeur de la page d'accueil (AdminDisplay)
+const MASQUE_DANS_LE_MENU = (debut) => `${debut} : réaffichez-le plus bas dans cet onglet, bloc « Ordre et visibilité des onglets » (icône œil)`;
+const TEXTE_SEUL_SAISIE = { absents: "Texte seul (sans chiffres) : comptes du catalogue pas encore calculés (fonction planifiée accueil-offres-refresh)",
+  illisibles: "Texte seul (sans chiffres) : comptes du catalogue illisibles en ce moment",
+  anciens: "Texte seul (sans chiffres) : comptes du catalogue de plus de 36 h, la fonction planifiée ne les met plus à jour (à vérifier)" };
+// fauteuils : correspondance code fournisseur → CIP pas (entièrement) calculée par la fonction planifiée : anciens CIP,
+// largeurs peut-être sous-comptées
+const AVERTISSEMENT_CORRESPONDANCE = "Correspondance des fauteuils pas encore calculée : largeurs peut-être sous-estimées (lancer accueil-offres-refresh)";
 const MOTIFS_OUTIL = { outil_vide: "Aucun produit en ce moment : la carte resterait cachée", rupture: "Aucune largeur en stock : la carte resterait cachée",
   donnees_anciennes: "Données de plus de 36 h : la carte resterait cachée", donnees_indisponibles: "Données illisibles en ce moment : la carte resterait cachée" };
 function AjoutOutil({ outilsEtat, caches, libelle, deja, onChoisir }) {
   const etat = (cle) => {
-    if (cle !== "groupees" && caches.has(cle)) return { ton: "warn", texte: "Masqué dans le menu : réaffichez-le (icône œil, en haut de cet onglet)" };
+    if (cle !== "groupees" && caches.has(cle)) return { ton: "warn", texte: MASQUE_DANS_LE_MENU("Masqué dans le menu") };
     if (cle === "groupees") return { ton: "info", texte: "Seulement pour les pharmacies inscrites à une opération ouverte" };
     if (!outilsEtat) return { ton: "neutral", texte: "Lecture des chiffres du moment…" };
     const o = outilsEtat[cle];
     if (!o) return { ton: "neutral", texte: "Chiffres du moment indisponibles" };
-    const motif = o.raisons?.[0];
+    // masquage : l'état vivant (caches) seulement (outil réaffiché depuis le dernier GET)
+    const motif = (o.raisons || []).filter(r => r !== "outil_masque")[0];
     if (motif) return { ton: "warn", texte: MOTIFS_OUTIL[motif] || STATUTS[motif]?.[1] || motif };
     const ch = o.chiffres;
+    // Saisie sans chiffres : texte seul, et pourquoi (comptes jamais calculés, illisibles, ou plus mis à jour)
+    if (cle === "saisie" && !ch) return { ton: o.admin?.comptes === "absents" ? "neutral" : "warn", texte: TEXTE_SEUL_SAISIE[o.admin?.comptes] || TEXTE_SEUL_SAISIE.absents };
     const texte = cle === "peremption" && ch ? [chiffresTexte(cle, ch).meta, ch.jusqua ? `jusqu'à ${fmtPct(ch.jusqua)}` : ""].filter(Boolean).join(" · ")
-      : chiffresTexte(cle, ch, { court: cle === "fauteuil" || cle === "transfert" }).meta || (cle === "saisie" ? "Texte seul : comptes du catalogue pas encore calculés" : "");
-    return { ton: "ok", texte, info: cle === "peremption" && o.admin?.en_menu > 0
-      ? `${o.admin.en_menu} produit${o.admin.en_menu > 1 ? "s" : ""} aussi rangé${o.admin.en_menu > 1 ? "s" : ""} dans un menu (prix du menu au panier) : exclu${o.admin.en_menu > 1 ? "s" : ""} du « dès » et du « jusqu'à »` : "" };
+      : chiffresTexte(cle, ch, { court: cle === "fauteuil" || cle === "transfert" }).meta;
+    const info = cle === "peremption" && o.admin?.en_menu > 0
+      ? `${o.admin.en_menu} produit${o.admin.en_menu > 1 ? "s" : ""} aussi rangé${o.admin.en_menu > 1 ? "s" : ""} dans un menu (prix du menu au panier) : exclu${o.admin.en_menu > 1 ? "s" : ""} du « dès » et du « jusqu'à »`
+      : (cle === "fauteuil" || cle === "transfert") && o.admin?.correspondance && o.admin.correspondance !== "odoo" ? AVERTISSEMENT_CORRESPONDANCE : "";
+    return { ton: info === AVERTISSEMENT_CORRESPONDANCE ? "warn" : "ok", texte, info };
   };
   return (
     <div style={{ marginTop: 8, padding: 6, background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.s }}>
@@ -748,7 +798,7 @@ function AjoutMenu({ promos, caches, aujourdhui, deja, ouvrirPromos, onChoisir }
   // pourquoi un menu ne s'affichera pas (encore) : inactif, terminé (prolonger sa date), masqué
   const pasPret = (m) => (!m.active ? "Ne s'affichera qu'une fois le menu activé."
     : !menuEnCours(m, aujourdhui) ? `Menu terminé le ${dateTexte(String(m.endDate).slice(0, 10), { court: true })} : prolongez sa date dans l'onglet Promos pour l'afficher.`
-      : "Menu masqué : réaffichez-le (icône œil, en haut de cet onglet) pour le montrer.");
+      : `${MASQUE_DANS_LE_MENU("Menu masqué")}.`);
   const tries = [...promos].sort((a, b) => (menuEnCours(b, aujourdhui) ? 1 : 0) - (menuEnCours(a, aujourdhui) ? 1 : 0) || (Number(b.id) || 0) - (Number(a.id) || 0));
   return (
     <div style={{ marginTop: 8, padding: 6, background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.s, maxHeight: 340, overflowY: "auto" }}>

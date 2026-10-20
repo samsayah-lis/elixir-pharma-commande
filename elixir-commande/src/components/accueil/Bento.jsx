@@ -2,9 +2,10 @@
 // Placement fixe selon le nombre de tuiles et la largeur (format s < 768 px, m < 1 280 px, l), la première en grand.
 // Tuile produit : <article> (nom en h3), deux vrais boutons (« Ajouter » par BoutonLot, « Voir dans … »), pas de lien
 // étiré. Tuile menu : un <button> entier (nom accessible : nom, références, « dès », remise, « voir le menu »).
-// Tuile outil (docs/accueil.md § 7.8) : un <button> entier aussi (nom accessible : titre, chiffres, texte du bouton) ;
-// photo de Zineb, sinon éventail de la composition automatique (grande tuile, bandeau), pastilles des photos du fabricant
-// ou plaque pétrole de l'outil (petite et large tuiles) ; « jusqu'à » pour la Péremption seulement.
+// Tuile outil (docs/accueil.md § 7.8) : un <button> entier aussi (nom accessible : titre, chiffres, texte du pied) ;
+// photo de Zineb, sinon éventail de la composition automatique (grande tuile, bandeau ; petite tuile : éventail réduit),
+// pastilles des photos du fabricant ou plaque pétrole de l'outil (large tuile) ; « jusqu'à » pour la Péremption seulement ;
+// méta en segments insécables ; pied sur une ligne (petite tuile sur téléphone : verbe seul, « Choisir »).
 // Pointeur fin seulement : bordure lumineuse qui tourne (pseudo-élément conique tourné, sans @property), relief qui suit
 // le pointeur (±3 à ±4°, lissé), projecteur (tache déplacée par transform). Entrée en cascade une fois par chargement.
 // Mouvement réduit : filet or clair fixe au survol et au focus, rien d'autre ; tactile : pression seulement.
@@ -15,7 +16,7 @@ import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail from "./Eventail.jsx";
-import { PhotoDecor, RESSORT, anime, photo, photoReconnue, sansEmoji, surErreurPhoto, useIllisibles } from "./outils.js";
+import { PhotoDecor, RESSORT, SegmentsMeta, anime, photo, photoReconnue, sansEmoji, surErreurPhoto, useIllisibles } from "./outils.js";
 import { dateTexte, prixLu, resumeMenuLu } from "./vedettes.js";
 import { estIllisible } from "./illisibles.js";
 
@@ -210,20 +211,27 @@ function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
   );
 }
 
-// outil du site : photo de Zineb, sinon composition automatique ; chiffres du moment ; le bouton entier ouvre l'outil
+// outil du site : photo de Zineb, sinon composition automatique ; chiffres du moment ; le bouton entier ouvre l'outil.
+// Nom accessible : titre et chiffres (x.lu), puis le texte du pied (court) : le libellé visible est dans le nom.
 function TuileOutil({ e, v, format, props, onVoir }) {
   const x = e.outil, grand = v === "grande" || v === "bandeau";
   useIllisibles();
   const photoZineb = x.photo && !estIllisible(x.photo) ? x.photo : null;
   const vignettes = x.cartes.filter(c => c.url && !estIllisible(c.url)).slice(0, 3);
+  // petite tuile sans photo : la plaque en carte (comme dans la vitrine, en petit ; ses chiffres sont dans la méta : une
+  // carte-chiffre de 76 px serait illisible), centrée dans la place libre ; large tuile (visuel de 96 px) : l'icône
+  const eventailPetit = v === "petite" && x.cartes[0]?.type === "plaque";
+  const pied = format === "s" && v === "petite" ? x.ctaMini : x.ctaCourt;
   return (
-    <button type="button" {...props} aria-label={`${x.lu}, ${x.cta}`} onClick={() => onVoir?.(e)}>
+    <button type="button" {...props} aria-label={`${x.lu}, ${x.ctaCourt}`} onClick={() => onVoir?.(e)}>
       <Fond e={e} />
-      <span className="mea-tuile-visuel" aria-hidden="true">
+      <span className={`mea-tuile-visuel${eventailPetit && !photoZineb ? " mea-tuile-visuel--cartes" : ""}`} aria-hidden="true">
         {photoZineb ? <Photo url={photoZineb} taille={grand ? "medium" : "thumbnail"} teinte={e.couleur} />
-          : grand ? <Eventail cartes={x.cartes} max={3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
+          // bandeau étroit (2 mises en avant, 768 à 1 279 px) : plaque et un chiffre, l'éventail tient dans son visuel
+          : grand ? <Eventail cartes={x.cartes} max={v === "bandeau" && format === "m" ? 2 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
             : vignettes.length ? <span className="mea-pastilles">{vignettes.map(c => <span key={c.url} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(c.url, ev)} /></span>)}</span>
-              : <span className="mea-tuile-plaque"><Icone nom={x.icone} taille={24} epaisseur={1.6} /></span>}
+              : eventailPetit ? <Eventail cartes={x.cartes} max={1} taille="mini" balise="span" />
+                : <span className="mea-tuile-plaque"><Icone nom={x.icone} taille={24} epaisseur={1.6} /></span>}
         {grand && photoZineb && <span className="mea-tuile-ombre" />}
       </span>
       <span className="mea-tuile-corps" aria-hidden="true">
@@ -232,11 +240,11 @@ function TuileOutil({ e, v, format, props, onVoir }) {
         {grand && e.accroche && <span className="mea-tuile-accroche">{e.accroche}</span>}
         {(x.meta || x.jusqua) && (
           <span className="mea-tuile-meta num">
-            {v === "petite" ? x.metaCourt : x.meta}
+            {(v === "petite" ? x.metaCourt : x.meta) && <SegmentsMeta texte={v === "petite" ? x.metaCourt : x.meta} />}
             {x.jusqua ? <span className="mea-tuile-remise">jusqu’à {fmtPct(x.jusqua)}</span> : null}
           </span>
         )}
-        <span className="mea-tuile-pied">{x.ctaCourt}<Icone nom="fleche" taille={16} epaisseur={2.4} /></span>
+        <span className="mea-tuile-pied">{pied}<Icone nom="fleche" taille={16} epaisseur={2.4} /></span>
       </span>
     </button>
   );

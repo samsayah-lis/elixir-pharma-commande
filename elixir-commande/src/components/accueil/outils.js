@@ -75,6 +75,16 @@ export function PhotoDecor({ url, onKo, ...props }) {
 }
 export const photoReconnue = (url) => !!url && (RE_TAILLE.test(url) || RE_SHOPIFY.test(url) || RE_OBF.test(url));
 
+// Méta d'un outil (« 167 références · dès 0,44 € HT ») découpée à ses « · » : chaque segment passe à la ligne entier
+// (nombres et unités déjà liés par des espaces insécables, rubriques.js) ; le point médian est posé devant chaque segment
+// et rogné quand le segment commence une ligne (bloc décalé à gauche, débord masqué) : jamais de « · » en fin ni en début
+// de ligne. Décoratif (le texte lu est ailleurs).
+export function SegmentsMeta({ texte }) {
+  const segments = String(texte || "").split(" · ").filter(Boolean);
+  return React.createElement("span", { className: "mea-segs", "aria-hidden": "true" },
+    React.createElement("span", { className: "mea-segs-in" }, segments.map((x, i) => React.createElement("span", { key: i, className: "mea-seg" }, x))));
+}
+
 // onError d'une photo montrée (adresse des données : url). Taille réduite en erreur (miniature de la banque d'images,
 // .200/.400 d'Open Beauty Facts, 2x « large ») : l'original d'abord, sans srcset — une seule bascule par adresse, donc
 // aucune boucle ; l'original en erreur à son tour (ou photo sans taille réduite) : notée illisible (illisibles.js), la

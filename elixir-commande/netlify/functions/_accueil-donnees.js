@@ -23,6 +23,9 @@ const parse = (v) => { if (typeof v !== "string") return v ?? null; try { return
 // delaiOdoo : délai maximal de chaque appel Odoo réel (ms ; 0 = aucun) — GET : court, la fonction entière est plafonnée
 // à 10 s par Netlify ; planifiée : une erreur (journal écrit) plutôt qu'un arrêt muet à 30 s
 export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
+  // configuration des justificatifs (kv « lj:config ») lue une fois par appel : justifs et labosJustif la partagent
+  let configP = null;
+  const config = () => (configP ||= lireConfig());
   return {
     odoo: deps.odoo || (delaiOdoo > 0 ? (m, me, a, k) => odooReel(m, me, a, k, { timeoutMs: delaiOdoo }) : odooReel),
     sb: deps.sb || sbReel,
@@ -30,9 +33,9 @@ export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
     compter: deps.compter || compterReel,
     quotaProducts: deps.quotaProducts || quotasReels,
     // CIP sur justificatif labo (tous les labos, comme lab-justif?action=products)
-    justifs: deps.justifs || (async () => new Set(Object.keys(indexProduits(await lireConfig())))),
+    justifs: deps.justifs || (async () => new Set(Object.keys(indexProduits(await config())))),
     // laboratoires sur justificatif montrés sur le site (site !== false) : [{ nom, medicaments, presentations }]
-    labosJustif: deps.labosJustif || (async () => labosDeConfig(await lireConfig())),
+    labosJustif: deps.labosJustif || (async () => labosDeConfig(await config())),
     kvGet: deps.kvGet || kvGetReel,
     kvSet: deps.kvSet || kvSetReel,
     verrou: deps.verrou || ((fn) => avecVerrou(fn, 60e3, CLE_VERROU)),

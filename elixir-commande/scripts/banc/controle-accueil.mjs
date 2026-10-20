@@ -13,6 +13,12 @@
 //  7. aucune animation infinie 10 s après l'arrivée sur une Saisie (curseur du champ arrêté) ;
 //  8. en mouvement réduit, les lettres du champ de la Saisie sont visibles d'emblée ;
 //  9. un clic sur la Péremption (vitrine) ou sur une tuile outil mène à ?menu=<outil>, en haut de page.
+// Variantes (réponse du GET réécrite dans le navigateur, outils_etat du banc ; aucun produit dans la grille, donc des
+// rangées basses) :
+// 10. grille de 2 à 5 outils à 1 024, 1 280 et 1 440 px : chaque carte d'un outil reste dans sa tuile (2 px près), le
+//     haut de la plaque sous le haut de la tuile, aucune carte sur le texte ; pied de tuile sur une ligne (375 px aussi) ;
+// 11. vitrine de 4 outils à 768, 820, 1 024, 1 080 et 1 280 px : chiffres et légendes des cartes dans l'écran, jamais
+//     sous la plaque ; bouton d'un outil sur une ligne (texte court si le long ne tient pas).
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -35,7 +41,18 @@ if (!page) { console.error("Chrome injoignable"); chrome.kill(); process.exit(2)
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise(r => { ws.onopen = r; });
 let n = 0; const attente = new Map();
-ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && attente.has(m.id)) { attente.get(m.id)(m); attente.delete(m.id); } };
+// variante : réponse du GET accueil-offres servie à la place de celle du banc (null : celle du banc)
+let variante = null;
+ws.onmessage = (e) => {
+  const m = JSON.parse(e.data);
+  if (m.id && attente.has(m.id)) { attente.get(m.id)(m); attente.delete(m.id); return; }
+  if (m.method === "Fetch.requestPaused") {
+    const { requestId, request } = m.params;
+    if (variante && !request.url.includes("verifier=")) cdp("Fetch.fulfillRequest", { requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }],
+      body: Buffer.from(JSON.stringify(variante)).toString("base64") }).catch(() => {});
+    else cdp("Fetch.continueRequest", { requestId }).catch(() => {});
+  }
+};
 const cdp = (method, params = {}) => new Promise((r, x) => { const i = ++n; attente.set(i, m => (m.error ? x(new Error(`${method} : ${m.error.message}`)) : r(m.result))); ws.send(JSON.stringify({ id: i, method, params })); });
 const js = async (expression) => { const r = await cdp("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description || r.exceptionDetails.text); return r.result.value; };
 const attendre = async (sel) => { for (let t = 0; t < 300; t++) { if (await js(`!!document.querySelector(${JSON.stringify(sel)})`)) return; await pause(50); } throw new Error(`introuvable : ${sel}`); };
@@ -49,11 +66,19 @@ async function ouvrir(l, h, mobile = false, reduit = false) {
   await js(`localStorage.clear(); sessionStorage.clear(); localStorage.setItem("session_email", "banc@pharmacie.test"); localStorage.setItem("session_name", "PHARMACIE DU BANC D'ESSAI");
     localStorage.setItem("session_cip", "9000001"); localStorage.setItem("pharmacy_token", "essai-jeton"); true`);
   await cdp("Page.navigate", { url: `${BANC}?menu=accueil` });
-  await attendre(".mea-cinema");
+  await attendre(".mea-cinema, .mea-grille-section");
   await pause(2500);
 }
 
 await cdp("Page.enable"); await cdp("Runtime.enable");
+await cdp("Fetch.enable", { patterns: [{ urlPattern: "*/.netlify/functions/accueil-offres*", requestStage: "Request" }] });
+// variantes : mises en avant d'outils fabriquées depuis outils_etat du banc (chiffres de la règle du serveur)
+const base = await fetch(`${BANC}.netlify/functions/accueil-offres`, { headers: { Authorization: "Bearer essai-jeton" } }).then(r => r.json()).catch(() => null);
+const BADGES = { saisie: "Tout le catalogue", peremption: "Petits prix", fauteuil: "Aide au choix", transfert: "Aide au choix", justificatif: "Suivi pas à pas", groupees: "Conditions négociées" };
+let nv = 0;
+const outilVar = (cle, emplacement) => ({ id: `mea_ctrl_${cle}_${++nv}`, type: "outil", outil: cle, emplacement, titre: "", accroche: "", badge: BADGES[cle], fin: null, fin_offre: null,
+  image: null, couleur: null, couleur_auto: null, chiffres: base.outils_etat[cle]?.chiffres ?? null });
+const avec = (items) => ({ ...base, vedettes: { ...base.vedettes, repli: false, items } });
 try {
   // 1. bouton d'ajout jamais rogné, après l'ajout
   for (const [l, h, m] of [[375, 812, true], [1024, 768, false], [1280, 800, false]]) {
@@ -97,7 +122,7 @@ try {
       const i = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption/.test(b.textContent))`);
       if (i > 0) { await js(`document.querySelectorAll(".mea-barre")[${i}].click(); true`); await pause(1200); }
       const b = await js(`(() => { const c = document.querySelector(".mea-diapo .mea-actions--outil .mea-cta"); if (!c) return null; const r = c.getBoundingClientRect(), s = document.querySelector(".mea-cinema").getBoundingClientRect();
-        return { texte: c.textContent, sw: c.scrollWidth, cw: c.clientWidth, dedans: r.left >= s.left - 0.5 && r.right <= s.right + 0.5 }; })()`);
+        return { texte: c.innerText, sw: c.scrollWidth, cw: c.clientWidth, dedans: r.left >= s.left - 0.5 && r.right <= s.right + 0.5 }; })()`);
       vrai(`${l} px : bouton de l'outil dans la vitrine entier${b ? ` (« ${b.texte} »)` : ""}`, b && b.sw <= b.cw + 0.5 && b.dedans, JSON.stringify(b));
       if (m) vrai(`${l} px (outils) : pas de défilement horizontal`, await js("document.documentElement.scrollWidth <= document.documentElement.clientWidth"));
     }
@@ -128,6 +153,49 @@ try {
     await js(`document.querySelector(".mea-tuile--outil").click(); true`); await pause(1200);
     const r2 = await js(`({ menu: new URLSearchParams(location.search).get("menu"), y: scrollY })`);
     vrai(`clic sur la tuile outil « ${String(cle).split(",")[0]} » : rubrique ouverte, haut de page`, r2.menu && r2.menu !== "accueil" && r2.y === 0, JSON.stringify(r2));
+  }
+  // 10-11. variantes (seulement si le banc a des outils : outils_etat)
+  if (!base?.outils_etat) console.log("  · banc sans outils_etat (fixture-accueil.mjs --outils) : variantes 10 et 11 sautées");
+  else {
+    const ORDRE = ["peremption", "saisie", "fauteuil", "groupees", "justificatif", "transfert"];
+    const grille = `(() => { const out = [];
+      document.querySelectorAll(".mea-tuile--outil").forEach(t => { const tr = t.getBoundingClientRect(), v = t.className.match(/--(grande|bandeau|petite|large)/)[1];
+        const textes = [...t.querySelector(".mea-tuile-corps").children].flatMap(e => [...e.getClientRects()]);
+        t.querySelectorAll(".mea-eventail .mea-carte").forEach((c, i) => { const r = c.getBoundingClientRect();
+          if (r.left < tr.left - 2 || r.right > tr.right + 2 || r.top < tr.top - 2 || r.bottom > tr.bottom + 2) out.push(v + " : carte " + i + " hors de la tuile");
+          if (c.classList.contains("mea-carte--plaque") && r.top <= tr.top) out.push(v + " : haut de la plaque rogné");
+          if (textes.some(x => x.width && x.height && !(r.right <= x.left + 1 || r.left >= x.right - 1 || r.bottom <= x.top + 1 || r.top >= x.bottom - 1))) out.push(v + " : carte " + i + " sur le texte"); });
+        const pied = t.querySelector(".mea-tuile-pied"), txt = pied && [...pied.childNodes].find(x => x.nodeType === 3);
+        if (txt) { const rg = document.createRange(); rg.selectNodeContents(txt); if (new Set([...rg.getClientRects()].map(x => Math.round(x.top))).size > 1) out.push(v + " : pied « " + txt.textContent + " » sur plusieurs lignes"); } });
+      return { n: document.querySelectorAll(".mea-tuile--outil").length, out }; })()`;
+    for (const nb of [2, 3, 4, 5]) {
+      variante = avec(ORDRE.slice(0, nb).map(k => outilVar(k, "grille")));
+      for (const [l, h, m] of [[1024, 768], [1280, 800], [1440, 900], ...(nb === 3 ? [[375, 812, true]] : [])]) {
+        await ouvrir(l, h, !!m);
+        await js(`document.querySelector(".mea-grille-section").scrollIntoView(); true`); await pause(700);
+        const r = await js(grille);
+        vrai(`grille de ${nb} outils sans produit, ${l} px : cartes dans leur tuile, hors du texte, pieds sur une ligne`, r.n === nb && !r.out.length, `${r.n} tuile(s) ; ${r.out.join(" ; ")}`);
+      }
+    }
+    const vitrine = `(() => { const e = document.querySelector(".mea-cinema .mea-ecran").getBoundingClientRect(), v = document.querySelector(".mea-cinema .mea-visuel:not(.mea-sortant)");
+      const p = v.querySelector(".mea-carte--plaque")?.getBoundingClientRect(), out = [];
+      v.querySelectorAll(".mea-carte-chiffre, .mea-carte-legende").forEach(el => { const rg = document.createRange(); rg.selectNodeContents(el); const t = rg.getBoundingClientRect();
+        if (t.left < e.left - 1 || t.right > e.right + 1 || t.top < e.top - 1 || t.bottom > e.bottom + 1) out.push("« " + el.textContent + " » hors de l'écran");
+        if (p && !(t.right <= p.left + 1 || t.left >= p.right - 1 || t.bottom <= p.top + 1 || t.top >= p.bottom - 1)) out.push("« " + el.textContent + " » sous la plaque"); });
+      const c = document.querySelector(".mea-cinema .mea-diapo .mea-cta"), sp = c && [...c.querySelectorAll("span")].find(x => getComputedStyle(x).display !== "none");
+      if (sp) { const rg = document.createRange(); rg.selectNodeContents(sp); if (new Set([...rg.getClientRects()].map(x => Math.round(x.top))).size > 1 || c.scrollWidth > c.clientWidth + 1) out.push("bouton « " + sp.textContent + " » sur plusieurs lignes ou rogné"); }
+      return { titre: document.querySelector(".mea-cinema .mea-diapo h2 .acc-vh")?.textContent || "", out }; })()`;
+    variante = avec(["saisie", "peremption", "justificatif", "groupees"].map(k => outilVar(k, "vitrine")));
+    for (const [l, h] of [[768, 1024], [820, 1180], [1024, 768], [1080, 800], [1280, 800]]) {
+      await ouvrir(l, h);
+      const nbBarres = await js(`document.querySelectorAll(".mea-barre").length`);
+      for (let i = 0; i < nbBarres; i++) {
+        if (i > 0) { await js(`document.querySelectorAll(".mea-barre")[${i}].click(); true`); await pause(1300); }
+        const r = await js(vitrine);
+        vrai(`vitrine ${l} px, « ${r.titre} » : cartes dans l'écran, hors de la plaque, bouton sur une ligne`, !r.out.length, r.out.join(" ; "));
+      }
+    }
+    variante = null;
   }
 } catch (e) { ko++; console.log("✗", e.message); }
 finally {

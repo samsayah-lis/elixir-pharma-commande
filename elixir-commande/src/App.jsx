@@ -2479,7 +2479,7 @@ export default function App() {
                 ouvrirMesCommandes={pharmacyCip && pharmacyCip !== "0" ? () => { setShowMyOrders(true); fetchMyOrders(); } : null}
                 dateFin={dateFin}
                 suggestions={blocSuggestions}
-                gp={{ autorise: gpAllowed === true && !actingFor, ouvertes: gpOuvertes }}
+                gp={{ autorise: gpAllowed === true && !actingFor, ouvertes: gpOuvertes, attente: gpAllowed === null && !actingFor }}
               />
             </React.Suspense>
           )}

@@ -29,9 +29,10 @@ const GEO = {
 };
 const PLACE = { 1: [0], 2: [1, 0], 3: [1, 0, 2], 4: [1, 2, 0, 3], 5: [2, 1, 3, 0, 4] };
 // disposition « outil » (carte 0 = plaque, devant et au centre ; cartes-chiffres de part et d'autre, assez écartées pour
-// que leur chiffre reste lisible) : [rotation, x %, y %] de chaque carte, dans l'ordre des cartes
+// que leur chiffre reste lisible) : [rotation, x %, y %] de chaque carte, dans l'ordre des cartes ; 2 cartes : plaque
+// à gauche et chiffre à droite, l'ensemble centré
 const GEO_OUTIL = {
-  1: [[0, 0, 0]], 2: [[-3, -14, 0], [9, 30, 3]], 3: [[0, 0, 0], [-11, -40, 6], [11, 40, 6]],
+  1: [[0, 0, 0]], 2: [[-1, -20, 0], [10, 24, 4]], 3: [[0, 0, 0], [-11, -40, 6], [11, 40, 6]],
   4: [[-1, -14, 0], [-12, -54, 7], [10, 26, 5], [19, 58, 12]], 5: [[0, 0, 0], [-11, -40, 6], [11, 40, 6], [-19, -66, 13], [19, 66, 13]],
 };
 const transformDe = ([r, x, y], centre, ouvre) => ouvre

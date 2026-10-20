@@ -12,8 +12,10 @@
 // entre la photo et l'écran (elle effacerait le fond blanc des PNG opaques).
 // Outil du site (docs/accueil.md § 7.8) : photo de Zineb rendue comme celle d'un produit, sinon l'éventail de sa
 // composition automatique (photos du fabricant, ou plaque et cartes-chiffres) ; sur-titre « Outil · <rubrique> », chiffres
-// du moment sous le titre, un seul bouton qui ouvre l'outil (comme l'appui sur l'écran) ; médaillon « jusqu'à » pour la
-// Péremption seulement ; jamais de compte à rebours.
+// du moment sous le titre (segments insécables : SegmentsMeta), un seul bouton qui ouvre l'outil (comme l'appui sur
+// l'écran ; texte court quand le long ne tient pas sur une ligne : tablette) ; médaillon « jusqu'à » pour la Péremption
+// seulement ; jamais de compte à rebours. Vitrine avec un outil : « mise en avant » au lieu d'« offre » dans les noms
+// accessibles (un outil n'est pas une offre). Éventail d'un outil à la mesure de l'écran (mea.css, container queries).
 import React, { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur, fmtPct } from "../../theme.js";
@@ -22,7 +24,7 @@ import BoutonLot from "./BoutonLot.jsx";
 import Rouleau from "./Rouleau.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail, { donne } from "./Eventail.jsx";
-import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, prechargerPhoto, surErreurPhoto, useIllisibles } from "./outils.js";
+import { EASE, PhotoDecor, RESSORT, SORTIE, SegmentsMeta, anime, photo, photoReconnue, prechargerPhoto, surErreurPhoto, useIllisibles } from "./outils.js";
 import { prixLu, resumeMenuLu } from "./vedettes.js";
 import { estIllisible } from "./illisibles.js";
 
@@ -30,7 +32,17 @@ import { estIllisible } from "./illisibles.js";
 let arriveeJouee = false, defilementArrete = false, indiceVu = false;
 const DUREE = 8000, TOURS = 2, FLOTTE = "cubic-bezier(.45,0,.55,1)";
 const borne = (v, a) => Math.max(-a, Math.min(a, v));
-const tailleTitre = (t) => (t.length <= 24 ? "l" : t.length <= 40 ? "m" : "s");
+// mots d'un titre : coupés aux espaces ordinaires seulement (une espace insécable, « à la », lie les mots)
+const motsDe = (t) => String(t || "").split(/[ \t\n\r]+/).filter(Boolean);
+// lignes d'un titre à n caractères par ligne (estimation, coupure aux espaces ordinaires)
+const lignesEstimees = (t, n) => { let lignes = 1, l = 0; for (const m of motsDe(t)) { if (l && l + 1 + m.length > n) { lignes++; l = m.length; } else l += (l ? 1 : 0) + m.length; } return lignes; };
+// taille « l » pour un titre court qui tient en 2 lignes (~12 caractères par ligne à 56 px : « Vos commandes groupées »
+// en ferait 3 → « m ») ; « m » s'il tient en 2 lignes de ~17 caractères (« Fauteuil de transfert Transit Lite » → « s »)
+const tailleTitre = (t) => (t.length <= 24 && lignesEstimees(t, 12) <= 2 ? "l" : t.length <= 40 && lignesEstimees(t, 17) <= 2 ? "m" : "s");
+// noms accessibles de la vitrine : « offre », ou « mise en avant » dès qu'un outil y figure (un outil n'est pas une offre)
+const motsVitrine = (items) => (items.some(x => x?.outil)
+  ? { une: "Mise en avant", region: "Mises en avant du moment", choisir: "Choisir une mise en avant", prec: "Mise en avant précédente", suiv: "Mise en avant suivante" }
+  : { une: "Offre", region: "Offre du moment", choisir: "Choisir une offre", prec: "Offre précédente", suiv: "Offre suivante" });
 const lienVoir = (o) => (o.menu?.key && o.menu.key !== "saisie" ? `Voir dans ${o.menu.label}` : "Voir dans la Saisie de commande");
 // éventail à l'écran : menu promo, ou outil sans photo de Zineb (composition automatique)
 const enEventail = (e) => !!(e?.menu || (e?.outil && !e.outil.photo));
@@ -115,7 +127,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
     if (source !== "rotation") arreter();
     sens.current = source === "precedent" || (source === "glisse" && glisseDx.current > 0) ? -1 : source === "onglet" || source === "clavier" ? (j >= refs.current.actif ? 1 : -1) : 1;
     setActifId(l[j].id);
-    if (["precedent", "suivant", "glisse"].includes(source)) setLive({ mode: "polite", texte: `Offre ${j + 1} sur ${l.length} : ${l[j].titre}` });
+    if (["precedent", "suivant", "glisse"].includes(source)) setLive({ mode: "polite", texte: `${motsVitrine(l).une} ${j + 1} sur ${l.length} : ${l[j].titre}` });
     if (source === "glisse") { try { if (window.matchMedia?.("(pointer: coarse)").matches) navigator.vibrate?.(6); } catch { /* sans vibreur */ } }
   };
   useLayoutEffect(() => {
@@ -327,14 +339,13 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
 
   if (!e) return null;
   const titreId = `${uid}-titre`;
+  const noms = motsVitrine(items);
   const carrousel = n > 1;
   const suivante = carrousel ? items[(actif + 1) % n] : null;
   const ajouter = (x, q) => { arreter(); onAjouter?.(x, q, sujetActif() || sel(".mea-visuel")); };
   // actions d'une offre ; inerte : copie de la diapositive sortante ou du gabarit (même hauteur, aucun effet)
   const actions = (x, inerte) => (x.outil ? (
-    <button type="button" className="mea-cta" tabIndex={inerte ? -1 : undefined} onClick={() => { arreter(); onVoir?.(x); }}>
-      {x.outil.cta}<Icone nom="fleche" taille={17} epaisseur={2.4} />
-    </button>
+    <CtaOutil long={x.outil.cta} court={x.outil.ctaCourt} inerte={inerte} onClick={() => { arreter(); onVoir?.(x); }} />
   ) : x.offre ? (<>
     <BoutonLot offre={x.offre} nom={x.titre} qte={qteAuPanier[x.offre.cip] || 0} pret={pret} desactive={apercu} inactif={inerte} onAjouter={(q) => ajouter(x, q)}
       onModifier={(q) => { arreter(); onModifier?.(x.offre.cip, q); }} onOuvrirPanier={onOuvrirPanier} />
@@ -347,7 +358,7 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
   return (
     <section ref={region} className={`mea-cinema mea-f-${format}${vivant ? " mea-vivant" : ""}${enMarche ? " mea--defile" : ""}${carrousel || possible ? "" : " mea--seule"} ex-on-dark`}
       style={varsTeinte(e)}
-      {...(carrousel ? { "aria-roledescription": "carrousel", "aria-label": "Offre du moment" } : { "aria-labelledby": titreId })}
+      {...(carrousel ? { "aria-roledescription": "carrousel", "aria-label": noms.region } : { "aria-labelledby": titreId })}
       onMouseEnter={() => setSurvol(true)} onMouseLeave={() => { setSurvol(false); surSortie(); }}
       onPointerDown={surAppui} onPointerMove={surDeplacement} onPointerUp={surRelache} onPointerCancel={() => { geste.current = null; ecrireGlisse(0); }}
       onFocus={(ev) => { try { if (ev.target.matches(":focus-visible")) arreter(); } catch { arreter(); } }}>
@@ -365,19 +376,19 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
             </button>
           )}
           {carrousel && (
-            <div role="tablist" aria-label="Choisir une offre" className="mea-barres">
+            <div role="tablist" aria-label={noms.choisir} className="mea-barres">
               {items.map((x, i) => (
                 <button key={x.id} type="button" role="tab" id={`${uid}-onglet-${i}`} aria-selected={i === actif} aria-controls={`${uid}-diapo`} tabIndex={i === actif ? 0 : -1}
                   className={`mea-barre${i < actif ? " mea-barre--passee" : ""}`} onClick={() => aller(i, "onglet")} onKeyDown={toucheOnglet}>
-                  <span className="acc-vh">Offre {i + 1} sur {n} : {x.titre}</span>
+                  <span className="acc-vh">{noms.une} {i + 1} sur {n} : {x.titre}</span>
                   <span className="mea-barre-fond" aria-hidden="true"><span className="mea-barre-rempli" /></span>
                 </button>
               ))}
             </div>
           )}
           {carrousel && !mobile && (<>
-            <button type="button" className="mea-rond" aria-label="Offre précédente" onClick={() => aller(actif - 1, "precedent")}><Icone nom="precedent" taille={17} epaisseur={2.4} /></button>
-            <button type="button" className="mea-rond" aria-label="Offre suivante" onClick={() => aller(actif + 1, "suivant")}><Icone nom="suivant" taille={17} epaisseur={2.4} /></button>
+            <button type="button" className="mea-rond" aria-label={noms.prec} onClick={() => aller(actif - 1, "precedent")}><Icone nom="precedent" taille={17} epaisseur={2.4} /></button>
+            <button type="button" className="mea-rond" aria-label={noms.suiv} onClick={() => aller(actif + 1, "suivant")}><Icone nom="suivant" taille={17} epaisseur={2.4} /></button>
           </>)}
         </div>
       )}
@@ -409,6 +420,36 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
   );
 }
 
+// bouton d'un outil : le texte long (« Ouvrir la Saisie de commande ») s'il tient sur une ligne, sinon le court (« Ouvrir
+// la Saisie » : tablette, colonne étroite) — mesuré comme BoutonLot (ResizeObserver sur la largeur) ; le nom accessible
+// est le texte affiché
+function CtaOutil({ long, court, inerte, onClick }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const b = ref.current, env = b?.parentElement;
+    if (!b || !env || !court || court === long) return undefined;
+    // contenu (texte, flèche, écart, marges intérieures) plus large que le bouton : un débordement dans la marge intérieure
+    // ne se voit pas dans scrollWidth (texte collé au bord droit), d'où la somme
+    const deborde = () => {
+      const cs = getComputedStyle(b), enfants = [...b.children].filter(x => getComputedStyle(x).display !== "none");
+      const contenu = enfants.reduce((t, x) => t + x.getBoundingClientRect().width, 0) + Math.max(0, enfants.length - 1) * (parseFloat(cs.columnGap) || 0)
+        + (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      return contenu > b.getBoundingClientRect().width + 0.5 || b.scrollWidth > b.clientWidth + 1;
+    };
+    const mesure = () => { b.removeAttribute("data-court"); if (deborde()) b.setAttribute("data-court", ""); };
+    mesure();
+    let largeur = env.clientWidth;
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(() => { if (env.clientWidth !== largeur) { largeur = env.clientWidth; mesure(); } }) : null;
+    ro?.observe(env);
+    return () => ro?.disconnect();
+  }, [long, court]);
+  return (
+    <button ref={ref} type="button" className="mea-cta mea-cta--outil" tabIndex={inerte ? -1 : undefined} onClick={onClick}>
+      <span className="mea-cta-long">{long}</span>{court && court !== long && <span className="mea-cta-court">{court}</span>}<Icone nom="fleche" taille={17} epaisseur={2.4} />
+    </button>
+  );
+}
+
 // médaillon or : remise du produit, ou « jusqu'à » la plus forte remise d'un menu ou de la Péremption courte (absent sans
 // remise ; jamais pour les autres outils : les fauteuils ont la remise standard du catalogue)
 function Medaillon({ e }) {
@@ -424,7 +465,7 @@ function Medaillon({ e }) {
 
 // textes d'une offre (diapositive active, ou copie inerte de l'offre sortante : « fantome », sans prix ni boutons visibles)
 function Textes({ e, titreId, fantome, actif = true, reduit, onExpire, children }) {
-  const mots = e.titre.split(/\s+/).filter(Boolean);
+  const mots = motsDe(e.titre);
   const groupes = mots.length > 12 ? [...mots.slice(0, 11), mots.slice(11).join(" ")] : mots;
   const o = e.offre;
   return (<>
@@ -441,7 +482,7 @@ function Textes({ e, titreId, fantome, actif = true, reduit, onExpire, children 
         <span className="mea-prix num"><span className="acc-vh">{prixLu(o)}</span><span aria-hidden="true"><Rouleau texte={fmtEur(o.pn)} /><span className="mea-ht">HT</span></span></span>
         {o.pv > o.pn && <span className="mea-pv num" aria-hidden="true">PV {fmtEur(o.pv)} HT · remise {fmtEur(o.remise_eur > 0 ? o.remise_eur : o.pv - o.pn)} HT</span>}
       </>) : e.outil ? (<>
-        {e.outil.meta ? <span className="mea-menu-meta num"><span className="acc-vh">{e.outil.lu}</span><span aria-hidden="true">{e.outil.meta}</span></span>
+        {e.outil.meta ? <span className="mea-menu-meta num"><span className="acc-vh">{e.outil.lu}</span><SegmentsMeta texte={e.outil.meta} /></span>
           : <span className="acc-vh">{e.outil.lu}</span>}
         {e.outil.meta2 && <span className="mea-sous mea-outil-sous">{e.outil.meta2}</span>}
       </>) : (
