@@ -1080,7 +1080,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
     {k:"sanofipro",label:"💉 Sanofi Pro",icon:"💉"},
     {k:"assistant",label:"💬 Assistant",icon:"💬"},
-    {k:"notifications",label:"🔔 Notifications",icon:"🔔"},
+    {k:"notifications",label:"📲 Notifications",icon:"📲"},   // 📲 et non 🔔 : sur téléphone, seules les icônes s'affichent (🔔 = Alertes retour)
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},

@@ -28,7 +28,7 @@ Votre demande : « Est ce que c'ets compliqué de faire de tout ça une vraie ap
 - Le lien **`https://elixir-commande.expepharma.com/?notifications=1`** ouvre directement ce panneau, après connexion. Vous pouvez le mettre dans un mailing ou un SMS.
 - À la déconnexion, l'appareil cesse de recevoir les notifications de la pharmacie : cela compte pour un poste partagé.
 
-**Pour vous, dans l'admin, onglet « 🔔 Notifications »** (à ne pas confondre avec « 🔔 Alertes retour », l'onglet des e-mails de retour en stock, qui reste tel quel)
+**Pour vous, dans l'admin, onglet « 📲 Notifications »** (à ne pas confondre avec « 🔔 Alertes retour », l'onglet des e-mails de retour en stock, qui reste tel quel)
 - **État du service** : des coches, et pour chaque point manquant, ce qu'il faut faire. Aucune clé n'est jamais affichée. Si un navigateur propose un service de notification inconnu, il est signalé ici.
 - **Ouverture aux pharmacies** : « Fermée (équipe Elixir) », « Pilote » (les pharmacies que vous choisissez), « Toutes les pharmacies ». On y règle aussi le plafond des offres : 2 par pharmacie sur 7 jours glissants, réglable de 0 à 7.
 - **Vos appareils** : pour recevoir vous-même les tests et les aperçus des annonces. Ils ne reçoivent jamais les notifications des pharmacies.
@@ -86,7 +86,7 @@ L'onglet admin montre combien de pharmacies sont joignables, et sur quels appare
 
 Tout est prêt et vérifié. La branche contient déjà la dernière version du site en ligne (alertes retour, photos et outils de l'accueil) : **vous n'avez rien à fusionner ni à résoudre**. Une seule commande met en ligne (étape d). Rien n'est en ligne avant l'étape d, rien n'est visible des pharmacies avant l'étape g.
 
-**a. Créer les deux clés VAPID — vous-même, sur votre Mac.** Elles signent les notifications. Ouvrez Terminal et tapez ces deux lignes :
+**a. Créer les deux clés VAPID — vous-même, sur votre Mac.** Elles signent les notifications. Ouvrez **l'application Terminal du Mac** (Applications › Utilitaires › Terminal), **pas le terminal intégré à l'application Claude** (Claude peut le lire : les clés passeraient par la conversation). Tapez ces deux lignes :
 
 ```
 cd ~/Downloads/elixir-appli-wt/elixir-commande
@@ -96,7 +96,7 @@ npx web-push generate-vapid-keys
 C'est l'outil déjà installé dans ce dossier (web-push 3.6.7) : rien n'est téléchargé. Deux clés s'affichent : « Public Key » et « Private Key ».
 - **Gardez une copie des deux clés dans votre gestionnaire de mots de passe** (Trousseau iCloud, 1Password…). Netlify ne permet plus de relire la clé privée une fois enregistrée : sans copie, une erreur de collage obligerait à tout réactiver.
 - **Ne les mettez jamais ailleurs** : ni e-mail, ni message, ni conversation (Claude compris), ni le dépôt de code. Personne ne vous les demandera.
-- Fermez ensuite cette fenêtre du Terminal (l'étape d se fait dans une nouvelle fenêtre).
+- Fermez ensuite cette fenêtre du Terminal (les étapes c et d se font dans une nouvelle fenêtre).
 
 **b. Les coller dans Netlify, avant la mise en ligne.** Netlify → site *commandes-elixir* → Site configuration → Environment variables → Add a variable. Trois variables :
 
@@ -110,12 +110,18 @@ Déjà en place pour l'Assistant Elixir, rien à faire : `SUPABASE_SERVICE_ROLE_
 
 **Ne changez jamais ces clés ensuite** : tous les appareils devraient réactiver leurs notifications. Une partie se renouvelle seule à la prochaine ouverture du site, mais pas toutes (sur iPhone en particulier).
 
-**c. Créer les tables.** Supabase → SQL Editor → collez le contenu de `elixir-commande/sql/push-schema.sql` (dans `~/Downloads/elixir-appli-wt`) → Run. Vous pouvez le relancer sans risque (vérifié : deux passages de suite sur un Postgres 17).
+**c. Créer les tables.** Dans une nouvelle fenêtre de l'application Terminal, tapez cette ligne : elle copie le script dans le presse-papiers (rien ne s'affiche, c'est normal).
+
+```
+pbcopy < ~/Downloads/elixir-appli-wt/elixir-commande/sql/push-schema.sql
+```
+
+Puis Supabase → SQL Editor → New query → Cmd+V (le script commence par des lignes `--` en français) → Run. Vous pouvez le relancer sans risque (vérifié : deux passages de suite sur un Postgres 17).
 - Le script crée 5 tables : abonnements, réglages, annonces, envois, services push refusés.
 - Elles sont fermées : RLS activé et aucune policy, comme celles de l'assistant. Le navigateur ne peut ni les lire ni les modifier.
 - Un index empêche deux annonces de partir en même temps (le plafond des offres reste juste).
 
-**d. Mise en ligne : une seule commande**, dans une nouvelle fenêtre du Terminal :
+**d. Mise en ligne : une seule commande**, dans la même fenêtre du Terminal (celle de l'étape c) :
 
 ```
 git -C ~/Downloads/elixir-appli-wt push origin appli-notifications:master
@@ -127,9 +133,9 @@ git -C ~/Downloads/elixir-appli-wt push origin appli-notifications:master
 - Les variables de l'étape b ne sont lues qu'au déploiement. Si vous les ajoutez après la mise en ligne : Netlify → Deploys → Trigger deploy.
 
 **e. Vérifier dans l'admin.**
-- **🔔 Notifications** → « État du service » : toutes les coches doivent être vertes. L'ouverture est « Fermée » : les pharmacies ne voient encore rien.
+- **📲 Notifications** → « État du service » : toutes les coches doivent être vertes. L'ouverture est « Fermée » : les pharmacies ne voient encore rien.
 - **🔔 Alertes retour** : l'onglet est toujours là, inchangé. Ses envois automatiques restent dans l'état où vous les avez laissés (activés ou suspendus).
-- Sur téléphone, l'admin n'affiche que les icônes des onglets : **🔔 Notifications est la cloche juste sous 💬 Assistant** ; la cloche plus bas, sous ⏰ Péremptions, est « Alertes retour ».
+- Sur téléphone, l'admin n'affiche que les icônes des onglets : **📲 = Notifications** (juste sous 💬 Assistant), **🔔 = Alertes retour** (sous ⏰ Péremptions).
 
 **f. Tester sur votre téléphone d'abord.**
 
@@ -137,7 +143,7 @@ git -C ~/Downloads/elixir-appli-wt push origin appli-notifications:master
 1. Ouvrez Safari à l'adresse `https://elixir-commande.expepharma.com/#admin`.
 2. Touchez Partager → « Sur l'écran d'accueil ». Le nom proposé est « Elixir Admin ». Touchez Ajouter.
 3. Ouvrez l'icône « Elixir Admin » et connectez-vous à l'admin.
-4. Allez dans 🔔 Notifications → « Recevoir les notifications sur cet appareil », puis « Autoriser ».
+4. Allez dans 📲 Notifications → « Recevoir les notifications sur cet appareil », puis « Autoriser ».
 5. Touchez « M'envoyer un test » et verrouillez l'écran : la notification doit arriver.
 6. Composez une annonce et touchez « M'envoyer l'aperçu ». Toucher l'aperçu ouvre son lien dans une nouvelle fenêtre : votre brouillon reste en place.
 7. Profitez-en pour relire le guide iPhone du panneau (côté pharmacie) : sur iOS 26, le libellé exact de l'interrupteur « Ouvrir en tant qu'app web » est à confirmer.
@@ -178,6 +184,7 @@ Vos appareils ne reçoivent jamais les notifications des pharmacies, donc pas le
 
 - **Ce qui part aujourd'hui** : vos annonces, les tests et les retours en stock (après l'e-mail, § 9.1). **Mes commandes** n'envoie rien avant le § 9.2.
 - **Retour en stock** : une notification seulement quand l'e-mail est parti. Pas d'e-mail (demande close, envoi refusé ou incertain, envois suspendus) : pas de notification. Une notification qui n'a pas pu partir n'est jamais renvoyée : l'e-mail reste la trace.
+- **Retour en stock, pharmacie à deux adresses** (deux comptes, deux e-mails) : une notification par pharmacie **et par appel** des envois. Si les deux e-mails partent dans deux appels successifs (rare : surtout au premier passage, avec du retard accumulé), la pharmacie reçoit deux notifications, une par e-mail. Rarement, si le temps manque en fin d'appel, une notification gardée pour réunir les deux adresses est abandonnée : l'e-mail reste la trace.
 - **iPhone** : iOS 16.4 ou plus récent, et seulement dans l'application de l'écran d'accueil. Il faut se reconnecter une fois dans l'application.
 - **Ordinateur** : le navigateur doit rester ouvert.
 - **Réception** : Ne pas déranger, Concentration, Résumé programmé, les réglages du système et l'économie de batterie retardent ou cachent les notifications.
@@ -208,7 +215,7 @@ Vos appareils ne reçoivent jamais les notifications des pharmacies, donc pas le
    - La carte et le menu disparaissent.
    - Plus aucune annonce ni notification automatique ne part (les retours en stock continuent par e-mail seulement).
    - Les abonnements restent : réouvrir suffit.
-   - « Suspendre » dans « 🔔 Alertes retour » arrête, lui, les e-mails de retour en stock **et** leurs notifications.
+   - « Suspendre » dans « 🔔 Alertes retour » arrête, lui, les envois **automatiques** : e-mails de retour en stock **et** leurs notifications. « Envoyer maintenant » envoie quand même (e-mails et notifications).
 2. **Arrêt d'urgence du service worker** (cas grave, peu probable : il ne fait qu'afficher les notifications, il ne touche jamais aux pages).
    - **Faites d'abord le point 1 (ouverture « Fermée »)** : la carte et le menu disparaissent, et plus rien ne réenregistre le service worker. Sinon, chaque visite le réinstallerait et l'activation échouerait en boucle.
    - Remplacez ensuite le contenu de `elixir-commande/public/sw.js` par :
@@ -255,11 +262,14 @@ Les e-mails « De retour en stock » des alertes retour partent de `netlify/func
 
 | Cas | Titre | Texte | Lien | Étiquette |
 |---|---|---|---|---|
-| 1 produit | « De retour en stock » | « DOLIPRANE 1000MG CPR B/8 est de nouveau disponible chez Elixir. » | `/?cip=<CIP>` (le produit dans la Saisie) | `stock-<CIP>` |
-| plusieurs | « 3 produits de retour en stock » | « A, B et 1 autre sont de nouveau disponibles chez Elixir. » | `/?outil=saisie` (bandeau « De retour en stock ») | `stock-lot-<empreinte des CIP>` |
+| 1 produit | « De retour en stock » | « DOLIPRANE 1000MG CPR B/8 est de nouveau disponible chez Elixir. » | `/?cip=<CIP>` (le produit dans la Saisie) | `stock-<empreinte à clé du CIP>` |
+| plusieurs | « 3 produits de retour en stock » | « A, B et 1 autre sont de nouveau disponibles chez Elixir. » | `/?outil=saisie` (bandeau « De retour en stock ») | `stock-lot-<empreinte à clé des CIP>` |
 
-- **Une notification par pharmacie et par passage**, produits regroupés comme l'e-mail. Deux adresses de la même pharmacie (deux e-mails) : une seule notification avec tous les produits, lancée après le dernier des deux e-mails.
-- **Jamais attendue par les e-mails** : elle est lancée, puis le passage continue. En fin de passage, il attend les notifications en cours **3 s au plus, et jamais au-delà de la limite déjà fixée pour les e-mails** (9 s pour la fonction HTTP, 20 s pour le passage planifié). Une notification gardée pour la fin n'est lancée que s'il reste 1,5 s ; sinon elle est abandonnée (l'e-mail est parti).
+L'étiquette sert aussi d'en-tête `Topic`, que le service push (Google, Apple, Mozilla, Microsoft) lit **en clair** à côté de l'adresse de l'appareil (le contenu, lui, est chiffré) : elle ne contient jamais de CIP, et c'est une empreinte **à clé** (HMAC-SHA256 avec la clé VAPID privée, 16 caractères), qu'on ne peut pas retrouver en essayant les CIP du catalogue. Mêmes produits → même étiquette : une notification identique remplace la précédente sur l'appareil.
+
+- **Une notification par pharmacie et par appel** de `passage()`, produits regroupés comme l'e-mail. Deux adresses de la même pharmacie (deux e-mails) dans le même appel : une seule notification avec tous les produits, lancée après le dernier des deux e-mails. Elle n'est gardée pour la fin que si l'autre adresse **peut encore partir dans cet appel** (budget de temps, plafond du jour, adresse pas avertie depuis moins de 24 h) ; sinon elle part tout de suite. Réserve : deux adresses dont les e-mails partent dans deux appels successifs (la GitHub Action rappelle jusqu'à 40 fois, « Envoyer maintenant » jusqu'à 30 fois ; rare, surtout au premier passage avec du retard accumulé) → deux notifications, une par e-mail.
+- **Jamais attendue par les e-mails** : elle est lancée, puis le passage continue. En fin de passage, il attend les notifications en cours **3 s au plus, et s'arrête toujours 1 s avant la limite déjà fixée pour les e-mails** (9 s pour la fonction HTTP, soit 8 s ; 20 s pour le passage planifié, soit 19 s) : cette dernière seconde reste à la lecture des noms et à l'écriture du journal du passage, avant la coupure de Netlify à 10 s. Une notification gardée pour la fin n'est lancée que s'il reste 1,5 s avant ce point ; sinon elle est abandonnée (cas rare : e-mail suivant très lent ; l'e-mail est parti et reste la trace).
+- **Chiffres figés** : le bilan rendu par le passage ne change plus ensuite ; une notification encore en route à ce moment reste comptée « en retard ».
 - **Jamais relancée** : une notification lente ou perdue n'est pas renvoyée (pas de doublon) ; le passage suivant ne la refait pas, la demande étant avertie.
 - **Silencieuse quand le service manque** : clés VAPID absentes, `_push.js` n'est même pas chargé ; clés refusées ou tables absentes, une tentative puis plus rien dans le passage ; exception ou rejet, sans effet sur les e-mails.
 - **Écran verrouillé** : le nom du produit, jamais de prix.
@@ -345,7 +355,7 @@ Ce que garantit `notifierPharmacie(cip, catégorie, contenu, options)` :
   - `node scripts/test-push-serveur.mjs` (255) : faux service push local, corps déchiffré, jeton VAPID vérifié, CIP « 0 » et « false », sujets refusés par web-push, comptes retirés, ménage, diffusions simultanées, redirection 307, 1 000 appareils et 500 CIP, empaquetage esbuild comme Netlify (dont restock-notify et restock-notify-cron, avec web-push) ;
   - `node scripts/test-push-sw.mjs` (29) ;
   - `node scripts/test-push-client.mjs` (95) : dont abonnement mort réactivé avec une nouvelle adresse, carte utile, écoute après activation, points d'intégration avec `master` ;
-  - `node scripts/test-alertes-retour.mjs` (206, dont 46 pour la notification « Retour en stock » ; les 160 cas d'origine inchangés).
+  - `node scripts/test-alertes-retour.mjs` (216, dont 56 pour la notification « Retour en stock » : marge de fin, bilan figé, étiquette à clé, notification gardée ou lancée tout de suite, deux appels ; les 160 cas d'origine inchangés).
 - Banc local (`npm run dev`) :
   - notifications simulées, aucun vrai abonnement : `?banc_push=android`, `bureau`, `ios-safari`, `ios-app`, `ios-ancien`, `ios-gmail`, `refuse`, `abonne`, `brave` ;
   - `BANC_PUSH=reconnexion` fait répondre 401 au statut.
@@ -358,7 +368,7 @@ Ce que garantit `notifierPharmacie(cip, catégorie, contenu, options)` :
 |---|---|
 | `netlify.toml` (elixir-commande) | Les deux fonctions planifiées : `restock-notify-cron` (`50 */3 * * *`) et `push-menage` (`35 3 * * *`) ; en-têtes `sw.js` et `*.webmanifest` inchangés. |
 | `scripts/verifie-zones.mjs` | `AJOUTS_AUTORISES` réunit `restock-notify(-cron)?`, `_restock`, `_push*` et `push-*` ; libellé du fichier modifié : accueil, alertes retour, notifications ; empreinte de `restock-alert.js` et clés de stockage des notifications conservées. |
-| `src/AdminPanel.jsx` | Les deux imports et les deux onglets : « 🔔 Alertes retour » (e-mails) et « 🔔 Notifications » (appli). |
+| `src/AdminPanel.jsx` | Les deux imports et les deux onglets : « 🔔 Alertes retour » (e-mails) et « 📲 Notifications » (appli ; icône 📲 et non 🔔 pour que les deux onglets se distinguent sur téléphone, où seules les icônes s'affichent). |
 | `src/App.jsx`, `src/components/accueil/Accueil.jsx` | Les deux propriétés de l'accueil : `gp` (outils « Commandes groupées ») et `alertes` (carte des notifications). |
 | `scripts/banc/plugin.mjs` | Le commentaire des notifications et la variable `BANC_PHOTOS=prive`. |
 | `src/dev/reponses-fictives.js` | Les cas `restock-notify` et `push-abonnement` / `push-admin`. |

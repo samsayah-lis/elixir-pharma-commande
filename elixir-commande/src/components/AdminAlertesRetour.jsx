@@ -34,7 +34,7 @@ const resumePassage = (p) => [
   p.echecs ? `${p.echecs} envoi(s) refusé(s), réessayé(s) plus tard` : "",
   p.reportes ? `${p.reportes} reporté(s) : adresse déjà avertie depuis moins de 24 h` : "",
   p.restants ? `${p.restants} en attente${p.suspendu ? " (envois automatiques suspendus)" : p.hors_fenetre ? " (hors 7 h – 21 h)" : p.plafond ? " (plafond du jour)" : ""}` : "",
-  // notification « Retour en stock » de l'appli (onglet « 🔔 Notifications », docs/notifications.md § 9.1)
+  // notification « Retour en stock » de l'appli (onglet « 📲 Notifications », docs/notifications.md § 9.1)
   p.notifications?.servies ? `${pl(p.notifications.servies, "pharmacie")} prévenue${p.notifications.servies > 1 ? "s" : ""} aussi sur téléphone` : "",
 ].filter(Boolean).join(" · ");
 
@@ -147,7 +147,7 @@ export default function AdminAlertesRetour({ adminFetch, flash }) {
             Une demande reste valable jusqu’au retour du produit ; seules celles déjà vieilles de plus de {d.regles.age_max_jours} jours à la mise en service
             sont closes sans e-mail{seuil ? <> (enregistrées avant le {jour(seuil)})</> : null}. Plafonds : un e-mail par adresse sur {d.regles.adresse_heures} h,
             {" "}{d.regles.plafond_jour} e-mails par jour. La pharmacie voit aussi « De retour en stock » dans sa Saisie pendant {d.regles.recent_jours} jours.
-            {" "}Si elle a activé les notifications de l’appli (onglet « 🔔 Notifications »), elle reçoit aussi une notification sur son téléphone, juste après l’e-mail.
+            {" "}Si elle a activé les notifications de l’appli (onglet « 📲 Notifications »), elle reçoit aussi une notification sur son téléphone, juste après l’e-mail.
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

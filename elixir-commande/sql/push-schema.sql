@@ -45,7 +45,7 @@ create table if not exists push_reglages (
 );
 insert into push_reglages (id) values (1) on conflict (id) do nothing;
 
--- Annonces « Offres et nouveautés » de l'admin (historique de l'onglet 🔔 Notifications)
+-- Annonces « Offres et nouveautés » de l'admin (historique de l'onglet 📲 Notifications)
 create table if not exists push_annonces (
   id             uuid primary key default gen_random_uuid(),
   idem           text unique,             -- clé d'idempotence du navigateur (double clic, réponse perdue : une seule annonce)

@@ -21,9 +21,11 @@
 //  • restock-notify : admin (aperçu sans adresse, envoyer, relancer), secret de la GitHub Action (chiffres seulement), refus ;
 //  • restock-notify-cron : passage et ménage du journal ;
 //  • notification « Retour en stock » (docs/notifications.md § 9.1) : après un e-mail réellement parti seulement, une par
-//    pharmacie et par passage (deux adresses : produits réunis), jamais attendue par les e-mails suivants, attente de fin
-//    bornée (limite de la fonction), jamais relancée ; exception, rejet, clés refusées, tables absentes, ouverture fermée,
-//    aucun appareil : rien, sans erreur ; clés VAPID absentes : comportement d'avant, _push.js jamais sollicité.
+//    pharmacie et par appel (deux adresses : produits réunis, gardée seulement si l'autre adresse peut encore partir dans
+//    l'appel), jamais attendue par les e-mails suivants, attente de fin bornée (1 s laissée au journal avant la limite),
+//    jamais relancée, bilan figé une fois rendu ; étiquette à clé, jamais le CIP (en-tête Topic lu en clair par le service
+//    push) ; exception, rejet, clés refusées, tables absentes, ouverture fermée, aucun appareil : rien, sans erreur ; clés
+//    VAPID absentes : comportement d'avant, _push.js jamais sollicité.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
 process.env.ADMIN_EMAIL = "admin@elixir.test";
@@ -668,8 +670,20 @@ eq("délai dépassé de bout en bout : une seule tentative par demande, « inter
   const pa = n.appelsPush[0]?.contenu, pb = n.appelsPush[1]?.contenu;
   eq("A (2 produits) : titre, texte, lien vers la Saisie, étiquette stable", [pa?.titre, pa?.corps, pa?.url, /^stock-lot-[0-9a-f]{16}$/.test(pa?.tag || "")],
     ["2 produits de retour en stock", "DOLIPRANE 1000MG CPR B/8 et VENTOLINE 100µG SUSP INH sont de nouveau disponibles chez Elixir.", "/?outil=saisie", true]);
-  eq("B (1 produit) : titre, texte, lien vers le produit, étiquette du produit", [pb?.titre, pb?.corps, pb?.url, pb?.tag],
-    ["De retour en stock", "DOLIPRANE 1000MG CPR B/8 est de nouveau disponible chez Elixir.", `/?cip=${P1}`, `stock-${P1}`]);
+  eq("B (1 produit) : titre, texte, lien vers le produit, étiquette à clé du produit", [pb?.titre, pb?.corps, pb?.url, /^stock-[0-9a-f]{16}$/.test(pb?.tag || "")],
+    ["De retour en stock", "DOLIPRANE 1000MG CPR B/8 est de nouveau disponible chez Elixir.", `/?cip=${P1}`, true]);
+  // l'étiquette sert aussi d'en-tête Topic, lu en clair par Google, Apple, Mozilla, Microsoft : jamais le CIP, ni une
+  // empreinte simple (retrouvable en essayant les CIP du catalogue)
+  const { createHash: hache } = await import("node:crypto");
+  vrai("étiquettes : aucun CIP, aucune empreinte simple d'un CIP", [pa?.tag, pb?.tag].every(t => !t.includes(P1) && !t.includes(P2)
+    && !t.includes(hache("sha256").update(P1).digest("hex").slice(0, 16)) && !t.includes(hache("sha256").update(`${P1},${P2}`).digest("hex").slice(0, 16))), `${pa?.tag} ${pb?.tag}`);
+  {
+    const avantCle = process.env.VAPID_PRIVATE_KEY;
+    const tagAvec = (cle) => { process.env.VAPID_PRIVATE_KEY = cle; return R.contenuRetour([{ cip: P1, nom: "A" }]).tag; };
+    const t1 = tagAvec("cle-privee-1"), t1bis = tagAvec("cle-privee-1"), t2 = tagAvec("cle-privee-2");
+    if (avantCle === undefined) delete process.env.VAPID_PRIVATE_KEY; else process.env.VAPID_PRIVATE_KEY = avantCle;
+    eq("étiquette à clé : stable avec la même clé, différente avec une autre", [t1 === t1bis, t1 !== t2], [true, true]);
+  }
   eq("notification lancée juste après l'e-mail de la pharmacie (avant celui de la suivante)", n.appelsPush.map(x => x.mails), [1, 2]);
   eq("bilan des notifications (nombres seulement)", b.notifications, { pharmacies: 2, servies: 2, appareils: 4, sans_appareil: 0, ecartees: 0, echecs: 0, indisponible: 0, en_retard: 0, abandonnees: 0 });
   eq("chiffres (GitHub Action, admin) : notifications comprises, ni nom ni adresse", [R.chiffres(b).notifications?.servies, /@|Pharmacie|VENTOLINE/.test(JSON.stringify(R.chiffres(b)))], [2, false]);
@@ -715,6 +729,35 @@ eq("délai dépassé de bout en bout : une seule tentative par demande, « inter
   b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: tardive.f, limiteMs: 9000 });
   duree = Date.now() - t0;
   vrai(`limite atteinte : aucune attente des notifications (${duree} ms)`, duree < 1000 && b.envoyes === 2 && b.notifications.en_retard === 2, `${duree} ${JSON.stringify(b.notifications)}`);
+  // marge de fin : l'attente s'arrête PUSH_MARGE_FIN_MS avant la limite (fin() lit les noms et écrit le journal ensuite)
+  vrai("marge de fin : 1 s", R.PUSH_MARGE_FIN_MS === 1000);
+  initialiser();
+  mails = [];
+  h = T0;
+  const presque = pousse((cip) => { if (cip === "2000002") h = T0 + 9000 - 800; return new Promise(() => {}); });
+  t0 = Date.now();
+  b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: presque.f, limiteMs: 9000 });
+  duree = Date.now() - t0;
+  vrai(`limite à 800 ms : aucune attente (marge de fin), notifications comptées en retard (${duree} ms)`, duree < 500 && b.envoyes === 2 && b.notifications.en_retard === 2 && b.notifications.abandonnees === 0, `${duree} ${JSON.stringify(b.notifications)}`);
+  initialiser();
+  mails = [];
+  h = T0;
+  const milieu = pousse((cip) => { if (cip === "2000002") h = T0 + 6500; return new Promise(() => {}); });
+  t0 = Date.now();
+  b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: milieu.f, limiteMs: 9000 });
+  duree = Date.now() - t0;
+  vrai(`limite à 2,5 s : attente de 1,5 s seulement (9 s − 1 s de marge − 6,5 s) (${duree} ms)`, duree >= 1450 && duree < 2300 && b.notifications.en_retard === 2, `${duree} ${JSON.stringify(b.notifications)}`);
+  // bilan figé une fois rendu : une notification qui finit après la fin du passage ne change plus les chiffres
+  initialiser();
+  mails = [];
+  h = T0;
+  const finirApres = [];
+  const tardives = pousse((cip) => { if (cip === "2000002") h = T0 + 9000; return new Promise(r => finirApres.push(() => r({ envoyes: 1, echecs: 0, retires: 0, raison: null }))); });
+  b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: tardives.f, limiteMs: 9000 });
+  const figes = JSON.stringify(b.notifications), chiffresFiges = JSON.stringify(R.chiffres(b).notifications);
+  finirApres.forEach(f => f());
+  await new Promise(r => setTimeout(r, 20));
+  eq("bilan rendu : inchangé quand les notifications en retard finissent ensuite", [JSON.stringify(b.notifications) === figes, JSON.stringify(R.chiffres(b).notifications) === chiffresFiges, b.notifications.servies, b.notifications.en_retard], [true, true, 0, 2]);
   // lente (300 ms) : l'e-mail suivant part sans l'attendre, la notification finit dans l'attente de fin
   initialiser();
   mails = [];
@@ -767,7 +810,8 @@ eq("délai dépassé de bout en bout : une seule tentative par demande, « inter
   n = pousse();
   b = await lance({ notifier: n.f });
   eq("seconde adresse reportée : un e-mail, une notification (produit parti seulement)", [mails.length, b.reportes, n.appelsPush.length, n.appelsPush[0]?.contenu.url], [1, 1, 1, `/?cip=${P1}`]);
-  // notification gardée pour la fin, mais la limite est trop proche : abandonnée (l'e-mail est parti), jamais lancée plus tard
+  eq("seconde adresse reportée : notification lancée juste après l'e-mail (jamais gardée pour une adresse qui attend)", n.appelsPush.map(x => x.mails), [1]);
+  // seconde adresse reportée et limite proche : la notification n'a pas été gardée, donc jamais abandonnée
   initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 3 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 2 * J)] });
   db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
   db.kv_store.push(kvLigne(`${R.PREFIXE_DEST}${R.empreinteAdresse("adjoint@pharmacie-a.test")}`, { at: iso(T0 - H) }));
@@ -776,7 +820,32 @@ eq("délai dépassé de bout en bout : une seule tentative par demande, « inter
   h = T0;
   const avance = async (m) => { const r = await envoiOk(m); h = T0 + 8000; return r; };   // l'e-mail laisse 1 s avant la limite
   b = await R.passage({ maintenant: () => h, envoyer: avance, attendre: sansPause, notifier: n.f, limiteMs: 9000 });
-  eq("limite trop proche : notification gardée abandonnée, e-mail parti", [mails.length, n.appelsPush.length, b.notifications?.abandonnees], [1, 0, 1]);
+  eq("seconde adresse reportée, limite proche : notification lancée tout de suite, rien d'abandonné", [mails.length, n.appelsPush.length, n.appelsPush[0]?.mails, b.notifications?.abandonnees], [1, 1, 1, 0]);
+  // seconde adresse en attente d'envoi, mais l'e-mail de la première finit après le budget de l'appel : la seconde partira
+  // à l'appel suivant → notification lancée tout de suite (avant : gardée, puis abandonnée faute de temps)
+  initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 3 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 2 * J)] });
+  db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
+  mails = [];
+  n = pousse();
+  h = T0;
+  const lent = async (m) => { const r = await envoiOk(m); h = T0 + 7000; return r; };
+  b = await R.passage({ maintenant: () => h, envoyer: lent, attendre: sansPause, notifier: n.f, budgetMs: 4000, limiteMs: 9000 });
+  eq("e-mail fini après le budget : seconde adresse à l'appel suivant, notification de la première lancée tout de suite",
+    [mails.length, b.done, b.restants, n.appelsPush.map(x => [x.mails, x.contenu.url]), b.notifications?.abandonnees], [1, false, 1, [[1, `/?cip=${P1}`]], 0]);
+  // appel suivant : e-mail de la seconde adresse, seconde notification (une par pharmacie et par appel, documenté)
+  h = T0;
+  b = await R.passage({ maintenant: () => h, envoyer: envoiOk, attendre: sansPause, notifier: n.f, budgetMs: 4000, limiteMs: 9000 });
+  eq("appel suivant : seconde adresse servie, seconde notification (produit de cet e-mail seulement)", [mails.length, n.appelsPush.length, n.appelsPush[1]?.contenu.url], [2, 2, `/?cip=${P2}`]);
+  // notification gardée (seconde adresse encore possible dans l'appel), puis e-mail suivant refusé ET lent : limite trop
+  // proche, la notification gardée est abandonnée (l'e-mail est parti, il reste la trace), jamais lancée plus tard
+  initialiser({ alertes: [alerte("2000001", P1, "compte@pharmacie-a.test", 3 * J), alerte("2000001", P2, "adjoint@pharmacie-a.test", 2 * J)] });
+  db.elixir_pharmacies.push({ email: "adjoint@pharmacie-a.test", cip: "2000001", name: "Pharmacie A" });
+  mails = [];
+  n = pousse();
+  h = T0;
+  const refusLent = async (m) => { if (m.to.startsWith("adjoint@")) { h = T0 + 8000; return { sent: false, status: 422, name: "validation_error", reason: "Invalid `to` field" }; } return envoiOk(m); };
+  b = await R.passage({ maintenant: () => h, envoyer: refusLent, attendre: sansPause, notifier: n.f, limiteMs: 9000 });
+  eq("gardée puis limite trop proche : notification abandonnée, e-mail de la première adresse parti", [mails.length, b.echecs, n.appelsPush.length, b.notifications?.abandonnees], [1, 1, 0, 1]);
 
   // g. vraie fonction (notifierPharmacie) avec des clés VAPID d'essai générées en mémoire : tables absentes, ouverture fermée,
   // aucun appareil — rien n'est envoyé à Google, Apple ni Mozilla, aucune erreur

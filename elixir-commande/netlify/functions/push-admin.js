@@ -1,4 +1,4 @@
-// ── Notifications de l'appli Elixir : API de l'onglet admin « 🔔 Notifications » (verifyAdmin sur toutes les routes) ──
+// ── Notifications de l'appli Elixir : API de l'onglet admin « 📲 Notifications » (verifyAdmin sur toutes les routes) ──
 // POST { action, … } :
 //   etat          { endpoint? }  → { service (coches, sans aucune valeur de clé), disponible, sujet_affiche, cle_publique, reglages,
 //                                    stats, pharmacies (500 au plus), mes_appareils (appareils admin de CET admin), hotes_refuses,

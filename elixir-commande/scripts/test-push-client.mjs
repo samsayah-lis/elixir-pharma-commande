@@ -439,7 +439,7 @@ eq("accueil : outils (gp) ET carte des alertes passés par App et reçus par l'a
   [APP.includes("gp={{ autorise: gpAllowed === true && !actingFor"), /suggestions = null, gp = null, alertes = null \}\) \{/.test(ACCUEIL)], [true, true]);
 const ADMIN = readFileSync(join(RACINE, "src/AdminPanel.jsx"), "utf8");
 eq("admin : onglets « Alertes retour » et « Notifications » distincts, chacun son composant",
-  [ADMIN.includes('{k:"alertes",   label:"🔔 Alertes retour"'), ADMIN.includes('{k:"notifications",label:"🔔 Notifications"'), /tab==="alertes"&&\(\s*<AdminAlertesRetour/.test(ADMIN), /tab==="notifications"&&\(\s*<AdminNotifications/.test(ADMIN)],
+  [ADMIN.includes('{k:"alertes",   label:"🔔 Alertes retour"'), ADMIN.includes('{k:"notifications",label:"📲 Notifications",icon:"📲"}'), /tab==="alertes"&&\(\s*<AdminAlertesRetour/.test(ADMIN), /tab==="notifications"&&\(\s*<AdminNotifications/.test(ADMIN)],
   [true, true, true, true]);
 const NOTIF = readFileSync(join(RACINE, "src/notifications/Notifications.jsx"), "utf8");
 eq("carte : retour en stock branché (plus de « bientôt »)", [/bientôt/.test(NOTIF), NOTIF.includes("Vos produits attendus dès leur retour en stock")], [false, true]);

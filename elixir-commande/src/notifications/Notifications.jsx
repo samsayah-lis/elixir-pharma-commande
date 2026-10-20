@@ -28,7 +28,7 @@ const MESSAGES = {
   trop_d_appareils: "10 appareils reçoivent déjà les notifications de votre pharmacie\u00a0: retirez-en un ci-dessous, puis réessayez.",
   fermee: "Les notifications ne sont pas encore ouvertes à votre pharmacie.",
   hors_pilote: "Les notifications ne sont pas encore ouvertes à votre pharmacie.",
-  admin: "Connexion Elixir\u00a0: les notifications s'activent depuis l'admin (🔔 Notifications).",
+  admin: "Connexion Elixir\u00a0: les notifications s'activent depuis l'admin (📲 Notifications).",
   fiche: `Aucune pharmacie n'est rattachée à ce compte\u00a0: contactez Elixir Pharma au ${TELEPHONE_ELIXIR}.`,
   expire: (m) => `Cet appareil n'était plus joignable\u00a0: ${geste(m)} «\u00a0Activer les notifications\u00a0» pour le réactiver.`,
   quota: "Trois notifications de test en 10 minutes au plus\u00a0: réessayez un peu plus tard.",

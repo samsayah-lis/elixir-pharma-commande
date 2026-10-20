@@ -5,7 +5,7 @@ import * as C from "../notifications/client.js";
 import { analyser, libelleAppareil, parcours as parcoursDe } from "../notifications/plateforme.js";
 import { LIMITES, TITRE_CONSEILLE, LIBELLES_OUTILS, OUTILS_LIEN, PLAFOND_MAX, lienValide, longueur } from "../notifications/regles.js";
 
-// ── Admin : notifications de l'appli (onglet « 🔔 Notifications », docs/notifications.md) ──
+// ── Admin : notifications de l'appli (onglet « 📲 Notifications », docs/notifications.md) ──
 // État du service (sans aucune valeur de clé), ouverture aux pharmacies (fermée / pilote / toutes) et plafond des offres,
 // appareils de l'admin (tests et aperçus : rôle admin, jamais au nom d'une pharmacie), statistiques, nouvelle annonce
 // « Offres et nouveautés » avec aperçus Android et iPhone, historique. API : netlify/functions/push-admin.js (verifyAdmin).
@@ -316,7 +316,7 @@ function MesAppareils({ etat, api, flash, onChange }) {
         : p === "installer_ios" ? (
           <div style={ui.encart("info")}>
             <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b> depuis cette page&nbsp;: Safari → Partager → <b>Sur l'écran d'accueil</b> → Ajouter. Ouvrez ensuite l'icône
-            «&nbsp;Elixir Admin&nbsp;», connectez-vous à l'admin, revenez dans 🔔 Notifications et touchez «&nbsp;Recevoir les notifications sur cet appareil&nbsp;». iOS 16.4 ou plus récent.
+            «&nbsp;Elixir Admin&nbsp;», connectez-vous à l'admin, revenez dans 📲 Notifications et touchez «&nbsp;Recevoir les notifications sur cet appareil&nbsp;». iOS 16.4 ou plus récent.
           </div>
         ) : p === "refuse" ? <div style={ui.encart("warn")}>Notifications bloquées pour ce site sur cet appareil&nbsp;: autorisez-les dans les réglages du navigateur, puis actualisez.</div>
         : p === "maj_ios" ? <div style={ui.encart("warn")}>Cet iPhone doit passer à iOS 16.4 ou plus récent (Réglages → Général → Mise à jour logicielle).</div>
