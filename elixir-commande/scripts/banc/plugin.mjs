@@ -9,17 +9,28 @@
 //  • Assistant Elixir (fonctions chat et chat-fichier) : réponses écrites d'avance (src/dev/reponses-fictives.js, cas
 //           « chat »), attente de la réponse rejouée (GET ?tour=, étape puis réponse), PDF et Excel d'essai ; « #401 »,
 //           « #409 », « #429 », « #503 » ou « #erreur » dans un message essaient les écrans d'erreur.
+//  • product-upload-image (photo de l'admin : catalogue, « Ajouter une photo » de l'accueil) : la photo reçue est rangée
+//           dans dev-fixtures/_photos/ (jamais Supabase) et servie par le banc à /banc-photos/elixir-images/products/<clé>.<ext>,
+//           avec le même cache public d'une heure que le Storage (l'anti-cache ?v= se vérifie ici). Mises en avant : cette
+//           adresse locale n'est pas en https, la règle des mises en avant la refuse à la publication (aperçu seulement).
+//  • config-get (POST de l'admin : affichage, menus promo, mises en avant) : la valeur publiée est gardée en mémoire et
+//           relue par les GET suivants jusqu'au redémarrage du banc (le site voit ce que l'admin publie, comme en ligne ;
+//           jamais de 409 ici), sans toucher aux données figées.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
 // « Me reconnecter »).
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
 import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
 import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
 import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
+
+// Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
+const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
+const TYPES_PHOTO = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 // Pharmacie du banc (identité renvoyée à l'identification) ; remplaçable par dev-fixtures/pharmacie.json
 const PHARMACIE_BANC = { name: "PHARMACIE DU BANC D'ESSAI", cip: "9999999", email: "" };
@@ -56,6 +67,8 @@ function catalogueLocal() {
 
 // Commandes enregistrées sur le banc depuis son démarrage (pour « Mes commandes »)
 const commandesDuBanc = [];
+// Configurations publiées par l'admin sur le banc depuis son démarrage : clé → { value, updated_at }
+const configsDuBanc = new Map();
 
 // Échantillon stable de produits (avec prix) d'une ou plusieurs sections
 const echantillon = (sections, n, decalage = 0) => produits().filter(p => sections.includes(p.section) && p.pn != null).slice(decalage, decalage + n);
@@ -153,6 +166,7 @@ function reponseGet(url) {
   const banc = pharmacieBanc();
   if (fn === "config-get" && query.key === "pharmacy_auth_mode" && process.env.BANC_AUTH)
     return { statut: 200, corps: { key: "pharmacy_auth_mode", value: process.env.BANC_AUTH === "legacy" ? "legacy" : "otp" }, source: "banc" };
+  if (fn === "config-get" && configsDuBanc.has(query.key)) return { statut: 200, corps: { key: query.key, ...configsDuBanc.get(query.key) }, source: "publié sur le banc" };
   if ((fn === "order-list" || fn === "ml-recommend") && query.pharmacy_cip === banc.cip) return { statut: 200, corps: getCalcule(fn, query), source: "calculé" };
   const f = fige(url);
   if (f !== undefined) return { statut: 200, corps: f, source: "figé" };
@@ -189,12 +203,29 @@ const litCorps = (req) => new Promise((ok, ko) => {
   req.on("error", ko);
 });
 
+// product-upload-image : mêmes contrôles et même réponse que la fonction ({ success, image_url }), fichier sur le banc
+function photoBanc(corps) {
+  const { cip, imageBase64, mimeType, image_url: distante } = corps && typeof corps === "object" ? corps : {};
+  if (!cip) return { statut: 400, corps: { error: "cip requis" }, source: "fictif" };
+  if (distante) return { corps: { success: true, image_url: distante }, source: "fictif" };
+  if (!imageBase64) return { statut: 400, corps: { error: "image_url ou imageBase64 requis" }, source: "fictif" };
+  const cle = String(cip);
+  if (!/^[\w-]{1,80}$/.test(cle)) return { statut: 400, corps: { error: "Banc d'essai : clé de photo inattendue" }, source: "fictif" };
+  const ext = TYPES_PHOTO[mimeType] || "jpg";
+  mkdirSync(DOSSIER_PHOTOS, { recursive: true });
+  writeFileSync(resolve(DOSSIER_PHOTOS, `${cle}.${ext}`), Buffer.from(String(imageBase64), "base64"));
+  return { corps: { success: true, image_url: `/banc-photos/elixir-images/products/${cle}.${ext}` }, source: "fictif (photo rangée sur le banc)" };
+}
+
 function reponsePost({ fn, methode, corps }) {
   const action = corps && typeof corps === "object" && typeof corps.action === "string" ? corps.action : "";
   const perso = (action ? litJson(resolve(DOSSIER_POST, `${fn}.${action}.json`)) : undefined) ?? litJson(resolve(DOSSIER_POST, `${fn}.json`));
   if (perso !== undefined) return { corps: perso, source: "post personnalisé" };
   if (fn === "chat") return reponseChatBanc(corps && typeof corps === "object" ? corps : {});
+  if (fn === "product-upload-image") return photoBanc(corps);
   const r = reponseFictive({ fn, methode, corps, pharmacie: pharmacieBanc(), admin: true });
+  if (fn === "config-get" && corps && typeof corps === "object" && typeof corps.key === "string" && r?.success)
+    configsDuBanc.set(corps.key, { value: corps.value ?? null, updated_at: r.updated_at ?? null });
   // « Mes commandes » montre les commandes passées sur le banc
   if (fn === "order-save" && corps && typeof corps === "object" && Array.isArray(corps.items)) commandesDuBanc.push({ ...corps, date: corps.date || new Date().toISOString() });
   return { corps: r, source: "fictif" };
@@ -294,6 +325,17 @@ export default function bancEssai() {
       const log = (m) => server.config.logger.info(`[banc] ${m}`, { timestamp: true });
       const latence = Math.max(0, parseInt(process.env.BANC_LATENCE) || 0);
       if (!existsSync(DOSSIER_GET)) server.config.logger.warn("[banc] aucune donnée figée : lancez « npm run banc:capture » (lectures GET de la production, une fois)");
+      // photos envoyées sur le banc (product-upload-image) : cache public d'une heure, comme le Storage
+      server.middlewares.use("/banc-photos/elixir-images/products", (req, res) => {
+        const nom = basename(String(req.url || "").split("?")[0]);   // clé [\w-] : rien à décoder
+        const ext = /^[\w-]{1,80}\.(jpg|png|webp)$/.exec(nom)?.[1];
+        const fichier = resolve(DOSSIER_PHOTOS, nom);
+        if (!ext || !existsSync(fichier)) { res.statusCode = 404; return res.end(); }
+        res.setHeader("Content-Type", ext === "jpg" ? "image/jpeg" : `image/${ext}`);
+        res.setHeader("Cache-Control", "public, max-age=3600");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+        return res.end(readFileSync(fichier));
+      });
       server.middlewares.use("/.netlify/functions", async (req, res) => {
         const methode = String(req.method || "GET").toUpperCase();
         const url = req.url || "/";
