@@ -46,10 +46,12 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
       return { success: true };
     // Assistant Elixir : conversation écrite d'avance (aucune IA, aucun Odoo)
     case "chat":                return reponseChatFictive(b, pharmacie);
-    // alertes retour (admin) : « Envoyer maintenant », « Relancer » — aucun e-mail ne part
+    // alertes retour (admin) : « Envoyer maintenant », « Activer / Suspendre », « Relancer » — aucun e-mail ne part
     case "restock-notify":      return b.action === "envoyer"
       ? { done: true, mode: "complet", envoyes: 0, pharmacies: 0, produits: 0, closes: { ancienne: 0, destinataire: 0, echec: 0, interrompu: 0 },
-          echecs: 0, deja_pris: 0, restants: 0, hors_fenetre: false, erreurs: ["essai à blanc : aucun e-mail envoyé"] }
+          echecs: 0, deja_pris: 0, restants: 0, reportes: 0, ecartees: 0, hors_fenetre: false, suspendu: false, plafond: false, panne: null,
+          erreurs: ["essai à blanc : aucun e-mail envoyé"] }
+      : b.action === "activer" ? { success: true, actif: b.actif === true, mise_en_service: b.actif === true ? new Date().toISOString() : null }
       : { success: true };
     default:                    return { success: true, ok: true };
   }

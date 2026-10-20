@@ -152,18 +152,25 @@ function getCalcule(fn, q) {
 
 // Alertes « M'avertir du retour » du banc (docs/alertes-retour.md), tirées du catalogue local, stables d'un appel à l'autre :
 // pharmacie du banc → 2 produits en stock « De retour en stock » (avertis hier) et 1 alerte active sur un produit en rupture ;
-// admin → tableau de bord de mise en service (demandes déjà enregistrées, aucun passage encore), pharmacies anonymes.
+// admin → tableau de bord de mise en service (demandes déjà enregistrées, envois automatiques suspendus, aucun passage
+// encore), pharmacies anonymes ; « Activer » bascule les envois automatiques en mémoire jusqu'au redémarrage du banc.
 const enStockBanc = () => catalogueLocal().filter(p => p.in_stock && Number(p.discounted_price ?? p.list_price) > 0).sort((a, b) => String(a.name).localeCompare(String(b.name)));
 function alertesBanc(banc) {
   const jour = 86400e3, t = Date.now();
   const retours = enStockBanc().slice(3, 5).map((p, i) => ({ pharmacy_cip: banc.cip, cip: p.cip, product_name: p.name, created_at: new Date(t - (9 + i) * jour).toISOString(),
-    notified: true, notified_at: new Date(t - jour).toISOString(), retour: true }));
+    notified: true, notified_at: new Date(t - jour).toISOString(), retour: true, retour_cip: p.cip }));
   const rupture = catalogueLocal().find(p => !p.in_stock);
   return [...retours, ...(rupture ? [{ pharmacy_cip: banc.cip, cip: rupture.cip, product_name: rupture.name, created_at: new Date(t - 2 * jour).toISOString(), notified: false, notified_at: null, retour: false }] : [])];
 }
 // « Envoyer maintenant » sur le banc : aucun e-mail, mais le tableau de bord passe à l'état « après le premier passage »
 // (avertis récemment, journal) jusqu'au redémarrage du banc
 let passageBanc = null;
+let reglagesBanc = { lisibles: true, actif: false, mise_en_service: null };
+function activerBanc(actif) {
+  const at = new Date().toISOString();
+  reglagesBanc = { lisibles: true, actif: actif === true, mise_en_service: reglagesBanc.mise_en_service || (actif === true ? at : null) };
+  return { success: true, actif: reglagesBanc.actif, mise_en_service: reglagesBanc.mise_en_service };
+}
 function envoiAlertesBanc() {
   const avant = alertesRetourBanc();
   const t = new Date().toISOString();
@@ -172,10 +179,12 @@ function envoiAlertesBanc() {
     ...pretes.flatMap(p => p.pharmacies.map(x => ({ pharmacie: x.nom, pharmacy_cip: x.cip, cip: p.cip, produit: p.nom, issue: "envoye", prix: p.prix }))),
     ...Array.from({ length: avant.totaux.anciennes }, (_, i) => ({ pharmacie: `PHARMACIE ANONYME ${20 + i}`, pharmacy_cip: String(9000020 + i), cip: avant.produits[i % avant.produits.length].cip,
       produit: avant.produits[i % avant.produits.length].nom, issue: "ancienne" })),
+    ...(avant.produits[1] ? [{ pharmacie: null, pharmacy_cip: "9000031", cip: avant.produits[1].cip, produit: avant.produits[1].nom, issue: "destinataire" }] : []),
   ];
   const envoyes = new Set(lignes.filter(l => l.issue === "envoye").map(l => l.pharmacy_cip)).size;
   passageBanc = { at: t, source: "admin", mode: "complet", envoyes, pharmacies: envoyes, produits: lignes.filter(l => l.issue === "envoye").length,
-    closes: { ancienne: avant.totaux.anciennes, destinataire: 0, echec: 0, interrompu: 0 }, echecs: 0, deja_pris: 0, restants: 0, hors_fenetre: false, done: true, erreurs: [], lignes };
+    closes: { ancienne: avant.totaux.anciennes, destinataire: avant.totaux.closes_destinataire, echec: 0, interrompu: 0 }, echecs: 0, deja_pris: 0, restants: 0, reportes: 0,
+    ecartees: 0, hors_fenetre: false, suspendu: false, plafond: false, panne: null, done: true, erreurs: [], lignes };
   const { lignes: _l, ...chiffres } = passageBanc;
   return { ...chiffres, erreurs: ["banc d'essai : aucun e-mail envoyé"] };
 }
@@ -195,17 +204,24 @@ function alertesRetourBanc() {
     ...(rupture[2] ? [produit(rupture[2], false, [ph(12, 2)])] : []),
   ];
   const prets = produits.filter(p => p.pret);
-  if (passageBanc) {   // après « Envoyer maintenant » : demandes avertes retirées de l'attente, journal rempli
+  const commun = { mode: "complet", regles: { age_max_jours: 60, recent_jours: 14, essais_max: 3, fenetre: { de: 7, a: 21 }, dans_fenetre: true, plafond_jour: 150, adresse_heures: 24 },
+    reglages: { ...reglagesBanc, seuil_anciennes: new Date((reglagesBanc.mise_en_service ? Date.parse(reglagesBanc.mise_en_service) : t) - 60 * jour).toISOString() },
+    prochain_passage: (() => { const h = new Date(t); h.setUTCMinutes(50, 0, 0); for (let i = -1; i < 72; i++) { const x = h.getTime() + i * 3600e3; if (x > t && new Date(x).getUTCHours() % 3 === 0) return new Date(x).toISOString(); } return null; })() };
+  if (passageBanc) {   // après « Envoyer maintenant » : demandes averties retirées de l'attente, journal rempli, un envoi à vérifier
     const restent = produits.filter(p => !p.pret);
-    return { mode: "complet", regles: { age_max_jours: 60, recent_jours: 14, essais_max: 3, fenetre: { de: 7, a: 21 }, dans_fenetre: true },
-      totaux: { en_attente: restent.reduce((n, p) => n + p.attente, 0), pharmacies_en_attente: 8, anciennes: 0, alertes_pretes: 0, emails_prets: 0, produits_prets: 0 },
-      produits: restent, recents: passageBanc.lignes.map(l => ({ at: passageBanc.at, source: "admin", ...l })),
-      passages: [{ ...passageBanc, lignes: passageBanc.lignes.length }], dernier: { ...passageBanc, lignes: passageBanc.lignes.length }, interrompus: [] };
+    const lignes = passageBanc.lignes;
+    const aVerifier = stock[3] ? [{ pharmacy_cip: "9000013", pharmacie: "PHARMACIE ANONYME 13", cip: stock[3].cip, produit: stock[3].name, issue: "interrompu",
+      at: passageBanc.at, email: "pharmacie13@exemple.test" }] : [];
+    return { ...commun, envoyes_jour: passageBanc.envoyes, deja_envoye: true,
+      totaux: { en_attente: restent.reduce((n, p) => n + p.attente, 0), pharmacies_en_attente: 8, anciennes: 0, futures: 0, alertes_pretes: 0, emails_prets: 0,
+        emails_reportes: 0, closes_destinataire: 0, produits_prets: 0 },
+      produits: restent, recents: lignes.map(l => ({ at: passageBanc.at, source: "admin", ...l })),
+      passages: [{ ...passageBanc, lignes: lignes.length }], dernier: { ...passageBanc, lignes: lignes.length }, a_verifier: aVerifier };
   }
-  return { mode: "complet", regles: { age_max_jours: 60, recent_jours: 14, essais_max: 3, fenetre: { de: 7, a: 21 }, dans_fenetre: true },
-    totaux: { en_attente: produits.reduce((n, p) => n + p.attente, 0), pharmacies_en_attente: 12, anciennes: 9,
-      alertes_pretes: prets.reduce((n, p) => n + p.attente, 0), emails_prets: 6, produits_prets: prets.length },
-    produits, recents: [], passages: [], dernier: null, interrompus: [] };
+  return { ...commun, envoyes_jour: 0, deja_envoye: false,
+    totaux: { en_attente: produits.reduce((n, p) => n + p.attente, 0), pharmacies_en_attente: 12, anciennes: 9, futures: 0,
+      alertes_pretes: prets.reduce((n, p) => n + p.attente, 0), emails_prets: 5, emails_reportes: 0, closes_destinataire: 1, produits_prets: prets.length },
+    produits, recents: [], passages: [], dernier: null, a_verifier: [] };
 }
 
 // Éditeur des mises en avant (?verifier=) : offre et motifs par la règle du serveur, avec le catalogue, les produits
@@ -283,6 +299,7 @@ function reponsePost({ fn, methode, corps }) {
   if (fn === "chat") return reponseChatBanc(corps && typeof corps === "object" ? corps : {});
   if (fn === "product-upload-image") return photoBanc(corps);
   if (fn === "restock-notify" && corps?.action === "envoyer") return { corps: envoiAlertesBanc(), source: "fictif (aucun e-mail)" };
+  if (fn === "restock-notify" && corps?.action === "activer") return { corps: activerBanc(corps.actif), source: "fictif (en mémoire)" };
   const r = reponseFictive({ fn, methode, corps, pharmacie: pharmacieBanc(), admin: true });
   if (fn === "config-get" && corps && typeof corps === "object" && typeof corps.key === "string" && r?.success)
     configsDuBanc.set(corps.key, { value: corps.value ?? null, updated_at: r.updated_at ?? null });

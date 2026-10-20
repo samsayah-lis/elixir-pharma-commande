@@ -128,7 +128,7 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/order-list.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire ; relecture finale : Supabase Auth en panne → 503 indisponible)",
   // correctif de sécurité du 19/10/2026 (jeton obligatoire), puis alertes retour (20/10/2026, docs/alertes-retour.md) :
   // modification figée par son empreinte (vaut contre master local, d'avant les correctifs, comme contre origin/master)
-  "netlify/functions/restock-alert.js": { empreinte: "9de0f691a1bf", motif: "alertes retour (20/10/2026) : « mes alertes » sans adresse e-mail, avec notified et retour (mention « De retour en stock » de la Saisie, _restock.js) ; nouvelle demande : suivi d'envoi remis à zéro (notified_at, attempts, outcome), repli sans ces colonnes" },
+  "netlify/functions/restock-alert.js": { empreinte: "9b28a9339ec3", motif: "alertes retour (20/10/2026) : « mes alertes » sans adresse e-mail, avec notified, retour et retour_cip (mention « De retour en stock » de la Saisie, _restock.js) ; nouvelle demande : suivi d'envoi remis à zéro (notified_at, attempts, outcome), repli sans ces colonnes ; correctifs de la revue : cip en chiffres (7 à 14), nom du produit coupé à 200 caractères, CIP de pharmacie et adresse de l'admin sans espaces" },
   "netlify/functions/pharmacy-lookup.js": "correctif de sécurité du 19/10/2026 (limite de débit, fermé en mode code)",
   // second correctif du 19/10/2026 : plus aucune commande, commande groupée ni habitude d'achat sans jeton
   "netlify/functions/_gp.js": "second correctif de sécurité du 19/10/2026 (identité des commandes groupées : jeton obligatoire, plus de repli sur l'e-mail du corps ; relecture finale : Supabase Auth en panne → refus 5xx, jamais 401)",

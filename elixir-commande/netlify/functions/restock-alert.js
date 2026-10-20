@@ -13,9 +13,10 @@ import { marquerRetours, colonneManquante } from "./_restock.js";
 // GET  /restock-alert?action=expiry_discounts                              → lister les remises (public : catalogue, aucune donnée de pharmacie)
 // Alertes retour (20/10/2026, docs/alertes-retour.md) : « mes alertes » renvoie chaque demande SANS adresse e-mail, avec
 // notified (déjà avertie : plus active) et retour (avertie depuis moins de 14 jours, produit de nouveau en stock : mention
-// « De retour en stock » de la Saisie ; DELETE la retire). Les e-mails partent de restock-notify (_restock.js). Une
-// nouvelle demande (POST) remet aussi à zéro le suivi d'envoi (notified_at, attempts, outcome), sans ces colonnes si la
-// base ne les a pas encore (sql/restock-notify.sql).
+// « De retour en stock » de la Saisie ; retour_cip : CIP de la ligne à marquer ; DELETE la retire). Les e-mails partent de
+// restock-notify (_restock.js). Une nouvelle demande (POST) remet aussi à zéro le suivi d'envoi (notified_at, attempts,
+// outcome), sans ces colonnes si la base ne les a pas encore (sql/restock-notify.sql) ; cip : chiffres seulement, nom du
+// produit coupé à 200 caractères, CIP de pharmacie de l'admin sans espaces.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -99,15 +100,18 @@ export const handler = async (event) => {
     // S'abonner à une alerte retour en stock
     const qui = await appelant(event, json);
     if (qui.erreur) return qui.erreur;
-    const pharmacyCip = qui.admin ? body.pharmacy_cip : qui.cip;
-    if (!pharmacyCip || !body.cip) {
+    const pharmacyCip = qui.admin ? String(body.pharmacy_cip ?? "").trim() : qui.cip;
+    const cip = String(body.cip ?? "").trim();
+    if (!pharmacyCip || !cip) {
       return json(400, { error: qui.admin ? "pharmacy_cip et cip requis" : "cip requis" });
     }
+    // CIP du catalogue (chiffres) ; nom : 200 caractères au plus (les e-mails prennent celui du catalogue)
+    if (!/^\d{7,14}$/.test(cip)) return json(400, { error: "cip invalide" });
     const row = {
       pharmacy_cip: pharmacyCip,
-      pharmacy_email: qui.admin ? (body.pharmacy_email || null) : qui.email,
-      cip: body.cip,
-      product_name: body.product_name || null,
+      pharmacy_email: qui.admin ? (String(body.pharmacy_email ?? "").trim() || null) : qui.email,
+      cip,
+      product_name: String(body.product_name ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null,
       created_at: new Date().toISOString(),
       notified: false,
     };

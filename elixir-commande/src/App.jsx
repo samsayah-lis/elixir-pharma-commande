@@ -317,7 +317,9 @@ export default function App() {
   // ou personnalisé n'existe qu'une fois la config chargée : il est retenu ici puis ouvert à ce moment-là.
   const menuDemande = useRef((() => { try { return new URLSearchParams(window.location.search).get("menu") || ""; } catch { return ""; } })());
   const navParClic = useRef(false);   // changement de menu par l'utilisateur → nouvelle entrée d'historique (bouton Retour)
-  const menuViaLien = useRef(menuDemande.current.startsWith("promo_"));   // arrivée par le lien d'un menu promo : pas de fenêtre « Offres du moment »
+  // arrivée par le lien d'un menu promo ou d'un produit (?cip= / ?produit= : e-mail « De retour en stock », catalogue) :
+  // pas de fenêtre « Offres du moment » par-dessus
+  const menuViaLien = useRef(menuDemande.current.startsWith("promo_") || !!initialProductQuery);
   const [activeTab, setActiveTab] = useState(() => {
     try {
       const p = new URLSearchParams(window.location.search);

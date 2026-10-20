@@ -73,9 +73,11 @@ async function stockRefresh() {
 }
 
 // Alertes « M'avertir du retour » (restock-notify, docs/alertes-retour.md) : stock à jour → e-mails aux pharmacies dont un
-// produit attendu est revenu (une fois par demande, 7 h – 21 h heure de Paris). 5 s de travail par appel : rappelé tant
-// qu'il en reste. Réponse en chiffres seulement (ni nom ni adresse dans ce journal). Un échec ici ne fait PAS échouer
-// la synchro du stock : le passage planifié restock-notify-cron (h:50) reprend ce qui reste.
+// produit attendu est revenu (une fois par demande, 7 h – 21 h heure de Paris, une fois les envois automatiques activés
+// dans l'admin ; plafonds : un e-mail par adresse sur 24 h, 150 par jour). 4 s de travail par appel : rappelé tant qu'il
+// en reste (done=false) ; une panne de Resend arrête la boucle (done=true). Réponse en chiffres seulement (ni nom ni
+// adresse dans ce journal). Un échec ici ne fait PAS échouer la synchro du stock : le passage planifié restock-notify-cron
+// (h:50) reprend ce qui reste.
 async function alertesRetour() {
   try {
     for (let i = 0; i < 40; i++) {
