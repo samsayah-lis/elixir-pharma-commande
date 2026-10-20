@@ -165,7 +165,7 @@ function CodeQR({ texte, taille = 168 }) {
     return () => { fini = true; };
   }, [texte]);
   if (!qr) return <div aria-hidden="true" style={{ width: taille, height: taille, borderRadius: 10, background: T.paper, flexShrink: 0 }} />;
-  const n = qr.getModuleCount(), marge = 2, cote = n + 2 * marge;
+  const n = qr.getModuleCount(), marge = 4, cote = n + 2 * marge;   // zone de silence standard (4 modules)
   let d = "";
   for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) d += `M${c + marge} ${r + marge}h1v1h-1z`;
   return (
