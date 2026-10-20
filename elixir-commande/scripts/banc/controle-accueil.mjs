@@ -74,7 +74,7 @@ await cdp("Page.enable"); await cdp("Runtime.enable");
 await cdp("Fetch.enable", { patterns: [{ urlPattern: "*/.netlify/functions/accueil-offres*", requestStage: "Request" }] });
 // variantes : mises en avant d'outils fabriquées depuis outils_etat du banc (chiffres de la règle du serveur)
 const base = await fetch(`${BANC}.netlify/functions/accueil-offres`, { headers: { Authorization: "Bearer essai-jeton" } }).then(r => r.json()).catch(() => null);
-const BADGES = { saisie: "Tout le catalogue", peremption: "Petits prix", fauteuil: "Aide au choix", transfert: "Aide au choix", justificatif: "Suivi pas à pas", groupees: "Conditions négociées" };
+const BADGES = { saisie: "Tout le catalogue", peremption: "Date courte", fauteuil: "Aide au choix", transfert: "Aide au choix", justificatif: "Suivi pas à pas", groupees: "Conditions négociées" };
 let nv = 0;
 const outilVar = (cle, emplacement) => ({ id: `mea_ctrl_${cle}_${++nv}`, type: "outil", outil: cle, emplacement, titre: "", accroche: "", badge: BADGES[cle], fin: null, fin_offre: null,
   image: null, couleur: null, couleur_auto: null, chiffres: base.outils_etat[cle]?.chiffres ?? null });
@@ -119,7 +119,8 @@ try {
     for (const t of tuiles) vrai(`tuile outil « ${t.pied} » : un seul bouton, nom avec le texte du bouton`, t.bouton && t.imbriques === 0 && !!t.pied && t.nom.includes(t.pied.trim()), JSON.stringify(t));
     for (const [l, h, m] of [[375, 812, true], [1024, 768, false], [1280, 800, false]]) {
       await ouvrir(l, h, m);
-      const i = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption/.test(b.textContent))`);
+      // onglet de la vitrine par le titre de la Péremption (« Lots à date courte, en stock » depuis le lot 0 du 20/10/2026)
+      const i = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption|Lots à date courte/.test(b.textContent))`);
       if (i > 0) { await js(`document.querySelectorAll(".mea-barre")[${i}].click(); true`); await pause(1200); }
       const b = await js(`(() => { const c = document.querySelector(".mea-diapo .mea-actions--outil .mea-cta"); if (!c) return null; const r = c.getBoundingClientRect(), s = document.querySelector(".mea-cinema").getBoundingClientRect();
         return { texte: c.innerText, sw: c.scrollWidth, cw: c.clientWidth, dedans: r.left >= s.left - 0.5 && r.right <= s.right + 0.5 }; })()`);
@@ -139,7 +140,7 @@ try {
     vrai("mouvement réduit : lettres du champ visibles d'emblée", lettres.length > 0 && lettres.every(o => o >= 0.99), lettres.join(","));
     // clic sur la Péremption (bouton de la vitrine) puis sur une tuile outil : rubrique ouverte, en haut de page
     await ouvrir(1440, 900);
-    const ip = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption/.test(b.textContent))`);
+    const ip = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption|Lots à date courte/.test(b.textContent))`);
     if (ip >= 0) {
       if (ip > 0) { await js(`document.querySelectorAll(".mea-barre")[${ip}].click(); true`); await pause(1200); }
       await js("window.scrollTo(0, 120); true"); await pause(200);

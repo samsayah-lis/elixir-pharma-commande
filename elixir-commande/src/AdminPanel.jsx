@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
 import ShortExpiry from "./components/ShortExpiry";
+import { PEREMPTIONS_ADMIN } from "./components/PeremptionsAdmin.jsx";
+import { estPeremption, notePeremption, datePeremption } from "./peremption-panier.js";
 import AdminSearchML from "./components/AdminSearchML";
 import AdminOrderKPIs from "./components/AdminOrderKPIs";
 import AdminDisplay from "./components/AdminDisplay";
@@ -1470,6 +1472,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                               </span>}
                               <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
                               <span style={{flex:1,paddingRight:8}}>{item.name}
+                                {/* péremption courte (src/peremption-panier.js) : ligne commandée depuis la page, date du lot ; prix habituel */}
+                                {estPeremption(item) && <span title={`Commandée depuis la page Péremption courte : lot au ${datePeremption(item.peremption)} (prix habituel, sans remise péremption)`} style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:tone("warn").bg,color:tone("warn").fg}}>{notePeremption(item.peremption)}</span>}
                                 {!o.processed && !lineDone(item) && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?T.okBg:tone("acting").bg,color:orderStock[item.cip]?T.ok:tone("acting").fg}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
                                 {item.synced_at && (!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{marginLeft:6,fontSize:11,color:T.ok,fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
                                 {!item.synced_at && item.handled_at && <span style={{marginLeft:6,fontSize:11,color:T.inkSoft,fontWeight:700}}>traitée sans envoi
@@ -1764,7 +1768,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
 
         {/* ── EXPIRY TAB ── */}
         {tab==="expiry"&&(
-          <ShortExpiry isAdmin={true} onAddToCart={() => {}} />
+          <ShortExpiry isAdmin={true} onAddToCart={() => {}} adminFetch={adminFetch} admin={PEREMPTIONS_ADMIN} />
         )}
 
         {/* ── DISPLAY TAB ── */}

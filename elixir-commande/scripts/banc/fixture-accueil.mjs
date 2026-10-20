@@ -13,8 +13,9 @@
 //            dev-fixtures/get/config-get__key=admin_promos.json) ; écrit aussi dev-fixtures/get/config-get__key=accueil_vedettes.json
 //            (lecture de l'éditeur de l'admin sur le banc). Produits mis en avant : ceux de la fixture (prix et stock figés).
 // --outils <dossier> : données figées des mises en avant d'outils (docs/accueil.md § 7.8 ; relevé du 20/10/2026 :
-//            peremption.json, remises.json, fauteuils.json, count.json, justif.json, produits.json) — péremptions réduites aux
-//            6 colonnes de la règle (ni lots ni stock), outils évalués par la règle du serveur (_accueil-outils.js) ; ajoute
+//            peremption.json, fauteuils.json, count.json, justif.json) — péremptions réduites aux 3 colonnes de la règle
+//            (lot 0 de la Péremption courte : ni prix, ni lots, ni stock), outils évalués par la règle du serveur
+//            (_accueil-outils.js) ; ajoute
 //            outils_etat à la réponse, écrit dev-fixtures/get/lab-justif__action=products.json et
 //            dev-fixtures/post/gp-pharmacy.access.json = { allowed: true, open_count: 2 } (valeur fictive, banc seulement ;
 //            --gp-non : { allowed: false }, pharmacie non inscrite).
@@ -92,7 +93,7 @@ if (args.includes("--vedettes")) {
     reponse.outils_etat = Object.fromEntries(OUTILS_MEA.map(k => [k, evaluerOutil(k, ctxV, Date.now())]));
     console.log(`✓ outils : ${OUTILS_MEA.map(k => `${k} ${reponse.outils_etat[k].raisons[0] || "visible"}`).join(" · ")}`);
     const per = reponse.outils_etat.peremption;
-    if (per.chiffres) console.log(`  péremption : ${per.chiffres.nb} réf., dès ${per.chiffres.des} € HT, jusqu'à −${per.chiffres.jusqua} %, ${per.chiffres.mois.join(" → ")}, en_menu ${per.admin.en_menu}, honnêtes ${per.admin.honnetes}`);
+    if (per.chiffres) console.log(`  péremption : ${per.chiffres.nb} réf., ${per.chiffres.mois.join(" → ")}, « dès » ${per.chiffres.des ?? "—"}, « jusqu'à » ${per.chiffres.jusqua ?? "—"}, remises facturées ${per.admin.remises_facturees}`);
   }
   writeFileSync(resolve(DOSSIER_GET, "config-get__key=accueil_vedettes.json"), JSON.stringify({ key: "accueil_vedettes", value: valeur, updated_at: maj }, null, 1));
   console.log(`✓ mises en avant : ${ved.etats.map(e => `${e.id} ${e.statut}`).join(" · ")}`);
@@ -103,10 +104,7 @@ if (args.includes("--vedettes")) {
 function outilsFiges(dossierOutils, lire) {
   const f = (nom) => lire(resolve(dossierOutils, nom));
   const { min, max } = fenetrePeremption(Date.now());
-  const rows = (f("peremption.json").products || []).map(({ cip, list_price, discounted_price, discount_pct, earliest_expiry, updated_at }) => ({ cip, list_price, discounted_price, discount_pct, earliest_expiry, updated_at }));
-  const cips = new Set(rows.map(r => r.cip));
-  const curees = (f("produits.json").products || []).filter(p => cips.has(p.cip) && p.active !== false).map(({ cip, section }) => ({ cip, section }));
-  const remises = Object.fromEntries((f("remises.json") || []).map(r => [r.cip, r.discount_pct]));
+  const rows = (f("peremption.json").products || []).map(({ cip, earliest_expiry, updated_at }) => ({ cip, earliest_expiry, updated_at }));
   const fa = f("fauteuils.json"), compte = f("count.json"), justif = f("justif.json");
   const garde = ["cip", "list_price", "discounted_price", "discount_pct", "in_stock"];
   const parCip = Object.fromEntries(Object.entries(fa.byCip || {}).map(([cip, r]) => [cip, Object.fromEntries(garde.map(k => [k, r[k]]))]));
@@ -119,7 +117,7 @@ function outilsFiges(dossierOutils, lire) {
     plan: { at: new Date().toISOString(), fauteuils: Object.fromEntries(Object.entries(fa.refs || {}).map(([code, l]) => [code, l.map(r => r.cip)])),
       saisie: { references: compte.total, en_stock: compte.in_stock, maj: compte.updated_at } },
     fauteuilsCat: { parCip },
-    peremption: { min, max, rows, remises, curees },
+    peremption: { min, max, rows },
     labos: labosDeConfig({ labs }),
   };
 }

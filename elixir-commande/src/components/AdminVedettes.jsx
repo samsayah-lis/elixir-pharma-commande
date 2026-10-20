@@ -624,7 +624,7 @@ function Formulaire({ it, titreDefaut, accrocheDefaut, menu, offre, couleur, acc
         <span><input value={it.badge} onChange={e => onChange({ badge: e.target.value })} aria-label="Badge" style={{ ...champ, ...bord("badge") }} />
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>{badges.map(b => <button key={b} type="button" onClick={() => onChange({ badge: b })} style={{ ...ui.pill(it.badge === b), height: 26, fontSize: 12 }}>{b}</button>)}</span>
           <span style={{ ...aide, display: "block" }}>{!outil ? "La remise s'affiche d'elle-même dans le médaillon or." : it.outil === "peremption"
-            ? "« jusqu'à −50 % » s'affiche de lui-même dans le médaillon or. Vide : pas de badge." : "Vide : pas de badge."}</span></span>
+            ? "Aucune remise annoncée : les remises péremption ne sont pas facturées par Odoo pour l'instant (onglet Péremptions). « Petits prix » ne s'affiche pas. Vide : pas de badge." : "Vide : pas de badge."}</span></span>
       </div>
       <div style={ligne}><span style={etiquette}>Dates</span>
         <span>
@@ -766,8 +766,8 @@ function AjoutOutil({ outilsEtat, caches, libelle, deja, onChoisir }) {
     if (cle === "saisie" && !ch) return { ton: o.admin?.comptes === "absents" ? "neutral" : "warn", texte: TEXTE_SEUL_SAISIE[o.admin?.comptes] || TEXTE_SEUL_SAISIE.absents };
     const texte = cle === "peremption" && ch ? [chiffresTexte(cle, ch).meta, ch.jusqua ? `jusqu'à ${fmtPct(ch.jusqua)}` : ""].filter(Boolean).join(" · ")
       : chiffresTexte(cle, ch, { court: cle === "fauteuil" || cle === "transfert" }).meta;
-    const info = cle === "peremption" && o.admin?.en_menu > 0
-      ? `${o.admin.en_menu} produit${o.admin.en_menu > 1 ? "s" : ""} aussi rangé${o.admin.en_menu > 1 ? "s" : ""} dans un menu (prix du menu au panier) : exclu${o.admin.en_menu > 1 ? "s" : ""} du « dès » et du « jusqu'à »`
+    const info = cle === "peremption" && o.admin?.remises_facturees === 0
+      ? "Aucune remise péremption facturée par Odoo : la carte annonce les références, sans prix ni remise"
       : (cle === "fauteuil" || cle === "transfert") && o.admin?.correspondance && o.admin.correspondance !== "odoo" ? AVERTISSEMENT_CORRESPONDANCE : "";
     return { ton: info === AVERTISSEMENT_CORRESPONDANCE ? "warn" : "ok", texte, info };
   };

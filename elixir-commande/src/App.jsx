@@ -12,6 +12,8 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
+// Péremption courte, lot 0 : mention « Pér. <date> » d'une ligne commandée depuis la page (prix, identité et relais inchangés)
+import { estPeremption, notePeremption, champsMention, champsPeremption, mentionCommande, mentionMail } from "./peremption-panier.js";
 // Renouvellement des jetons (un seul échange à la fois, partagé avec l'Assistant Elixir) : src/jetons.js
 import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
@@ -1082,10 +1084,11 @@ export default function App() {
         const i = byCode >= 0 ? byCode : prev.findIndex(s => (s.cip || s.name) === id);
         if (i >= 0) {
           const n = [...prev];
-          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) };
+          // ajout depuis Péremption courte : la ligne garde la date du lot (champsMention) ; prix et identité inchangés
+          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) };
           return n;
         }
-        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) }];
+        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) }];
       });
     }
     flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
@@ -1164,6 +1167,7 @@ export default function App() {
         isCampaign: false,
         isSpecial: true,
         supplierCode: s.supplier_code || null,
+        ...champsPeremption(s),   // péremption courte : date du lot et mention « Pér. … » (rien d'autre ne change)
       });
     });
     return items;
@@ -1719,7 +1723,7 @@ export default function App() {
     const totalsSend = qtyByCip(sendItems);
     const isJustif = (i) => needsJustif(i, jp, totalsSend);
     const lignesMail = (arr) => arr.map(i =>
-      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
+      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}${mentionMail(i)}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
 
     // Build CSV and save order to localStorage for admin
@@ -1759,7 +1763,8 @@ export default function App() {
     // « justificatif »), jamais transmise automatiquement à PharmaML (Elixir commande au labo, puis synchronise à réception).
     const normalItems = sendItems.filter(i => !isJustif(i));
     const justifLines = sendItems.filter(isJustif);
-    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));
+    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)
+    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));
     const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
     const enregistrer = async (o) => {   // → { ok: true, id } | { ok: false, status, error }
       const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items]);
@@ -3433,6 +3438,14 @@ export default function App() {
                       </div>
                       {/* Nom du produit */}
                       <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
+                      {/* Péremption courte (src/peremption-panier.js) : date du lot de la page, gardée jusqu'à la commande ; prix habituel,
+                          celui qu'Odoo facture (aucune remise péremption tant qu'Odoo ne la facture pas) */}
+                      {estPeremption(item) && (
+                        <div style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
+                          <Icone nom="horloge" taille={14} style={iconeEncart} />
+                          <span><strong>{notePeremption(item.peremption)}</strong> · péremption courte, au prix habituel</span>
+                        </div>
+                      )}
                       {/* Unités gratuites des campagnes */}
                       {item.qtyUG > 0 && (
                         <div style={{ marginBottom: 8 }}>

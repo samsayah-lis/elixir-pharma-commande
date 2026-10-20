@@ -296,8 +296,10 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   /* Safari iOS zoome sur tout champ en moins de 16 px (recherche de l'en-tête, quantités, fauteuil, justificatif…) */
   .ex-app input:not(.ex-admin *), .ex-app select:not(.ex-admin *), .ex-app textarea:not(.ex-admin *) { font-size: 16px !important; }
 
-  /* Péremption courte : chaque produit devient une carte (le tableau de 9 colonnes défilait en largeur, la quantité
-     et « Ajouter » hors de l'écran) — nom ; CIP et stock ; péremption ; lots ; prix ; quantité et « Ajouter » */
+  /* Péremption courte : chaque produit devient une carte (le tableau défilait en largeur, la quantité et « Ajouter » hors
+     de l'écran) — nom ; CIP et stock ; péremption ; lots ; prix ; quantité et « Ajouter ». Cellules repérées par leur
+     classe (ex-per-*) : la vue pharmacie a 7 colonnes depuis le lot 0 de la Péremption courte (ni prix de base barré, ni
+     remise), la vue admin 9 (prix de base, remise notée) */
   .ex-app .ex-peremption:not(.ex-admin *) thead { display: none; }
   .ex-app .ex-peremption:not(.ex-admin *), .ex-app .ex-peremption:not(.ex-admin *) tbody { display: block; }
   .ex-app .ex-peremption:not(.ex-admin *) tr {
@@ -305,20 +307,20 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
     grid-template-areas: "nom nom nom" "cip cip stock" "per per per" "lots lots lots" "base remise net" "qte qte qte";
   }
   .ex-app .ex-peremption:not(.ex-admin *) td { padding: 0 !important; max-width: none !important; text-align: left !important; min-width: 0; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(1) { grid-area: cip; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(2) { grid-area: nom; font-size: 14px !important; line-height: 1.35; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(3) { grid-area: stock; justify-self: end; font-size: 12px; color: var(--ink-soft); }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4) { grid-area: per; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4) > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5) { grid-area: lots; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5):empty { display: none; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(5) > div { white-space: normal !important; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(6) { grid-area: base; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(7) { grid-area: remise; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(8) { grid-area: net; justify-self: end; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(9) { grid-area: qte; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(3)::before { content: "Stock : "; font-weight: 500; }
-  .ex-app .ex-peremption:not(.ex-admin *) td:nth-child(4)::before { content: "Péremption"; display: block; font-size: 11px; font-weight: 700;
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-cip { grid-area: cip; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-nom { grid-area: nom; font-size: 14px !important; line-height: 1.35; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-stock { grid-area: stock; justify-self: end; font-size: 12px; color: var(--ink-soft); }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-date { grid-area: per; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-date > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-lots { grid-area: lots; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-lots:empty { display: none; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-lots > div { white-space: normal !important; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-base { grid-area: base; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-remise { grid-area: remise; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-prix { grid-area: net; justify-self: end; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-qte { grid-area: qte; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-stock::before { content: "Stock : "; font-weight: 500; }
+  .ex-app .ex-peremption:not(.ex-admin *) td.ex-per-date::before { content: "Péremption"; display: block; font-size: 11px; font-weight: 700;
     letter-spacing: .06em; text-transform: uppercase; color: var(--ink-mute); margin-bottom: 2px; }
   .ex-app .ex-peremption:not(.ex-admin *) .ex-peremption-ajouter { min-height: 40px; margin-top: 0 !important; padding: 0 18px !important; font-size: 13px !important; }
 

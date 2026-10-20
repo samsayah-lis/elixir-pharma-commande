@@ -55,8 +55,10 @@ const DOSSIERS = ["netlify/functions"];
 // { zone: "<début du nom de la zone>", avant: "…", apres: "…", lot: "E2", motif: "…" }
 // Écarts validés par rapport à master. Vide depuis la mise en ligne de la refonte (16/10/2026) : master contient
 // désormais les lots 1, E2 et 8 ; y inscrire un nouvel écart volontaire, avec sa zone, son motif, son avant et son après.
-// Seul écart en cours : le second correctif de sécurité du 19/10/2026 et sa relecture finale (ci-dessous), appliqué
-// seulement si la référence ne contient pas encore ces correctifs (LOTS.securite : master local d'avant, pas origin/master).
+// Écarts en cours : le second correctif de sécurité du 19/10/2026 et sa relecture finale, appliqués seulement si la
+// référence ne contient pas encore ces correctifs (LOTS.securite : master local d'avant, pas origin/master) ; la mention
+// « Pér. » de la Péremption courte (attente : "peremptionMention", LOTS.peremptionMention), tant que la référence ne
+// contient pas ce lot. Un écart sans « attente » suit les correctifs de sécurité.
 const ECARTS_AUTORISES = [
   // Correctif de sécurité du 19/10/2026 (order-save, quota-status et group-order exigent un jeton) : envoi de la commande
   // et contingentement passent par appelAuthentifie ; la session est vérifiée avant tout envoi. À retirer dès que master les contient.
@@ -106,6 +108,26 @@ const ECARTS_AUTORISES = [
   { zone: "confirmation de la commande groupée U-Labs", lot: "sécurité 19/10/2026 (relecture finale)", motif: "confirmation refusée faute de session : quantités du groupement renvoyées après la reconnexion (renvoyerGroupe)",
     avant: "                  if (res.status === 401 && !actingFor) setEnvoiBloque(\"reconnexion\");",
     apres: "                  if (res.status === 401 && !actingFor) { setEnvoiBloque(\"reconnexion\"); groupeAResynchroniser.current = true; }   // quantités renvoyées au groupement après la reconnexion" },
+  // ── Péremption courte, lot 0 (20/10/2026, conception « Odoo facture la remise », § 8.2 et § 14) : src/peremption-panier.js ──
+  // Seule la mention « Pér. <date> » de la branche peremption-prix-panier est reprise : elle suit une ligne hors catalogue
+  // ajoutée depuis la page (panier, commande enregistrée, e-mail à Elixir). Ni ligne à part, ni commande à part, ni
+  // changement du relais : prix, identité de ligne (CIP) et champs lus par le relais (cip, name, qty, pn) inchangés.
+  // Appliqués après ceux de sécurité (ordre du tableau), tant que la référence ne contient pas le lot.
+  { zone: "quantités et ajout au panier", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "addItemToCart : un ajout depuis Péremption courte sur une ligne hors catalogue existante (même CIP) lui laisse la date du lot (champsMention) ; quantité, prix et identité comme avant",
+    avant: "          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) };",
+    apres: "          // ajout depuis Péremption courte : la ligne garde la date du lot (champsMention) ; prix et identité inchangés\n          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) };" },
+  { zone: "quantités et ajout au panier", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "addItemToCart : nouvelle ligne hors catalogue ajoutée depuis Péremption courte : date du lot gardée (champsMention) ; mêmes champs qu'avant pour toute autre ligne",
+    avant: "        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) }];",
+    apres: "        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) }];" },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "ligne du panier : date du lot et mention « Pér. … » recopiées (champsPeremption) ; clé, rayon, prix et total inchangés",
+    avant: "        supplierCode: s.supplier_code || null,",
+    apres: "        supplierCode: s.supplier_code || null,\n        ...champsPeremption(s),   // péremption courte : date du lot et mention « Pér. … » (rien d'autre ne change)" },
+  { zone: "envoi de la commande", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "e-mail à Elixir : « PÉREMPTION COURTE (Pér. 31/12/2026, sans remise péremption) » sur la ligne (mentionMail) ; vide pour toute autre ligne",
+    avant: "${isJustif(i) ? \" — SUR JUSTIFICATIF LABO (\" + jp[i.cip].labNom + \")\" : \"\"}\\n  Qté : ${i.qty}",
+    apres: "${isJustif(i) ? \" — SUR JUSTIFICATIF LABO (\" + jp[i.cip].labNom + \")\" : \"\"}${mentionMail(i)}\\n  Qté : ${i.qty}" },
+  { zone: "envoi de la commande", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "lignes enregistrées : mention « Pér. … » et date du lot gardées (mentionCommande : admin, « Mes commandes ») ; le relais n'en lit que cip, name, qty et pn",
+    avant: "    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));",
+    apres: "    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)\n    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));" },
 ];
 // Lots en attente de fusion dans la référence : leurs écarts ne valent que si la référence ne les contient pas encore,
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
@@ -118,6 +140,9 @@ const LOTS = {
   assistantPresentation: { nom: "Assistant Elixir (présentation et lanceur)", repere: "src/components/assistant/presentation.js" },
   // branche accueil-offres (docs/accueil.md), en attente de fusion : page d'accueil et mises en avant de Zineb
   accueil: { nom: "page d'accueil (mises en avant)", repere: "src/components/accueil/Squelette.jsx" },
+  // Péremption courte, lot 0 (20/10/2026) : mention « Pér. » jusqu'à la commande (ECARTS_AUTORISES, attente
+  // « peremptionMention »)
+  peremptionMention: { nom: "péremption courte, lot 0 (mention « Pér. »)", repere: "scripts/test-peremption-mention.mjs" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -242,7 +267,8 @@ for (const z of ZONES) {
   if (zr.erreur) { erreurs++; console.log(`  ! ${titre} : ${zr.erreur} dans ${REF} (définition de zone à revoir)`); continue; }
   if (zc.erreur) { ko(`${titre} : ${zc.erreur} dans l'arbre de travail`); continue; }
   let attendu = zr.texte;
-  for (const e of enAttente("securite") ? ECARTS_AUTORISES.filter(e => z.nom.startsWith(e.zone)) : []) {
+  // chaque écart vaut tant que la référence ne contient pas son lot (attente ; par défaut : correctifs de sécurité)
+  for (const e of ECARTS_AUTORISES.filter(e => z.nom.startsWith(e.zone) && enAttente(e.attente || "securite"))) {
     if (!attendu.includes(e.avant)) { erreurs++; console.log(`  ! écart autorisé (lot ${e.lot}) introuvable dans la zone « ${z.nom} »`); continue; }
     attendu = attendu.replace(e.avant, e.apres);
   }

@@ -3,33 +3,39 @@ import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
+import { prixPage, offrePeremption } from "../peremption-panier.js";
 
-// Affichage seulement (refonte charte, lot 7) : format français de src/theme.js ; le panier reçoit les prix calculés
-// par getDiscountedPrice, inchangés.
+// Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
+// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix qu'Odoo facture, celui de
+// la Saisie de commande (prixPage : prix remisé de la liste n° 5, sinon prix catalogue), sans remise péremption ni prix
+// barré — avant, −50 % (−20 % dès 500 €) ou la remise de l'admin, qu'Odoo ne facturait jamais. Le panier reçoit ce prix
+// et la date du lot (offrePeremption : mention « Pér. <date> » jusqu'à la commande).
 const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
 
-// En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés)
+// En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés), quand l'admin ne passe pas adminFetch
 const adminAuthHeaders = () => {
   const t = (typeof localStorage !== "undefined" && localStorage.getItem("admin_token")) || "";
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
 
-// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises modifiables, synchro Odoo).
+// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises notées, synchro Odoo ;
+// adminFetch : appels authentifiés de l'admin, jeton renouvelé ; admin : encart et cellule « Remise notée » de
+// src/components/PeremptionsAdmin.jsx, passés par AdminPanel — chargés avec l'admin, hors du bundle des pharmacies).
 // icone, couleur : icône et couleur du menu (App) ; absentes dans l'admin → horloge et orange d'origine (filet et pastille).
-export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, couleur = "#ea580c" }) {
+export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#ea580c", adminFetch, admin = null }) {
   const [products, setProducts] = useState([]);
   const [discounts, setDiscounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [quantities, setQuantities] = useState({});
-  const [editingDiscount, setEditingDiscount] = useState(null);
-  const [discountInput, setDiscountInput] = useState("");
-  const [savingDiscount, setSavingDiscount] = useState(false);
   const [sortBy, setSortBy] = useState("expiry");
 
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(null); // { current, total }
+
+  const appelAdmin = (url, options = {}) => (adminFetch ? adminFetch(url, options)
+    : fetch(url, { ...options, headers: { ...(options.headers || {}), ...adminAuthHeaders() } }));
 
   const triggerExpirySync = async () => {
     setSyncing(true);
@@ -38,7 +44,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
       let offset = 0;
       let totalUpdated = 0;
       while (true) {
-        const res = await fetch(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`, { headers: adminAuthHeaders() });
+        const res = await appelAdmin(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`);
         if (!res.ok) { console.error("[sync] échec HTTP", res.status, "— êtes-vous connecté en admin ?"); break; }
         const data = await res.json();
         if (data.error) { console.error("[sync]", data.error); break; }
@@ -53,21 +59,21 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
     finally { setSyncing(false); setSyncProgress(null); }
   };
 
-  // ── Chargement : tous les produits en stock < 4 mois de péremption ────
+  // ── Chargement : tous les produits en stock < 4 mois de péremption ; remises notées : admin seulement ────
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [prodRes, discRes] = await Promise.all([
         fetch("/.netlify/functions/odoo-catalog?expiry_months=4"),
-        fetch("/.netlify/functions/restock-alert?action=expiry_discounts"),
+        isAdmin ? fetch("/.netlify/functions/restock-alert?action=expiry_discounts") : null,
       ]);
       if (!prodRes.ok) throw new Error(`Erreur catalogue: HTTP ${prodRes.status}`);
       const prodData = await prodRes.json();
       if (prodData.error) throw new Error(prodData.error);
       setProducts(Array.isArray(prodData.products) ? prodData.products : []);
 
-      const discData = await discRes.json();
+      const discData = discRes ? await discRes.json().catch(() => []) : [];
       const map = {};
       (Array.isArray(discData) ? discData : []).forEach(d => { map[d.cip] = d.discount_pct; });
       setDiscounts(map);
@@ -76,24 +82,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
       setError(e.message);
     }
     finally { setLoading(false); }
-  }, []);
+  }, [isAdmin]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  // ── Remise admin ──────────────────────────────────────────────────────
-  const saveDiscount = async (cip, productName) => {
-    const pct = parseFloat(discountInput) || 0;
-    setSavingDiscount(true);
-    try {
-      await fetch("/.netlify/functions/restock-alert", {
-        method: "POST", headers: { "Content-Type": "application/json", ...adminAuthHeaders() },
-        body: JSON.stringify({ action: "set_expiry_discount", cip, discount_pct: pct, product_name: productName }),
-      });
-      setDiscounts(prev => ({ ...prev, [cip]: pct }));
-      setEditingDiscount(null);
-    } catch (e) { console.warn("[discount]", e.message); }
-    finally { setSavingDiscount(false); }
-  };
 
   // ── Filtrage et tri ───────────────────────────────────────────────────
   const filtered = products.filter(p =>
@@ -121,28 +112,20 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
     return T.warn;
   };
 
-  // ── Remise applicable : admin override > défaut (50% < 500€, 20% >= 500€) ──
-  const getDiscount = (p) => {
-    // Si l'admin a défini une remise spécifique, elle prime
-    if (discounts[p.cip] != null && discounts[p.cip] !== 0) return discounts[p.cip];
-    // Sinon, remise par défaut selon le prix
-    const price = parseFloat(p.list_price) || 0;
-    return price >= 500 ? 20 : 50;
-  };
-
-  const getDiscountedPrice = (p) => {
-    const disc = getDiscount(p);
-    return Math.round((parseFloat(p.list_price) || 0) * (1 - disc / 100) * 100) / 100;
-  };
-
   const handleAdd = (p) => {
     const qty = parseInt(quantities[p.cip]) || 0;
     if (qty <= 0) return;
-    const disc = getDiscount(p);
-    const price = getDiscountedPrice(p);
-    onAddToCart?.({ cip: p.cip, name: p.name, qty, pn: price, pv: p.list_price, discount: disc, note: `Pér. ${p.earliest_expiry?.slice(0,10)}` });
+    // prix facturé (celui de la Saisie) et date du lot → mention « Pér. <date> » au panier (src/peremption-panier.js)
+    onAddToCart?.(offrePeremption(p, qty));
     setQuantities(prev => ({ ...prev, [p.cip]: 0 }));
   };
+
+  // colonnes : pharmacie (7, classes ex-per-* : cartes sous 768 px, src/styles/tokens.css) ; admin (9 : prix de base et
+  // remise notée en plus)
+  const colonnes = isAdmin
+    ? ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix de base", "Prix liste 5", "Remise notée", "Qté"]
+    : ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix HT", "Qté"];
+  const aDroite = ["Prix de base", "Prix liste 5", "Prix HT"];
 
   return (
     <div>
@@ -161,6 +144,15 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
         )}
         aside={<CompteurVue chargement={loading} valeur={products.length.toLocaleString("fr-FR")} libelle={loading || products.length > 1 ? "références" : "référence"} />}
       />
+
+      {/* Ce que dit la page : pharmacie, prix facturé sans remise ; admin, remises notées mais non facturées */}
+      {isAdmin ? (admin?.Encart && <admin.Encart style={{ ...encart("warn"), marginBottom: 16 }} />) : (
+        <div role="note" style={{ ...encart("info"), marginBottom: 16 }}>
+          <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>Prix habituels, comme dans le reste du catalogue : aucune remise péremption pour l'instant. La date est celle du lot le
+            plus court en stock ; les lots sont détaillés sur chaque ligne.</span>
+        </div>
+      )}
 
       {/* Recherche en pastille blanche + tri (comme la recherche de section du catalogue) */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
@@ -208,36 +200,35 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
       )}
 
       {/* Table : carte blanche, en-tête neutre (eyebrow --ink-mute), lignes .ex-tr (zébrure, survol) ; défilement
-          horizontal dans le cadre sur tablette ; sous 768 px, une carte par produit (classe ex-peremption, lot 9 :
-          disposition seulement, mêmes cellules, mêmes gestionnaires) */}
+          horizontal dans le cadre sur tablette ; sous 768 px, une carte par produit (classe ex-peremption et cellules
+          ex-per-*, lot 9 : disposition seulement, mêmes cellules, mêmes gestionnaires) */}
       {!loading && sorted.length > 0 && (
         <div style={{ background: T.surface, border: `1px solid ${T.line}`, borderRadius: R.m, overflowX: "auto", boxShadow: T.shadow1 }}>
           <table className="num ex-peremption" style={{ width: "100%", borderCollapse: "collapse", color: T.ink }}>
             <thead>
               <tr>
-                {["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix de base", isAdmin ? "Remise admin" : "Remise", "Prix remisé", "Qté"].map(h => (
-                  <th key={h} style={{ ...ui.th, padding: "10px 10px", textAlign: ["Stock", "Qté"].includes(h) ? "center" : ["Prix de base", "Prix remisé"].includes(h) ? "right" : "left" }}>{h}</th>
+                {colonnes.map(h => (
+                  <th key={h} style={{ ...ui.th, padding: "10px 10px", textAlign: ["Stock", "Qté"].includes(h) ? "center" : aDroite.includes(h) ? "right" : "left" }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {sorted.map((p) => {
                 const days = daysUntil(p.earliest_expiry);
-                const disc = getDiscount(p);
-                const discPrice = getDiscountedPrice(p);
-                const hasAdminOverride = discounts[p.cip] != null && discounts[p.cip] !== 0;
+                const prix = prixPage(p);
+                const notee = discounts[p.cip] != null && Number(discounts[p.cip]) !== 0 ? Number(discounts[p.cip]) : null;
                 const qty = quantities[p.cip] || 0;
 
                 return (
                   <tr key={p.cip} className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
-                    <td style={{ padding: "10px 10px", fontSize: 12, fontFamily: T.mono, color: T.inkMute }}>{p.cip}</td>
-                    <td style={{ padding: "10px 10px", fontWeight: 600, fontSize: 13, color: T.ink, maxWidth: 260 }}>{p.name}</td>
-                    <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                    <td className="ex-per-cip" style={{ padding: "10px 10px", fontSize: 12, fontFamily: T.mono, color: T.inkMute }}>{p.cip}</td>
+                    <td className="ex-per-nom" style={{ padding: "10px 10px", fontWeight: 600, fontSize: 13, color: T.ink, maxWidth: 260 }}>{p.name}</td>
+                    <td className="ex-per-stock" style={{ padding: "10px 10px", textAlign: "center" }}>
                       <span style={{ fontWeight: 700, fontSize: 14, color: p.available > 10 ? T.ok : p.available > 0 ? T.warn : T.danger }}>
                         {p.available}
                       </span>
                     </td>
-                    <td style={{ padding: "10px 10px" }}>
+                    <td className="ex-per-date" style={{ padding: "10px 10px" }}>
                       {p.earliest_expiry && (
                         <div>
                           <div style={{ fontWeight: 700, fontSize: 13, color: expiryColor(days) }}>
@@ -249,51 +240,31 @@ export default function ShortExpiry({ isAdmin, onAddToCart, pharmacyCip, icone, 
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "10px 10px", fontSize: 11, color: T.inkSoft }}>
+                    <td className="ex-per-lots" style={{ padding: "10px 10px", fontSize: 11, color: T.inkSoft }}>
                       {(p.lots || []).slice(0, 3).map((l, j) => (
                         <div key={j} style={{ whiteSpace: "nowrap" }}>
                           {l.lot_name} ({l.qty}) {l.expiry ? `· ${new Date(l.expiry).toLocaleDateString("fr-FR")}` : ""}
                         </div>
                       ))}
                     </td>
-                    <td style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, color: T.inkMute, textDecoration: "line-through", fontWeight: 400, whiteSpace: "nowrap" }}>
-                      {fmt(p.list_price)}
+                    {isAdmin && (
+                      <td className="ex-per-base" style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, color: T.inkMute, whiteSpace: "nowrap" }}>
+                        {fmt(p.list_price)}
+                      </td>
+                    )}
+                    {/* prix facturé : celui de la Saisie (prix de la liste n° 5), ni prix barré ni remise péremption */}
+                    <td className="ex-per-prix" style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
+                      <span style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>{fmt(prix.pn)}</span>
+                      {!isAdmin && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
                     </td>
-                    <td style={{ padding: "10px 10px", textAlign: "left" }}>
-                      {isAdmin ? (
-                        editingDiscount === p.cip ? (
-                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                            <input type="number" min="0" max="99" step="1" value={discountInput}
-                              onChange={e => setDiscountInput(e.target.value)}
-                              onKeyDown={e => e.key === "Enter" && saveDiscount(p.cip, p.name)}
-                              autoFocus aria-label={`Remise sur ${p.name} (%)`}
-                              style={{ ...ui.qtyInput(true), width: 48 }} />
-                            <span style={{ fontSize: 12 }}>%</span>
-                            <button onClick={() => saveDiscount(p.cip, p.name)} disabled={savingDiscount} aria-label="Enregistrer la remise" title="Enregistrer"
-                              style={{ ...ui.rond(26), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={13} epaisseur={2.6} /></button>
-                            <button className="ex-btn-discret" onClick={() => { setEditingDiscount(null); setDiscountInput(""); }} aria-label="Annuler" title="Annuler"
-                              style={ui.rond(26)}><Icone nom="fermer" taille={12} epaisseur={2.4} /></button>
-                          </div>
-                        ) : (
-                          // remise modifiable (admin) : ton info si une remise propre au produit est posée, sinon remise par défaut en or + encre
-                          <button onClick={() => { setEditingDiscount(p.cip); setDiscountInput(String(disc)); }} title="Modifier la remise"
-                            style={{
-                              ...ui.badge(hasAdminOverride ? "info" : "promo"), fontSize: 12, padding: "3px 10px", border: `1px solid ${hasAdminOverride ? tone("info").border : "transparent"}`,
-                              cursor: "pointer", fontFamily: "inherit",
-                            }}>
-                            {fmtPct(disc)}{hasAdminOverride && <Icone nom="crayon" taille={12} />}
-                          </button>
-                        )
-                      ) : (
-                        <span style={{ ...ui.badge("promo"), fontSize: 12 }}>{fmtPct(disc)}</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>
-                        {fmt(discPrice)}
-                      </span>
-                    </td>
-                    <td style={{ padding: "10px 10px", textAlign: "center" }}>
+                    {isAdmin && (
+                      <td className="ex-per-remise" style={{ padding: "10px 10px", textAlign: "left" }}>
+                        {admin?.CelluleRemise
+                          ? <admin.CelluleRemise p={p} notee={notee} appelAdmin={appelAdmin} onEnregistree={(cip, pct) => setDiscounts(prev => ({ ...prev, [cip]: pct }))} />
+                          : <span style={{ fontSize: 12, color: T.inkSoft }}>{notee != null ? `${fmtPct(notee)} · non facturée` : "—"}</span>}
+                      </td>
+                    )}
+                    <td className="ex-per-qte" style={{ padding: "10px 10px", textAlign: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                         <button className="ex-qte-moins" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
                           aria-label={`Diminuer la quantité de ${p.name}`} style={pas}><Icone nom="moins" taille={12} epaisseur={2.6} /></button>
@@ -328,3 +299,9 @@ const btnLigne = { ...ui.btn("ligne", "s"), background: undefined, boxShadow: `i
 // « − » / « + » de 24 px du tableau : fond et survol par les classes ex-qte-moins / ex-qte-plus
 const pas = { width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
   display: "flex", alignItems: "center", justifyContent: "center" };
+// encart d'explication en tête de page (ton de theme.js, texte 13 px, icône calée sur la première ligne)
+const encart = (ton) => {
+  const t = tone(ton);
+  return { display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 14px", borderRadius: R.s, fontSize: 13, lineHeight: 1.5,
+    background: t.bg, color: t.fg, border: `1px solid ${t.border}` };
+};

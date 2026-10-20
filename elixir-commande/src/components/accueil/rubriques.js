@@ -68,11 +68,13 @@ export const OUTILS = {
     badge: "Tout le catalogue", cta: () => "Ouvrir la Saisie de commande", ctaCourt: "Ouvrir la Saisie", ctaMini: "Ouvrir",
     sansPhoto: "plaque de l'outil et chiffres du catalogue",
   },
+  // lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : aucune remise péremption n'est facturée, la page
+  // affiche le prix habituel ; ni « petits prix » ni remise annoncés (le serveur ne donne ni « dès » ni « jusqu'à »)
   peremption: {
     libelle: "Péremption courte", icone: "horloge", accent: "#ea580c", composition: "plaque", chiffresRequis: true,
-    titre: "Péremption courte, petits prix",
-    accroche: () => `Produits en stock à péremption entre J+30 et 4${NBSP}mois : la remise est déjà dans le prix affiché.`,
-    badge: "Petits prix", cta: (ch) => (ch?.nb === 1 ? "Voir le produit" : ch?.nb > 1 ? `Voir les ${ch.nb} produits` : "Voir les produits"), ctaCourt: "Voir les produits", ctaMini: "Voir",
+    titre: `Lots à date courte, en${NBSP}stock`,
+    accroche: () => `Produits en stock à péremption entre J+30 et 4${NBSP}mois, à leur prix habituel, avec la date de chaque lot.`,
+    badge: "Date courte", cta: (ch) => (ch?.nb === 1 ? "Voir le produit" : ch?.nb > 1 ? `Voir les ${ch.nb} produits` : "Voir les produits"), ctaCourt: "Voir les produits", ctaMini: "Voir",
     sansPhoto: "plaque de l'outil et chiffres du moment",
   },
   fauteuil: {

@@ -3,17 +3,18 @@
 // src/wheelchair-logic.js : les fonctions n'importent pas le code du navigateur, scripts/test-accueil-outils.mjs compare
 // les copies, comme applyTiers). Le SERVEUR calcule les chiffres ; le navigateur ne fait que les formater et appliquer
 // les règles propres à chaque pharmacie (rubrique ouvrable, accès aux Commandes groupées). Champ public « chiffres » :
-// jamais de quantité en stock (ni available, ni lot), jamais de CIP ni de nom de produit ; réservés à l'admin : en_menu,
-// honnetes (outils_etat).
+// jamais de quantité en stock (ni available, ni lot), jamais de CIP ni de nom de produit ; réservé à l'admin :
+// remises_facturees (outils_etat).
 //  • saisie : comptes du catalogue (références, références en stock, mise à jour), calculés par la fonction planifiée
 //    (kv « accueil:outils ») ; jamais masquée : sans chiffres récents (36 h), texte seul.
 //  • peremption : règle de la page (ShortExpiry.jsx, odoo-catalog.js expiry_months=4) : en stock, péremption entre J+30
-//    et le dernier jour du 4e mois qui suit (UTC, comme Netlify) ; remise propre au produit, sinon 50 % (20 % dès 500 €).
-//    nb = toutes les lignes (ce que la page montre) ; « dès » et « jusqu'à » sur le sous-ensemble honnête seulement :
-//    rangé dans aucun menu, campagne ni menu promo actif (sinon le panier le facture au prix du menu : défaut existant
-//    d'addItemToCart, zone protégée, lot séparé ; sections ajoutées dans l'admin comprises : display_config.customSections),
-//    moins cher que le prix habituel du site, au moins 0,05 €. Lectures gardées 5 min par instance (clé : jour de Paris et
-//    fenêtre) ; fenêtre recalculée à chaque évaluation.
+//    et le dernier jour du 4e mois qui suit (UTC, comme Netlify) ; nb = toutes les lignes (ce que la page montre), mois.
+//    Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix qu'Odoo facture, sans
+//    remise péremption ; tant qu'Odoo n'en facture aucune, la carte n'annonce ni « dès » ni « jusqu'à » (des et jusqua
+//    null, conception § 10 : sans produit facturé, le nombre de références seul). Avant : « jusqu'à −50 % » et « dès »
+//    calculés d'une remise d'office (50 %, 20 % dès 500 €) ou de expiry_discounts, qu'Odoo ne facturait pas.
+//    Lecture (3 colonnes, ni prix, ni lots, ni stock) gardée 5 min par instance (clé : jour de Paris et fenêtre) ;
+//    fenêtre recalculée à chaque évaluation.
 // Délai (GET) : chaque lecture d'outil est bornée (delaiMs) : au-delà, seul cet outil passe en donnees_indisponibles, la
 // réponse de l'accueil part sans l'attendre (une lecture finie plus tard reste gardée 5 min : elle est complète).
 //  • fauteuil, transfert : correspondance code fournisseur → CIP (plus ancien d'abord) calculée par la fonction planifiée
@@ -25,7 +26,7 @@
 //  • groupees : aucune lecture (accès et opérations ouvertes : par pharmacie, dans le navigateur) → selon_pharmacie.
 // Aucune écriture ici (la fonction planifiée écrit « accueil:outils »).
 import { COMPANY_ID } from "./_odoo-rpc.js";
-import { premierMenu, prixSaisie, jourParis } from "./_accueil-selection.js";
+import { jourParis } from "./_accueil-selection.js";
 
 export const OUTILS_MEA = ["saisie", "peremption", "fauteuil", "transfert", "justificatif", "groupees"];
 export const FAUTEUILS = {
@@ -39,13 +40,9 @@ export const FAUTEUILS = {
 export const CLE_OUTILS = "accueil:outils";
 export const AGE_MAX_MS = 36 * 3600e3;
 export const MEMO_MS = 5 * 60e3;
-// « jusqu'à » de la Péremption : remise de la page sur le prix de base (« page », ce que la pharmacie retrouve en cliquant),
-// ou économie réelle sur le prix habituel du site (« habituel ») — docs/accueil.md § 7.8
-export const REMISE_REFERENCE = "page";
 
 const enc = encodeURIComponent;
 const liste = (arr) => `(${arr.map(v => `"${String(v).replace(/["\\]/g, "")}"`).join(",")})`;
-const r2 = (x) => Math.round(x * 100) / 100;
 const num = (x) => { const v = typeof x === "number" ? x : parseFloat(String(x ?? "").replace(",", ".")); return Number.isFinite(v) ? v : null; };
 const jour10 = (s) => (/^\d{4}-\d{2}-\d{2}/.test(String(s || "")) ? String(s).slice(0, 10) : null);
 const RE_ID = /^mea_[a-z0-9_]{4,32}$/;
@@ -74,32 +71,18 @@ export function fenetrePeremption(t) {
   const d = new Date(t);
   return { min: new Date(t + 30 * 864e5).toISOString().slice(0, 10), max: new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 5, 0)).toISOString().slice(0, 10) };
 }
-export const remisePeremption = (ligne, remises) => {
-  const propre = num(remises?.[ligne.cip]);
-  if (propre != null && propre !== 0) return propre;
-  return (num(ligne.list_price) || 0) >= 500 ? 20 : 50;
-};
-export const prixPeremption = (ligne, remise) => r2((num(ligne.list_price) || 0) * (1 - remise / 100));
 
 let memo = { cle: null, at: 0, valeur: null };
 export const oublierMemo = () => { memo = { cle: null, at: 0, valeur: null }; };
-// 2 lectures en parallèle (6 colonnes du catalogue, sans lots ni stock exact ; remises), puis les produits curatés de ces
-// CIP (lots de 150 en parallèle) ; gardées 5 min par instance
+// 1 lecture (3 colonnes du catalogue : ni prix, ni lots, ni stock exact) ; gardée 5 min par instance. Lot 0 : ni
+// expiry_discounts (remises jamais facturées), ni produits curatés (plus de « dès » à calculer)
 export async function lirePeremption(src) {
   const t = src.maintenant();
   const { min, max } = fenetrePeremption(t);
   const cle = `${jourParis(t)}|${min}|${max}`;
   if (memo.valeur && memo.cle === cle && t - memo.at >= 0 && t - memo.at < MEMO_MS) return memo.valeur;
-  const [rows, remises] = await Promise.all([
-    src.sb(`odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.${min}&earliest_expiry=lte.${max}&order=earliest_expiry.asc&limit=1000`),
-    src.sb("expiry_discounts?select=cip,discount_pct"),
-  ]);
-  const lignes = (Array.isArray(rows) ? rows : []).filter(r => r && r.cip);
-  const cips = [...new Set(lignes.map(r => String(r.cip)))];
-  const lots = [];
-  for (let i = 0; i < cips.length; i += 150) lots.push(src.sb(`elixir_products?active=eq.true&cip=in.${enc(liste(cips.slice(i, i + 150)))}&select=cip,section`));
-  const curees = (await Promise.all(lots)).flatMap(x => (Array.isArray(x) ? x : []));
-  const valeur = { min, max, rows: lignes, remises: Object.fromEntries((Array.isArray(remises) ? remises : []).filter(r => r?.cip).map(r => [String(r.cip), num(r.discount_pct)])), curees };
+  const rows = await src.sb(`odoo_catalog?select=cip,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.${min}&earliest_expiry=lte.${max}&order=earliest_expiry.asc&limit=1000`);
+  const valeur = { min, max, rows: (Array.isArray(rows) ? rows : []).filter(r => r && r.cip) };
   memo = { cle, at: t, valeur };
   return valeur;
 }
@@ -131,13 +114,8 @@ export function labosDeConfig(cfg) {
   return out;
 }
 
-// sections ajoutées dans l'admin (display_config.customSections) : App y range les produits de elixir_products de même
-// section, et addItemToCart les facture au prix de la section, comme un menu du catalogue
-export const sectionsPerso = (displayConfig) => (Array.isArray(displayConfig?.customSections) ? displayConfig.customSections : [])
-  .map(cs => String(cs?.key || "").trim()).filter(Boolean);
-
 // ── Lectures d'un GET : seulement ce que demandent `cles`, tout en parallèle ; une lecture en échec (ou plus lente que
-// delaiMs, délai commun à toutes) ne fait échouer que son outil → { plan, fauteuilsCat, peremption, labos, perso }
+// delaiMs, délai commun à toutes) ne fait échouer que son outil → { plan, fauteuilsCat, peremption, labos }
 // (partie : { erreur }). Outils masqués par l'admin : rien à lire, sauf lireMasques (GET de l'admin : l'éditeur montre
 // leurs chiffres, prêts quand Zineb les réaffiche).
 export async function lireOutils(src, cles, conf = null, { delaiMs = 0, lireMasques = false } = {}) {
@@ -161,7 +139,7 @@ export async function lireOutils(src, cles, conf = null, { delaiMs = 0, lireMasq
   const [plan, fauteuilsCat, peremption, labos] = await Promise.all([planP, catP,
     veut("peremption") ? garde(() => lirePeremption(src)) : undefined,
     veut("justificatif") ? garde(async () => src.labosJustif()) : undefined]);
-  return { plan, fauteuilsCat, peremption, labos, perso: sectionsPerso(conf?.displayConfig) };
+  return { plan, fauteuilsCat, peremption, labos };
 }
 
 // ── Évaluation d'un outil au moment présent ──
@@ -191,21 +169,11 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
     if (!rows.length) return { raisons: [...raisons, "outil_vide"], chiffres: null };
     const maj = rows.map(r => r.updated_at).filter(x => Number.isFinite(Date.parse(x || ""))).sort().at(-1) || null;
     if (ageMs(maj, maintenant) > AGE_MAX_MS) raisons.push("donnees_anciennes");
-    let enMenu = 0;
-    const honnetes = [];
-    const perso = new Set((o.perso || []).map(String));
-    const enSectionPerso = (cip) => perso.size > 0 && (P.curees || []).some(c => String(c.cip) === cip && perso.has(String(c.section)));
-    for (const r of rows) {
-      const m = premierMenu(String(r.cip), P.curees || [], ctx.menus || { libelle: (k) => k, caches: new Set(), promos: [], campagnes: new Set() });
-      if (m.source !== "saisie" || enSectionPerso(String(r.cip))) { enMenu++; continue; }
-      const remise = remisePeremption(r, P.remises), prix = prixPeremption(r, remise), habituel = prixSaisie(r).pn;
-      if (!(prix >= 0.05) || !(habituel > 0) || !(prix < habituel)) continue;
-      honnetes.push({ prix, remise: REMISE_REFERENCE === "habituel" ? (1 - prix / habituel) * 100 : remise });
-    }
     const jours = rows.map(r => jour10(r.earliest_expiry)).sort();
-    const jusqua = honnetes.length ? Math.floor(Math.max(...honnetes.map(h => h.remise))) : null;
-    return { raisons, chiffres: { nb: rows.length, des: honnetes.length ? Math.min(...honnetes.map(h => h.prix)) : null, jusqua: jusqua >= 1 ? jusqua : null,
-      mois: [jours[0].slice(0, 7), jours.at(-1).slice(0, 7)], maj }, admin: { en_menu: enMenu, honnetes: honnetes.length } };
+    // lot 0 : Odoo ne facture aucune remise péremption → ni « dès » ni « jusqu'à » (champs gardés, à null : même forme
+    // pour les pages déjà ouvertes) ; admin : nombre de remises facturées (0), pour l'éditeur des mises en avant
+    return { raisons, chiffres: { nb: rows.length, des: null, jusqua: null, mois: [jours[0].slice(0, 7), jours.at(-1).slice(0, 7)], maj },
+      admin: { remises_facturees: 0 } };
   }
   if (cle === "fauteuil" || cle === "transfert") {
     const F = FAUTEUILS[cle], cat = o.fauteuilsCat;
