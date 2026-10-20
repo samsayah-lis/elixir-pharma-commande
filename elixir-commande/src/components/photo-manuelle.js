@@ -8,6 +8,13 @@
 // catalogue n'est pas touché. L'adresse renvoyée reçoit ?v=<instant> : une photo remplacée (même fichier) se montre tout
 // de suite ; pour un produit du catalogue, un second appel (image_url, sans fichier) y range aussi cette adresse.
 // Parties pures (contrôle du fichier, dimensions, adresse, clés, dosages visés, menus) : scripts/test-photo-manuelle.mjs.
+// Affichage vérifié (incident du 20/10/2026 : stockage elixir-images privé, toute adresse /object/public/ répondait 400
+// « Bucket not found », carte de devant blanche sur l'accueil malgré « ✓ Photo ajoutée ») : l'adresse renvoyée doit
+// s'afficher dans le navigateur (new Image(), sans CORS) AVANT tout message de réussite ; sinon rien n'est mis dans le
+// brouillon ni publié, et le message dit pourquoi (réglage du stockage, docs/accueil.md). Photos déjà choisies : contrôlées
+// de même, notées illisibles (accueil/illisibles.js, partagé avec l'aperçu) : « Photo illisible » dans l'admin.
+
+import { estIllisible, illisibles, noterIllisible, oublierIllisible } from "./accueil/illisibles.js";
 
 export const TYPES = { "image/jpeg": "JPG", "image/png": "PNG", "image/webp": "WebP" };
 export const MAX_OCTETS = 15e6;   // 15 Mo comme le Finder les compte (Mo décimaux)
@@ -241,3 +248,98 @@ export async function versionnerAuCatalogue(adminFetch, cip, url) {
     return !!(r.ok && j.success);
   } catch { return false; }
 }
+
+// ── affichage des photos : l'adresse donne-t-elle vraiment une image dans ce navigateur ? ──
+export const DELAI_AFFICHAGE = 12000;   // une photo de 900 px au plus : largement assez, même en 4G
+// Photo rangée dans le stockage des photos (Supabase elixir-images, ou sa copie du banc d'essai)
+export const auStockage = (url) => /\/elixir-images\//.test(String(url || ""));
+export const DOC_STOCKAGE = "docs/accueil.md, « Stockage des photos »";
+// Pourquoi une photo ne s'affiche pas (court, après « Photo illisible : »)
+export const raisonIllisible = (url) => (auStockage(url)
+  ? `le stockage des photos (Supabase, « elixir-images ») n'est pas public — réglage à faire une seule fois dans Supabase, voir ${DOC_STOCKAGE}`
+  : "l'adresse ne donne plus d'image (photo retirée par son hébergeur, ou adresse erronée)");
+
+// adresse → Promise<"ok" | "illisible" | "delai" | "inconnu"> ; jamais d'erreur. new Image() sans crossOrigin : aucune
+// lecture des pixels, aucun en-tête CORS nécessaire (la page la montre de la même façon). « inconnu » : pas de navigateur.
+export function verifierAffichage(url, { delai = DELAI_AFFICHAGE, Img = globalThis.Image } = {}) {
+  return new Promise((fini) => {
+    if (!url || typeof Img !== "function") { fini("inconnu"); return; }
+    let img = null, fait = false, minuteur = 0;
+    const conclure = (v) => {
+      if (fait) return;
+      fait = true; clearTimeout(minuteur);
+      if (img) { img.onload = null; img.onerror = null; }
+      fini(v);
+    };
+    try {
+      img = new Img();
+      minuteur = setTimeout(() => conclure("delai"), delai);
+      img.onload = () => conclure(img.naturalWidth > 0 && img.naturalHeight > 0 ? "ok" : "illisible");
+      img.onerror = () => conclure("illisible");
+      img.src = url;
+    } catch { conclure("inconnu"); }
+  });
+}
+
+// Message après un envoi dont l'adresse ne s'affiche pas (verdict de verifierAffichage) ; null si elle s'affiche.
+// catalogue : produit du catalogue, dont la fiche a déjà reçu l'adresse (product-upload-image l'y range d'office).
+export function messageNonAffichee(verdict, { url, catalogue = false } = {}) {
+  if (verdict === "ok" || verdict === "inconnu") return null;
+  const rien = " Rien n'a changé sur l'accueil.";
+  if (verdict === "delai") {
+    return `Photo reçue, mais elle ne s'est pas affichée en ${DELAI_AFFICHAGE / 1000} secondes (connexion lente ?) : ajoutez-la de nouveau.${rien}`
+      + (catalogue ? " La fiche du produit au catalogue, elle, a déjà reçu cette photo." : "");
+  }
+  if (!auStockage(url)) return `Photo reçue, mais l'adresse renvoyée ne donne pas d'image : ajoutez-la de nouveau.${rien}`;
+  return "Photo reçue, mais le site ne peut pas l'afficher : le stockage des photos (Supabase, « elixir-images ») n'est pas public. "
+    + `C'est un réglage à faire une seule fois dans Supabase (voir ${DOC_STOCKAGE}) ; une fois fait, ajoutez de nouveau la photo.${rien}`
+    + (catalogue ? " La fiche du produit au catalogue a déjà reçu cette adresse (la fonction d'envoi l'y range d'office) : la photo y apparaîtra d'elle-même une fois le réglage fait." : "");
+}
+
+// Photos déjà choisies (brouillon, version en ligne, réglages de l'accueil) : contrôlées une fois par adresse ; illisible
+// → notée (illisibles.js : « Photo illisible » dans l'admin, aperçu sans elle, avertissement à « Publier »).
+// variante : adresse réellement chargée (miniature de la banque d'images : photo(url, "thumbnail")), l'adresse elle-même sinon.
+const controles = new Map();   // adresse → Promise<verdict>
+export function controlerAffichage(url, { variante = url, ...opts } = {}) {
+  if (!url) return Promise.resolve("inconnu");
+  if (!controles.has(url)) {
+    controles.set(url, verifierAffichage(variante, opts).then(v => { if (v === "illisible") noterIllisible(url); return v; }));
+  }
+  return controles.get(url);
+}
+// Nouvel essai des photos notées illisibles (après le réglage du stockage, sans recharger la page) : une adresse du stockage
+// est redemandée avec un ?v= neuf (jamais une réponse d'erreur gardée en cache) ; affichée → oubliée, elle se montre de
+// nouveau partout. → nombre d'adresses redevenues lisibles.
+export async function reverifierIllisibles(urls = [...illisibles()], opts = {}) {
+  const t = opts.t ?? Date.now();
+  const verdicts = await Promise.all(urls.filter(estIllisible).map(async (u) => {
+    const v = await verifierAffichage(auStockage(u) ? avecVersion(u, t) : u, opts);
+    if (v === "ok") { oublierIllisible(u); controles.delete(u); return 1; }
+    return 0;
+  }));
+  return verdicts.reduce((a, b) => a + b, 0);
+}
+
+// Photo du stockage qui vient de s'afficher : le stockage est public, les autres photos du stockage notées illisibles
+// sont réessayées (elles réapparaissent sans recharger la page)
+export function stockageLisible(url, opts = {}) {
+  if (!auStockage(url)) return Promise.resolve(0);
+  if (dernierEchec) dernierEchec = null;
+  return reverifierIllisibles([...illisibles()].filter(auStockage), opts);
+}
+
+// Avant d'envoyer la photo d'un produit du CATALOGUE (product-upload-image écrit son adresse dans la fiche du produit
+// avant toute vérification possible) : le stockage est-il lisible ? Sonde = une photo du stockage qui existe (dernier envoi
+// non affiché de cette session, photos envoyées d'ici et publiées), redemandée avec un ?v= neuf.
+// → "public" | "prive" | "inconnu" (aucune photo du stockage connue : l'envoi se fait, vérifié ensuite).
+let dernierEchec = null;
+export const noterEchecStockage = (url) => { if (auStockage(url)) dernierEchec = url; };
+export async function sonderStockage(candidats = [], opts = {}) {
+  const sonde = [dernierEchec, ...candidats].find(auStockage);
+  if (!sonde) return "inconnu";
+  const v = await verifierAffichage(avecVersion(sonde, opts.t ?? Date.now()), opts);
+  if (v === "ok") { if (sonde === dernierEchec) dernierEchec = null; oublierIllisible(sonde); controles.delete(sonde); return "public"; }
+  return v === "illisible" ? "prive" : "inconnu";
+}
+export const MESSAGE_STOCKAGE_PRIVE = "Rien n'a été envoyé : le stockage des photos (Supabase, « elixir-images ») n'est pas public, et cette photo deviendrait "
+  + `aussi celle du produit au catalogue sans pouvoir s'y afficher. Faites d'abord le réglage dans Supabase (voir ${DOC_STOCKAGE}), puis ajoutez la photo.`;

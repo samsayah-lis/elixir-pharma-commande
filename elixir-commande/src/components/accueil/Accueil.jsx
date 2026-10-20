@@ -22,7 +22,8 @@ import Cinema from "./Cinema.jsx";
 import Bento from "./Bento.jsx";
 import { construireDiapos, promosEnCours, jourParis } from "./resolution.js";
 import { construireMisesEnAvant } from "./vedettes.js";
-import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useMedia } from "./outils.js";
+import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useIllisibles, useMedia } from "./outils.js";
+import { illisibles } from "./illisibles.js";
 import { voler, rebondPanier } from "./vol.js";
 
 // pour l'aperçu de l'admin (ApercuMea.jsx, chargé à part) : les vitrines viennent de ce chunk
@@ -104,17 +105,20 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   // photos choisies dans l'admin (display_config.accueil.photos : CIP → adresse) pour les produits sans photo au catalogue ;
   // réglages relus à chaque rendu d'App : clé texte, pour ne recalculer qu'à un vrai changement
   const photos = JSON.stringify(reglages.photos || {});
+  // photo en erreur (stockage pas public, photo retirée…) : notée par le composant qui la montrait, vitrines reconstruites
+  // sans elle, comme si elle n'existait pas (illisibles.js)
+  const nIllisibles = useIllisibles();
   const classement = vitrineValide(donnees) ? donnees : null;
   const slides = useMemo(() => construireDiapos(classement, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
-    exclus: new Set(exclus ? exclus.split(",") : []),
-  }), [classement, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos]);   // eslint-disable-line react-hooks/exhaustive-deps
+    exclus: new Set(exclus ? exclus.split(",") : []), illisibles: illisibles(),
+  }), [classement, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos, nIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
   // mises en avant (chargement : rien ; réponse sans vedettes, refusée ou tardive : repli automatique)
   const vedettes = donnees?.vedettes ?? null;
   const mea = useMemo(() => (donnees === undefined ? { vitrine: [], grille: [], defilement: false } : construireMisesEnAvant(vedettes, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
-    promos: menusPromo, aujourdhui: jourParis(),
-  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute]);   // eslint-disable-line react-hooks/exhaustive-deps
+    promos: menusPromo, aujourdhui: jourParis(), illisibles: illisibles(),
+  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute, nIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
   const montreMea = mea.vitrine.length > 0 || mea.grille.length > 0;
   const menusMontres = new Set([...mea.vitrine, ...mea.grille].filter(x => x.menu).map(x => x.menu.id));
   const offresRestantes = promos.filter(ps => !menusMontres.has(String(ps.id)));

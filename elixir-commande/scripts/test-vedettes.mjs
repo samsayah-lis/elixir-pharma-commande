@@ -16,7 +16,10 @@
 //  • teintes : contrastes du texte de la salle sur 5 teintes extrêmes ; teinte dominante d'une photo (pixels) ;
 //  • compte à rebours sur la fin du PRIX seulement (fin_offre / finOffre : menu promo daté), jamais sur la date de fin
 //    d'une mise en avant (produit d'un menu permanent) ; 3 mises en avant en réserve au-delà de 5 ; justificatifs lus en
-//    parallèle du contexte ; photos réduites (banque d'images, Shopify, Open Beauty Facts).
+//    parallèle du contexte ; photos réduites (banque d'images, Shopify, Open Beauty Facts) ;
+//  • photo illisible (incident du 20/10/2026 : stockage des photos privé, carte de devant blanche) : traitée exactement
+//    comme une photo absente — éventail refait (photos restantes, cartes texte), produit → photo du catalogue, de la
+//    banque, puis boîte générée ; halo jamais sur une photo illisible.
 import { build } from "esbuild";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -355,6 +358,53 @@ function factureDuPanier(offre, qty) {
     verifierJeton: async () => ({ id: "a", email: "compte@pharmacie-a.test" }) })({ httpMethod: "GET", headers: { authorization: "Bearer x" }, queryStringParameters: {} });
   eq("GET : réponse 200", r.statusCode, 200);
   vrai(`GET : justificatifs demandés avant la fin du contexte (${ordre.join(" → ")})`, ordre.indexOf("justifs") >= 0 && ordre.indexOf("justifs") < ordre.indexOf("elixir_campaigns"));
+}
+
+// ── 9. Photo illisible = photo absente (incident du 20/10/2026 : stockage des photos privé) ──
+{
+  const DEVANT = "https://jwhbmnytrcrflavqtihj.supabase.co/storage/v1/object/public/elixir-images/products/accueil-menu-1792060000000-mvgg7ayo.jpg?v=1792486536000";
+  const vaseline = PROMOS.find(x => String(x.id) === VASELINE), clari = PROMOS.find(x => String(x.id) === CLARI);
+  const [pot50, pot250] = vaseline.products.map(p => p.image_url);
+  const ill = (...u) => new Set(u);
+  // la carte de devant de l'incident : en erreur, l'éventail est celui du menu sans carte de devant (jamais une carte blanche)
+  eq("carte de devant illisible : éventail identique au cas sans photo choisie", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill(DEVANT) }), C.resumeMenu(vaseline));
+  eq("carte de devant lisible : en tête de l'éventail", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill() }).cartes.map(c => c.url), [DEVANT, pot50, pot250]);
+  eq("aucune carte vide de texte et sans photo", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill(DEVANT, pot50, pot250) }).cartes.every(c => c.url || c.nom), true);
+  eq("une photo du menu illisible : retirée, l'éventail se complète par une carte texte (jusqu'à 3)",
+    C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill(DEVANT, pot50) }).cartes.map(c => c.url || `texte:${c.nom}`),
+    [pot250, "texte:Vaseline Original Petroleum Jelly – pot 50 ml"]);
+  eq("toutes illisibles : cartes texte, comme un menu sans photo", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill(DEVANT, pot50, pot250) }).cartes.map(c => [c.url, c.pn]),
+    [[null, 1.59], [null, 3.39]]);
+  // photo du produit illisible, celle du catalogue du site lisible : elle prend la place
+  const catAutre = { m: { products: [{ cip: vaseline.products[0].cip, image_url: "https://exemple.test/catalogue-pot50.jpg" }] } };
+  eq("photo du menu illisible → photo du catalogue pour ce CIP", C.resumeMenu({ ...vaseline, products: [{ ...vaseline.products[0] }] }, { catalogue: catAutre, illisibles: ill(pot50) }).cartes.map(c => c.url),
+    ["https://exemple.test/catalogue-pot50.jpg"]);
+  eq("photo du catalogue illisible aussi → carte texte", C.resumeMenu({ ...vaseline, products: [{ ...vaseline.products[0] }] }, { catalogue: catAutre, illisibles: ill(pot50, "https://exemple.test/catalogue-pot50.jpg") }).cartes.map(c => c.url || "texte"),
+    ["texte"]);
+  // vitrine : menu mis en avant avec la carte de devant de l'incident
+  const conf = { items: [objet("menu", VASELINE, "vitrine", { image: DEVANT, badge: "Exclusivité Elixir" }), objet("produit", CIP.ventoline, "grille", { image: DEVANT }), objet("menu", CLARI, "grille")] };
+  const ved = S.evaluerVedettes(conf, null, ctxServeur(), MIDI_20).publiques;
+  const sain = C.construireMisesEnAvant(ved, ctxPage()), casse = C.construireMisesEnAvant(ved, ctxPage({ illisibles: ill(DEVANT) }));
+  const sansImage = C.construireMisesEnAvant({ ...ved, items: ved.items.map(i => ({ ...i, image: null })) }, ctxPage());
+  eq("photo lisible : carte de devant en tête, halo sur elle", [sain.vitrine[0].menu.cartes[0].url, sain.vitrine[0].halo], [DEVANT, DEVANT]);
+  eq("carte de devant illisible : vitrine identique au cas sans photo choisie (cartes, halo)", [casse.vitrine[0].menu.cartes, casse.vitrine[0].halo], [sansImage.vitrine[0].menu.cartes, sansImage.vitrine[0].halo]);
+  eq("… halo sur la première photo lisible du menu", casse.vitrine[0].halo, pot50);
+  eq("produit : photo choisie illisible → photo du catalogue (banque d'images)", [sain.grille[0].offre.image_url, casse.grille[0].offre.image_url, casse.grille[0].halo],
+    [DEVANT, "https://assets.medipim.fr/media/medium/ccca.png", "https://assets.medipim.fr/media/medium/ccca.png"]);
+  const plusRien = C.construireMisesEnAvant(ved, ctxPage({ illisibles: ill(DEVANT, "https://assets.medipim.fr/media/medium/ccca.png") }));
+  eq("produit : photo du catalogue illisible aussi → boîte générée (aucune photo, aucun halo)", [plusRien.grille[0].offre.image_url, plusRien.grille[0].halo], [null, null]);
+  eq("illisibles sans rapport : rien ne change", C.construireMisesEnAvant(ved, ctxPage({ illisibles: ill("https://x.test/autre.jpg") })), sain);
+  eq("menu Claripharm intact", casse.grille[1].menu.cartes.map(c => c.url), clari.products.map(p => p.image_url));
+  // plus commandés (resoudreOffre) : catalogue, puis photo du GET, puis photo choisie dans l'admin ; illisible = absente
+  const o = { cip: CIP.dupixent, image_url: "https://x.test/get.jpg", menu: { key: "saisie" }, boite: {} };
+  const ctxR = (illisibles) => ({ ...ctxPage({ photos: { [CIP.dupixent]: "https://x.test/admin.jpg" } }), illisibles });
+  eq("plus commandés : photo du GET d'abord", C.resoudreOffre(o, ctxR(ill())).image_url, "https://x.test/get.jpg");
+  eq("plus commandés : photo du GET illisible → photo choisie dans l'admin", C.resoudreOffre(o, ctxR(ill("https://x.test/get.jpg"))).image_url, "https://x.test/admin.jpg");
+  eq("plus commandés : toutes illisibles → boîte générée", C.resoudreOffre(o, ctxR(ill("https://x.test/get.jpg", "https://x.test/admin.jpg"))).image_url, null);
+  eq("plus commandés : photo du catalogue du site illisible → celle du GET", C.resoudreOffre({ cip: CIP.ventoline, image_url: "https://x.test/get.jpg", boite: {} },
+    ctxR(ill("https://assets.medipim.fr/media/medium/ccca.png"))).image_url, "https://x.test/get.jpg");
+  eq("plus commandés : catalogue pas chargé, photo du GET illisible → photo de l'admin", C.resoudreOffre(o, { ...ctxR(ill("https://x.test/get.jpg")), catalogueCharge: false }).image_url, "https://x.test/admin.jpg");
+  eq("photoLisible", [C.photoLisible(DEVANT, ill(DEVANT)), C.photoLisible(DEVANT, ill()), C.photoLisible(DEVANT), C.photoLisible("", ill())], [null, DEVANT, DEVANT, null]);
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

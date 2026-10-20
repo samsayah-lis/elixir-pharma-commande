@@ -78,22 +78,26 @@ const enRupture = (stockData, cip) => { const st = (stockData || {})[cip]; retur
 export function produitsVisibles(menu, stockData) {
   return (Array.isArray(menu?.products) ? menu.products : []).filter(p => p && nombre(p.pn) > 0 && (menu.sansStock || !enRupture(stockData, String(p.cip || ""))));
 }
-// photo d'un produit de menu : la sienne, sinon celle du catalogue pour ce CIP (premier menu qui en a une)
-const photoCatalogue = (catalogue, cip) => {
-  for (const c of Object.values(catalogue || {})) { const p = (c.products || []).find(x => x.cip === cip && x.image_url); if (p) return p.image_url; }
+// Photo affichable : présente et pas notée illisible (illisibles : ensemble des adresses en erreur sur cette page,
+// illisibles.js) ; une photo illisible est traitée exactement comme une photo absente
+export const photoLisible = (url, illisibles) => (url && !illisibles?.has?.(url) ? url : null);
+// photo d'un produit de menu : la sienne, sinon celle du catalogue pour ce CIP (premier menu qui en a une lisible)
+const photoCatalogue = (catalogue, cip, illisibles) => {
+  for (const c of Object.values(catalogue || {})) { const p = (c.products || []).find(x => x.cip === cip && photoLisible(x.image_url, illisibles)); if (p) return p.image_url; }
   return null;
 };
 // résumé d'un menu : nombre de produits montrés, « dès » (plus petit prix net), « jusqu'à » (plus forte remise réellement
 // présente), cartes de l'éventail (5 au plus : photos dans l'ordre du menu, dédoublonnées, la carte de devant d'abord ;
-// complétées jusqu'à 3 par des cartes texte)
-export function resumeMenu(menu, { stockData, catalogue, image } = {}) {
+// complétées jusqu'à 3 par des cartes texte). Photo illisible (carte de devant comprise) : comme sans photo.
+export function resumeMenu(menu, { stockData, catalogue, image, illisibles } = {}) {
   const vis = produitsVisibles(menu, stockData);
   const pns = vis.map(p => nombre(p.pn)), pcts = vis.map(p => Math.abs(nombre(p.pct) ?? 0)).filter(x => x >= 1 && x < 100);
   const cartes = [], urls = new Set();
-  if (image) { cartes.push({ url: image, nom: "", pn: null }); urls.add(image); }
+  const devant = photoLisible(image, illisibles);
+  if (devant) { cartes.push({ url: devant, nom: "", pn: null }); urls.add(devant); }
   for (const p of vis) {
     if (cartes.length >= 5) break;
-    const url = p.image_url || photoCatalogue(catalogue, String(p.cip || ""));
+    const url = photoLisible(p.image_url, illisibles) || photoCatalogue(catalogue, String(p.cip || ""), illisibles);
     if (url && !urls.has(url)) { urls.add(url); cartes.push({ url, nom: String(p.name || ""), pn: nombre(p.pn) }); }
   }
   for (const p of vis) {
@@ -128,7 +132,7 @@ export const titreMenu = (menu) => sansEmoji(menu?.name) || "Offre";
 
 // ── Construction finale (page des pharmacies, aperçu de l'admin) ──
 // ved : vedettes du GET ({ repli, defilement, items }) ou null (GET absent, refusé, trop lent) ; ctx : celui de
-// resoudreOffre + { promos, aujourdhui, apercu } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
+// resoudreOffre (illisibles compris) + { promos, aujourdhui, apercu } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
 export function construireMisesEnAvant(ved, ctx) {
   const conf = ved && typeof ved === "object" ? ved : { repli: true, defilement: true, items: [] };
   const out = { vitrine: [], grille: [], auto: { vitrine: false, grille: false }, defilement: conf.defilement !== false };
@@ -164,7 +168,8 @@ function entreeProduit(v, ctx) {
   const promo = key.startsWith("promo_") ? (ctx.promos || []).find(p => `promo_${p.id}` === key) : null;
   const r = resoudreOffre(o, { ...ctx, ignorerStock: !!promo?.sansStock });
   if (!r) return null;
-  if (v.image) r.image_url = v.image;
+  // photo choisie dans l'admin d'abord ; illisible : celle du catalogue ou de la banque (resoudreOffre), sinon la boîte
+  if (photoLisible(v.image, ctx.illisibles)) r.image_url = v.image;
   const t = ctx.catalogueCharge ? produitDuCatalogue(ctx.catalogue, o.cip) : null;
   const rkey = r.menu?.key || key;
   const menuPromo = rkey.startsWith("promo_") ? (ctx.promos || []).find(p => `promo_${p.id}` === rkey) : null;
@@ -181,7 +186,7 @@ function entreeMenu(v, ctx, aj) {
   const m = (ctx.promos || []).find(p => String(p?.id) === String(v.menu_id));
   const key = `promo_${m?.id}`;
   if (!menuEnCours(m, aj) || (ctx.menuOuvrable && !ctx.menuOuvrable(key))) return null;
-  const res = resumeMenu(m, { stockData: ctx.stockData, catalogue: ctx.catalogue, image: v.image });
+  const res = resumeMenu(m, { stockData: ctx.stockData, catalogue: ctx.catalogue, image: v.image, illisibles: ctx.illisibles });
   if (!res.nb) return null;
   const e = commun(v, `m:${m.id}`, couleurDe(v, { menu: m }), res.cartes.find(c => c.url)?.url);
   return { ...e, titre: v.titre || titreMenu(m), accroche: v.accroche || String(m.description || "").trim(), fin: finEffective(v.fin, m.endDate), finOffre: jour10(m.endDate),

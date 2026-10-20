@@ -7,26 +7,30 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Boite from "./Boite.jsx";
 import Rouleau from "./Rouleau.jsx";
-import { EASE, RESSORT, SORTIE, anime, photo, photoReconnue } from "./outils.js";
+import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, useIllisibles } from "./outils.js";
+import { estIllisible, noterIllisible } from "./illisibles.js";
 import { alpha } from "../../theme.js";
 
-// photo (medium, large en 2x) ou boîte générée ; photo en erreur → boîte
+// photo (medium, large en 2x) ou boîte générée. Photo en erreur : notée (illisibles.js) ; la page reconstruit l'offre sans
+// elle (autre photo du produit, sinon la boîte), dans le même rendu
 export function Visuel({ offre, mode, taille, priorite = false, teinte }) {
-  const [erreur, setErreur] = useState(false);
-  useEffect(() => { setErreur(false); }, [offre.image_url]);
-  if (offre.image_url && !erreur) {
-    const r = photoReconnue(offre.image_url);
-    return <img className="acc-photo" src={photo(offre.image_url, "medium")} srcSet={r ? `${photo(offre.image_url, "medium")} 1x, ${photo(offre.image_url, "large")} 2x` : undefined}
-      alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={() => setErreur(true)} />;
+  useIllisibles();
+  const url = offre.image_url;
+  if (url && !estIllisible(url)) {
+    const r = photoReconnue(url);
+    return <img className="acc-photo" src={photo(url, "medium")} srcSet={r ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
+      alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={() => noterIllisible(url)} />;
   }
   return <Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode={mode} taille={taille} />;
 }
 
-// halo teinté du rayon derrière une boîte générée : assez dense (0,24) pour que la boîte claire se détache du fond sable
+// halo teinté du rayon derrière une boîte générée : assez dense (0,24) pour que la boîte claire se détache du fond sable ;
+// miniature floutée de la photo sinon (en erreur : retirée, rien derrière le produit)
 export function Halo({ offre, teinte }) {
+  useIllisibles();
   const t = alpha(teinte, 0.24);
-  return offre.image_url
-    ? <span className="acc-halo" aria-hidden="true"><img src={photo(offre.image_url, "thumbnail")} alt="" draggable={false} decoding="async" /></span>
+  return offre.image_url && !estIllisible(offre.image_url)
+    ? <span className="acc-halo" aria-hidden="true"><PhotoDecor url={offre.image_url} /></span>
     : <span className="acc-halo acc-halo--boite" aria-hidden="true" style={typeof t === "string" && t.startsWith("rgba(") ? { "--acc-halo": t } : undefined} />;
 }
 

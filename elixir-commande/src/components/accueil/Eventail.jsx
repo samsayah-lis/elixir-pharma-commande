@@ -3,9 +3,13 @@
 // de la carte, origine sous la carte). Survol (ordinateur) : l'éventail s'ouvre (+4° par carte, carte centrale +10 px) par
 // la variable --ouvre posée par le parent, transition CSS. Donne (arrivée, changement d'offre) : donne(), Web Animations,
 // cartes parties empilées du centre vers l'extérieur. Photos en multiply sur la carte blanche. Décoratif (aria-hidden).
-import React, { useState } from "react";
+// Photo en erreur (stockage pas public, photo retirée) : notée (illisibles.js), la carte disparaît et l'éventail est
+// refait par la page sans elle (resumeMenu : photos restantes du menu, puis cartes texte), exactement comme sans photo ;
+// jamais de carte blanche (la carte de devant n'a pas de texte) ni d'icône d'image cassée.
+import React from "react";
 import { fmtEur } from "../../theme.js";
-import { RESSORT, anime, photo } from "./outils.js";
+import { RESSORT, anime, photo, useIllisibles } from "./outils.js";
+import { estIllisible, noterIllisible } from "./illisibles.js";
 
 // nombre de cartes → [rotation (°), décalage x (%), décalage y (%)] de gauche à droite, et place de chaque carte (0 = devant)
 const GEO = {
@@ -19,19 +23,22 @@ const transformDe = ([r, x, y], centre, ouvre) => ouvre
 
 // balise : "span" dans un bouton (tuile menu de la grille : un <div> n'y est pas permis)
 export default function Eventail({ cartes = [], max = 5, taille = "l", balise: Balise = "div" }) {
-  const [ko, setKo] = useState({});
-  const liste = cartes.slice(0, max);
+  useIllisibles();
+  // carte de photo illisible, carte sans photo ni texte : retirées (la page refait l'éventail dans le même rendu)
+  const liste = cartes.filter(c => (c.url ? !estIllisible(c.url) : !!c.nom)).slice(0, max);
   const n = liste.length;
   if (!n) return null;
   return (
     <Balise className={`mea-eventail mea-eventail--${taille}`} aria-hidden="true">
       {liste.map((c, k) => {
         const slot = PLACE[n][k], g = GEO[n][slot], centre = Math.abs(slot - (n - 1) / 2) < 1;
-        const img = c.url && !ko[c.url];
+        const img = !!c.url;
         return (
-          <span key={`${c.url || c.nom}-${k}`} className={`mea-carte${img ? "" : " mea-carte--texte"}`} data-fin={transformDe(g, centre, false)}
+          // clé stable (adresse, ou nom d'une carte texte, uniques dans resumeMenu) : une carte retirée, les autres glissent
+          // à leur nouvelle place (transition CSS) sans être recréées ni redemander leur photo
+          <span key={c.url ? `p:${c.url}` : `t:${c.nom}`} className={`mea-carte${img ? "" : " mea-carte--texte"}`} data-fin={transformDe(g, centre, false)}
             data-ordre={Math.round(Math.abs(slot - (n - 1) / 2))} style={{ transform: transformDe(g, centre, true), zIndex: 10 - k }}>
-            {img ? <img src={photo(c.url, "medium")} alt="" draggable={false} decoding="async" onError={() => setKo(o => ({ ...o, [c.url]: true }))} />
+            {img ? <img src={photo(c.url, "medium")} alt="" draggable={false} decoding="async" onError={() => noterIllisible(c.url)} />
               : <><span className="mea-carte-nom">{c.nom}</span>{c.pn > 0 && <span className="mea-carte-prix num">{fmtEur(c.pn)} HT</span>}</>}
             <span className="mea-reflet" />
           </span>

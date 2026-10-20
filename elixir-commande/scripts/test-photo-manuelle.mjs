@@ -6,9 +6,15 @@
 // catalogue). La réduction
 // elle-même (canvas) se vérifie au banc, dans un vrai navigateur. L'adresse produite passe la règle des mises en avant
 // du serveur (netlify/functions/_accueil-vedettes.js : https, 500 caractères au plus).
-import { abonnerLignes, adresseRecue, auCatalogue, avecVersion, ciblesFamille, cleDuFichier, cleEnvoi, cleMiseEnAvant, controlerFichier, dimensions,
-  envoisEnCours, envoyerPhoto, estPhotoEnvoyee, etatLigne, liee, MAX_OCTETS, memeForme, MENUS_AVEC_PHOTOS, MENUS_CATALOGUE, noterLigne, portee,
-  questionCatalogue, repartitionFamille, suivre, typeDuFichier, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
+// Affichage vérifié (incident du 20/10/2026, stockage elixir-images privé : 400 « Bucket not found ») : verifierAffichage
+// avec une fausse Image (chargée, en erreur, vide, muette → délai), messages de l'admin (stockage privé, catalogue,
+// délai), photos notées illisibles (accueil/illisibles.js : une fois par adresse, abonnés prévenus une fois, oubli),
+// contrôle dédoublonné, « Vérifier de nouveau » (?v= neuf pour le stockage), sonde avant l'envoi d'un produit du catalogue.
+import { abonnerLignes, adresseRecue, auCatalogue, auStockage, avecVersion, ciblesFamille, cleDuFichier, cleEnvoi, cleMiseEnAvant, controlerAffichage,
+  controlerFichier, DELAI_AFFICHAGE, dimensions, envoisEnCours, envoyerPhoto, estPhotoEnvoyee, etatLigne, liee, MAX_OCTETS, memeForme, MENUS_AVEC_PHOTOS,
+  MENUS_CATALOGUE, MESSAGE_STOCKAGE_PRIVE, messageNonAffichee, noterEchecStockage, noterLigne, portee, questionCatalogue, raisonIllisible, repartitionFamille,
+  reverifierIllisibles, sonderStockage, stockageLisible, suivre, typeDuFichier, verifierAffichage, versionnerAuCatalogue } from "../src/components/photo-manuelle.js";
+import { abonnerIllisibles, estIllisible, illisibles, lisible, noterIllisible, oublierIllisible, versionIllisibles } from "../src/components/accueil/illisibles.js";
 import { ORDRE_MENUS } from "../netlify/functions/_accueil-selection.js";
 
 process.env.SUPABASE_URL = "https://supabase.test";
@@ -205,6 +211,100 @@ egal("résultat transmis", await enVol, "fini");
 egal("plus rien en cours", envoisEnCours(), false);
 await suivre(Promise.reject(new Error("x"))).catch(() => {});
 egal("échec : plus rien en cours non plus", envoisEnCours(), false);
+
+// ── affichage vérifié : fausse Image (le navigateur charge l'adresse ; aucune lecture de pixels, aucun CORS) ──
+// comportement(adresse) → "ok" (chargée), "erreur" (400 du stockage privé), "vide" (0 × 0), "rien" (jamais de réponse)
+const fausseImage = (comportement) => {
+  const F = class { set src(u) { F.demandes.push(u); this.s = u; const c = comportement(u);
+    if (c === "ok") setTimeout(() => { this.naturalWidth = 900; this.naturalHeight = 675; this.onload?.(); }, 1);
+    else if (c === "erreur") setTimeout(() => this.onerror?.(), 1);
+    else if (c === "vide") setTimeout(() => { this.naturalWidth = 0; this.naturalHeight = 0; this.onload?.(); }, 1);
+    else if (c === "deux") setTimeout(() => { this.onerror?.(); this.naturalWidth = 1; this.naturalHeight = 1; this.onload?.(); }, 1); }
+  get src() { return this.s; } };
+  F.demandes = [];
+  return F;
+};
+const SUPA = "https://jwhbmnytrcrflavqtihj.supabase.co/storage/v1/object/public/elixir-images/products";
+const DEVANT = `${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=1792486536000`;   // la carte de devant de l'incident
+egal("chargée : ok", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "ok") }), "ok");
+egal("stockage privé (400 « Bucket not found ») : illisible", await verifierAffichage(DEVANT, { Img: fausseImage(() => "erreur") }), "illisible");
+egal("image de 0 × 0 : illisible", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "vide") }), "illisible");
+egal("aucune réponse : délai", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "rien"), delai: 20 }), "delai");
+egal("erreur puis chargement : la première réponse compte", await verifierAffichage(`${SUPA}/a.jpg`, { Img: fausseImage(() => "deux") }), "illisible");
+egal("sans navigateur : inconnu", await verifierAffichage(`${SUPA}/a.jpg`, { Img: undefined }), "inconnu");
+egal("Image qui lève une erreur : inconnu", await verifierAffichage(`${SUPA}/a.jpg`, { Img: class { set src(u) { throw new Error(u); } } }), "inconnu");
+egal("pas d'adresse : inconnu", await verifierAffichage("", { Img: fausseImage(() => "ok") }), "inconnu");
+const F1 = fausseImage(() => "ok");
+await verifierAffichage(DEVANT, { Img: F1 });
+egal("adresse chargée telle quelle (sans crossOrigin ni réécriture)", F1.demandes, [DEVANT]);
+vrai("délai par défaut : 12 s", DELAI_AFFICHAGE === 12000);
+
+// ── messages de l'admin ──
+egal("affichée : aucun message", messageNonAffichee("ok", { url: DEVANT }), null);
+egal("pas de navigateur pour vérifier : aucun message", messageNonAffichee("inconnu", { url: DEVANT }), null);
+egal("stockage privé : message clair, pas de « ✓ Photo ajoutée »", messageNonAffichee("illisible", { url: DEVANT }),
+  "Photo reçue, mais le site ne peut pas l'afficher : le stockage des photos (Supabase, « elixir-images ») n'est pas public. "
+  + "C'est un réglage à faire une seule fois dans Supabase (voir docs/accueil.md, « Stockage des photos ») ; une fois fait, ajoutez de nouveau la photo. Rien n'a changé sur l'accueil.");
+vrai("produit du catalogue : la fiche a déjà reçu l'adresse, la photo y apparaîtra après le réglage",
+  messageNonAffichee("illisible", { url: `${SUPA}/3400930292914.webp?v=1`, catalogue: true }).endsWith("la photo y apparaîtra d'elle-même une fois le réglage fait."));
+vrai("banc d'essai (stockage privé simulé) : même message", messageNonAffichee("illisible", { url: "/banc-photos/elixir-images/products/a.jpg?v=1" }).includes("n'est pas public"));
+egal("délai : réessayer, rien n'a changé", messageNonAffichee("delai", { url: DEVANT }),
+  "Photo reçue, mais elle ne s'est pas affichée en 12 secondes (connexion lente ?) : ajoutez-la de nouveau. Rien n'a changé sur l'accueil.");
+egal("autre hébergeur : pas d'image", messageNonAffichee("illisible", { url: "https://x.test/a.jpg" }), "Photo reçue, mais l'adresse renvoyée ne donne pas d'image : ajoutez-la de nouveau. Rien n'a changé sur l'accueil.");
+vrai("refus avant l'envoi (catalogue, stockage privé) : rien n'a été envoyé", MESSAGE_STOCKAGE_PRIVE.startsWith("Rien n'a été envoyé : le stockage des photos"));
+vrai("photo du stockage reconnue (Supabase et banc)", auStockage(DEVANT) && auStockage("/banc-photos/elixir-images/products/a.jpg") && !auStockage("https://assets.medipim.fr/media/medium/a.png"));
+vrai("motif : stockage pas public, avec la marche à suivre", raisonIllisible(DEVANT).startsWith("le stockage des photos (Supabase, « elixir-images ») n'est pas public") && raisonIllisible(DEVANT).includes("docs/accueil.md"));
+egal("motif : autre hébergeur", raisonIllisible("https://assets.medipim.fr/media/medium/a.png"), "l'adresse ne donne plus d'image (photo retirée par son hébergeur, ou adresse erronée)");
+
+// ── photos notées illisibles (partagé avec l'accueil et l'aperçu) : une fois par adresse, jamais de boucle ──
+let prevenus = 0;
+const finAbonnement = abonnerIllisibles(() => { prevenus++; });
+const v0 = versionIllisibles();
+vrai("première erreur : notée", noterIllisible(DEVANT));
+egal("même adresse en erreur de nouveau : ignorée (aucun nouveau rendu)", [noterIllisible(DEVANT), prevenus, versionIllisibles() - v0], [false, 1, 1]);
+egal("lisible : null pour une adresse notée, l'adresse sinon", [lisible(DEVANT), lisible(`${SUPA}/b.jpg`), lisible(null)], [null, `${SUPA}/b.jpg`, null]);
+vrai("ensemble partagé", illisibles().has(DEVANT) && estIllisible(DEVANT) && !estIllisible(undefined));
+egal("adresse vide : jamais notée", noterIllisible(""), false);
+finAbonnement();
+
+// ── contrôle des photos déjà choisies : une fois par adresse, miniature chargée (variante), adresse notée ──
+const F2 = fausseImage((u) => (u.includes("thumbnail") ? "erreur" : "ok"));
+const PHOTO_BANQUE = "https://assets.medipim.fr/media/medium/retiree.png";
+egal("photo retirée par la banque : illisible", await controlerAffichage(PHOTO_BANQUE, { variante: PHOTO_BANQUE.replace("medium", "thumbnail"), Img: F2 }), "illisible");
+vrai("… notée sous son adresse (pas celle de la miniature)", estIllisible(PHOTO_BANQUE) && !estIllisible(PHOTO_BANQUE.replace("medium", "thumbnail")));
+await controlerAffichage(PHOTO_BANQUE, { Img: F2 });
+egal("contrôlée une seule fois (dédoublonné)", F2.demandes.length, 1);
+egal("photo qui s'affiche : pas notée", [await controlerAffichage(`${SUPA}/c.jpg`, { Img: fausseImage(() => "ok") }), estIllisible(`${SUPA}/c.jpg`)], ["ok", false]);
+
+// ── « Vérifier de nouveau » (réglage fait) : ?v= neuf pour le stockage, adresse oubliée si elle s'affiche ──
+const F3 = fausseImage(() => "ok");
+egal("après le réglage : redevenue lisible", await reverifierIllisibles([DEVANT], { Img: F3, t: 77 }), 1);
+egal("redemandée avec un ?v= neuf (jamais une erreur gardée en cache)", F3.demandes, [`${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=77`]);
+vrai("oubliée : elle se montre de nouveau partout", !estIllisible(DEVANT));
+noterIllisible(DEVANT);
+egal("toujours privé : reste notée", [await reverifierIllisibles([DEVANT], { Img: fausseImage(() => "erreur") }), estIllisible(DEVANT)], [0, true]);
+const F4 = fausseImage(() => "ok");
+await reverifierIllisibles([PHOTO_BANQUE], { Img: F4, t: 5 });
+egal("autre hébergeur : adresse redemandée telle quelle", F4.demandes, [PHOTO_BANQUE]);
+egal("adresse jamais notée : rien à refaire", await reverifierIllisibles([`${SUPA}/jamais.jpg`], { Img: fausseImage(() => "ok") }), 0);
+vrai("oublier une adresse non notée : sans effet", !oublierIllisible(`${SUPA}/jamais.jpg`));
+
+// ── sonde du stockage avant l'envoi d'un produit du catalogue (l'envoi écrit l'adresse dans sa fiche) ──
+egal("aucune photo du stockage connue : inconnu (envoi, vérifié ensuite)", await sonderStockage(["https://assets.medipim.fr/a.png"], { Img: fausseImage(() => "ok") }), "inconnu");
+const F5 = fausseImage(() => "erreur");
+egal("photo publiée qui répond 400 : privé (rien n'est envoyé)", await sonderStockage([`${SUPA}/3400930292914.webp?v=1`], { Img: F5, t: 9 }), "prive");
+egal("sondée avec un ?v= neuf", F5.demandes, [`${SUPA}/3400930292914.webp?v=9`]);
+noterEchecStockage(`${SUPA}/accueil-1-x.jpg?v=3`);
+const F6 = fausseImage(() => "ok");
+egal("dernier envoi non affiché de la session : sondé en premier ; public", await sonderStockage([`${SUPA}/3400930292914.webp?v=1`], { Img: F6, t: 4 }), "public");
+egal("… c'est bien lui qui a été sondé", F6.demandes, [`${SUPA}/accueil-1-x.jpg?v=4`]);
+egal("sans réponse : inconnu (envoi, vérifié ensuite)", await sonderStockage([`${SUPA}/a.jpg`], { Img: fausseImage(() => "rien"), delai: 20 }), "inconnu");
+// photo du stockage qui vient de s'afficher : les autres photos du stockage notées illisibles sont réessayées
+noterIllisible(DEVANT);
+const F7 = fausseImage(() => "ok");
+egal("stockage lisible : les photos du stockage notées sont réessayées et redeviennent lisibles",
+  [await stockageLisible(`${SUPA}/nouvelle.jpg?v=1`, { Img: F7, t: 8 }), estIllisible(DEVANT), F7.demandes], [1, false, [`${SUPA}/accueil-menu-1792060000000-mvgg7ayo.jpg?v=8`]]);
+egal("photo d'un autre hébergeur : rien n'est réessayé", await stockageLisible("https://x.test/a.jpg"), 0);
 
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);

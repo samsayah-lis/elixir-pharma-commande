@@ -11,12 +11,17 @@
 //           « #409 », « #429 », « #503 » ou « #erreur » dans un message essaient les écrans d'erreur.
 //  • product-upload-image (photo de l'admin : catalogue, « Ajouter une photo » de l'accueil) : la photo reçue est rangée
 //           dans dev-fixtures/_photos/ (jamais Supabase) et servie par le banc à /banc-photos/elixir-images/products/<clé>.<ext>,
-//           avec le même cache public d'une heure que le Storage (l'anti-cache ?v= se vérifie ici). Mises en avant : cette
+//           avec le même en-tête de cache que le Storage (relevé le 20/10/2026 : « no-cache », revalidée à chaque
+//           affichage ; l'anti-cache ?v= reste vérifiable ici). Mises en avant : cette
 //           adresse locale n'est pas en https, la règle des mises en avant la refuse à la publication (aperçu seulement).
+//           Stockage privé simulé (incident du 20/10/2026 : bucket elixir-images privé, toute adresse publique répondait
+//           400 « Bucket not found ») : BANC_PHOTOS=prive au lancement, ou à chaud /banc-photos/_stockage?prive=1 (0 pour
+//           revenir au stockage public ; sans paramètre : état actuel). Les photos restent rangées, seules leurs adresses
+//           répondent 400 : l'admin doit refuser « ✓ Photo ajoutée », l'accueil retomber sur l'absence de photo.
 //  • config-get (POST de l'admin : affichage, menus promo, mises en avant) : la valeur publiée est gardée en mémoire et
 //           relue par les GET suivants jusqu'au redémarrage du banc (le site voit ce que l'admin publie, comme en ligne ;
 //           jamais de 409 ici), sans toucher aux données figées.
-// Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>,
+// Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>, BANC_PHOTOS=prive,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
 // « Me reconnecter »).
@@ -402,14 +407,31 @@ export default function bancEssai() {
       const log = (m) => server.config.logger.info(`[banc] ${m}`, { timestamp: true });
       const latence = Math.max(0, parseInt(process.env.BANC_LATENCE) || 0);
       if (!existsSync(DOSSIER_GET)) server.config.logger.warn("[banc] aucune donnée figée : lancez « npm run banc:capture » (lectures GET de la production, une fois)");
-      // photos envoyées sur le banc (product-upload-image) : cache public d'une heure, comme le Storage
+      // stockage des photos privé (simulation) : bascule à chaud, sans redémarrer le banc
+      let stockagePrive = process.env.BANC_PHOTOS === "prive";
+      if (stockagePrive) log("stockage des photos PRIVÉ (BANC_PHOTOS=prive) : les adresses /banc-photos/ répondent 400 « Bucket not found »");
+      server.middlewares.use("/banc-photos/_stockage", (req, res) => {
+        const p = new URLSearchParams(String(req.url || "").split("?")[1] || "").get("prive");
+        if (p === "1" || p === "0") { stockagePrive = p === "1"; log(`stockage des photos ${stockagePrive ? "PRIVÉ (adresses en 400)" : "public"}`); }
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(JSON.stringify({ stockage: stockagePrive ? "prive" : "public" }));
+      });
+      // photos envoyées sur le banc (product-upload-image) : « no-cache », comme le Storage (relevé du 20/10/2026)
       server.middlewares.use("/banc-photos/elixir-images/products", (req, res) => {
         const nom = basename(String(req.url || "").split("?")[0]);   // clé [\w-] : rien à décoder
         const ext = /^[\w-]{1,80}\.(jpg|png|webp)$/.exec(nom)?.[1];
         const fichier = resolve(DOSSIER_PHOTOS, nom);
+        // comme Supabase quand le bucket est privé : 400 en JSON, jamais mis en cache
+        if (stockagePrive) {
+          res.statusCode = 400;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.setHeader("Cache-Control", "no-store");
+          return res.end(JSON.stringify({ statusCode: "404", error: "Bucket not found", message: "Bucket not found" }));
+        }
         if (!ext || !existsSync(fichier)) { res.statusCode = 404; return res.end(); }
         res.setHeader("Content-Type", ext === "jpg" ? "image/jpeg" : `image/${ext}`);
-        res.setHeader("Cache-Control", "public, max-age=3600");
+        res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Access-Control-Allow-Origin", "*");
         return res.end(readFileSync(fichier));
       });

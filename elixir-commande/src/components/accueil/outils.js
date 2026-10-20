@@ -1,6 +1,15 @@
 // ── Page d'accueil : outils communs du chunk (mouvement, photos, formats, préférences de l'appareil) ──
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { fmtEur } from "../../theme.js";
+import { abonnerIllisibles, estIllisible, versionIllisibles } from "./illisibles.js";
+
+// Photos notées illisibles (illisibles.js) : le composant se redessine dès qu'une adresse l'est → numéro de version
+// (dépendance des useMemo qui construisent les vitrines)
+export function useIllisibles() {
+  const [v, setV] = useState(versionIllisibles);
+  useEffect(() => { setV(versionIllisibles()); return abonnerIllisibles(setV); }, []);
+  return v;
+}
 
 // Jetons de mouvement (docs/accueil.md § 5.1) : linear() quand le navigateur le connaît (rebond), sinon cubic-bezier (Safari 15)
 const lineaireConnu = typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("transition-timing-function", "linear(0, 1)");
@@ -56,6 +65,13 @@ const RE_SHOPIFY = /^https:\/\/(cdn\.shopify\.com\/s\/files\/|[^/?#]+\/cdn\/shop
 const RE_OBF = /^(https:\/\/images\.openbeautyfacts\.org\/images\/products\/[^?#]+\.\d+\.)(full|100|200|400)(\.jpg)$/;
 const LARGEUR_SHOPIFY = { thumbnail: 200, medium: 480, large: 960 };
 const TAILLE_OBF = { thumbnail: "200", medium: "400", large: "full" };
+// Miniature décorative (halo flou de la salle, d'une tuile, de la gondole) : en erreur, simplement retirée ici (jamais
+// d'icône d'image cassée), sans noter l'adresse : une miniature décorative ratée ne retire pas la photo du produit
+export function PhotoDecor({ url, ...props }) {
+  const [ko, setKo] = useState(null);
+  if (!url || ko === url || estIllisible(url)) return null;
+  return React.createElement("img", { ...props, src: photo(url, "thumbnail"), alt: "", draggable: false, decoding: "async", onError: () => setKo(url) });
+}
 export const photoReconnue = (url) => !!url && (RE_TAILLE.test(url) || RE_SHOPIFY.test(url) || RE_OBF.test(url));
 export function photo(url, taille) {
   if (!url) return null;

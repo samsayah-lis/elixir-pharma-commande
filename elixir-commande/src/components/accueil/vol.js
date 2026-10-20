@@ -19,6 +19,7 @@ export function voler(source, { image, marque, dosage, teinte }) {
   x.className = "acc-vol"; y.className = "acc-vol-y";
   if (image) {
     const img = document.createElement("img");
+    img.onerror = () => img.remove();   // photo en erreur : rien plutôt qu'une icône d'image cassée
     img.src = image; img.alt = ""; img.draggable = false;
     y.appendChild(img);
   } else {

@@ -30,14 +30,17 @@ const sansEmoji = (s) => String(s || "").replace(/[\p{Extended_Pictographic}️�
 
 // Une offre (diapositive ou dosage du GET) au moment présent → offre résolue, ou null si elle ne doit pas paraître.
 // ctx : { catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable(k), regleSaisie(cip), estCampagne(k),
-//         photos: { cip: url } (admin), teinte(k), ignorerStock (mise en avant d'un produit de précommande) }
+//         photos: { cip: url } (admin), teinte(k), ignorerStock (mise en avant d'un produit de précommande),
+//         illisibles: Set des adresses de photo en erreur sur la page (illisibles.js) }
 // Retirés : justificatif labo, produit de campagne (prix et UG propres au panier), menu non ouvrable, rupture d'un produit
-// de menu, prix net absent.
+// de menu, prix net absent. Photo : catalogue du site, puis celle du GET, puis celle de l'admin ; une photo illisible
+// est sautée comme une photo absente (null : boîte générée).
 export function resoudreOffre(o, ctx) {
   if (!o?.cip || (ctx.justifProducts || {})[o.cip]) return null;
   const teinte = ctx.teinte || (() => null);
-  const photoAdmin = (ctx.photos || {})[o.cip] || null;
-  let r = { ...o, image_url: o.image_url || photoAdmin };
+  const ok = (u) => (u && !ctx.illisibles?.has?.(u) ? u : null);
+  const photoAdmin = ok((ctx.photos || {})[o.cip]);
+  let r = { ...o, image_url: ok(o.image_url) || photoAdmin };
   if (!ctx.catalogueCharge) {
     // catalogue pas encore chargé : prix du GET, ajout désactivé (« Chargement des prix… »)
     return { ...r, regle: o.regle_qte || { step: 1, min: 1, multiple: 1 }, teinte: teinte(o.menu?.key) || teinte("saisie") };
@@ -53,7 +56,7 @@ export function resoudreOffre(o, ctx) {
     if (!(pn > 0)) return null;
     const remise = nombre(p.remise_eur);
     r = { ...r, pv, pn, pct: Math.abs(nombre(p.pct) ?? 0), remise_eur: remise ?? (pv > 0 ? r2(pv - pn) : null),
-      price_tiers: p.price_tiers || null, nom_panier: p.name, image_url: p.image_url || o.image_url || photoAdmin,
+      price_tiers: p.price_tiers || null, nom_panier: p.name, image_url: ok(p.image_url) || ok(o.image_url) || photoAdmin,
       menu: { key: t.catKey, label: sansEmoji(t.label) }, teinte: t.accent || teinte("saisie") };
   } else r = { ...r, menu: { key: "saisie", label: "Saisie de commande" }, teinte: teinte("saisie") };
   // règle de quantité de la Saisie (colis, minimum) ; lot = max(minimum, multiple, 1) ; montant = ce que le panier

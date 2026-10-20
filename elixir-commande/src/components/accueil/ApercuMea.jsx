@@ -6,7 +6,8 @@
 // pour les pharmacies) ; ses styles viennent avec lui.
 import React, { useEffect, useRef, useState } from "react";
 import { construireMisesEnAvant, finEffective, jourParis } from "./vedettes.js";
-import { POINTEUR_FIN, REDUIT, useMedia } from "./outils.js";
+import { POINTEUR_FIN, REDUIT, useIllisibles, useMedia } from "./outils.js";
+import { illisibles } from "./illisibles.js";
 
 const rien = () => {};
 
@@ -24,6 +25,7 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
     return () => ro.disconnect();
   }, []);
   const reduit = useMedia(REDUIT), finPointer = useMedia(POINTEUR_FIN);
+  useIllisibles();   // photo en erreur : aperçu reconstruit sans elle, comme la page des pharmacies
   const aujourdhui = jourParis();
   const finMenuDe = (o) => promos.find(p => `promo_${p.id}` === o?.menu?.key)?.endDate;
   const ved = { repli: brouillon.repli, defilement: false, items: brouillon.items.filter(i => statut(i.id) === "visible").sort((a, b) => a.ordre - b.ordre)
@@ -32,7 +34,7 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
         fin_offre: finMenuDe(o) || null, image: i.image,
         couleur: i.couleur, couleur_auto: i.couleur_auto, offre: o, menu_id: i.menu_id }; }) };
   const mea = construireMisesEnAvant(ved, { catalogue: {}, catalogueCharge: false, stockData: {}, justifProducts: {}, menuOuvrable: (k) => !caches.has(k),
-    regleSaisie: () => null, estCampagne: () => false, photos: {}, teinte: () => null, promos, aujourdhui });
+    regleSaisie: () => null, estCampagne: () => false, photos: {}, teinte: () => null, promos, aujourdhui, illisibles: illisibles() });
   const commun = { reduit, finPointer, apercu: true, pret: true, qteAuPanier: {}, onAjouter: rien, onModifier: rien, onOuvrirPanier: rien, onVoir: rien, onExpire: rien };
   const vide = !mea.vitrine.length && !mea.grille.length;
   const { Cinema, Bento } = mod || {};

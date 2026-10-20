@@ -10,14 +10,20 @@
 // jusqu'à « Publier »). État de la photo de chaque mise en avant tenu ici, pas dans le formulaire : fermé puis rouvert
 // pendant un envoi, il montre toujours « Envoi… » ; un jeton par mise en avant fait ignorer une réponse dépassée (envoi
 // ou recherche plus ancien, adresse collée ou retour au catalogue entre-temps) : le dernier choix l'emporte.
+// Affichage vérifié (incident du 20/10/2026, stockage des photos privé : carte de devant blanche malgré « ✓ Photo
+// ajoutée ») : une photo envoyée n'entre dans le brouillon qu'une fois affichée par le navigateur ; sinon message clair
+// (réglage du stockage, docs/accueil.md). Photos du brouillon et de la version en ligne contrôlées : « Photo illisible »
+// (vignette, miniature du formulaire, ligne), avertissement à « Publier » (sans le bloquer), « Vérifier de nouveau ».
 import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { T, R, fmtEur, fmtPct, tone, ui } from "../theme.js";
 import { teinteDominante } from "./teinte-photo.js";
 import { LIMITES, MAX_VISIBLES, couleurDe, couleurMenu, dateTexte, finEffective, jourParis, menuEnCours, produitsVisibles,
   repliMenus, teintes, titreMenu, titreParDefaut } from "./accueil/vedettes.js";
 import { erreursBrouillon, etatDate } from "./accueil/vedettes-regles.js";
-import { photo, useMedia } from "./accueil/outils.js";
-import { ACCEPT, AIDE, cleMiseEnAvant, controlerFichier, envoyerPhoto, preparerPhoto, suivre } from "./photo-manuelle.js";
+import { photo, useIllisibles, useMedia } from "./accueil/outils.js";
+import { estIllisible, noterIllisible } from "./accueil/illisibles.js";
+import { ACCEPT, AIDE, auStockage, cleMiseEnAvant, controlerAffichage, controlerFichier, envoyerPhoto, messageNonAffichee, noterEchecStockage, preparerPhoto,
+  raisonIllisible, reverifierIllisibles, stockageLisible, suivre, verifierAffichage } from "./photo-manuelle.js";
 
 const ApercuMea = React.lazy(() => import("./accueil/ApercuMea.jsx"));
 const CLE = "accueil_vedettes";
@@ -41,6 +47,9 @@ const lireValeur = (v) => {
   return x && typeof x === "object" ? { version: 1, repli: x.repli !== false, defilement: x.defilement !== false, items: Array.isArray(x.items) ? x.items : [] } : vide();
 };
 const sansMaj = ({ maj, ...x }) => x;   // eslint-disable-line no-unused-vars
+// ce que la page montre à la place des photos choisies illisibles (mises en avant concernées)
+const aLaPlaceDe = (liste) => (liste.every(i => i.type === "menu") ? "les photos du menu" : liste.every(i => i.type === "produit") ? "la photo du catalogue (ou la boîte générée)"
+  : "la photo du catalogue (produit) ou les photos du menu (menu promo)");
 const nouvelId = () => `mea_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
 const num = (x) => { const v = parseFloat(String(x ?? "").replace(",", ".").replace(/[^0-9.-]/g, "")); return Number.isFinite(v) ? v : null; };
 const renumeroter = (items) => {
@@ -69,7 +78,9 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const [photoEtats, setPhotoEtats] = useState({});   // id → { occupe: "recherche" | "envoi" | null, texte, ton, n }
   const jetons = useRef(new Map());                   // id → numéro de la dernière opération sur la photo
   const [apercu, setApercu] = useState(false);
+  const [reverif, setReverif] = useState(null);       // « Vérifier de nouveau » : null | "en cours" | bilan
   const verifRef = useRef(verif); verifRef.current = verif;
+  useIllisibles();   // photo notée illisible (contrôle, vignette) : « Photo illisible » et avertissement redessinés
   const aujourdhui = jourParis();
   const caches = new Set(displayConfig.hiddenTabs || []);
 
@@ -95,6 +106,9 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   useEffect(() => { charger(); lireEtats(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const nbProduits = brouillon?.items.filter(i => i.type === "produit").map(i => i.cip).join(",");
   useEffect(() => { if (nbProduits) verifier(nbProduits.split(",")); }, [nbProduits]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // photos choisies (brouillon et version en ligne) : chacune contrôlée une fois ; illisible → notée (illisibles.js)
+  const imagesChoisies = [...new Set([...(brouillon?.items || []), ...(enLigne?.valeur?.items || [])].map(i => i.image).filter(Boolean))].join("|");
+  useEffect(() => { if (imagesChoisies) imagesChoisies.split("|").forEach(u => controlerAffichage(u, { variante: photo(u, "thumbnail") })); }, [imagesChoisies]);
 
   // ── modifications non publiées ──
   const valeurEnLigne = enLigne?.valeur;
@@ -164,6 +178,14 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     if (!visibles("grille").length) auto.grille = menus.filter(m => !auto.vitrine.includes(m)).slice(0, MAX_VISIBLES);
   }
   const alertes = items.filter(i => ALERTE.has(evalues.get(i.id).statut));
+  // photos choisies qui ne s'affichent pas : signalées (la page les remplace), jamais bloquantes pour « Publier »
+  const sansPhoto = items.filter(i => i.image && estIllisible(i.image));
+  const reverifier = async () => {
+    setReverif("en cours");
+    const urls = [...new Set(sansPhoto.map(i => i.image))];
+    const reste = urls.length - await reverifierIllisibles(urls);
+    setReverif(reste ? `${reste} photo${reste > 1 ? "s" : ""} toujours illisible${reste > 1 ? "s" : ""}.` : "✓ Les photos s'affichent de nouveau.");
+  };
   const terminees = items.filter(i => evalues.get(i.id).statut === "terminee");
 
   // ── édition du brouillon ──
@@ -183,10 +205,13 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const calculerTeinte = (id, url) => {
     if (!url) return;
     setCouleurMsg(m => ({ ...m, [id]: "Lecture de la couleur de la photo…" }));
-    teinteDominante(url).then(r => {
+    teinteDominante(url).then(async r => {
       modifier(id, { couleur_auto: r.hex || null });
-      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : r.erreur ? "L'hébergeur de cette photo ne permet pas d'en lire la couleur : couleur du menu ou du rayon utilisée. Choisissez-en une si vous préférez."
-        : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
+      // lecture refusée : hébergeur sans en-tête CORS, ou photo qui ne s'affiche pas du tout (à dire autrement)
+      const illisible = r.erreur && (estIllisible(url) || await controlerAffichage(url, { variante: photo(url, "thumbnail") }) === "illisible");
+      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : illisible ? "Photo illisible : couleur du menu ou du rayon utilisée."
+        : r.erreur ? "L'hébergeur de cette photo ne permet pas d'en lire la couleur : couleur du menu ou du rayon utilisée. Choisissez-en une si vous préférez."
+          : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
     });
   };
   // ── photo d'une mise en avant : banque d'images, ordinateur, adresse ; la dernière opération lancée l'emporte ──
@@ -221,6 +246,13 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
         noterPhoto(it.id, { occupe: "envoi", texte: "Envoi de la photo…" });
         const url = await envoyerPhoto(adminFetch, cleMiseEnAvant(it), prete);
         if (!actuel()) return;
+        // l'adresse doit s'afficher AVANT d'entrer dans le brouillon (stockage privé : 400 « Bucket not found »)
+        noterPhoto(it.id, { occupe: "envoi", texte: "Vérification de l'affichage de la photo…" });
+        const verdict = await verifierAffichage(url);
+        if (!actuel()) return;
+        const nonAffichee = messageNonAffichee(verdict, { url });
+        if (nonAffichee) { if (verdict === "illisible") noterEchecStockage(url); noterPhoto(it.id, { texte: nonAffichee, ton: "danger" }); return; }
+        stockageLisible(url);
         changerImage(it, url);
         // banc d'essai : adresse locale, que la règle des mises en avant (https) refuse à la publication
         noterPhoto(it.id, { texte: /^https:\/\//.test(url) ? `✓ Photo ajoutée : visible sur l'accueil après « Publier »${it.type === "produit" ? " (le catalogue n'est pas modifié)" : ""}.`
@@ -252,7 +284,11 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
       const j = await r.json().catch(() => ({}));
       if (r.ok && j.success) {
         setEnLigne({ valeur, maj: j.updated_at ?? null }); setBrouillon(valeur); setConflit(null);
-        setMessage({ ton: "ok", texte: `✓ Publié à ${heure()} : visible chez les pharmacies dans les 5 minutes, tout de suite en rechargeant la page.` });
+        const publieesIllisibles = valeur.items.filter(i => i.image && estIllisible(i.image));
+        const nb = publieesIllisibles.length;
+        setMessage(nb
+          ? { ton: "warn", texte: `Publié à ${heure()}, avec ${nb > 1 ? `${nb} photos illisibles` : "une photo illisible"} (${publieesIllisibles.map(i => `« ${titreDe(i)} »`).join(", ")}) : l'accueil montre à la place ${aLaPlaceDe(publieesIllisibles)} tant qu'${nb > 1 ? "elles ne s'affichent" : "elle ne s'affiche"} pas. Le reste est visible chez les pharmacies dans les 5 minutes, tout de suite en rechargeant la page.` }
+          : { ton: "ok", texte: `✓ Publié à ${heure()} : visible chez les pharmacies dans les 5 minutes, tout de suite en rechargeant la page.` });
         lireEtats();
       } else if (r.status === 409) setConflit({ valeur: lireValeur(j.value), maj: j.updated_at ?? null });
       else setMessage({ ton: "danger", texte: `Non publié : ${j.error || `HTTP ${r.status}`}. Vos modifications sont gardées.`, reessayer: true });
@@ -296,6 +332,16 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
         </div>
       )}
       {alertes.length > 0 && <div style={{ ...ui.encart("warn"), fontSize: 12, margin: "8px 0" }}>⚠ {alertes.length} mise{alertes.length > 1 ? "s" : ""} en avant {alertes.length > 1 ? "ne sont" : "n'est"} pas visible{alertes.length > 1 ? "s" : ""} en ce moment : {alertes.map(i => `${titreDe(i)} (${STATUTS[evalues.get(i.id).statut][1].replace("Non visible : ", "")})`).join(", ")}.</div>}
+      {sansPhoto.length > 0 && (
+        <div role="status" style={{ ...ui.encart("warn"), fontSize: 12, margin: "8px 0" }}>
+          ⚠ Photo illisible pour {sansPhoto.map(i => `« ${titreDe(i)} »`).join(", ")} : {raisonIllisible(sansPhoto[0].image)}.
+          {" "}L'accueil montre à la place {aLaPlaceDe(sansPhoto)} ; « Publier » reste possible.
+          {sansPhoto.some(i => auStockage(i.image)) ? ` Une fois le réglage fait, « Vérifier de nouveau » : ${sansPhoto.length > 1 ? "elles réapparaissent d'elles-mêmes" : "elle réapparaît d'elle-même"}.` : ""}
+          <button type="button" onClick={reverifier} disabled={reverif === "en cours"} style={{ ...ui.btn("ligne", "s"), height: 26, marginLeft: 8 }}>{reverif === "en cours" ? "Vérification…" : "Vérifier de nouveau"}</button>
+          {reverif && reverif !== "en cours" && <span style={{ marginLeft: 8 }}>{reverif}</span>}
+        </div>
+      )}
+      {!sansPhoto.length && reverif && reverif !== "en cours" && <div role="status" style={{ fontSize: 12, color: T.ok, margin: "8px 0" }}>{reverif}</div>}
       {terminees.length > 0 && <div style={{ ...ui.encart("neutral"), fontSize: 12, margin: "8px 0" }}>{terminees.length} mise{terminees.length > 1 ? "s" : ""} en avant {terminees.length > 1 ? "sont terminées" : "est terminée"} : vous pouvez {terminees.length > 1 ? "les" : "la"} supprimer.</div>}
       {apercu && (
         <Suspense fallback={<div style={{ fontSize: 12, color: T.inkMute, padding: 12 }}>Chargement de l'aperçu…</div>}>
@@ -347,16 +393,19 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
 }
 
 // ── vignette 16:9 (CSS seul) : salle, débord de la teinte, photo ou mini-cartes, médaillon or si remise ──
+// Photo choisie illisible : retirée comme sur la page (photos du menu, photo du catalogue), pastille rouge « illisible »
 function Vignette({ it, menu, offre, couleur }) {
   const t = teintes(couleur.hex);
-  const urls = it.type === "menu" ? [it.image, ...(menu?.products || []).map(p => p.image_url)].filter(Boolean).slice(0, 3) : [it.image || offre?.image_url].filter(Boolean);
+  const ok = (u) => u && !estIllisible(u);
+  const urls = it.type === "menu" ? [...new Set([it.image, ...(menu?.products || []).map(p => p.image_url)].filter(ok))].slice(0, 3) : [[it.image, offre?.image_url].find(ok)].filter(Boolean);
+  const illisible = !!it.image && estIllisible(it.image);
   const remise = it.type === "menu" ? Math.max(0, ...produitsVisibles(menu).map(p => Math.abs(num(p.pct) ?? 0)).filter(x => x < 100)) : offre?.pct;
   return (
     <span aria-hidden="true" style={{ position: "relative", width: 112, height: 63, flexShrink: 0, borderRadius: 8, overflow: "hidden", opacity: it.actif ? 1 : 0.5,
       background: `radial-gradient(60% 90% at 66% 50%, ${t.sombre}, transparent 75%), linear-gradient(180deg, var(--deep), var(--petrol))` }}>
       <span style={{ position: "absolute", left: 44, top: 7, right: 6, bottom: 7, borderRadius: 5, background: `radial-gradient(70% 70% at 50% 45%, var(--paper) 45%, ${t.claire})`,
         display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {urls.length ? urls.map((u, k) => <img key={k} src={photo(u, "thumbnail")} alt="" draggable={false} style={{ maxHeight: 42, maxWidth: urls.length > 1 ? 22 : 54, objectFit: "contain", mixBlendMode: "multiply",
+        {urls.length ? urls.map((u, k) => <img key={u} src={photo(u, "thumbnail")} alt="" draggable={false} onError={() => noterIllisible(u)} style={{ maxHeight: 42, maxWidth: urls.length > 1 ? 22 : 54, objectFit: "contain", mixBlendMode: "multiply",
           ...(urls.length > 1 ? { background: "#fff", borderRadius: 3, padding: 1, transform: `rotate(${(k - 1) * 9}deg)`, margin: "0 -3px", boxShadow: "0 2px 6px rgba(0,0,0,.25)" } : {}) }} />)
           : <span style={{ width: 22, height: 30, borderRadius: 2, background: "var(--surface)", borderTop: `3px solid ${t.trait}`, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />}
       </span>
@@ -364,8 +413,22 @@ function Vignette({ it, menu, offre, couleur }) {
       <span style={{ position: "absolute", left: 7, top: 22, width: 22, height: 4, borderRadius: 2, background: "rgba(251,248,242,.55)" }} />
       <span style={{ position: "absolute", left: 7, bottom: 12, width: 26, height: 7, borderRadius: 4, background: "var(--paper)" }} />
       {remise >= 1 && <span style={{ position: "absolute", right: 2, top: 2, width: 15, height: 15, borderRadius: "50%", background: "var(--or)" }} />}
+      {illisible && <span style={{ position: "absolute", left: 44, right: 6, bottom: 3, padding: "1px 4px", borderRadius: 4, background: T.danger, color: "#fff", fontSize: 9, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>illisible</span>}
     </span>
   );
+}
+
+// Miniature de la photo choisie (formulaire) : la photo, ou « Photo illisible » (jamais une icône d'image cassée) avec le
+// motif et ce que la page montre à la place
+function Miniature({ url, aLaPlace }) {
+  useIllisibles();
+  const cadre = { width: 44, height: 44, flexShrink: 0, borderRadius: 6, border: `1px solid ${T.line}`, background: "#fff" };
+  if (!estIllisible(url)) return <img src={photo(url, "thumbnail")} alt="" onError={() => noterIllisible(url)} style={{ ...cadre, objectFit: "contain" }} />;
+  return (<>
+    <span role="img" aria-label="Photo illisible" style={{ ...cadre, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", border: `1.5px dashed ${T.danger}`,
+      background: T.paper, color: T.danger, fontSize: 9, fontWeight: 700, lineHeight: 1.15 }}>Photo illisible</span>
+    <span style={{ flexBasis: "100%", order: 9, fontSize: 11, color: T.danger }}><b>Photo illisible</b> : {raisonIllisible(url)}. {aLaPlace}</span>
+  </>);
 }
 
 function Puce({ statut, fin, debut }) {
@@ -391,6 +454,7 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start", minWidth: 150 }}>
           <Puce statut={ev.statut} fin={ev.fin} debut={it.date_debut} />
+          {it.image && estIllisible(it.image) && <span style={{ ...ui.badge("danger"), whiteSpace: "normal" }}>Photo illisible</span>}
           {dates && <span style={{ fontSize: 11, color: T.inkMute }}>{dates}</span>}
           {publie && publie.statut !== ev.statut && <span style={{ fontSize: 10, color: T.inkMute }}>en ligne : {(STATUTS[publie.statut] || STATUTS.inconnu)[1].toLowerCase()}</span>}
           {/^menu_/.test(ev.statut) && ouvrirPromos && <button onClick={ouvrirPromos} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Onglet Promos</button>}
@@ -480,7 +544,8 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
         <span>
           {it.type === "produit" ? (<>
             <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-              {(it.image || offre?.image_url) ? <img src={photo(it.image || offre.image_url, "thumbnail")} alt="" style={{ width: 44, height: 44, objectFit: "contain", background: "#fff", borderRadius: 6, border: `1px solid ${T.line}` }} />
+              {(it.image || offre?.image_url) ? <Miniature url={it.image || offre.image_url}
+                aLaPlace={it.image ? `L'accueil montre ${offre?.image_url && !estIllisible(offre.image_url) ? "la photo du catalogue" : "la boîte générée"} à la place.` : "L'accueil montre la boîte générée à la place."} />
                 : <span style={{ fontSize: 12, color: T.inkMute }}>Boîte générée (marque, dosage, forme)</span>}
               <button type="button" onClick={onChercher} disabled={occupe} aria-busy={etat.occupe === "recherche"} style={ui.btn("ligne", "s")}>{etat.occupe === "recherche" ? "Recherche…" : "Chercher dans la banque d'images"}</button>
               {boutonFichier}
@@ -490,7 +555,7 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
             <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => { if (adresse.trim() !== (it.image || "")) onImage(adresse.trim() || null); }} placeholder="Coller une adresse https://…" aria-label="Adresse https de la photo" style={{ ...champ, marginTop: 6, ...bord("image") }} />
           </>) : (<>
             <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
-              {it.image && <img src={photo(it.image, "thumbnail")} alt="" style={{ width: 44, height: 44, objectFit: "contain", background: "#fff", borderRadius: 6, border: `1px solid ${T.line}` }} />}
+              {it.image && <Miniature url={it.image} aLaPlace="L'éventail montre les photos du menu à la place." />}
               {boutonFichier}
               {it.image && <button type="button" onClick={() => onImage(null)} disabled={occupe} style={ui.btn("ligne", "s")}>Retirer la carte de devant</button>}
               {message}
