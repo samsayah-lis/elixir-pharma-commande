@@ -11,19 +11,21 @@
 // pendant un envoi, il montre toujours « Envoi… » ; un jeton par mise en avant fait ignorer une réponse dépassée (envoi
 // ou recherche plus ancien, adresse collée ou retour au catalogue entre-temps) : le dernier choix l'emporte.
 // Affichage vérifié (incident du 20/10/2026, stockage des photos privé : carte de devant blanche malgré « ✓ Photo
-// ajoutée ») : une photo envoyée n'entre dans le brouillon qu'une fois affichée par le navigateur ; sinon message clair
-// (réglage du stockage, docs/accueil.md). Photos du brouillon et de la version en ligne contrôlées : « Photo illisible »
-// (vignette, miniature du formulaire, ligne), avertissement à « Publier » (sans le bloquer), « Vérifier de nouveau ».
+// ajoutée ») : une photo envoyée n'entre dans le brouillon qu'une fois affichée par le navigateur (envoyerEtVerifier de
+// photo-manuelle.js) ; sinon message clair, motif lu dans la réponse du stockage (bucket privé : réglage, docs/accueil.md ;
+// fichier absent, panne, connexion). Photos du brouillon et de la version en ligne contrôlées : « Photo illisible » avec
+// son motif (vignette, miniature du formulaire, ligne), avertissement à « Publier » (sans le bloquer), « Vérifier de nouveau ».
+// Couleur automatique : photo trop lente → « Relire la couleur » (jamais « l'hébergeur ne permet pas » à tort).
 import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { T, R, fmtEur, fmtPct, tone, ui } from "../theme.js";
 import { teinteDominante } from "./teinte-photo.js";
 import { LIMITES, MAX_VISIBLES, couleurDe, couleurMenu, dateTexte, finEffective, jourParis, menuEnCours, produitsVisibles,
   repliMenus, teintes, titreMenu, titreParDefaut } from "./accueil/vedettes.js";
 import { erreursBrouillon, etatDate } from "./accueil/vedettes-regles.js";
-import { photo, useIllisibles, useMedia } from "./accueil/outils.js";
-import { estIllisible, noterIllisible } from "./accueil/illisibles.js";
-import { ACCEPT, AIDE, auStockage, cleMiseEnAvant, controlerAffichage, controlerFichier, envoyerPhoto, messageNonAffichee, noterEchecStockage, preparerPhoto,
-  raisonIllisible, reverifierIllisibles, stockageLisible, suivre, verifierAffichage } from "./photo-manuelle.js";
+import { photo, surErreurPhoto, useIllisibles, useMedia } from "./accueil/outils.js";
+import { estIllisible } from "./accueil/illisibles.js";
+import { ACCEPT, AIDE, cleMiseEnAvant, controlerAffichage, controlerFichier, envoyerEtVerifier, expliquerIllisible, illisibleCarPrive, preparerPhoto,
+  raisonIllisible, reverifierIllisibles, suivre } from "./photo-manuelle.js";
 
 const ApercuMea = React.lazy(() => import("./accueil/ApercuMea.jsx"));
 const CLE = "accueil_vedettes";
@@ -109,6 +111,9 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   // photos choisies (brouillon et version en ligne) : chacune contrôlée une fois ; illisible → notée (illisibles.js)
   const imagesChoisies = [...new Set([...(brouillon?.items || []), ...(enLigne?.valeur?.items || [])].map(i => i.image).filter(Boolean))].join("|");
   useEffect(() => { if (imagesChoisies) imagesChoisies.split("|").forEach(u => controlerAffichage(u, { variante: photo(u, "thumbnail") })); }, [imagesChoisies]);
+  // motif de chaque photo du stockage notée illisible (contrôle ou miniature) : lu dans la réponse du stockage, jamais deviné
+  const illisiblesChoisies = imagesChoisies ? imagesChoisies.split("|").filter(estIllisible).join("|") : "";
+  useEffect(() => { if (illisiblesChoisies) illisiblesChoisies.split("|").forEach(u => expliquerIllisible(u)); }, [illisiblesChoisies]);
 
   // ── modifications non publiées ──
   const valeurEnLigne = enLigne?.valeur;
@@ -207,11 +212,15 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     setCouleurMsg(m => ({ ...m, [id]: "Lecture de la couleur de la photo…" }));
     teinteDominante(url).then(async r => {
       modifier(id, { couleur_auto: r.hex || null });
-      // lecture refusée : hébergeur sans en-tête CORS, ou photo qui ne s'affiche pas du tout (à dire autrement)
-      const illisible = r.erreur && (estIllisible(url) || await controlerAffichage(url, { variante: photo(url, "thumbnail") }) === "illisible");
-      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : illisible ? "Photo illisible : couleur du menu ou du rayon utilisée."
-        : r.erreur ? "L'hébergeur de cette photo ne permet pas d'en lire la couleur : couleur du menu ou du rayon utilisée. Choisissez-en une si vous préférez."
-          : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
+      // photo trop lente (2 s) : ni l'hébergeur ni la photo en cause, « Relire la couleur » ; lecture refusée : hébergeur sans
+      // en-tête CORS (la photo s'affiche), ou photo qui ne s'affiche pas du tout (à dire autrement)
+      const relire = { texte: "La photo a mis trop de temps à se charger : couleur du menu ou du rayon utilisée pour l'instant.", relire: url };
+      if (r.erreur === "delai") { setCouleurMsg(m => ({ ...m, [id]: relire })); return; }
+      const verdict = r.erreur ? (estIllisible(url) ? "illisible" : await controlerAffichage(url, { variante: photo(url, "thumbnail") })) : null;
+      setCouleurMsg(m => ({ ...m, [id]: r.hex ? "" : verdict === "illisible" ? "Photo illisible : couleur du menu ou du rayon utilisée."
+        : verdict === "ok" ? "L'hébergeur de cette photo ne permet pas d'en lire la couleur : couleur du menu ou du rayon utilisée. Choisissez-en une si vous préférez."
+          : r.erreur ? { ...relire, texte: "Couleur de la photo non lue (photo lente ou injoignable) : couleur du menu ou du rayon utilisée pour l'instant." }
+            : "Photo sans couleur dominante (produit blanc ou gris) : couleur du menu ou du rayon utilisée." }));
     });
   };
   // ── photo d'une mise en avant : banque d'images, ordinateur, adresse ; la dernière opération lancée l'emporte ──
@@ -240,24 +249,19 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     const actuel = jeton(it.id);
     return suivre((async () => {
       noterPhoto(it.id, { occupe: "envoi", texte: "Préparation de la photo…" });
-      try {
-        const prete = await preparerPhoto(fichier);
-        if (!actuel()) return;
-        noterPhoto(it.id, { occupe: "envoi", texte: "Envoi de la photo…" });
-        const url = await envoyerPhoto(adminFetch, cleMiseEnAvant(it), prete);
-        if (!actuel()) return;
-        // l'adresse doit s'afficher AVANT d'entrer dans le brouillon (stockage privé : 400 « Bucket not found »)
-        noterPhoto(it.id, { occupe: "envoi", texte: "Vérification de l'affichage de la photo…" });
-        const verdict = await verifierAffichage(url);
-        if (!actuel()) return;
-        const nonAffichee = messageNonAffichee(verdict, { url });
-        if (nonAffichee) { if (verdict === "illisible") noterEchecStockage(url); noterPhoto(it.id, { texte: nonAffichee, ton: "danger" }); return; }
-        stockageLisible(url);
-        changerImage(it, url);
-        // banc d'essai : adresse locale, que la règle des mises en avant (https) refuse à la publication
-        noterPhoto(it.id, { texte: /^https:\/\//.test(url) ? `✓ Photo ajoutée : visible sur l'accueil après « Publier »${it.type === "produit" ? " (le catalogue n'est pas modifié)" : ""}.`
-          : "✓ Photo ajoutée (banc d'essai : adresse locale, refusée à la publication ; en ligne, l'adresse est en https).", ton: "ok" });
-      } catch (e) { if (actuel()) noterPhoto(it.id, { texte: e.message, ton: "danger" }); }
+      let prete;
+      try { prete = await preparerPhoto(fichier); } catch (e) { if (actuel()) noterPhoto(it.id, { texte: e.message, ton: "danger" }); return; }
+      if (!actuel()) return;
+      // envoi, puis l'adresse doit s'afficher AVANT d'entrer dans le brouillon (photo-manuelle.js, envoyerEtVerifier) ;
+      // sinon rien dans le brouillon, message avec le motif lu dans la réponse du stockage
+      const res = await envoyerEtVerifier({ adminFetch, cle: cleMiseEnAvant(it), prete,
+        publier: (url) => { if (!actuel()) return null; changerImage(it, url); return { ok: true }; },
+        etape: (texte) => { if (actuel()) noterPhoto(it.id, { occupe: "envoi", texte }); } });
+      if (!actuel()) return;
+      if (!res.url) { noterPhoto(it.id, { texte: res.message, ton: res.ton }); return; }
+      // banc d'essai : adresse locale, que la règle des mises en avant (https) refuse à la publication
+      noterPhoto(it.id, { texte: /^https:\/\//.test(res.url) ? `✓ Photo ajoutée : visible sur l'accueil après « Publier »${it.type === "produit" ? " (le catalogue n'est pas modifié)" : ""}.`
+        : "✓ Photo ajoutée (banc d'essai : adresse locale, refusée à la publication ; en ligne, l'adresse est en https).", ton: "ok" });
     })());
   };
   const ajouter = (type, place, objet) => {
@@ -336,7 +340,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
         <div role="status" style={{ ...ui.encart("warn"), fontSize: 12, margin: "8px 0" }}>
           ⚠ Photo illisible pour {sansPhoto.map(i => `« ${titreDe(i)} »`).join(", ")} : {raisonIllisible(sansPhoto[0].image)}.
           {" "}L'accueil montre à la place {aLaPlaceDe(sansPhoto)} ; « Publier » reste possible.
-          {sansPhoto.some(i => auStockage(i.image)) ? ` Une fois le réglage fait, « Vérifier de nouveau » : ${sansPhoto.length > 1 ? "elles réapparaissent d'elles-mêmes" : "elle réapparaît d'elle-même"}.` : ""}
+          {sansPhoto.some(i => illisibleCarPrive(i.image)) ? ` Une fois le réglage fait, « Vérifier de nouveau » : ${sansPhoto.length > 1 ? "elles réapparaissent d'elles-mêmes" : "elle réapparaît d'elle-même"}.` : ""}
           <button type="button" onClick={reverifier} disabled={reverif === "en cours"} style={{ ...ui.btn("ligne", "s"), height: 26, marginLeft: 8 }}>{reverif === "en cours" ? "Vérification…" : "Vérifier de nouveau"}</button>
           {reverif && reverif !== "en cours" && <span style={{ marginLeft: 8 }}>{reverif}</span>}
         </div>
@@ -358,7 +362,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
                 menu={menuDe(it)} offre={offreDe(it)} couleur={couleur(it)} ouvert={ouvert === it.id} onOuvrir={() => setOuvert(o => (o === it.id ? null : it.id))}
                 onMonter={() => deplacer(it.id, -1)} onDescendre={() => deplacer(it.id, 1)} onMasquer={() => modifier(it.id, { actif: !it.actif })} onSupprimer={() => supprimer(it)} ouvrirPromos={ouvrirPromos}>
                 {ouvert === it.id && <Formulaire it={it} titreDefaut={it.type === "menu" ? titreMenu(menuDe(it)) : titreParDefaut(offreDe(it))} menu={menuDe(it) || menuRangement(it)}
-                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]}
+                  offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]} onRelireCouleur={(u) => calculerTeinte(it.id, u)}
                   nom={titreDe(it)} photoEtat={photoEtats[it.id]} onChercher={() => chercherPhoto(it)} onFichier={(f) => ajouterPhoto(it, f)} onImage={(image) => imageManuelle(it, image)}
                   onChange={(patch) => modifier(it.id, patch)} onPlace={(p) => changerPlace(it.id, p)} />}
               </Ligne>
@@ -405,7 +409,7 @@ function Vignette({ it, menu, offre, couleur }) {
       background: `radial-gradient(60% 90% at 66% 50%, ${t.sombre}, transparent 75%), linear-gradient(180deg, var(--deep), var(--petrol))` }}>
       <span style={{ position: "absolute", left: 44, top: 7, right: 6, bottom: 7, borderRadius: 5, background: `radial-gradient(70% 70% at 50% 45%, var(--paper) 45%, ${t.claire})`,
         display: "flex", alignItems: "center", justifyContent: "center" }}>
-        {urls.length ? urls.map((u, k) => <img key={u} src={photo(u, "thumbnail")} alt="" draggable={false} onError={() => noterIllisible(u)} style={{ maxHeight: 42, maxWidth: urls.length > 1 ? 22 : 54, objectFit: "contain", mixBlendMode: "multiply",
+        {urls.length ? urls.map((u, k) => <img key={u} src={photo(u, "thumbnail")} alt="" draggable={false} onError={(ev) => surErreurPhoto(u, ev)} style={{ maxHeight: 42, maxWidth: urls.length > 1 ? 22 : 54, objectFit: "contain", mixBlendMode: "multiply",
           ...(urls.length > 1 ? { background: "#fff", borderRadius: 3, padding: 1, transform: `rotate(${(k - 1) * 9}deg)`, margin: "0 -3px", boxShadow: "0 2px 6px rgba(0,0,0,.25)" } : {}) }} />)
           : <span style={{ width: 22, height: 30, borderRadius: 2, background: "var(--surface)", borderTop: `3px solid ${t.trait}`, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />}
       </span>
@@ -423,7 +427,7 @@ function Vignette({ it, menu, offre, couleur }) {
 function Miniature({ url, aLaPlace }) {
   useIllisibles();
   const cadre = { width: 44, height: 44, flexShrink: 0, borderRadius: 6, border: `1px solid ${T.line}`, background: "#fff" };
-  if (!estIllisible(url)) return <img src={photo(url, "thumbnail")} alt="" onError={() => noterIllisible(url)} style={{ ...cadre, objectFit: "contain" }} />;
+  if (!estIllisible(url)) return <img src={photo(url, "thumbnail")} alt="" onError={(ev) => surErreurPhoto(url, ev)} style={{ ...cadre, objectFit: "contain" }} />;
   return (<>
     <span role="img" aria-label="Photo illisible" style={{ ...cadre, display: "flex", alignItems: "center", justifyContent: "center", textAlign: "center", border: `1.5px dashed ${T.danger}`,
       background: T.paper, color: T.danger, fontSize: 9, fontWeight: 700, lineHeight: 1.15 }}>Photo illisible</span>
@@ -474,7 +478,7 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
 
 function Compteur({ v, max }) { return <span style={{ fontSize: 11, fontWeight: 600, color: v > max ? T.danger : T.inkMute }}>{v}/{max}</span>; }
 
-function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, nom, photoEtat, onChercher, onFichier, onImage, onChange, onPlace }) {
+function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, onRelireCouleur, nom, photoEtat, onChercher, onFichier, onImage, onChange, onPlace }) {
   const [adresse, setAdresse] = useState(it.image || "");
   useEffect(() => { setAdresse(it.image || ""); }, [it.image]);   // photo trouvée ou envoyée, même formulaire rouvert
   const etat = photoEtat || {}, occupe = !!etat.occupe, envoi = etat.occupe === "envoi";
@@ -575,7 +579,8 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
               <input type="color" value={it.couleur || couleur.hex} onChange={e => onChange({ couleur: e.target.value.toLowerCase() })} style={{ width: 30, height: 30, border: "none", padding: 0, background: "none" }} />Autre
             </label>
           </span>
-          {couleurMsg && <span style={{ ...aide, display: "block" }}>{couleurMsg}</span>}
+          {couleurMsg && <span style={{ ...aide, display: "block" }}>{couleurMsg.texte ?? couleurMsg}
+            {couleurMsg.relire && <button type="button" onClick={() => onRelireCouleur?.(couleurMsg.relire)} style={{ ...ui.btn("ligne", "s"), height: 24, marginLeft: 8 }}>Relire la couleur</button>}</span>}
         </span>
       </div>
       {medicament && <div style={{ ...ui.encart("warn"), fontSize: 12 }}>Médicament : restez sur le prix, la disponibilité et le conditionnement (publicité réglementée : pas d'allégation thérapeutique).</div>}

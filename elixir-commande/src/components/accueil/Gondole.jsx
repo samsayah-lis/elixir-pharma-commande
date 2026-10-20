@@ -7,30 +7,32 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Boite from "./Boite.jsx";
 import Rouleau from "./Rouleau.jsx";
-import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, useIllisibles } from "./outils.js";
-import { estIllisible, noterIllisible } from "./illisibles.js";
+import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, surErreurPhoto, useIllisibles } from "./outils.js";
+import { estIllisible } from "./illisibles.js";
 import { alpha } from "../../theme.js";
 
-// photo (medium, large en 2x) ou boîte générée. Photo en erreur : notée (illisibles.js) ; la page reconstruit l'offre sans
-// elle (autre photo du produit, sinon la boîte), dans le même rendu
+// photo (medium, large en 2x) ou boîte générée. Photo en erreur : l'original d'abord (taille réduite en erreur), puis notée
+// (illisibles.js) ; la page reconstruit l'offre sans elle (autre photo du produit, sinon la boîte), dans le même rendu
 export function Visuel({ offre, mode, taille, priorite = false, teinte }) {
   useIllisibles();
   const url = offre.image_url;
   if (url && !estIllisible(url)) {
     const r = photoReconnue(url);
     return <img className="acc-photo" src={photo(url, "medium")} srcSet={r ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
-      alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={() => noterIllisible(url)} />;
+      alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={(ev) => surErreurPhoto(url, ev)} />;
   }
   return <Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode={mode} taille={taille} />;
 }
 
 // halo teinté du rayon derrière une boîte générée : assez dense (0,24) pour que la boîte claire se détache du fond sable ;
-// miniature floutée de la photo sinon (en erreur : retirée, rien derrière le produit)
+// miniature floutée de la photo sinon (en erreur, ou photo illisible : le halo teinté, jamais rien derrière le produit)
 export function Halo({ offre, teinte }) {
   useIllisibles();
+  const [ko, setKo] = useState(null);   // adresse dont la miniature floutée a échoué
   const t = alpha(teinte, 0.24);
-  return offre.image_url && !estIllisible(offre.image_url)
-    ? <span className="acc-halo" aria-hidden="true"><PhotoDecor url={offre.image_url} /></span>
+  const url = offre.image_url;
+  return url && !estIllisible(url) && ko !== url
+    ? <span className="acc-halo" aria-hidden="true"><PhotoDecor url={url} onKo={setKo} /></span>
     : <span className="acc-halo acc-halo--boite" aria-hidden="true" style={typeof t === "string" && t.startsWith("rgba(") ? { "--acc-halo": t } : undefined} />;
 }
 

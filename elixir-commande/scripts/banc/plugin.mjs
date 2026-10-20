@@ -17,7 +17,8 @@
 //           Stockage privé simulé (incident du 20/10/2026 : bucket elixir-images privé, toute adresse publique répondait
 //           400 « Bucket not found ») : BANC_PHOTOS=prive au lancement, ou à chaud /banc-photos/_stockage?prive=1 (0 pour
 //           revenir au stockage public ; sans paramètre : état actuel). Les photos restent rangées, seules leurs adresses
-//           répondent 400 : l'admin doit refuser « ✓ Photo ajoutée », l'accueil retomber sur l'absence de photo.
+//           répondent 400 (code NoSuchBucket, comme le Storage) : l'admin doit refuser « ✓ Photo ajoutée » et dire
+//           « stockage pas public », l'accueil retomber sur l'absence de photo. Fichier absent : 400 code NoSuchKey.
 //  • config-get (POST de l'admin : affichage, menus promo, mises en avant) : la valeur publiée est gardée en mémoire et
 //           relue par les GET suivants jusqu'au redémarrage du banc (le site voit ce que l'admin publie, comme en ligne ;
 //           jamais de 409 ici), sans toucher aux données figées.
@@ -422,14 +423,18 @@ export default function bancEssai() {
         const nom = basename(String(req.url || "").split("?")[0]);   // clé [\w-] : rien à décoder
         const ext = /^[\w-]{1,80}\.(jpg|png|webp)$/.exec(nom)?.[1];
         const fichier = resolve(DOSSIER_PHOTOS, nom);
-        // comme Supabase quand le bucket est privé : 400 en JSON, jamais mis en cache
-        if (stockagePrive) {
+        // réponses d'erreur du Storage (relevé du 20/10/2026) : 400 en JSON, lisible d'une autre origine, jamais mise en
+        // cache ; bucket privé ou absent → code NoSuchBucket, fichier absent d'un bucket public → code NoSuchKey (lus par
+        // diagnostiquerStockage et la sonde d'avant l'envoi, photo-manuelle.js)
+        const erreur = (corps) => {
           res.statusCode = 400;
           res.setHeader("Content-Type", "application/json; charset=utf-8");
           res.setHeader("Cache-Control", "no-store");
-          return res.end(JSON.stringify({ statusCode: "404", error: "Bucket not found", message: "Bucket not found" }));
-        }
-        if (!ext || !existsSync(fichier)) { res.statusCode = 404; return res.end(); }
+          res.setHeader("Access-Control-Allow-Origin", "*");
+          return res.end(JSON.stringify({ statusCode: "404", ...corps }));
+        };
+        if (stockagePrive) return erreur({ error: "Bucket not found", message: "Bucket not found", code: "NoSuchBucket" });
+        if (!ext || !existsSync(fichier)) return erreur({ error: "not_found", message: "Object not found", code: "NoSuchKey" });
         res.setHeader("Content-Type", ext === "jpg" ? "image/jpeg" : `image/${ext}`);
         res.setHeader("Cache-Control", "no-cache");
         res.setHeader("Access-Control-Allow-Origin", "*");

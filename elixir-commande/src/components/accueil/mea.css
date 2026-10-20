@@ -79,6 +79,9 @@
 .mea-visuel--menu { align-items: center; }
 .mea-cadre { position: relative; display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; max-height: 400px; padding: 14px 10px 6px; }
 .mea-reflet-cadre { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+/* photo du produit pas encore chargée : lueur de la teinte de l'offre à sa place (après 0,3 s, sans animation infinie) */
+.mea-cadre--attente::before { content: ""; position: absolute; left: 20%; right: 20%; top: 16%; bottom: 6%; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(closest-side, var(--mea-claire), transparent); opacity: .7; animation: mea-attente .4s var(--ease) .3s both; }
 .mea-photo { display: block; max-width: 100%; max-height: 100%; object-fit: contain; mix-blend-mode: multiply; }
 .mea-sujet--boite { display: flex; align-items: flex-end; justify-content: center; }
 .mea-vivant .mea-sujet { transform: perspective(900px) rotateX(calc(var(--py, 0) * -5deg)) rotateY(calc(var(--px, 0) * 5deg)) translate3d(calc(var(--px, 0) * 8px), calc(var(--py, 0) * 8px), 0); }
@@ -123,6 +126,13 @@
 .mea-carte-prix { font-size: 13px; font-weight: 700; color: var(--ink); }
 .mea-eventail--mini .mea-carte-nom, .mea-eventail--s .mea-carte-nom { font-size: 9.5px; -webkit-line-clamp: 3; }
 .mea-eventail--mini .mea-carte-prix, .mea-eventail--s .mea-carte-prix { font-size: 10px; }
+/* photo pas encore chargée (lente, ou erreur en attente) : jamais une carte blanche — nom et prix comme une carte texte,
+   montrés après 0,3 s (une photo rapide ne fait rien clignoter), photo invisible hors du flux jusqu'à son chargement */
+.mea-carte--attente { flex-direction: column; align-items: flex-start; justify-content: space-between; padding-top: 16px; border-top: 3px solid var(--mea-trait); }
+.mea-carte--attente img { position: absolute; left: 0; top: 0; opacity: 0; }
+.mea-carte--attente .mea-carte-nom, .mea-carte--attente .mea-carte-prix { animation: mea-attente .25s var(--ease) .3s both; }
+@keyframes mea-attente { from { opacity: 0; } }
+.mea-carte--chargee img { animation: mea-attente .2s var(--ease) both; }
 
 /* ── le texte (colonne de gauche, sur la salle) : les deux diapositives (sortante, active) dans la même cellule ── */
 .mea-texte { grid-area: texte; position: relative; display: grid; min-width: 0; padding: 12px 40px 40px 56px; }

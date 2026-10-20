@@ -12,9 +12,9 @@ import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail from "./Eventail.jsx";
-import { PhotoDecor, RESSORT, anime, photo, photoReconnue, sansEmoji, useIllisibles } from "./outils.js";
+import { PhotoDecor, RESSORT, anime, photo, photoReconnue, sansEmoji, surErreurPhoto, useIllisibles } from "./outils.js";
 import { dateTexte, prixLu, resumeMenuLu } from "./vedettes.js";
-import { estIllisible, noterIllisible } from "./illisibles.js";
+import { estIllisible } from "./illisibles.js";
 
 let cascadeJouee = false;
 // [colonnes, rangées] de chaque tuile et variante : g grande, b bandeau, c large compacte, p petite
@@ -30,12 +30,13 @@ const lot = (o) => (o.lot?.qte > 1 ? `${o.menu?.key === "stratege" ? "Carton" : 
 // rayon où l'ajout range la ligne, comme la vitrine cinéma : « Sélection Stratège », sinon « la Saisie de commande »
 const rayonDe = (o) => (o.menu?.key && o.menu.key !== "saisie" ? sansEmoji(o.menu.label) : "la Saisie de commande");
 
-// photo en erreur : notée (illisibles.js) ; la page reconstruit l'offre sans elle (autre photo du produit, sinon la boîte)
+// photo en erreur : l'original d'abord (taille réduite en erreur), puis notée (illisibles.js) ; la page reconstruit l'offre
+// sans elle (autre photo du produit, sinon la boîte)
 function Photo({ url, taille, teinte, offre }) {
   useIllisibles();
   // 2x : la taille au-dessus (vignette → moyenne), jamais la grande pour une petite tuile (1,4 Mo sur téléphone)
   if (url && !estIllisible(url)) return <img className="mea-tuile-photo" src={photo(url, taille)} srcSet={photoReconnue(url) ? `${photo(url, taille)} 1x, ${photo(url, taille === "thumbnail" ? "medium" : "large")} 2x` : undefined}
-    alt="" draggable={false} decoding="async" loading="lazy" onError={() => noterIllisible(url)} />;
+    alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(url, ev)} />;
   return offre ? <span className="mea-tuile-boite"><Boite boite={offre.boite} cip={offre.cip} teinte={teinte} mode="25d" taille="carte" /></span> : null;
 }
 
@@ -185,7 +186,7 @@ function TuileMenu({ e, v, format, props, onVoir, onExpire }) {
       <Fond e={e} />
       <span className={`mea-tuile-visuel${!grand && !vignettes.length && m.cartes.length ? " mea-tuile-visuel--cartes" : ""}`} aria-hidden="true">
         {grand ? <Eventail cartes={m.cartes} max={v === "grande" && format !== "s" ? 5 : 3} taille={v !== "grande" ? "s" : format === "l" ? "l" : format === "m" ? "m" : "s"} balise="span" />
-          : vignettes.length ? <span className="mea-pastilles">{vignettes.map(c => <span key={c.url} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" onError={() => noterIllisible(c.url)} /></span>)}</span>
+          : vignettes.length ? <span className="mea-pastilles">{vignettes.map(c => <span key={c.url} className="mea-pastille"><img src={photo(c.url, "thumbnail")} alt="" draggable={false} decoding="async" loading="lazy" onError={(ev) => surErreurPhoto(c.url, ev)} /></span>)}</span>
             // menu sans photo : ses cartes texte en éventail (nom et prix, filet de la teinte) ; l'icône seulement sans aucune carte
             : m.cartes.length ? <Eventail cartes={m.cartes} max={3} taille={v === "petite" && format !== "s" ? "s" : "mini"} balise="span" />
               : <span className="mea-tuile-icone"><Icone nom="etiquette" taille={20} /></span>}

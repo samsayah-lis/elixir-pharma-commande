@@ -88,13 +88,14 @@ const photoCatalogue = (catalogue, cip, illisibles) => {
 };
 // résumé d'un menu : nombre de produits montrés, « dès » (plus petit prix net), « jusqu'à » (plus forte remise réellement
 // présente), cartes de l'éventail (5 au plus : photos dans l'ordre du menu, dédoublonnées, la carte de devant d'abord ;
-// complétées jusqu'à 3 par des cartes texte). Photo illisible (carte de devant comprise) : comme sans photo.
+// complétées jusqu'à 3 par des cartes texte). Photo illisible (carte de devant comprise) : comme sans photo. Chaque carte
+// photo a un texte (nom du menu pour la carte de devant, nom et prix du produit sinon), montré tant que sa photo charge.
 export function resumeMenu(menu, { stockData, catalogue, image, illisibles } = {}) {
   const vis = produitsVisibles(menu, stockData);
   const pns = vis.map(p => nombre(p.pn)), pcts = vis.map(p => Math.abs(nombre(p.pct) ?? 0)).filter(x => x >= 1 && x < 100);
   const cartes = [], urls = new Set();
   const devant = photoLisible(image, illisibles);
-  if (devant) { cartes.push({ url: devant, nom: "", pn: null }); urls.add(devant); }
+  if (devant) { cartes.push({ url: devant, nom: titreMenu(menu), pn: null }); urls.add(devant); }
   for (const p of vis) {
     if (cartes.length >= 5) break;
     const url = photoLisible(p.image_url, illisibles) || photoCatalogue(catalogue, String(p.cip || ""), illisibles);

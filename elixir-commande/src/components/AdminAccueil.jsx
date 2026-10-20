@@ -17,19 +17,21 @@
 // l'image_url du GET, qui peut être en retard. Hors catalogue : clé « accueil-… », le catalogue n'est pas touché.
 // Publication : majAccueil (AdminPanel) applique seulement le changement voulu à la DERNIÈRE version des réglages, même
 // si l'onglet a été quitté ou remonté pendant l'envoi ; l'état d'envoi de chaque ligne vit hors du composant.
-// Affichage vérifié (incident du 20/10/2026, stockage des photos privé) : la photo envoyée doit s'afficher dans le
-// navigateur avant d'être publiée et annoncée ; sinon rien n'est publié et le message dit pourquoi (docs/accueil.md,
-// « Stockage des photos »). Produit du catalogue : le stockage est sondé AVANT l'envoi quand une photo du stockage est
-// connue (l'envoi écrit l'adresse dans sa fiche avant toute vérification). Photos de la liste qui ne s'affichent pas :
-// « Photo illisible » sur la ligne, avec ce que l'accueil montre à la place, et « Vérifier de nouveau ».
+// Affichage vérifié (incident du 20/10/2026, stockage des photos privé ; envoyerEtVerifier de photo-manuelle.js) : la
+// photo envoyée doit s'afficher dans le navigateur avant d'être publiée et annoncée ; sinon rien n'est publié et le message
+// dit pourquoi, d'après la réponse du stockage (docs/accueil.md, « Stockage des photos »). Produit du catalogue : le
+// stockage est TOUJOURS sondé avant l'envoi (l'envoi écrit l'adresse dans sa fiche avant toute vérification) ; refus si
+// son état n'est pas établi ; photo envoyée qui ne s'affiche pas : son ancienne photo (autre fichier) lui est remise.
+// Photos de la liste qui ne s'affichent pas : « Photo illisible » sur la ligne, avec son motif et ce que l'accueil montre
+// à la place, et « Vérifier de nouveau ».
 // Trois intertitres dans l'ordre de la page : Mises en avant (AdminVedettes.jsx : vitrine cinéma et grille, clé
 // accueil_vedettes publiée par l'éditeur lui-même) · Les plus commandés (aperçu et exclusions) · Réglages (interrupteurs).
 import React, { useEffect, useRef, useState } from "react";
 import { T, R, fmtEur, ui } from "../theme.js";
 import AdminVedettes from "./AdminVedettes.jsx";
-import { ACCEPT, AIDE, MESSAGE_STOCKAGE_PRIVE, abonnerLignes, auCatalogue, auStockage, cleEnvoi, controlerAffichage, controlerFichier, envoyerPhoto, estPhotoEnvoyee,
-  etatLigne, liee, messageNonAffichee, noterEchecStockage, noterLigne, portee, preparerPhoto, questionCatalogue, raisonIllisible, repartitionFamille,
-  reverifierIllisibles, sonderStockage, stockageLisible, suivre, verifierAffichage, versionnerAuCatalogue } from "./photo-manuelle.js";
+import { ACCEPT, AIDE, abonnerLignes, auCatalogue, cleEnvoi, controlerAffichage, controlerFichier, envoyerEtVerifier, estPhotoEnvoyee, etatLigne,
+  expliquerIllisible, illisibleCarPrive, liee, noterLigne, portee, preparerPhoto, questionCatalogue, raisonIllisible, repartitionFamille,
+  reverifierIllisibles, suivre } from "./photo-manuelle.js";
 import { estIllisible } from "./accueil/illisibles.js";
 import { photo, useIllisibles } from "./accueil/outils.js";
 
@@ -120,25 +122,18 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
     const remplace = cibles.some(c => photos[c]);
     return suivre((async () => {
       noter(s.cip, { occupe: "envoi", message: "Préparation de la photo…" });
-      let prete, url;
+      let prete;
       try { prete = await preparerPhoto(fichier); } catch (e) { noter(s.cip, { message: e.message, ton: "danger" }); return; }
-      // produit du catalogue : l'envoi écrit l'adresse dans sa fiche avant toute vérification → stockage sondé d'abord
-      if (versCatalogue) {
-        noter(s.cip, { occupe: "envoi", message: "Vérification du stockage des photos…" });
-        if (await sonderStockage(Object.values(photos).filter(estPhotoEnvoyee)) === "prive") { noter(s.cip, { message: MESSAGE_STOCKAGE_PRIVE, ton: "danger" }); return; }
-      }
-      noter(s.cip, { occupe: "envoi", message: "Envoi de la photo…" });
+      // sonde du stockage (produit du catalogue), envoi, affichage vérifié, adresse avec ?v= rangée au catalogue, puis
+      // seulement publication (photo-manuelle.js, envoyerEtVerifier) ; échec : rien de publié, message avec le motif
       const t = Date.now();
-      try { url = await envoyerPhoto(adminFetch, cleEnvoi(s, t), prete, t); } catch (e) { noter(s.cip, { message: e.message, ton: "danger" }); return; }
-      // l'adresse doit s'afficher AVANT d'être publiée et annoncée (stockage privé : 400 « Bucket not found »)
-      noter(s.cip, { occupe: "envoi", message: "Vérification de l'affichage de la photo…" });
-      const verdict = await verifierAffichage(url);
-      const nonAffichee = messageNonAffichee(verdict, { url, catalogue: versCatalogue });
-      if (nonAffichee) { if (verdict === "illisible") noterEchecStockage(url); noter(s.cip, { message: nonAffichee, ton: "danger" }); return; }
-      stockageLisible(url);
-      // produit du catalogue : la fonction y a rangé la photo (adresse sans ?v=) ; l'adresse avec ?v= l'y remplace
-      if (versCatalogue) await versionnerAuCatalogue(adminFetch, s.cip, url);
-      const r = await publierPhotos(Object.fromEntries(cibles.map(c => [c, url])));
+      const connues = [...Object.values(photos), ...(apercu?.slides || []), ...(apercu?.reserves || [])].flatMap(x => (typeof x === "string" ? [x] : dosages(x).map(o => o.image_url)));
+      const res = await envoyerEtVerifier({ adminFetch, cle: cleEnvoi(s, t), prete, t, candidats: connues,
+        catalogue: versCatalogue ? { cip: s.cip, ancienne: s.image_url || (dejaLiee ? photos[s.cip] : null) } : null,
+        publier: (url) => publierPhotos(Object.fromEntries(cibles.map(c => [c, url]))),
+        etape: (message) => noter(s.cip, { occupe: "envoi", message }) });
+      if (!res.url) { noter(s.cip, { message: res.message, ton: res.ton }); return; }
+      const r = res.publication || { ok: false };
       const n = cibles.length, verbe = remplace ? "remplacée" : "ajoutée";
       const dosagesTxt = tous.length < 2 ? "" : n === tous.length ? ` pour les ${n} dosages` : ` pour ${n} dosage${n > 1 ? "s" : ""} sur ${tous.length}`;
       const par = (raison) => gardees.filter(g => g.raison === raison);
@@ -172,6 +167,9 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
   const clePhotos = photosListe.join("|");
   useEffect(() => { photosListe.forEach(u => controlerAffichage(u, { variante: photo(u, "thumbnail") })); }, [clePhotos]);   // eslint-disable-line react-hooks/exhaustive-deps
   const illisiblesListe = photosListe.filter(estIllisible);
+  // motif de chaque photo du stockage illisible (lu dans la réponse du stockage, jamais deviné)
+  const cleIllisibles = illisiblesListe.join("|");
+  useEffect(() => { illisiblesListe.forEach(u => expliquerIllisible(u)); }, [cleIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
   const reverifier = async () => {
     setReverif("en cours");
     const n = await reverifierIllisibles(illisiblesListe);
@@ -190,7 +188,7 @@ export default function AdminAccueil({ displayConfig, majAccueil, adminFetch, pr
       {illisiblesListe.length > 0 && (
         <div role="status" style={{ ...ui.encart("warn"), fontSize: 12, margin: "6px 0 8px" }}>
           ⚠ {illisiblesListe.length} photo{illisiblesListe.length > 1 ? "s" : ""} de cette liste ne s'affiche{illisiblesListe.length > 1 ? "nt" : ""} pas (lignes marquées « Photo illisible ») : l'accueil {illisiblesListe.length > 1 ? "les remplace" : "la remplace"} par une autre photo du produit ou par la boîte générée.
-          {illisiblesListe.some(auStockage) ? " Stockage des photos pas public : réglage à faire une seule fois dans Supabase (docs/accueil.md, « Stockage des photos ») ; ensuite, « Vérifier de nouveau »." : ""}
+          {illisiblesListe.some(illisibleCarPrive) ? " Stockage des photos pas public : réglage à faire une seule fois dans Supabase (docs/accueil.md, « Stockage des photos ») ; ensuite, « Vérifier de nouveau »." : ""}
           <button type="button" onClick={reverifier} disabled={reverif === "en cours"} style={{ ...ui.btn("ligne", "s"), height: 26, marginLeft: 8 }}>{reverif === "en cours" ? "Vérification…" : "Vérifier de nouveau"}</button>
           {reverif && reverif !== "en cours" && <span style={{ marginLeft: 8 }}>{reverif}</span>}
         </div>

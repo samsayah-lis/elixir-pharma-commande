@@ -19,7 +19,9 @@
 //    parallèle du contexte ; photos réduites (banque d'images, Shopify, Open Beauty Facts) ;
 //  • photo illisible (incident du 20/10/2026 : stockage des photos privé, carte de devant blanche) : traitée exactement
 //    comme une photo absente — éventail refait (photos restantes, cartes texte), produit → photo du catalogue, de la
-//    banque, puis boîte générée ; halo jamais sur une photo illisible.
+//    banque, puis boîte générée ; halo jamais sur une photo illisible ; chaque carte photo a un texte d'attente ;
+//  • taille réduite en erreur (miniature, .400, 2x) : l'original d'abord, notée seulement s'il échoue aussi ; préchargement
+//    de l'offre suivante : de même, et jamais noté hors ligne.
 import { build } from "esbuild";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -33,7 +35,7 @@ globalThis.fetch = async (url) => { throw new Error(`réseau interdit dans les t
 
 const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
-  stdin: { contents: 'export * from "./src/components/accueil/vedettes.js"; export * from "./src/components/accueil/vedettes-regles.js"; export { resoudreOffre } from "./src/components/accueil/resolution.js"; export { applyTiers } from "./src/tiers.jsx"; export { teinteDePixels } from "./src/components/teinte-photo.js"; export { photo, photoReconnue } from "./src/components/accueil/outils.js";', resolveDir: RACINE, loader: "js" },
+  stdin: { contents: 'export * from "./src/components/accueil/vedettes.js"; export * from "./src/components/accueil/vedettes-regles.js"; export { resoudreOffre } from "./src/components/accueil/resolution.js"; export { applyTiers } from "./src/tiers.jsx"; export { teinteDePixels } from "./src/components/teinte-photo.js"; export { photo, photoReconnue, surErreurPhoto, prechargerPhoto } from "./src/components/accueil/outils.js"; export { estIllisible, reglerIllisibles } from "./src/components/accueil/illisibles.js";', resolveDir: RACINE, loader: "js" },
   bundle: true, format: "esm", platform: "neutral", write: false, loader: { ".jsx": "jsx", ".js": "jsx" }, jsx: "transform", logLevel: "silent",
   plugins: [{ name: "sans-react", setup(b) {
     b.onResolve({ filter: /^react$/ }, () => ({ path: "react", namespace: "vide" }));
@@ -405,6 +407,48 @@ function factureDuPanier(offre, qty) {
     ctxR(ill("https://assets.medipim.fr/media/medium/ccca.png"))).image_url, "https://x.test/get.jpg");
   eq("plus commandés : catalogue pas chargé, photo du GET illisible → photo de l'admin", C.resoudreOffre(o, { ...ctxR(ill("https://x.test/get.jpg")), catalogueCharge: false }).image_url, "https://x.test/admin.jpg");
   eq("photoLisible", [C.photoLisible(DEVANT, ill(DEVANT)), C.photoLisible(DEVANT, ill()), C.photoLisible(DEVANT), C.photoLisible("", ill())], [null, DEVANT, DEVANT, null]);
+  // photo lente : chaque carte photo a un texte, montré tant qu'elle charge (jamais une carte blanche)
+  eq("carte de devant : le nom du menu comme texte d'attente", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill() }).cartes[0].nom, C.titreMenu(vaseline));
+  vrai("toutes les cartes photo ont un texte d'attente", C.resumeMenu(vaseline, { image: DEVANT, illisibles: ill() }).cartes.every(c => c.nom));
+}
+
+// ── 10. Taille réduite en erreur : l'original d'abord (jamais toute la photo retirée pour une miniature) ; préchargement ──
+{
+  C.reglerIllisibles({ Img: () => undefined, planifier: (f) => f() });   // aucun nouvel essai en arrière-plan ici
+  // fausse <img> : currentSrc = taille demandée ; src remplacé → nouvelle demande de cette adresse
+  const fausseImg = (demandee) => {
+    const attrs = { src: demandee, srcset: `${demandee} 1x` };
+    return { attrs, dataset: {}, currentSrc: demandee, getAttribute: (k) => attrs[k], removeAttribute: (k) => { delete attrs[k]; },
+      get src() { return attrs.src; }, set src(v) { attrs.src = v; this.currentSrc = v; } };
+  };
+  const MED = "https://assets.medipim.fr/media/medium/spasfon.jpg";
+  const vignette = fausseImg(C.photo(MED, "thumbnail"));
+  eq("miniature en erreur : l'original demandé, srcset retiré, rien de noté", [C.surErreurPhoto(MED, { currentTarget: vignette }), vignette.attrs.src, "srcset" in vignette.attrs, C.estIllisible(MED)],
+    [false, MED, false, false]);
+  eq("l'original en erreur à son tour : notée (une seule bascule, aucune boucle)", [C.surErreurPhoto(MED, { currentTarget: vignette }), C.estIllisible(MED)], [true, true]);
+  const L = "https://assets.medipim.fr/media/medium/ventoline.jpg", deuxX = fausseImg(C.photo(L, "large"));
+  eq("2x « large » en erreur : la taille des données (medium) d'abord", [C.surErreurPhoto(L, { currentTarget: deuxX }), deuxX.attrs.src, C.estIllisible(L)], [false, L, false]);
+  const STO = "https://jwhbmnytrcrflavqtihj.supabase.co/storage/v1/object/public/elixir-images/products/a.jpg?v=1";
+  eq("photo sans taille réduite (stockage) : notée tout de suite", [C.surErreurPhoto(STO, { currentTarget: fausseImg(STO) }), C.estIllisible(STO)], [true, true]);
+  // préchargement de l'offre suivante (vitrine cinéma) : taille demandée, puis l'original ; jamais noté hors ligne
+  const demandes = [];
+  const Img = (echoue) => class { set src(u) { demandes.push(u); setTimeout(() => (echoue(u) ? this.onerror?.() : this.onload?.()), 1); } };
+  const attendre = () => new Promise(r => setTimeout(r, 15));
+  const OBF = "https://images.openbeautyfacts.org/images/products/871/024/400/2627/front_nl.128.full.jpg";
+  C.prechargerPhoto(OBF, "medium", Img(u => u.includes(".400.")));
+  await attendre();
+  eq("préchargement : .400 en erreur (502), l'original s'affiche → pas notée", [demandes, C.estIllisible(OBF)], [[OBF.replace(".full.", ".400."), OBF], false]);
+  const KO = "https://images.openbeautyfacts.org/images/products/871/024/400/2658/front_fr.12.full.jpg";
+  const nav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "navigator", { value: { onLine: false }, configurable: true });
+  C.prechargerPhoto(KO, "medium", Img(() => true));
+  await attendre();
+  eq("préchargement hors ligne : rien n'est noté (le réseau coupé n'est pas la photo)", C.estIllisible(KO), false);
+  Object.defineProperty(globalThis, "navigator", nav);
+  C.prechargerPhoto(KO, "medium", Img(() => true));
+  await attendre();
+  eq("préchargement en ligne, original en erreur aussi : notée (l'offre arrive sans elle)", C.estIllisible(KO), true);
+  C.reglerIllisibles();
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

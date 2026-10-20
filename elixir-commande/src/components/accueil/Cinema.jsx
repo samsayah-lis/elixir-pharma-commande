@@ -18,9 +18,9 @@ import BoutonLot from "./BoutonLot.jsx";
 import Rouleau from "./Rouleau.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail, { donne } from "./Eventail.jsx";
-import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, useIllisibles } from "./outils.js";
+import { EASE, PhotoDecor, RESSORT, SORTIE, anime, photo, photoReconnue, prechargerPhoto, surErreurPhoto, useIllisibles } from "./outils.js";
 import { prixLu, resumeMenuLu } from "./vedettes.js";
-import { estIllisible, noterIllisible } from "./illisibles.js";
+import { estIllisible } from "./illisibles.js";
 
 // mémoire de la page (aucune clé de stockage) : arrivée jouée, défilement arrêté par l'utilisateur, indice de glissé vu
 let arriveeJouee = false, defilementArrete = false, indiceVu = false;
@@ -30,16 +30,22 @@ const tailleTitre = (t) => (t.length <= 24 ? "l" : t.length <= 40 ? "m" : "s");
 const lienVoir = (o) => (o.menu?.key && o.menu.key !== "saisie" ? `Voir dans ${o.menu.label}` : "Voir dans la Saisie de commande");
 
 // le sujet de l'écran : photo (medium, large en 2x) posée en multiply sur l'écran, boîte générée, ou éventail du menu.
-// Photo en erreur : notée (illisibles.js) ; la page reconstruit l'offre sans elle (photo du catalogue ou de la banque),
-// sinon la boîte générée, dans le même rendu (jamais d'écran vide ni d'icône d'image cassée)
+// Photo en erreur : l'original d'abord (taille réduite en erreur), puis notée (illisibles.js) ; la page reconstruit l'offre
+// sans elle (photo du catalogue ou de la banque), sinon la boîte générée, dans le même rendu (jamais d'écran vide ni
+// d'icône d'image cassée). Photo pas encore chargée : lueur de la teinte de l'offre sous le produit (écran jamais nu).
 function Sujet({ e, format, priorite, mode }) {
   useIllisibles();
   const url = e.offre?.image_url;
+  const img = useRef(null);
+  const [chargee, setChargee] = useState(null);   // adresse chargée
+  const montree = url && !estIllisible(url) && !e.menu ? url : null;
+  useLayoutEffect(() => { const i = img.current; if (montree && i?.complete && i.naturalWidth > 0) setChargee(montree); }, [montree]);
   if (e.menu) return <Eventail cartes={e.menu.cartes} max={format === "s" ? 3 : 5} taille={format} />;
   return (
-    <span className="mea-cadre">
-      {url && !estIllisible(url) ? <img className="mea-sujet mea-photo" src={photo(url, "medium")} srcSet={photoReconnue(url) ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
-        alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined} onError={() => noterIllisible(url)} />
+    <span className={`mea-cadre${montree && chargee !== montree ? " mea-cadre--attente" : ""}`}>
+      {montree ? <img ref={img} className="mea-sujet mea-photo" src={photo(url, "medium")} srcSet={photoReconnue(url) ? `${photo(url, "medium")} 1x, ${photo(url, "large")} 2x` : undefined}
+        alt="" draggable={false} decoding="async" loading={priorite ? "eager" : "lazy"} fetchpriority={priorite ? "high" : undefined}
+        onLoad={() => setChargee(url)} onError={(ev) => surErreurPhoto(url, ev)} />
         : <span className="mea-sujet mea-sujet--boite"><Boite boite={e.offre.boite} cip={e.offre.cip} teinte={e.couleur} mode={mode} taille={format === "s" ? "carte" : "grande"} /></span>}
       <span className="mea-reflet-cadre"><span className="mea-reflet" /></span>
     </span>
@@ -205,10 +211,11 @@ export default function Cinema({ items, format = "l", reduit, finPointer, defile
       if (j === 0 && ++tours.current >= TOURS) { tours.current = 0; setActifId(l[0].id); setRotation("finie"); return; }
       setActifId(l[j].id);
     };
-    // préchargement de l'offre suivante, 1 s avant son tour (photo en erreur : notée, l'offre arrive déjà sans elle)
+    // préchargement de l'offre suivante, 1 s avant son tour (photo en erreur, original compris : notée, l'offre arrive déjà
+    // sans elle ; hors ligne : rien n'est noté ; erreur passagère : nouvel essai par illisibles.js)
     const suivante = items[(actif + 1) % n];
     const t = setTimeout(() => [suivante?.offre?.image_url, ...(suivante?.menu?.cartes || []).map(c => c.url)].filter(Boolean).slice(0, 5)
-      .forEach(u => { const i = new Image(); i.onerror = () => noterIllisible(u); i.src = photo(u, "medium"); }), DUREE - 1000 + (premier ? 1200 : 0));
+      .forEach(u => prechargerPhoto(u, "medium")), DUREE - 1000 + (premier ? 1200 : 0));
     return () => { a.onfinish = null; a.cancel(); animRot.current = null; clearTimeout(t); };
   }, [enMarche, actif]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { const a = animRot.current; if (!a) return; if (enPause) a.pause(); else if (a.playState === "paused") a.play(); }, [enPause]);
