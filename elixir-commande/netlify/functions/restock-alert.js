@@ -1,5 +1,6 @@
 import { getCors } from "./cors.js";
 import { verifyAdmin, verifyTokenAsync } from "./auth.js";
+import { marquerRetours, colonneManquante } from "./_restock.js";
 // ── Alertes retour en stock + remises péremption courte ─────────────────
 // Lot 0 (16/10/2026) : les alertes demandent un jeton. Pharmacie = son CIP et son e-mail, ceux du JETON
 // (tout pharmacy_cip / pharmacy_email venu du navigateur est ignoré) ; admin (saisie pour une pharmacie) =
@@ -10,6 +11,11 @@ import { verifyAdmin, verifyTokenAsync } from "./auth.js";
 // GET  /restock-alert?cip=X                                                → admin : qui veut ce produit ?
 // POST /restock-alert { action: "set_expiry_discount", cip, discount_pct } → admin : remise péremption
 // GET  /restock-alert?action=expiry_discounts                              → lister les remises (public : catalogue, aucune donnée de pharmacie)
+// Alertes retour (20/10/2026, docs/alertes-retour.md) : « mes alertes » renvoie chaque demande SANS adresse e-mail, avec
+// notified (déjà avertie : plus active) et retour (avertie depuis moins de 14 jours, produit de nouveau en stock : mention
+// « De retour en stock » de la Saisie ; DELETE la retire). Les e-mails partent de restock-notify (_restock.js). Une
+// nouvelle demande (POST) remet aussi à zéro le suivi d'envoi (notified_at, attempts, outcome), sans ces colonnes si la
+// base ne les a pas encore (sql/restock-notify.sql).
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -62,7 +68,7 @@ export const handler = async (event) => {
       { headers: H }
     );
     const rows = await res.json();
-    return json(200, Array.isArray(rows) ? rows : []);
+    return json(200, await marquerRetours(Array.isArray(rows) ? rows : []));
   }
 
   // ── POST ───────────────────────────────────────────────────────────────
@@ -105,11 +111,18 @@ export const handler = async (event) => {
       created_at: new Date().toISOString(),
       notified: false,
     };
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/restock_alerts`, {
+    // demande refaite (même pharmacie, même produit) : suivi d'envoi remis à zéro ; colonnes absentes → ligne d'origine
+    const ecrire = (corps) => fetch(`${SUPABASE_URL}/rest/v1/restock_alerts`, {
       method: "POST", headers: { ...H, Prefer: "resolution=merge-duplicates" },
-      body: JSON.stringify(row)
+      body: JSON.stringify(corps)
     });
-    if (!res.ok) return json(500, { error: await res.text() });
+    let res = await ecrire({ ...row, notified_at: null, attempts: 0, outcome: null });
+    if (!res.ok) {
+      const t = await res.text();
+      if (!colonneManquante(t)) return json(500, { error: t });
+      res = await ecrire(row);
+      if (!res.ok) return json(500, { error: await res.text() });
+    }
     return json(200, { success: true });
   }
 

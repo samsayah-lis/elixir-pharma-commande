@@ -54,3 +54,10 @@
 # les 3 h de 6 h 40 à 21 h 40 heure de Paris en hiver (après les synchros de stock), lecture Odoo seule (docs/accueil.md)
 [functions."accueil-offres-refresh"]
   schedule = "40 5-20/3 * * *"
+
+# Alertes « M'avertir du retour » : e-mails aux pharmacies dont un produit attendu est revenu en stock (une fois par
+# demande, envois 7 h – 21 h heure de Paris). 50 min après chaque synchro rapide du stock de la GitHub Action
+# (« 0 */3 * * * », qui appelle déjà restock-notify à la fin de ses étapes) : filet si l'Action échoue ou prend du retard
+# (docs/alertes-retour.md)
+[functions."restock-notify-cron"]
+  schedule = "50 */3 * * *"

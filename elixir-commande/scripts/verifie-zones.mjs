@@ -126,7 +126,9 @@ const LOTS = {
 // modification figée par son empreinte sha256 à 12 caractères — toute autre modification reste signalée).
 const FICHIERS_AUTORISES = {
   "netlify/functions/order-list.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire ; relecture finale : Supabase Auth en panne → 503 indisponible)",
-  "netlify/functions/restock-alert.js": "correctif de sécurité du 19/10/2026 (jeton obligatoire)",
+  // correctif de sécurité du 19/10/2026 (jeton obligatoire), puis alertes retour (20/10/2026, docs/alertes-retour.md) :
+  // modification figée par son empreinte (vaut contre master local, d'avant les correctifs, comme contre origin/master)
+  "netlify/functions/restock-alert.js": { empreinte: "9de0f691a1bf", motif: "alertes retour (20/10/2026) : « mes alertes » sans adresse e-mail, avec notified et retour (mention « De retour en stock » de la Saisie, _restock.js) ; nouvelle demande : suivi d'envoi remis à zéro (notified_at, attempts, outcome), repli sans ces colonnes" },
   "netlify/functions/pharmacy-lookup.js": "correctif de sécurité du 19/10/2026 (limite de débit, fermé en mode code)",
   // second correctif du 19/10/2026 : plus aucune commande, commande groupée ni habitude d'achat sans jeton
   "netlify/functions/_gp.js": "second correctif de sécurité du 19/10/2026 (identité des commandes groupées : jeton obligatoire, plus de repli sur l'e-mail du corps ; relecture finale : Supabase Auth en panne → refus 5xx, jamais 401)",
@@ -152,7 +154,10 @@ const FICHIERS_AUTORISES = {
 // Empreinte d'un fichier de FICHIERS_AUTORISES : node scripts/verifie-zones.mjs --empreintes
 // Page d'accueil « La Tête de gondole » (branche accueil-offres, docs/accueil.md) : fonctions NOUVELLES seulement
 // (accueil-offres.js, accueil-offres-refresh.js, _accueil-*.js) ; aucune fonction existante n'est modifiée.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+)\.js$/;
+// Alertes « M'avertir du retour » (branche alertes-retour, docs/alertes-retour.md) : restock-notify.js (envois et tableau de
+// bord de l'admin), restock-notify-cron.js (passage planifié) et _restock.js (logique) ; seule fonction existante
+// modifiée : restock-alert.js (FICHIERS_AUTORISES, empreinte).
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -263,11 +268,11 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : "de l'Assistant Elixir"})`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
-    ko(`${chemin} : modifié (${empreinte(b)}), empreinte admise pour l'Assistant Elixir : ${permis.empreinte} (FICHIERS_AUTORISES)`);
+    ko(`${chemin} : modifié (${empreinte(b)}), empreinte admise : ${permis.empreinte} (FICHIERS_AUTORISES : ${permis.motif})`);
     return false;
   }
   if (a == null) { ko(`${chemin} : ajouté`); return false; }
@@ -283,7 +288,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour)` : ""}`);
 }
 
 // 3. clés de stockage
