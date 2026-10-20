@@ -16,6 +16,10 @@
 //  • config-get (POST de l'admin : affichage, menus promo, mises en avant) : la valeur publiée est gardée en mémoire et
 //           relue par les GET suivants jusqu'au redémarrage du banc (le site voit ce que l'admin publie, comme en ligne ;
 //           jamais de 409 ici), sans toucher aux données figées.
+//  • Notifications de l'appli (push-abonnement, push-admin) : GET → clé « BANC-FICTIVE » (navigateur simulé côté page,
+//           src/notifications/banc.js, ?banc_push=<scénario>) ; appareils, réglages et annonces gardés en mémoire jusqu'au
+//           redémarrage, deux appareils d'exemple pour la pharmacie du banc ; rien n'est envoyé. BANC_PUSH=reconnexion :
+//           statut et actions répondent 401 (écran « Se reconnecter » du panneau).
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
@@ -27,6 +31,7 @@ import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, n
 import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
 import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
 import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
+import { categoriesAffichees, filtrerCategories, verifierAnnonce, verifierReglages, fusionnerReglages, CATEGORIES_DEFAUT } from "../../src/notifications/regles.js";
 
 // Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
 const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
@@ -139,6 +144,8 @@ function getCalcule(fn, q) {
     case "group-order": return [];
     case "lab-justif": return { products: {} };
     case "supplier-code-refs": return { refs: {}, byCip: {} };
+    // notifications : clé fictive → la page simule le navigateur (aucun vrai abonnement)
+    case "push-abonnement": return { disponible: true, cle_publique: "BANC-FICTIVE", ouverture: pushBanc.reglages.ouverture };
     // page d'accueil : vrai classement des 15 jours figé (dev-fixtures/accueil-offres.json, écrit par
     // scripts/banc/fixture-accueil.mjs depuis la fixture produit de l'étude), sinon le classement fictif des aperçus
     case "accueil-offres": {
@@ -222,6 +229,8 @@ function reponsePost({ fn, methode, corps }) {
   const perso = (action ? litJson(resolve(DOSSIER_POST, `${fn}.${action}.json`)) : undefined) ?? litJson(resolve(DOSSIER_POST, `${fn}.json`));
   if (perso !== undefined) return { corps: perso, source: "post personnalisé" };
   if (fn === "chat") return reponseChatBanc(corps && typeof corps === "object" ? corps : {});
+  if (fn === "push-abonnement") return reponsePushBanc(corps && typeof corps === "object" ? corps : {});
+  if (fn === "push-admin") return reponsePushAdminBanc(corps && typeof corps === "object" ? corps : {});
   if (fn === "product-upload-image") return photoBanc(corps);
   const r = reponseFictive({ fn, methode, corps, pharmacie: pharmacieBanc(), admin: true });
   if (fn === "config-get" && corps && typeof corps === "object" && typeof corps.key === "string" && r?.success)
@@ -229,6 +238,142 @@ function reponsePost({ fn, methode, corps }) {
   // « Mes commandes » montre les commandes passées sur le banc
   if (fn === "order-save" && corps && typeof corps === "object" && Array.isArray(corps.items)) commandesDuBanc.push({ ...corps, date: corps.date || new Date().toISOString() });
   return { corps: r, source: "fictif" };
+}
+
+// ── Notifications de l'appli : appareils, réglages et annonces du banc (en mémoire, rien n'est envoyé) ──
+const JOUR_MS = 86400e3;
+const ilYa = (j) => new Date(Date.now() - j * JOUR_MS).toISOString();
+const pushBanc = {
+  reglages: fusionnerReglages({ ouverture: "toutes", pilote_cips: [], plafond_offres_7j: 2 }),
+  appareils: null,   // id → appareil (créés au premier appel : la pharmacie du banc peut venir de dev-fixtures/pharmacie.json)
+  admin: new Map(),
+  annonces: [],
+  n: 0,
+};
+function appareilsBanc() {
+  if (pushBanc.appareils) return pushBanc.appareils;
+  const cip = pharmacieBanc().cip;
+  const a = (id, appareil, plateforme, installe, categories, jours, extra = {}) => [id, { id, endpoint: `https://fcm.googleapis.com/fcm/send/${id}`, cip, appareil, plateforme,
+    installe, categories, created_at: ilYa(jours), last_success_at: ilYa(1), failures: 0, ...extra }];
+  pushBanc.appareils = new Map([
+    a("banc-comptoir", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "offres"], 12),
+    a("banc-titulaire", "iPhone · application", "ios", true, ["stock", "offres"], 30, { failures: 4, last_success_at: ilYa(9) }),
+    // scénario « abonne » de la page (?banc_push=abonne) : cet appareil est déjà connu du banc
+    a("banc-abonne", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "offres"], 3),
+  ]);
+  return pushBanc.appareils;
+}
+const publicBanc = (d, endpoint) => ({ id: d.id, appareil: d.appareil, plateforme: d.plateforme, installe: d.installe, categories: d.categories, created_at: d.created_at,
+  last_success_at: d.last_success_at, en_echec: d.failures >= 3, ...(endpoint !== undefined ? { actuel: d.endpoint === endpoint } : {}) });
+function reponsePushBanc(b) {
+  if (process.env.BANC_PUSH === "reconnexion" && b.action !== "oublier") return { statut: 401, corps: { error: "reconnexion" }, source: "fictif (BANC_PUSH)" };
+  const liste = appareilsBanc();
+  const parEndpoint = (e) => [...liste.values()].find(d => d.endpoint === e) || null;
+  const ok = (corps) => ({ corps, source: "fictif (notifications du banc)" });
+  switch (b.action) {
+    case "statut": {
+      const actuel = b.endpoint ? parEndpoint(b.endpoint) : null;
+      // l'appareil « abonne » n'apparaît que s'il est celui de la page (sinon : deux appareils d'exemple)
+      const visibles = [...liste.values()].filter(d => d.id !== "banc-abonne" || (actuel && actuel.id === "banc-abonne"));
+      return ok({ disponible: true, raison: null, cle_publique: "BANC-FICTIVE", plafond_offres_7j: pushBanc.reglages.plafond_offres_7j,
+        categories_disponibles: categoriesAffichees(pushBanc.reglages.plafond_offres_7j), appareil: actuel ? publicBanc(actuel) : null, autre_identite: false,
+        appareils: visibles.map(d => publicBanc(d, b.endpoint || null)) });
+    }
+    case "abonner": {
+      const e = String(b.abonnement?.endpoint || "");
+      if (!e) return { statut: 400, corps: { error: "abonnement" }, source: "fictif" };
+      const ex = parEndpoint(e);
+      const id = ex?.id || `banc-${++pushBanc.n}`;
+      liste.set(id, { ...(ex || {}), id, endpoint: e, cip: pharmacieBanc().cip, appareil: b.appareil?.libelle || "Appareil", plateforme: b.appareil?.plateforme || "autre",
+        installe: !!b.appareil?.installe, categories: filtrerCategories(b.categories) ?? ex?.categories ?? CATEGORIES_DEFAUT, created_at: ex?.created_at || new Date().toISOString(),
+        last_success_at: ex?.last_success_at || null, failures: 0 });
+      return ok({ success: true, appareil: publicBanc(liste.get(id)) });
+    }
+    case "categories": {
+      const d = parEndpoint(b.endpoint);
+      if (!d) return { statut: 404, corps: { error: "appareil" }, source: "fictif" };
+      d.categories = filtrerCategories(b.categories) || [];
+      return ok({ success: true, categories: d.categories });
+    }
+    case "test": { const d = parEndpoint(b.endpoint); if (d) d.last_success_at = new Date().toISOString(); return d ? ok({ success: true }) : { statut: 404, corps: { error: "appareil" }, source: "fictif" }; }
+    case "retirer": {
+      if (b.id) liste.delete(String(b.id)); else { const d = parEndpoint(b.endpoint); if (d) liste.delete(d.id); }
+      return ok({ success: true });
+    }
+    case "oublier": { const d = parEndpoint(b.endpoint); if (d) liste.delete(d.id); return ok({ success: true, role: d ? "pharmacie" : null }); }
+    default: return ok({ success: true });
+  }
+}
+// Statistiques d'exemple de l'admin : pharmacies fictives (aucune donnée réelle) + appareils du banc
+const PHARMACIES_EXEMPLE = [
+  ["PHARMACIE DES ARCADES", "2000001", ["android"], ["stock", "commandes", "offres"]], ["PHARMACIE DU MARCHÉ", "2000002", ["ios", "ordinateur"], ["stock", "offres"]],
+  ["PHARMACIE DE LA GARE", "2000003", ["ios"], ["stock", "commandes", "offres"]], ["GRANDE PHARMACIE CENTRALE", "2000004", ["android", "android", "ordinateur"], ["stock", "commandes"]],
+  ["PHARMACIE DU PARC", "2000005", ["ordinateur"], ["offres"]], ["PHARMACIE SAINT-LOUIS", "2000006", ["ios"], ["stock", "commandes", "offres"]],
+];
+function etatAdminBanc(endpoint) {
+  const pharmacies = PHARMACIES_EXEMPLE.map(([nom, cip, plateformes, categories]) => ({ cip, nom, appareils: plateformes.length, plateformes: [...new Set(plateformes)], categories, en_echec: 0 }));
+  const banc = [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne");
+  if (banc.length) pharmacies.push({ cip: pharmacieBanc().cip, nom: pharmacieBanc().name, appareils: banc.length, plateformes: [...new Set(banc.map(d => d.plateforme))],
+    categories: [...new Set(banc.flatMap(d => d.categories))], en_echec: banc.filter(d => d.failures >= 3).length });
+  const plateformes = { ios: 0, android: 0, ordinateur: 0, autre: 0 };
+  for (const p of PHARMACIES_EXEMPLE) for (const x of p[2]) plateformes[x]++;
+  for (const d of banc) plateformes[d.plateforme] = (plateformes[d.plateforme] || 0) + 1;
+  const parCat = { stock: 0, commandes: 0, offres: 0 };
+  for (const p of pharmacies) for (const c of p.categories) parCat[c]++;
+  pharmacies.sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
+  return { disponible: true, service: { vapid_publique: true, vapid_privee: true, vapid_paire: true, sujet: true, sujet_defaut: false, cle_serveur: true, cron_secret: true,
+    tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: "BANC-FICTIVE", reglages: pushBanc.reglages,
+    stats: { pharmacies: pharmacies.length, appareils: Object.values(plateformes).reduce((a, b) => a + b, 0), par_categorie: parCat, par_plateforme: plateformes,
+      installes: 3, en_echec: banc.filter(d => d.failures >= 3).length, vus_30j: 9 },
+    pharmacies, mes_appareils: [...pushBanc.admin.values()].map(d => publicBanc(d, endpoint || null)) };
+}
+function reponsePushAdminBanc(b) {
+  const ok = (corps, statut = 200) => ({ statut, corps, source: "fictif (notifications du banc)" });
+  switch (b.action) {
+    case "etat": return ok(etatAdminBanc(b.endpoint));
+    case "reglages": { const v = verifierReglages(b.reglages || {}); if (!v.ok) return ok({ erreurs: v.erreurs }, 400); pushBanc.reglages = v.reglages; return ok({ reglages: v.reglages }); }
+    case "abonner_admin": {
+      const e = String(b.abonnement?.endpoint || "");
+      const ex = [...pushBanc.admin.values()].find(d => d.endpoint === e);
+      const id = ex?.id || `banc-admin-${++pushBanc.n}`;
+      pushBanc.admin.set(id, { id, endpoint: e, appareil: b.appareil?.libelle || "Appareil", plateforme: b.appareil?.plateforme || "autre", installe: !!b.appareil?.installe,
+        categories: [], created_at: ex?.created_at || new Date().toISOString(), last_success_at: null, failures: 0 });
+      return ok({ success: true, appareil: publicBanc(pushBanc.admin.get(id)) });
+    }
+    case "retirer_admin": { for (const [id, d] of pushBanc.admin) if (id === b.id || d.endpoint === b.endpoint) pushBanc.admin.delete(id); return ok({ success: true }); }
+    case "test": return ok(pushBanc.admin.size ? { envoyes: pushBanc.admin.size, echecs: 0, retires: 0 } : { envoyes: 0, echecs: 0, retires: 0, aucun: true });
+    case "apercu": { const v = verifierAnnonce({ ...(b.annonce || {}), audience: "toutes" }); if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
+      return ok(pushBanc.admin.size ? { envoyes: pushBanc.admin.size, echecs: 0, retires: 0 } : { envoyes: 0, echecs: 0, retires: 0, aucun: true }); }
+    case "estimer": {
+      const n = b.audience === "liste" ? (Array.isArray(b.cips) ? b.cips.length : 0) : 5;
+      return ok({ visees: n, plafonnees: n > 1 ? 1 : 0, recevront: Math.max(0, n - (n > 1 ? 1 : 0)), appareils: Math.max(0, n - (n > 1 ? 1 : 0)) + 1, fermee: pushBanc.reglages.ouverture === "fermee",
+        plafond_offres_7j: pushBanc.reglages.plafond_offres_7j });
+    }
+    case "envoyer": {
+      const v = verifierAnnonce(b.annonce || {});
+      if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
+      const deja = pushBanc.annonces.find(a => a.idem === b.idem);
+      if (deja) return ok({ annonce: deja, deja: true });
+      if (pushBanc.reglages.ouverture === "fermee") return ok({ error: "fermee" }, 409);
+      const a = { id: `banc-${Date.now()}`, idem: b.idem, ...v.annonce, nb_cips: v.annonce.cips?.length || 0, admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", erreur: null,
+        nb_visees: 5, nb_plafonnees: 1, nb_pharmacies: 4, nb_appareils: 5, nb_reussis: 5, nb_echecs: 0, nb_retires: 0, created_at: new Date().toISOString(), finished_at: new Date().toISOString() };
+      pushBanc.annonces.unshift(a);
+      return ok({ annonce: a }, 202);
+    }
+    case "relancer": return ok({ error: "statut" }, 409);
+    case "historique": return ok({ annonces: [...pushBanc.annonces,
+      { id: "banc-ex-2", titre: "Vaseline : précommande ouverte", corps: "13 références à prix net, livraison début novembre.", url: "/?menu=promo_1792060000000", audience: "toutes", cips: null, nb_cips: 0,
+        admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 6, nb_plafonnees: 0, nb_pharmacies: 6, nb_appareils: 9, nb_reussis: 8, nb_echecs: 1, nb_retires: 0,
+        created_at: ilYa(3), finished_at: ilYa(3) },
+      { id: "banc-ex-1", titre: "Culottes menstruelles remboursées", corps: "20 références Claripharm, remboursées sur prescription.", url: "/?outil=saisie", audience: "liste", cips: ["2000001", "2000003"], nb_cips: 2,
+        admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 2, nb_plafonnees: 0, nb_pharmacies: 2, nb_appareils: 2, nb_reussis: 2, nb_echecs: 0, nb_retires: 0,
+        created_at: ilYa(9), finished_at: ilYa(9) }] });
+    case "pharmacie": {
+      const banc = b.cip === pharmacieBanc().cip ? [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne").map(d => publicBanc(d)) : [];
+      return ok({ appareils: banc, raison: null, disponible: true });
+    }
+    default: return ok({ success: true });
+  }
 }
 
 // ── Assistant Elixir : conversation du banc (docs/assistant-contrat.md, « API HTTP ») ──

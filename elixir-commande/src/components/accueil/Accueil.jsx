@@ -36,7 +36,7 @@ const reponseValide = (d) => !!(d && typeof d === "object" && (vitrineValide(d) 
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
   estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
-  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null }) {
+  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, alertes = null }) {
   // menus promo actifs et pas encore échus (une offre « jusqu'au 25 sept. » n'est plus mise en avant le 19 oct.)
   const promos = promosEnCours(menusPromo, jourParis());
   const teinteDe = (k) => catalogue[k]?.accent || catalogue.saisie?.accent || "#2d9cbc";
@@ -208,6 +208,9 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
 
       {/* suggestions de recommande (App) : sous la vitrine et les offres, plus au-dessus de la vitrine */}
       {suggestions}
+
+      {/* « Recevez nos alertes sur votre téléphone » (App, docs/notifications.md) : avant les accès rapides */}
+      {alertes}
 
       <section className="acc-section" aria-labelledby="acc-acces-titre">
         <h2 id="acc-acces-titre" className="acc-h2">Accès rapides</h2>

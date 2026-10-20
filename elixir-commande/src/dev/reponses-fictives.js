@@ -4,6 +4,8 @@
 // Rien n'est envoyé ni enregistré : la réponse imite celle du serveur juste assez pour que l'écran
 // suive son cours normal (succès). JS pur, sans dépendance.
 
+import { categoriesAffichees, REGLAGES_DEFAUT } from "../notifications/regles.js";
+
 export const PHARMACIE_FICTIVE = { name: "PHARMACIE D'ESSAI", cip: "", email: "" };
 
 // fn : nom de la fonction Netlify ; corps : données envoyées (objet JSON ou texte) ;
@@ -46,6 +48,9 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
       return { success: true };
     // Assistant Elixir : conversation écrite d'avance (aucune IA, aucun Odoo)
     case "chat":                return reponseChatFictive(b, pharmacie);
+    // Notifications de l'appli (docs/notifications.md) : aucun abonnement enregistré, aucune notification envoyée
+    case "push-abonnement":     return reponsePushFictive(b);
+    case "push-admin":          return reponsePushAdminFictive(b);
     default:                    return { success: true, ok: true };
   }
 }
@@ -207,5 +212,31 @@ export function reponseChatFictive(b = {}, pharmacie = PHARMACIE_FICTIVE) {
           delai: INFOS_FICTIVES.delai_annonce, email_masque: "ph…@…fr", simulation: true }])
       : messageFictif("Demande annulée : rien n'a été envoyé.")), id: `d-${b.demande_id}` } };
     default:         return { success: true };
+  }
+}
+
+// ── Notifications de l'appli (cas « push-abonnement » et « push-admin ») : « Aperçu : aucune notification n'est envoyée » ──
+// Le GET (clé publique, ouverture) reste réel sur un aperçu : l'abonnement du navigateur peut être pris, il n'est jamais
+// enregistré et rien ne lui est envoyé.
+export function reponsePushFictive(b = {}) {
+  if (b.action === "statut") return { disponible: true, raison: null, cle_publique: null, plafond_offres_7j: 2, categories_disponibles: categoriesAffichees(2),
+    appareil: null, autre_identite: false, appareils: [], apercu: true };
+  if (b.action === "oublier") return { success: true, role: null, apercu: true };
+  return { success: true, apercu: true };
+}
+export function reponsePushAdminFictive(b = {}) {
+  const vide = { stock: 0, commandes: 0, offres: 0 };
+  switch (b.action) {
+    case "etat": return { apercu: true, disponible: true, service: { vapid_publique: true, vapid_privee: true, vapid_paire: true, sujet: true, sujet_defaut: false,
+      cle_serveur: true, cron_secret: true, tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: null, reglages: REGLAGES_DEFAUT,
+      stats: { pharmacies: 0, appareils: 0, par_categorie: vide, par_plateforme: { ios: 0, android: 0, ordinateur: 0, autre: 0 }, installes: 0, en_echec: 0, vus_30j: 0 },
+      pharmacies: [], mes_appareils: [] };
+    case "estimer": return { apercu: true, visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond_offres_7j: 2 };
+    case "envoyer": return { apercu: true, annonce: { id: "apercu", statut: "envoyee", created_at: new Date().toISOString() } };
+    case "historique": return { apercu: true, annonces: [] };
+    case "pharmacie": return { apercu: true, appareils: [], raison: null, disponible: true };
+    case "test": case "apercu": return { apercu: true, envoyes: 0, echecs: 0, retires: 0 };
+    case "reglages": return { apercu: true, reglages: { ...REGLAGES_DEFAUT, ...(b.reglages || {}) } };
+    default: return { apercu: true, success: true };
   }
 }
