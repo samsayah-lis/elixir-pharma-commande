@@ -1676,7 +1676,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {/* Notifications de l'appli (docs/notifications.md) : service, ouverture, appareils de l'admin, annonces */}
         {tab==="notifications"&&(
-          <AdminNotifications adminFetch={adminFetch} flash={flash} promos={promos} sections={allSectionsList} />
+          <AdminNotifications adminFetch={adminFetch} flash={flash} promos={promos} sections={allSectionsList} masques={displayConfig.hiddenTabs || []} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

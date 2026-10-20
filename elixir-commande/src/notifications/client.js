@@ -5,7 +5,11 @@
 // Le service worker (/sw.js, sans cache) est enregistré quand la carte ou le panneau s'affiche (preparer), jamais avant.
 // api : { role, appeler(action, corps) → { statut, corps } } — pharmacie : push-abonnement par appelAuthentifie (jeton
 // pharmacie) ; admin : push-admin par adminFetch (abonner_admin, retirer_admin).
+// Abonnement local que le serveur ne connaît plus (404/410 du service push, retiré par un autre appareil, ménage) : le
+// navigateur le rendrait tel quel à subscribe() (même clé) ; il est donc désinscrit localement (oublierLocal) avant toute
+// nouvelle activation — sinon « Réactiver » réenregistrerait sans fin une adresse morte.
 import { lireEnv, libelleAppareil, plateformeDe, estInstalle } from "./plateforme.js";
+import { hotePushConnu } from "./regles.js";
 
 export const API = "/.netlify/functions/push-abonnement";
 export const API_ADMIN = "/.netlify/functions/push-admin";
@@ -25,11 +29,12 @@ function navigateurReel(w = window) {
     ecouterMessages: (fn) => { if (!sw) return; sw.addEventListener("message", fn); sw.startMessages?.(); },
     aller: (url) => w.location.assign(url),
     origine: () => w.location.origin,
+    surAdmin: () => /^#admin/.test(w.location.hash || ""),
   };
 }
 let nav = null;
 export const navigateur = () => (nav ||= navigateurReel());
-export function installerNavigateur(n) { nav = n; preparation = null; prete = null; configGardee = null; }
+export function installerNavigateur(n) { nav = n; preparation = null; prete = null; configGardee = null; ecoute = false; }
 
 // ── API ──
 const repondre = async (res) => ({ statut: res.status, corps: await res.json().catch(() => ({})) });
@@ -92,7 +97,9 @@ export function preparer() {
     if (!reg) reg = await n.enregistrer();
     reg = (await n.pret(5000)) || reg;
     const sub = await reg.pushManager?.getSubscription().catch(() => null);
-    if (sub && !memeCle(sub, conf.cle_publique) && n.permission() === "granted") await renouvelerCle({ sub, reg, cle: conf.cle_publique }).catch(() => {});
+    // adresse hors des services push connus : inutilisable (le serveur la refuse), désinscrite localement
+    if (sub && !hotePushConnu(sub.endpoint)) await oublierLocal(sub);
+    else if (sub && !memeCle(sub, conf.cle_publique) && n.permission() === "granted") await renouvelerCle({ sub, reg, cle: conf.cle_publique }).catch(() => {});
     prete = { reg, cle: conf.cle_publique };
     return prete;
   })().catch((e) => { preparation = null; throw e; });
@@ -128,18 +135,39 @@ export async function activer({ api, categories = null, remplacer = false } = {}
 }
 
 // Abonnement local → serveur (abonner) ; aussi pour « Réactiver » (autorisation déjà donnée) et « Oui, pour {pharmacie} »
-export async function enregistrer({ api, sub, categories = null, remplacer = false }) {
+// 400 « abonnement » (adresse ou clés refusées) : désinscription locale, nouvel abonnement (sans nouvelle demande :
+// l'autorisation vient d'être donnée), une seule nouvelle tentative.
+export async function enregistrer({ api, sub, categories = null, remplacer = false, retente = false }) {
   const env = navigateur().env();
   const corps = { abonnement: sub.toJSON(), appareil: { libelle: libelleAppareil(env), plateforme: plateformeDe(env), installe: estInstalle(env) },
     ...(categories ? { categories } : {}), ...(remplacer ? { remplacer: true } : {}) };
   let r;
   try { r = await api.appeler("abonner", corps); } catch { return { etat: "indisponible" }; }
-  if (r.statut === 200 && r.corps.success) return { etat: "abonne", appareil: r.corps.appareil || null };
+  if (r.statut === 200 && r.corps.success) { ecouterNavigation(); return { etat: "abonne", appareil: r.corps.appareil || null }; }
+  if (r.statut === 400 && r.corps?.error === "abonnement" && !retente) {
+    try {
+      await oublierLocal(sub);
+      const { reg, cle } = prete || await preparer();
+      const neuf = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: cleBinaire(cle) });
+      return enregistrer({ api, sub: neuf, categories, remplacer, retente: true });
+    } catch { return { etat: "echec" }; }
+  }
   if (r.statut === 409) return { etat: r.corps.error === "autre_identite" ? "autre_identite" : r.corps.error === "trop_d_appareils" ? "trop_d_appareils" : "erreur", de: r.corps.de || null };
   if (r.statut === 401) return { etat: "reconnexion" };
   if (r.statut === 403) return { etat: ["fermee", "hors_pilote", "admin", "fiche"].includes(r.corps.error) ? r.corps.error : "erreur" };
   if (r.statut === 400) return { etat: "echec" };
   return { etat: "indisponible" };
+}
+
+// Désinscription locale seulement (le serveur ne connaît plus cet abonnement, ou l'a déclaré expiré) : jamais d'exception
+export async function oublierLocal(sub) {
+  try { await sub?.unsubscribe(); } catch { /* déjà désinscrit */ }
+}
+// Abonnement local inconnu du serveur (statut : aucun appareil à ce nom ET adresse inconnue de toute autre identité) :
+// désinscrit localement → { sub: null } ; sinon inchangé. Jamais quand l'adresse appartient à une autre identité (409).
+export async function nettoyerSiInconnu({ sub, statut }) {
+  if (sub && statut && !statut.appareil && !statut.autre_identite) { await oublierLocal(sub); return { sub: null, nettoye: true }; }
+  return { sub, nettoye: false };
 }
 
 // Réactiver : abonnement local (ou nouveau, sans nouvelle demande : autorisation déjà donnée) renvoyé au serveur
@@ -160,7 +188,12 @@ export async function envoyerTest({ api } = {}) {
     else { const { sub } = await abonnementLocal(); if (!sub) return { etat: "expire" }; r = await api.appeler("test", { endpoint: sub.endpoint }); }
   } catch { return { etat: "indisponible" }; }
   if (r.statut === 200) return api.role === "admin" ? { etat: r.corps.aucun ? "aucun" : r.corps.envoyes ? "ok" : "envoi", bilan: r.corps } : { etat: "ok", apercu: !!r.corps.apercu };
-  if (r.statut === 410 || r.statut === 404) return { etat: "expire" };
+  if (r.statut === 410 || r.statut === 404) {
+    // abonnement mort (retiré par le serveur) : désinscrit ici aussi, la prochaine activation en prend un NOUVEAU
+    const { sub } = await abonnementLocal();
+    await oublierLocal(sub);
+    return { etat: "expire" };
+  }
   if (r.statut === 429) return { etat: "quota" };
   if (r.statut === 401) return { etat: "reconnexion" };
   if (r.statut === 502) return { etat: "envoi", detail: r.corps.detail || null };
@@ -230,6 +263,7 @@ export function ecouterNavigation() {
   n.ecouterMessages((e) => {
     const d = e?.data;
     if (d?.type !== "elixir-notification" || typeof d.url !== "string") return;
+    if (n.surAdmin?.()) return;   // admin ouvert dans cette fenêtre : jamais quitté (annonce en rédaction)
     try { if (new URL(d.url).origin === n.origine()) n.aller(d.url); } catch { /* adresse illisible */ }
   });
 }

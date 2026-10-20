@@ -21,7 +21,7 @@ import webpush from "web-push";
 const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
   stdin: { contents: ['export * from "./src/notifications/plateforme.js";', 'export * from "./src/notifications/client.js";',
-    'export { demarrer } from "./src/notifications/demarrage.js";', 'export { masquee, masquer } from "./src/notifications/memo.js";'].join("\n"),
+    'export { demarrer } from "./src/notifications/demarrage.js";', 'export { masquee, masquer, empreinteIdentite } from "./src/notifications/memo.js";'].join("\n"),
   resolveDir: RACINE, loader: "js" },
   bundle: true, format: "esm", platform: "neutral", write: false, logLevel: "silent", define: { "import.meta.env.DEV": "false" },
 });
@@ -139,6 +139,7 @@ function fauxNavigateur({ permission = "default", reponseConfig = { disponible: 
       ecouterMessages: (fn) => { etat.messages = fn; },
       aller: (u) => etat.aller.push(u),
       origine: () => ORIGINE,
+      surAdmin: () => !!etat.surAdmin,
     },
   };
 }
@@ -216,8 +217,8 @@ function fausseApi(reponses = {}, journal = []) {
 {
   const f = fauxNavigateur({ sub: "https://fcm.googleapis.com/fcm/send/abcd", permission: "granted" });
   N.installerNavigateur(f.nav);
-  const api = fausseApi({ test: { statut: 410, corps: { error: "expire" } }, categories: { statut: 200, corps: { success: true, categories: ["stock"] } } }, f.journal);
-  eq("test sur appareil expiré → expire", (await N.envoyerTest({ api })).etat, "expire");
+  const api = fausseApi({ test: { statut: 200, corps: { success: true } }, categories: { statut: 200, corps: { success: true, categories: ["stock"] } } }, f.journal);
+  eq("test → ok", (await N.envoyerTest({ api })).etat, "ok");
   eq("test : endpoint de CET appareil", api.recus[0].corps, { endpoint: "https://fcm.googleapis.com/fcm/send/abcd" });
   eq("catégories → endpoint + liste", [await N.changerCategories({ api, categories: ["stock"] }), api.recus[1].corps], [{ ok: true, categories: ["stock"] }, { endpoint: "https://fcm.googleapis.com/fcm/send/abcd", categories: ["stock"] }]);
   f.etat.unsubscribeEnPanne = true;
@@ -298,10 +299,11 @@ const STATUT = { disponible: true, raison: null, cle_publique: CLE, plafond_offr
   eq("Android non abonné : visible, carte « activer », aucun abonnement au démarrage", [e.visible, e.carte, e.parcours, recus[0].corps, f.journal.some((x) => /subscribe|requestPermission|register/.test(x))],
     [true, true, "activer", { action: "statut" }, false]);
   N.masquer("ppa@x.fr");
-  eq("« Plus tard » : clé notif_carte_<identité>", [...stockage.keys()], ["notif_carte_ppa@x.fr"]);
+  eq("« Plus tard » : clé notif_carte_<empreinte> (aucune adresse e-mail en clair)", [...stockage.keys()].map((k) => [/^notif_carte_[0-9a-f]{16}$/.test(k), k.includes("@")]), [[true, false]]);
+  eq("empreinte stable et propre à chaque identité", [N.empreinteIdentite("ppa@x.fr") === N.empreinteIdentite("ppa@x.fr"), N.empreinteIdentite("ppa@x.fr") === N.empreinteIdentite("ppb@x.fr")], [true, false]);
   N.installerNavigateur(fauxNavigateur().nav);
   eq("« Plus tard » : carte masquée", (await N.demarrer({ appel: appelStatut(STATUT).appel, identite: "ppa@x.fr" })).carte, false);
-  stockage.set("notif_carte_ppa@x.fr", String(Date.now() - 31 * 86400e3));
+  stockage.set(`notif_carte_${N.empreinteIdentite("ppa@x.fr")}`, String(Date.now() - 31 * 86400e3));
   N.installerNavigateur(fauxNavigateur().nav);
   eq("31 jours plus tard : carte de retour", (await N.demarrer({ appel: appelStatut(STATUT).appel, identite: "ppa@x.fr" })).carte, true);
   eq("masquée 29 jours", N.masquee("x", Date.now()) || (N.masquer("y", Date.now() - 29 * 86400e3), N.masquee("y")), true);
@@ -345,14 +347,83 @@ const STATUT = { disponible: true, raison: null, cle_publique: CLE, plafond_offr
   eq("configuration gardée 60 s (un seul GET)", f.journal.filter((x) => x === "fetch GET").length, 1);
 }
 
+// ── 6 bis. Correctifs de la revue : abonnement mort, carte utile, navigation ──
+{
+  // F1 : le navigateur rend l'abonnement EXISTANT à subscribe() (même clé) ; le test répond 410 → désinscrit localement,
+  // la réactivation enregistre un NOUVEL abonnement (plus jamais la même adresse morte)
+  const f = fauxNavigateur({ sub: "https://fcm.googleapis.com/fcm/send/mort", permission: "granted" });
+  N.installerNavigateur(f.nav);
+  const enregistres = [];
+  const api = fausseApi({ test: { statut: 410, corps: { error: "expire" } }, abonner: (c) => { enregistres.push(c.abonnement.endpoint); return { statut: 200, corps: { success: true } }; } }, f.journal);
+  eq("test 410 → expire, abonnement local désinscrit", [(await N.envoyerTest({ api })).etat, f.journal.includes("unsubscribe mort"), f.etat.sub], ["expire", true, null]);
+  await N.preparer();
+  const r = await N.activer({ api });
+  eq("réactivation : nouvel abonnement, jamais l'adresse morte", [r.etat, enregistres.length, enregistres[0] !== "https://fcm.googleapis.com/fcm/send/mort"], ["abonne", 1, true]);
+}
+{
+  // F1 : au démarrage, abonnement local inconnu du serveur (aucun appareil à ce nom, adresse inconnue ailleurs) → désinscrit
+  const f = fauxNavigateur({ sub: "https://fcm.googleapis.com/fcm/send/oubl", permission: "granted" });
+  N.installerNavigateur(f.nav);
+  const e = await N.demarrer({ appel: appelStatut(STATUT).appel, identite: "pf@x.fr" });
+  eq("démarrage : abonnement inconnu du serveur désinscrit, carte « activer »", [f.journal.includes("unsubscribe oubl"), e.parcours, e.carte], [true, "activer", true]);
+  const g = fauxNavigateur({ sub: "https://fcm.googleapis.com/fcm/send/autr", permission: "granted" });
+  N.installerNavigateur(g.nav);
+  await N.demarrer({ appel: appelStatut({ ...STATUT, autre_identite: true }).appel, identite: "pg@x.fr" });
+  eq("démarrage : adresse connue d'une autre identité → jamais désinscrite (confirmation dans le panneau)", g.journal.includes("unsubscribe autr"), false);
+  eq("nettoyerSiInconnu : appareil connu → gardé", (await N.nettoyerSiInconnu({ sub: g.etat.sub, statut: { appareil: { id: "x" } } })).nettoye, false);
+}
+{
+  // F1 : 400 « abonnement » → désinscription, nouvel abonnement, UNE seule nouvelle tentative
+  const f = fauxNavigateur({ sub: "https://fcm.googleapis.com/fcm/send/v400", permission: "granted" });
+  N.installerNavigateur(f.nav);
+  await N.preparer();
+  let n = 0;
+  const api = fausseApi({ abonner: () => (++n === 1 ? { statut: 400, corps: { error: "abonnement" } } : { statut: 200, corps: { success: true } }) }, f.journal);
+  eq("400 abonnement : désinscription, nouvel abonnement, 2e envoi accepté", [(await N.reactiver({ api })).etat, n, f.journal.includes("unsubscribe v400")], ["abonne", 2, true]);
+  let m = 0;
+  const api2 = fausseApi({ abonner: () => { m++; return { statut: 400, corps: { error: "abonnement" } }; } });
+  eq("400 répété : une seule nouvelle tentative, puis échec", [(await N.reactiver({ api: api2 })).etat, m], ["echec", 2]);
+  // adresse hors des services push connus : désinscrite dès la préparation
+  const h = fauxNavigateur({ sub: "https://push.inconnu.example/x/hors", permission: "granted" });
+  N.installerNavigateur(h.nav);
+  await N.preparer();
+  eq("préparation : abonnement chez un service push inconnu désinscrit", h.journal.includes("unsubscribe hors"), true);
+}
+{
+  // U2 : carte seulement si elle sert encore
+  const tel = (plateforme, installe = false, extra = {}) => ({ id: plateforme + installe, plateforme, installe, en_echec: false, actuel: false, ...extra });
+  const env = (ua, extra = {}) => ({ ...complet, ua, ...extra });
+  eq("ordinateur : un téléphone de la pharmacie reçoit déjà → pas de carte", N.carteUtile("activer", env(UA.chrome), { appareils: [tel("android")] }), false);
+  eq("ordinateur : seul un autre ordinateur reçoit → carte", N.carteUtile("activer", env(UA.chrome), { appareils: [tel("ordinateur")] }), true);
+  eq("ordinateur : téléphone « ne répond plus » → carte", N.carteUtile("activer", env(UA.chrome), { appareils: [tel("ios", true, { en_echec: true })] }), true);
+  eq("iPhone dans Safari : application déjà installée et abonnée → pas de carte", N.carteUtile("installer_ios", { ...iosSafari, ua: UA.ios164 }, { appareils: [tel("ios", true)] }), false);
+  eq("iPhone dans Safari : aucun iPhone installé → carte", N.carteUtile("installer_ios", { ...iosSafari, ua: UA.ios164 }, { appareils: [tel("android")] }), true);
+  eq("2e téléphone Android : carte gardée (texte « N appareils reçoivent déjà… »)", [N.carteUtile("activer", env(UA.android), { appareils: [tel("android")] }), N.joignables({ appareils: [tel("android"), tel("ordinateur")] }).total], [true, 2]);
+  const f = fauxNavigateur({ env: env(UA.chrome) });
+  N.installerNavigateur(f.nav);
+  eq("démarrage sur ordinateur, téléphone déjà joignable : menu visible, pas de carte",
+    await N.demarrer({ appel: appelStatut({ ...STATUT, appareils: [tel("ios", true)] }).appel, identite: "pu@x.fr" }).then((e) => [e.visible, e.carte]), [true, false]);
+}
+{
+  // F3 : écoute des messages du service worker branchée dès l'activation ; jamais de navigation sur l'admin (#admin)
+  const f = fauxNavigateur();
+  N.installerNavigateur(f.nav);
+  await N.preparer();
+  await N.activer({ api: fausseApi() });
+  eq("activation réussie : messages du service worker écoutés dans la même visite", typeof f.etat.messages, "function");
+  f.etat.surAdmin = true;
+  f.etat.messages({ data: { type: "elixir-notification", url: `${ORIGINE}/?menu=promo_1` } });
+  eq("admin ouvert dans la fenêtre : aucune navigation", f.etat.aller, []);
+}
+
 // ── 7. App.jsx : points d'insertion ──
 const APP = readFileSync(join(RACINE, "src/App.jsx"), "utf8");
 const LIGNES = [
   'import { CarteNotifications, PanneauNotifications, EntreeMenuNotifications, demarrerNotifications, oublierAppareilNotifications } from "./notifications/entree.jsx";',
   "    oublierAppareilNotifications();   // cet appareil ne reçoit plus les notifications de la pharmacie (preuve, sans jeton)",
   "alertes={notif?.carte && !actingFor ? <CarteNotifications",
-  "{notif?.visible && <EntreeMenuNotifications isDesktop={isDesktop} onOuvrir={ouvrirNotifications} />}",
-  "{!isMobile && notif?.visible && <button",
+  "{notif?.visible && <EntreeMenuNotifications isDesktop={isDesktop} onOuvrir={() => ouvrirNotifications()} />}",
+  "{isDesktop && notif?.visible && <button",
   "<PanneauNotifications appel={appelAuthentifie} acting={actingFor}",
   "demarrerNotifications({ appel: appelAuthentifie, identite: identiteNotif, acting: !!actingFor })",
 ];
@@ -360,6 +431,8 @@ eq("App.jsx : insertions présentes", LIGNES.filter((l) => !APP.includes(l)), []
 const deconnexion = APP.slice(APP.indexOf("const handleLogout = () => {"), APP.indexOf("const handleLogout = () => {") + 200);
 eq("déconnexion : oubli de l'appareil AVANT l'effacement des jetons", deconnexion.indexOf("oublierAppareilNotifications") < deconnexion.indexOf('removeItem("pharmacy_token")') || !deconnexion.includes('removeItem("pharmacy_token")'), true);
 const ENTREE = readFileSync(join(RACINE, "src/notifications/entree.jsx"), "utf8");
+const ACCUEIL = readFileSync(join(RACINE, "src/components/accueil/Accueil.jsx"), "utf8");
+eq("accueil : carte des alertes APRÈS les accès rapides (aucun décalage des tuiles)", ACCUEIL.indexOf("{alertes}") > ACCUEIL.indexOf('aria-labelledby="acc-acces-titre"'), true);
 eq("bundle principal : aucun import statique de client.js ni de Notifications.jsx", /^import .*(client\.js|Notifications\.jsx)/m.test(ENTREE), false);
 eq("aucun module chargé à la demande nommé index.*", /import\(["'][^"']*\/index(\.jsx?)?["']\)/.test(ENTREE + readFileSync(join(RACINE, "src/notifications/demarrage.js"), "utf8")), false);
 

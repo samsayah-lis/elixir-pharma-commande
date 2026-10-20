@@ -7,7 +7,7 @@
 // Arrêt d'urgence : docs/notifications.md, « En cas de problème ».
 "use strict";
 
-const VERSION = "2026-10-20.1";   // changer la valeur suffit à publier une nouvelle version
+const VERSION = "2026-10-20.2";   // changer la valeur suffit à publier une nouvelle version
 const ICONE = "/icones/elixir-192.png";
 const BADGE = "/icones/badge-96.png";
 const TITRE_DEFAUT = "Elixir Pharma";
@@ -47,14 +47,27 @@ self.addEventListener("push", (event) => {
   event.waitUntil(self.registration.showNotification(texte(d.titre, TITRE_DEFAUT, 80), options));
 });
 
+// Toucher une notification : fenêtre du site au premier plan (ou visible) de préférence, jamais rechargée sans raison :
+//  • test (pharmacie ou admin) : la fenêtre est seulement mise au premier plan (saisies en cours gardées) ;
+//  • aperçu d'une annonce, ou fenêtre ouverte sur l'admin (#admin) : le lien s'ouvre dans une NOUVELLE fenêtre (l'annonce en
+//    cours de rédaction n'est jamais perdue) ;
+//  • fenêtre déjà sur la bonne adresse : premier plan seulement ;
+//  • sinon : premier plan puis navigation ; navigation impossible (Safari) → message à la page ; aucune fenêtre → nouvelle.
+const surAdmin = (c) => { try { return /^#admin/.test(new URL(c.url).hash); } catch (e) { return false; } };
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = lien(event.notification.data && event.notification.data.url);
+  const data = event.notification.data || {};
+  const url = lien(data.url);
+  const etiquette = String(event.notification.tag || "");
   event.waitUntil((async () => {
-    const fenetres = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-    const fen = fenetres.find((c) => { try { return new URL(c.url).origin === self.location.origin; } catch (e) { return false; } });
+    const fenetres = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+      .filter((c) => { try { return new URL(c.url).origin === self.location.origin; } catch (e) { return false; } });
+    const fen = fenetres.find((c) => c.focused) || fenetres.find((c) => c.visibilityState === "visible") || fenetres[0];
     if (!fen) return self.clients.openWindow(url);
-    try { await fen.focus(); } catch (e) { /* fenêtre déjà au premier plan */ }
+    const auPremierPlan = async () => { try { await fen.focus(); } catch (e) { /* fenêtre déjà au premier plan */ } };
+    if (data.categorie === "test" || fen.url === url) return auPremierPlan();
+    if (etiquette === "apercu" || surAdmin(fen)) return self.clients.openWindow(url);
+    await auPremierPlan();
     if (typeof fen.navigate === "function") {
       try { await fen.navigate(url); return undefined; } catch (e) { /* fenêtre non contrôlée : message à la page */ }
     }

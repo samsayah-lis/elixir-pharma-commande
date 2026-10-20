@@ -73,6 +73,22 @@ export function parcours(env = {}, abonne = false) {
 }
 // parcours qui montrent la carte de l'accueil (les autres s'expliquent dans le panneau)
 export const PARCOURS_CARTE = ["activer", "installer_ios", "ouvrir_safari"];
+// Autres appareils de la pharmacie qui reçoivent (hors cet appareil, hors « ne répond plus »)
+export function joignables(statut) {
+  const autres = (statut?.appareils || []).filter((d) => !d.actuel && !d.en_echec);
+  return { total: autres.length, telephones: autres.filter((d) => d.plateforme === "ios" || d.plateforme === "android").length,
+    iphoneInstalle: autres.some((d) => d.plateforme === "ios" && d.installe) };
+}
+// La carte de l'accueil sert-elle encore ? iPhone dans Safari (ou une autre application) : pas si l'application Elixir
+// est déjà installée et abonnée sur un iPhone de la pharmacie ; ordinateur : pas si un téléphone reçoit déjà. Un 2e
+// téléphone Android garde la carte (texte « N appareils reçoivent déjà… »). Le panneau reste toujours accessible.
+export function carteUtile(p, env, statut) {
+  const j = joignables(statut);
+  if (p === "installer_ios" || p === "ouvrir_safari") return !j.iphoneInstalle;
+  if (p === "activer" && !analyser(env).mobile) return j.telephones === 0;
+  return true;
+}
+
 
 // plateforme enregistrée avec l'abonnement (statistiques de l'admin)
 export function plateformeDe(env = {}) {

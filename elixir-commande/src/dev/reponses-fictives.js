@@ -230,11 +230,12 @@ export function reponsePushAdminFictive(b = {}) {
     case "etat": return { apercu: true, disponible: true, service: { vapid_publique: true, vapid_privee: true, vapid_paire: true, sujet: true, sujet_defaut: false,
       cle_serveur: true, cron_secret: true, tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: null, reglages: REGLAGES_DEFAUT,
       stats: { pharmacies: 0, appareils: 0, par_categorie: vide, par_plateforme: { ios: 0, android: 0, ordinateur: 0, autre: 0 }, installes: 0, en_echec: 0, vus_30j: 0 },
-      pharmacies: [], mes_appareils: [] };
+      pharmacies: [], mes_appareils: [], hotes_refuses: [], appareil_inconnu: null };
     case "estimer": return { apercu: true, visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond_offres_7j: 2 };
     case "envoyer": return { apercu: true, annonce: { id: "apercu", statut: "envoyee", created_at: new Date().toISOString() } };
     case "historique": return { apercu: true, annonces: [] };
     case "pharmacie": return { apercu: true, appareils: [], raison: null, disponible: true };
+    case "retirer_pharmacie": return { apercu: true, success: true, retires: 0 };
     case "test": case "apercu": return { apercu: true, envoyes: 0, echecs: 0, retires: 0 };
     case "reglages": return { apercu: true, reglages: { ...REGLAGES_DEFAUT, ...(b.reglages || {}) } };
     default: return { apercu: true, success: true };

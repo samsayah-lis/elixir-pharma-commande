@@ -115,8 +115,33 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   const journal = [];
   const fen = { url: `${ORIGINE}/`, focus: async () => { throw new Error("déjà au premier plan"); }, navigate: async () => { throw new TypeError("non contrôlée"); }, postMessage: (m) => journal.push(m.url) };
   const { evenement } = bac({ fenetres: [fen] });
-  await evenement("notificationclick", { notification: notif(`${ORIGINE}/`) });
-  eq("focus et navigate refusés → message à la page", journal, [`${ORIGINE}/`]);
+  await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=otc`) });
+  eq("focus et navigate refusés → message à la page", journal, [`${ORIGINE}/?menu=otc`]);
+}
+{
+  // fenêtre au premier plan préférée ; test → premier plan seulement ; même adresse → premier plan seulement
+  const journal = [];
+  const fenetre = (nom, url, extra = {}) => ({ url, ...extra, focus: async () => journal.push(`focus ${nom}`), navigate: async (u) => journal.push(`navigate ${nom} ${u}`),
+    postMessage: () => journal.push(`message ${nom}`) });
+  const { t, evenement } = bac({ fenetres: [fenetre("cachee", `${ORIGINE}/`, { visibilityState: "hidden" }), fenetre("active", `${ORIGINE}/?menu=otc`, { focused: true, visibilityState: "visible" })] });
+  await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
+  eq("fenêtre au premier plan choisie (pas la première de la liste)", journal.splice(0), ["focus active", `navigate active ${ORIGINE}/?menu=promo_1`]);
+  await evenement("notificationclick", { notification: { tag: "test", data: { url: `${ORIGINE}/?notifications=1`, categorie: "test" }, close() {} } });
+  eq("notification de test : premier plan seulement (saisies en cours gardées)", [journal.splice(0), t.ouvertes], [["focus active"], []]);
+  await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=otc`) });
+  eq("fenêtre déjà sur l'adresse : premier plan seulement, aucun rechargement", journal.splice(0), ["focus active"]);
+}
+{
+  // admin : fenêtre sur #admin, ou aperçu d'une annonce → nouvelle fenêtre (annonce en rédaction jamais perdue)
+  const journal = [];
+  const admin = { url: `${ORIGINE}/?banc=1#admin`, focused: true, focus: async () => journal.push("focus"), navigate: async (u) => journal.push(`navigate ${u}`), postMessage: () => journal.push("message") };
+  const { t, evenement } = bac({ fenetres: [admin] });
+  await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
+  eq("fenêtre sur #admin : lien ouvert dans une nouvelle fenêtre, l'admin n'est pas rechargé", [journal.splice(0), t.ouvertes.splice(0)], [[], [`${ORIGINE}/?menu=promo_1`]]);
+  const pharmacie = { url: `${ORIGINE}/?menu=otc`, focused: true, focus: async () => journal.push("focus"), navigate: async (u) => journal.push(`navigate ${u}`) };
+  const b2 = bac({ fenetres: [pharmacie] });
+  await b2.evenement("notificationclick", { notification: { tag: "apercu", data: { url: `${ORIGINE}/?menu=promo_2`, categorie: "offres" }, close() {} } });
+  eq("aperçu d'une annonce : nouvelle fenêtre, jamais la fenêtre en cours", [journal, b2.t.ouvertes], [[], [`${ORIGINE}/?menu=promo_2`]]);
 }
 {
   const { t, evenement } = bac({ fenetres: [] });

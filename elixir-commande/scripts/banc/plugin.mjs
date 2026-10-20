@@ -255,6 +255,7 @@ const pushBanc = {
   appareils: null,   // id → appareil (créés au premier appel : la pharmacie du banc peut venir de dev-fixtures/pharmacie.json)
   admin: new Map(),
   annonces: [],
+  retirees: new Set(),   // pharmacies d'exemple dont l'admin a retiré les appareils (retirer_pharmacie)
   n: 0,
 };
 function appareilsBanc() {
@@ -332,7 +333,8 @@ function etatAdminBanc(endpoint) {
     tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: "BANC-FICTIVE", reglages: pushBanc.reglages,
     stats: { pharmacies: pharmacies.length, appareils: Object.values(plateformes).reduce((a, b) => a + b, 0), par_categorie: parCat, par_plateforme: plateformes,
       installes: 3, en_echec: banc.filter(d => d.failures >= 3).length, vus_30j: 9 },
-    pharmacies, mes_appareils: [...pushBanc.admin.values()].map(d => publicBanc(d, endpoint || null)) };
+    pharmacies: pharmacies.filter(p => !pushBanc.retirees.has(p.cip)), mes_appareils: [...pushBanc.admin.values()].map(d => publicBanc(d, endpoint || null)),
+    hotes_refuses: [], appareil_inconnu: endpoint ? ![...pushBanc.admin.values(), ...appareilsBanc().values()].some(d => d.endpoint === endpoint) : null };
 }
 function reponsePushAdminBanc(b) {
   const ok = (corps, statut = 200) => ({ statut, corps, source: "fictif (notifications du banc)" });
@@ -378,6 +380,12 @@ function reponsePushAdminBanc(b) {
     case "pharmacie": {
       const banc = b.cip === pharmacieBanc().cip ? [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne").map(d => publicBanc(d)) : [];
       return ok({ appareils: banc, raison: null, disponible: true });
+    }
+    case "retirer_pharmacie": {
+      let n = 0;
+      if (b.cip === pharmacieBanc().cip) for (const [id] of appareilsBanc()) { if (!b.id || b.id === id) { appareilsBanc().delete(id); n++; } }
+      else if (!pushBanc.retirees.has(b.cip)) { pushBanc.retirees.add(b.cip); n = PHARMACIES_EXEMPLE.find(p => p[1] === b.cip)?.[2].length || 0; }
+      return ok({ success: true, retires: n });
     }
     default: return ok({ success: true });
   }

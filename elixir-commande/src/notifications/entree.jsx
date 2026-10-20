@@ -10,7 +10,7 @@ const charger = () => import("./Notifications.jsx");
 const SecoursPanneau = ({ onClose }) => (
   <aside role="alert" aria-label="Notifications" style={{ ...ui.encart("danger"), position: "fixed", top: 16, right: 16, zIndex: 401, maxWidth: "calc(100% - 32px)",
     boxShadow: T.shadow3, display: "flex", alignItems: "center", gap: 12 }}>
-    Les notifications n'ont pas pu se charger : rechargez la page.
+    Les notifications n'ont pas pu se charger&nbsp;: rechargez la page.
     <button type="button" className="ex-btn-ligne" onClick={onClose} style={ui.btn("ligne", "s")}>Fermer</button>
   </aside>
 );

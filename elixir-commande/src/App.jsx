@@ -1013,7 +1013,7 @@ export default function App() {
   // en lecture seule, jamais d'abonnement de l'appareil d'Elixir). Démarrage, carte et panneau chargés à la demande ──
   const identiteNotif = identiteAssistant;
   const [notif, setNotif] = useState(null);   // { visible, carte, parcours, statut, acting } (src/notifications/demarrage.js)
-  const [notifOuvert, setNotifOuvert] = useState(false);
+  const [notifOuvert, setNotifOuvert] = useState(false);   // false | true | "telephone" (code QR en tête, ordinateur)
   useEffect(() => {
     setNotif(null); setNotifOuvert(false);
     if (!identiteNotif) return;
@@ -1021,7 +1021,7 @@ export default function App() {
     demarrerNotifications({ appel: appelAuthentifie, identite: identiteNotif, acting: !!actingFor }).then(e => { if (!annule) setNotif(e); });
     return () => { annule = true; };
   }, [identiteNotif]);   // eslint-disable-line react-hooks/exhaustive-deps -- actingFor est dans l'identité
-  const ouvrirNotifications = () => { setCartOpen(false); setAssistantOuvert(false); setSidebarOpen(false); setShowMyOrders(false); setNotifOuvert(true); };
+  const ouvrirNotifications = (section) => { setCartOpen(false); setAssistantOuvert(false); setSidebarOpen(false); setShowMyOrders(false); setNotifOuvert(section === "telephone" ? section : true); };
   // lien direct ?notifications=1 (mailing, message d'Elixir) : panneau ouvert une fois la session prête ; paramètre retiré
   const lienNotif = useRef((() => { try { return new URLSearchParams(window.location.search).get("notifications") === "1"; } catch { return false; } })());
   useEffect(() => {
@@ -2222,7 +2222,7 @@ export default function App() {
         {/* Assistant Elixir : groupe « AIDE » sous « OUTILS » (ouvre le panneau, ce n'est pas un onglet du catalogue) */}
         {assistantDispo && <GroupeAide isDesktop={isDesktop} infos={assistant.infos} onOuvrir={() => ouvrirAssistant()} />}
         {/* Notifications de l'appli : groupe « MON COMPTE » (accessible aussi sur mobile par le menu ☰) */}
-        {notif?.visible && <EntreeMenuNotifications isDesktop={isDesktop} onOuvrir={ouvrirNotifications} />}
+        {notif?.visible && <EntreeMenuNotifications isDesktop={isDesktop} onOuvrir={() => ouvrirNotifications()} />}
         </nav>
       </aside>
 
@@ -2319,8 +2319,8 @@ export default function App() {
               {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
-            {/* Notifications : ordinateur et tablette (sur mobile, l'en-tête est plein : menu ☰ et carte de l'accueil) */}
-            {!isMobile && notif?.visible && <button className="ex-icone-entete ex-cible" onClick={ouvrirNotifications} title="Notifications" aria-label="Notifications" style={btnEntete}><Icone nom="cloche" /></button>}
+            {/* Notifications : grand écran seulement (tablette : la recherche garderait trop peu de place ; menu → MON COMPTE) */}
+            {isDesktop && notif?.visible && <button className="ex-icone-entete ex-cible" onClick={() => ouvrirNotifications()} title="Notifications" aria-label="Notifications" style={btnEntete}><Icone nom="cloche" /></button>}
             {/* Assistant Elixir : avant « Mes commandes » ; data-assistant-ouvrir : le focus y revient à la fermeture du panneau */}
             {assistantDispo && (
               <button className="ex-icone-entete ex-cible" data-assistant-ouvrir onClick={() => (assistantOuvert ? setAssistantOuvert(false) : ouvrirAssistant())}
@@ -3359,7 +3359,7 @@ export default function App() {
 
         {/* ── Notifications — fenêtre (chargée à la demande) ; saisie Elixir : lecture seule ── */}
         {notifOuvert && notif?.visible && (
-          <PanneauNotifications appel={appelAuthentifie} acting={actingFor} pharmacyName={pharmacyName} mobile={isMobile}
+          <PanneauNotifications appel={appelAuthentifie} acting={actingFor} pharmacyName={pharmacyName} mobile={isMobile} section={notifOuvert === "telephone" ? "telephone" : null}
             onClose={() => setNotifOuvert(false)} onReconnecter={actingFor ? null : demanderReconnexion} onEtat={setNotif} />
         )}
 

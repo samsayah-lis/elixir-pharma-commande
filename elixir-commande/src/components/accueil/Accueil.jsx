@@ -209,9 +209,6 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
       {/* suggestions de recommande (App) : sous la vitrine et les offres, plus au-dessus de la vitrine */}
       {suggestions}
 
-      {/* « Recevez nos alertes sur votre téléphone » (App, docs/notifications.md) : avant les accès rapides */}
-      {alertes}
-
       <section className="acc-section" aria-labelledby="acc-acces-titre">
         <h2 id="acc-acces-titre" className="acc-h2">Accès rapides</h2>
         <div className="acc-acces">
@@ -220,6 +217,10 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
           {menus.map(m => <Tuile key={m.key} icone={m.icone} titre={sansEmoji(m.label)} texte={m.sousTitre} couleur={m.couleur} onClick={() => aller(naviguer(m.key))} />)}
         </div>
       </section>
+
+      {/* « Recevez nos alertes sur votre téléphone » (App, docs/notifications.md) : APRÈS les accès rapides — la carte arrive
+          après la configuration et le statut, elle ne décale donc jamais les tuiles qu'on s'apprête à toucher */}
+      {alertes}
     </div>
   );
 }
