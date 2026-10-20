@@ -258,7 +258,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction de l'Assistant Elixir)`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
@@ -278,7 +278,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) (Assistant Elixir, accueil) et ${assistant.modifies} modifié(s) (Assistant Elixir)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil)` : ""}`);
 }
 
 // 3. clés de stockage

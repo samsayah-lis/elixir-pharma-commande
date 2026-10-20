@@ -132,7 +132,8 @@ const doseNum = (d) => { const m = String(d ?? "").match(/(\d+(?:[\s ]\d{3})*(
 
 // ── Prix (mêmes règles que le site) ──
 const r2 = (x) => Math.round(x * 100) / 100;
-const num = (x) => { const v = typeof x === "string" ? parseFloat(x.replace(",", ".").replace(/[^0-9.-]/g, "")) : Number(x); return Number.isFinite(v) ? v : null; };
+// vide ou absent → null (un PV absent, produits Vaseline, n'est pas un PV à 0 : pas de remise négative)
+const num = (x) => { if (x == null || x === "") return null; const v = typeof x === "string" ? parseFloat(x.replace(",", ".").replace(/[^0-9.-]/g, "")) : Number(x); return Number.isFinite(v) ? v : null; };
 const paliers = (t) => (Array.isArray(t) && t.length ? t : null);
 // Fusion de products-get.js : prix curaté remplacé par le prix Odoo n° 5 (odoo_catalog) quand pn > 0 et pv > 0
 export function fusionPrix(cure, cat) {

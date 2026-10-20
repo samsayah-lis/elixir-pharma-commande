@@ -1,18 +1,26 @@
 // ── Banc d'essai : donnée figée de la page d'accueil (GET accueil-offres) ──
 // node scripts/banc/fixture-accueil.mjs <top15j.json> [--config <display_config.json>] [--noms <fiches Odoo.json>] [--fictif]
+//   [--vedettes <accueil-vedettes.json>] [--promos <admin_promos.json>]
 // Lit la fixture produit de l'étude des données (top 15 jours, prix et stock figés, aucune donnée client) et écrit
 // dev-fixtures/accueil-offres.json (hors git) au format EXACT de la réponse du GET : la conversion passe par la
 // règle du serveur (netlify/functions/_accueil-selection.js : diapoPublique), avec le catalogue reconstitué depuis la
 // fixture. Retirés : comptes exacts (nb_*), candidats, identifiants Odoo, froid, prescription.
 // --fictif : affiche en plus la version compacte (6 diapositives variées, une par ligne) recopiée dans
 //            src/dev/reponses-fictives.js (aperçus Netlify, où le jeton d'essai ne peut pas lire le vrai classement).
+// --vedettes : mises en avant de Zineb (valeur de la clé ec_config « accueil_vedettes », exemple :
+//            dev-fixtures/accueil-vedettes.json) ajoutées à la réponse par la règle du serveur (_accueil-vedettes.js :
+//            evaluerVedettes, au moment du lancement), avec les menus promo de --promos (par défaut la donnée figée
+//            dev-fixtures/get/config-get__key=admin_promos.json) ; écrit aussi dev-fixtures/get/config-get__key=accueil_vedettes.json
+//            (lecture de l'éditeur de l'admin sur le banc). Produits mis en avant : ceux de la fixture (prix et stock figés).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DOSSIER_FIXTURES } from "./commun.mjs";
 import { contexteMenus, diapoPublique, normaliser, NB_SLIDES, NB_RESERVES, VERSION, laboCourt } from "../../netlify/functions/_accueil-selection.js";
+import { evaluerVedettes } from "../../netlify/functions/_accueil-vedettes.js";
+import { DOSSIER_GET } from "./commun.mjs";
 
 const args = process.argv.slice(2);
-const source = args.find((a, i) => !a.startsWith("--") && !["--config", "--noms"].includes(args[i - 1]));
+const source = args.find((a, i) => !a.startsWith("--") && !["--config", "--noms", "--vedettes", "--promos"].includes(args[i - 1]));
 if (!source) { console.error("Usage : node scripts/banc/fixture-accueil.mjs <top15j.json> [--config <display_config.json>] [--fictif]"); process.exit(2); }
 const F = JSON.parse(readFileSync(source, "utf8"));
 const conf = args.includes("--config") ? JSON.parse(readFileSync(args[args.indexOf("--config") + 1], "utf8")) : null;
@@ -60,6 +68,19 @@ const pub = diapos.map(d => diapoPublique(d, ctx)).filter(Boolean);
 const slides = pub.slice(0, NB_SLIDES).map((s, i) => ({ ...s, rang: i + 1 }));
 const reserves = pub.slice(NB_SLIDES, NB_SLIDES + NB_RESERVES).map((s, i) => ({ ...s, rang: NB_SLIDES + i + 1 }));
 const reponse = { version: VERSION, genere_le: F.genere_le, periode: { du: F.periode.jours[0], au: F.periode.jours[14], jours: F.periode.jours }, slides, reserves, perime: false };
+// mises en avant : règle du serveur, menus promo figés, produits de la fixture
+if (args.includes("--vedettes")) {
+  const lire = (f) => JSON.parse(readFileSync(f, "utf8"));
+  const valeur = lire(args[args.indexOf("--vedettes") + 1]);
+  const brutPromos = lire(args.includes("--promos") ? args[args.indexOf("--promos") + 1] : resolve(DOSSIER_GET, "config-get__key=admin_promos.json"));
+  const promos = Array.isArray(brutPromos) ? brutPromos : (typeof brutPromos.value === "string" ? JSON.parse(brutPromos.value) : brutPromos.value) || [];
+  const maj = new Date().toISOString();
+  const ved = evaluerVedettes(valeur, maj, { catalogue, curees, menus: contexteMenus({ displayConfig, promos }), promos, justifs: new Set() }, Date.now());
+  reponse.vedettes = ved.publiques;
+  reponse.vedettes_etat = ved.etats;   // lu par l'éditeur de l'admin (le banc ne distingue pas les jetons)
+  writeFileSync(resolve(DOSSIER_GET, "config-get__key=accueil_vedettes.json"), JSON.stringify({ key: "accueil_vedettes", value: valeur, updated_at: maj }, null, 1));
+  console.log(`✓ mises en avant : ${ved.etats.map(e => `${e.id} ${e.statut}`).join(" · ")}`);
+}
 
 const fuite = JSON.stringify(reponse).match(/"(nb_commandes|nb_pharmacies|odoo_product_id|famille_total|_cmd|_rythme|_pid|available)"/);
 if (fuite) { console.error(`Champ interdit dans la réponse : ${fuite[1]}`); process.exit(1); }

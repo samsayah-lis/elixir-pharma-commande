@@ -3,7 +3,10 @@
 // Le classement des ventes est une information commerciale : réservé aux pharmacies connectées (compte du jeton) et à
 // l'admin (saisie pour une pharmacie, aperçu de l'admin). Sans jeton valide → 401 { error: "reconnexion" } ; compte
 // inconnu → 403 { error: "fiche" } ; Supabase Auth en panne → 503 « indisponible ».
-// → { version, genere_le, periode: { du, au, jours }, slides (12 au plus), reserves (8 au plus), perime }
+// → { version, genere_le, periode: { du, au, jours }, slides (12 au plus), reserves (8 au plus), perime, vedettes }
+// vedettes (toujours présent, même périmé) : les mises en avant de Zineb visibles maintenant (_accueil-vedettes.js),
+// configuration relue à chaque appel (ec_config « accueil_vedettes », lue en parallèle du cache). Jeton admin seulement :
+// vedettes_etat (état de chaque mise en avant publiée) et ?verifier=cip,cip (brouillon de l'éditeur : verification).
 // Prix et stock relus à chaque appel (fusion de products-get, sinon règle de la Saisie) : une diapositive passée en
 // rupture est remplacée par la première réserve. Jamais de compte exact (tranches, courbe normalisée), jamais de stock.
 // Cache absent (premier appel après la mise en ligne) : calcul sous verrou (60 s), terminé au plus tard 7 s après le début
@@ -13,8 +16,9 @@
 import { getCors } from "./cors.js";
 import { rateLimit } from "./rate-limit.js";
 import { reponseIndisponible } from "./auth.js";
-import { creerSources, calculerClassement, lireContexte, CLE_CACHE, CLE_JOURNAL, CLE_ECHEC } from "./_accueil-donnees.js";
+import { creerSources, calculerClassement, lireContexte, lireConfigAccueil, CLE_CACHE, CLE_JOURNAL, CLE_ECHEC } from "./_accueil-donnees.js";
 import { publique, cipsDuCache, VERSION } from "./_accueil-selection.js";
+import { evaluerVedettes, cipsVedettes, cipsAVerifier, verification } from "./_accueil-vedettes.js";
 
 const ECHEANCE_MS = 7000;          // depuis le début de l'appel (plafond Netlify : 10 s)
 const DELAI_ODOO_MS = 3500;        // par appel Odoo, connexion comprise
@@ -43,11 +47,20 @@ export function creerHandler(deps = {}) {
         const [compte] = mail ? (await src.sb(`elixir_pharmacies?email=eq.${enc(mail)}&select=email&limit=1`)) || [] : [];
         if (!compte) return repondre(403, { error: "fiche", message: "Aucune pharmacie n'est rattachée à ce compte." });
       }
-      let cache = await src.kvGet(CLE_CACHE);
-      if (!cache) cache = await premierCalcul(src, echeance);
-      if (!cache) return repondre(200, { version: VERSION, genere_le: null, periode: null, slides: [], reserves: [], perime: true }, "private, max-age=60");
-      const ctx = await lireContexte(src, cipsDuCache(cache));
-      return repondre(200, publique(cache, ctx, src.maintenant()), "private, max-age=60");
+      // classement en cache et configuration de l'accueil (menus, menus promo, mises en avant) lus en parallèle
+      const [enCache, conf] = await Promise.all([src.kvGet(CLE_CACHE), lireConfigAccueil(src)]);
+      const cache = enCache || await premierCalcul(src, echeance);
+      const vedCips = cipsVedettes(conf.vedettes.valeur);
+      const aVerifier = user.isAdmin ? cipsAVerifier(event.queryStringParameters?.verifier) : [];
+      const ctx = await lireContexte(src, [...new Set([...(cache ? cipsDuCache(cache) : []), ...vedCips, ...aVerifier])], conf);
+      // justificatifs illisibles : liste vide (le navigateur écarte aussi ces produits avec justifProducts)
+      const justifs = vedCips.length || aVerifier.length ? await src.justifs().catch(() => null) : null;
+      const ctxV = { ...ctx, justifs: justifs || new Set() };
+      const ved = evaluerVedettes(conf.vedettes.valeur, conf.vedettes.maj, ctxV, src.maintenant());
+      const corps = cache ? publique(cache, ctx, src.maintenant()) : { version: VERSION, genere_le: null, periode: null, slides: [], reserves: [], perime: true };
+      corps.vedettes = ved.publiques;
+      if (user.isAdmin) { corps.vedettes_etat = ved.etats; if (aVerifier.length) corps.verification = verification(aVerifier, ctxV); }
+      return repondre(200, corps, "private, max-age=60");
     } catch (e) {
       console.error("accueil-offres", e);
       return repondre(502, { error: "indisponible", message: "Offres momentanément indisponibles." });

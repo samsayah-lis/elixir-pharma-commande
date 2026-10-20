@@ -35,8 +35,19 @@ export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
   };
 }
 
+// ── Supabase : configuration de l'accueil en une requête (menus, menus promo, mises en avant de Zineb) ──
+// → { displayConfig, promos, vedettes: { valeur, maj } } ; table illisible → valeurs vides (la page garde son repli)
+export async function lireConfigAccueil(src) {
+  const rows = await src.sb(`ec_config?key=in.${enc(liste(["display_config", "admin_promos", "accueil_vedettes"]))}&select=key,value,updated_at`).catch(() => []);
+  const ligne = (k) => (rows || []).find(r => r.key === k);
+  const promos = parse(ligne("admin_promos")?.value);
+  return { displayConfig: parse(ligne("display_config")?.value) || {}, promos: Array.isArray(promos) ? promos : [],
+    vedettes: { valeur: parse(ligne("accueil_vedettes")?.value), maj: ligne("accueil_vedettes")?.updated_at || null } };
+}
+
 // ── Supabase : catalogue, produits curatés, configuration, campagnes ──
-export async function lireContexte(src, cips) {
+// conf : configuration déjà lue (lireConfigAccueil, GET : lue en parallèle du cache), sinon lue ici
+export async function lireContexte(src, cips, conf = null) {
   const catalogue = {}, curees = [];
   for (let i = 0; i < cips.length; i += 150) {
     const lot = enc(liste(cips.slice(i, i + 150)));
@@ -47,13 +58,12 @@ export async function lireContexte(src, cips) {
     for (const r of cat || []) catalogue[r.cip] = r;
     curees.push(...(cur || []));
   }
-  const [conf, campagnes] = await Promise.all([
-    src.sb(`ec_config?key=in.${enc(liste(["display_config", "admin_promos"]))}&select=key,value`).catch(() => []),
+  const [c, campagnes] = await Promise.all([
+    conf || lireConfigAccueil(src),
     src.sb("elixir_campaigns?active=eq.true&select=id,active").catch(() => []),
   ]);
-  const valeur = (k) => parse((conf || []).find(r => r.key === k)?.value);
-  const menus = contexteMenus({ displayConfig: valeur("display_config") || {}, promos: valeur("admin_promos") || [], campagnes });
-  return { catalogue, curees, menus };
+  const menus = contexteMenus({ displayConfig: c.displayConfig || {}, promos: c.promos || [], campagnes });
+  return { catalogue, curees, menus, promos: c.promos || [] };
 }
 
 // ── Odoo : commandes SERVIES (au moins une boîte acceptée), société Elixir, état « sale » ──

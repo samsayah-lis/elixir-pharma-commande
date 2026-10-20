@@ -2,7 +2,8 @@
 // Répond lui-même à /.netlify/functions/* : rien n'est jamais relayé vers la production.
 //  • GET  : données figées de dev-fixtures/get/ (npm run banc:capture), sinon données calculées à partir
 //           d'elles (recherche locale, « Mes commandes » et suggestions de la pharmacie du banc), sinon 404.
-//           Page d'accueil (accueil-offres) : dev-fixtures/accueil-offres.json (scripts/banc/fixture-accueil.mjs).
+//           Page d'accueil (accueil-offres) : dev-fixtures/accueil-offres.json (scripts/banc/fixture-accueil.mjs) ;
+//           ?verifier=cip,cip (éditeur des mises en avant) : règle du serveur (_accueil-vedettes.js) sur les données figées.
 //  • autres méthodes : réponse « succès » (src/dev/reponses-fictives.js, ou dev-fixtures/post/<fn>[.<action>].json
 //           si présent) ; le corps reçu est journalisé dans dev-fixtures/_envois/<jour>/ (jetons jamais écrits).
 //  • Assistant Elixir (fonctions chat et chat-fichier) : réponses écrites d'avance (src/dev/reponses-fictives.js, cas
@@ -17,6 +18,8 @@ import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
 import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
+import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
+import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
 
 // Pharmacie du banc (identité renvoyée à l'identification) ; remplaçable par dev-fixtures/pharmacie.json
 const PHARMACIE_BANC = { name: "PHARMACIE DU BANC D'ESSAI", cip: "9999999", email: "" };
@@ -125,9 +128,23 @@ function getCalcule(fn, q) {
     case "supplier-code-refs": return { refs: {}, byCip: {} };
     // page d'accueil : vrai classement des 15 jours figé (dev-fixtures/accueil-offres.json, écrit par
     // scripts/banc/fixture-accueil.mjs depuis la fixture produit de l'étude), sinon le classement fictif des aperçus
-    case "accueil-offres": return litJson(resolve(DOSSIER_FIXTURES, "accueil-offres.json")) ?? accueilFictif();
+    case "accueil-offres": {
+      const base = litJson(resolve(DOSSIER_FIXTURES, "accueil-offres.json")) ?? accueilFictif();
+      return q.verifier ? { ...base, verification: verificationBanc(q.verifier) } : base;
+    }
     default: return undefined;
   }
+}
+
+// Éditeur des mises en avant (?verifier=) : offre et motifs par la règle du serveur, avec le catalogue, les produits
+// curatés, les menus promo, l'affichage et les justificatifs figés du banc
+function verificationBanc(liste) {
+  const valeur = (k) => { const v = fige(`config-get?key=${k}`)?.value; return typeof v === "string" ? JSON.parse(v) : v; };
+  const promos = valeur("admin_promos") || [];
+  const catalogue = Object.fromEntries(catalogueLocal().map(p => [p.cip, p]));
+  const justifs = new Set(Object.keys(fige("lab-justif?action=products")?.products || {}));
+  return verification(cipsAVerifier(liste), { catalogue, curees: produits().filter(p => p.active !== false), promos, justifs,
+    menus: contexteMenus({ displayConfig: valeur("display_config") || {}, promos, campagnes: [] }) });
 }
 
 // GET : priorité à la configuration du banc, puis donnée figée, puis calcul

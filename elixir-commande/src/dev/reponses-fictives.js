@@ -35,6 +35,9 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
     case "order-save":          return b.verifier ? { success: true, admin: !!admin } : { success: true, id: b.id ?? Date.now() };
     case "submit-order":        return { queued: false, error: "essai à blanc : rien n'est transmis à PharmaML" };
     case "search-track":        return { ok: true };
+    // publication d'une clé de configuration (éditeur des mises en avant de l'accueil : base / 409) : acceptée, nouvelle
+    // version datée de maintenant ; rien n'est écrit
+    case "config-get":          return { success: true, key: b.key, updated_at: new Date().toISOString() };
     case "lab-justif":
       if (b.action === "rx_upload")   return { id: `essai-${Date.now()}`, name: b.name || "ordonnance" };
       if (b.action === "commander")   return { order_id: b.order_id, demandes: [] };
@@ -81,10 +84,22 @@ const ACCUEIL_FICTIF = [
   {"cip":"3400949605538","nom_court":"IZALGI MYLAN 500MG/25MG BTE 16","nom_panier":"IZALGI MYLAN 500MG/25MG BTE 16","nom":"IZALGI 500 mg/25 mg (paracétamol, poudre d'opium), gélules sous plaquettes  thermoformées (PVC/Aluminium) B/16","image_url":"https://assets.medipim.fr/media/medium/0a506f62fa0ca3618d2e07d399df6994.png","boite":{"marque":"IZALGI","dosage":"500 mg/25 mg","forme":"Gélules","labo":"Viatris"},"pv":1.43,"pn":1.2,"pct":16.1,"remise_eur":0.23,"price_tiers":[{"pct":17.5,"price":1.18,"min_qty":100}],"regle_qte":{"step":100,"min":100,"multiple":100,"libelle":"Se commande par 100 (carton)"},"lot":{"qte":100,"pu":1.18,"total":118},"stock":{"en_stock":true,"niveau":"ok"},"menu":{"key":"stratege","label":"Sélection Stratège"},"popularite":"Plus de 100 pharmacies","famille":"IZALGI","labo":"Viatris","tendance_pct":34,"nouveau":false,"serie_15j":[0.59,1,0.88,0.88,0.41,0.41,0.12,0.94,1,0.88,0.53,0.65,0.24,0.12,0.53],"variantes":[]},
   {"cip":"3400937784214","nom_court":"FLECTOR 1% GEL FL 100G BT 1","nom_panier":"FLECTOR 1% GEL FL 100G BT 1","nom":"FLECTOR 1 % (épolamine de diclofénac), gel, 100 g en flacon","image_url":"https://assets.medipim.fr/media/medium/895d3b3caaa23572edc6a8c4e048dd74.png","boite":{"marque":"FLECTOR","dosage":"1 %","forme":"Gel","labo":"IBSA"},"pv":2.42,"pn":2.19,"pct":9.5,"remise_eur":0.23,"price_tiers":null,"regle_qte":{"step":42,"min":42,"multiple":42,"libelle":"Se commande par 42 (carton)"},"lot":{"qte":42,"pu":2.19,"total":91.98},"stock":{"en_stock":true,"niveau":"ok"},"menu":{"key":"stratege","label":"Sélection Stratège"},"popularite":"Plus de 50 pharmacies","famille":"FLECTOR","labo":"IBSA","tendance_pct":16,"nouveau":false,"serie_15j":[0.5,0.55,0.45,0.65,0.45,0.3,0.05,0.65,0.7,0.45,1,0.5,0.8,0.1,0.9],"variantes":[]},
 ];
+// Mises en avant d'exemple (badge « Aperçu ») : deux en vitrine cinéma (menu Précommande Vaseline, Ventoline au carton),
+// une dans la grille (menu Claripharm) ; les menus promo sont ceux, réels, que lit l'aperçu (menu absent ou inactif :
+// l'objet disparaît et le repli automatique prend sa place, comme en ligne).
+function vedettesFictives() {
+  const { famille, labo, tendance_pct, nouveau, serie_15j, variantes, popularite, ...offre } = ACCUEIL_FICTIF[1];   // eslint-disable-line no-unused-vars
+  const objet = (id, type, emplacement, titre, fin, extra) => ({ id, type, emplacement, titre, accroche: "", badge: "Aperçu", fin, image: null, couleur: null, couleur_auto: null, ...extra });
+  return { maj: null, repli: true, defilement: true, apercu: true, items: [
+    objet("mea_apercu_vas", "menu", "vitrine", "Le baume culte, au prix de précommande", jourParis(10), { menu_id: "1792060000000" }),
+    objet("mea_apercu_ven", "produit", "vitrine", "Ventoline au carton", jourParis(1), { couleur: "#2f6fa8", offre }),
+    objet("mea_apercu_cla", "menu", "grille", "", null, { menu_id: "1792040000000" }),
+  ] };
+}
 export function accueilFictif() {
   const jours = Array.from({ length: 15 }, (_, i) => jourParis(i - 14));
   return { version: 1, genere_le: new Date(Date.now() - 2 * 3600e3).toISOString(), periode: { du: jours[0], au: jours[14], jours },
-    slides: ACCUEIL_FICTIF.map((s, i) => ({ ...s, rang: i + 1 })), reserves: [], perime: false, apercu: true };
+    slides: ACCUEIL_FICTIF.map((s, i) => ({ ...s, rang: i + 1 })), reserves: [], perime: false, apercu: true, vedettes: vedettesFictives() };
 }
 const sansAccents = (t) => String(t ?? "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 let numeroFictif = 0;

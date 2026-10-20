@@ -30,7 +30,7 @@ const sansEmoji = (s) => String(s || "").replace(/[\p{Extended_Pictographic}️�
 
 // Une offre (diapositive ou dosage du GET) au moment présent → offre résolue, ou null si elle ne doit pas paraître.
 // ctx : { catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable(k), regleSaisie(cip), estCampagne(k),
-//         photos: { cip: url } (admin), teinte(k) }
+//         photos: { cip: url } (admin), teinte(k), ignorerStock (mise en avant d'un produit de précommande) }
 // Retirés : justificatif labo, produit de campagne (prix et UG propres au panier), menu non ouvrable, rupture d'un produit
 // de menu, prix net absent.
 export function resoudreOffre(o, ctx) {
@@ -47,7 +47,7 @@ export function resoudreOffre(o, ctx) {
     if (ctx.estCampagne?.(t.catKey)) return null;
     if (!ctx.menuOuvrable(t.catKey)) return null;
     const st = (ctx.stockData || {})[o.cip];
-    if (st && (st.dispo === 0 || st.dispo === false)) return null;
+    if (!ctx.ignorerStock && st && (st.dispo === 0 || st.dispo === false)) return null;   // précommande (menu sansStock) : stock sans objet
     const p = t.p;
     const pn = nombre(p.pn), pv = nombre(p.pv);
     if (!(pn > 0)) return null;
