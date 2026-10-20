@@ -7,6 +7,12 @@
 //  2. aucune animation infinie au repos : 10 s après un clic sur « Ajouter » d'une tuile, souris hors de la page ;
 //  3. entrée en cascade (375 × 812, grille sous la ligne de flottaison) : une tuile n'est jamais vue, puis effacée ;
 //  4. aucun défilement horizontal de la page à 375 px.
+// Mises en avant d'outils (docs/accueil.md § 7.8 ; banc : fixture-accueil.mjs --outils) :
+//  5. une tuile outil est un seul bouton dont le nom contient le texte de son bouton ;
+//  6. le bouton d'un outil dans la vitrine n'est pas rogné à 375, 1024 et 1280 px ;
+//  7. aucune animation infinie 10 s après l'arrivée sur une Saisie (curseur du champ arrêté) ;
+//  8. en mouvement réduit, les lettres du champ de la Saisie sont visibles d'emblée ;
+//  9. un clic sur la Péremption (vitrine) ou sur une tuile outil mène à ?menu=<outil>, en haut de page.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +27,7 @@ const chrome = spawn(CHROME, ["--headless=new", `--remote-debugging-port=${PORT}
   "--hide-scrollbars", "--lang=fr-FR", "about:blank"], { stdio: "ignore" });
 const pause = (ms) => new Promise(r => setTimeout(r, ms));
 let ok = 0, ko = 0;
-const vrai = (label, v, detail = "") => { if (v) ok++; else { ko++; console.log("✗", label, detail); } };
+const vrai = (label, v, detail = "") => { if (v) { ok++; if (process.env.DETAIL) console.log("✓", label); } else { ko++; console.log("✗", label, detail); } };
 
 let page = null;
 for (let i = 0; i < 50 && !page; i++) { await pause(200); try { page = (await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json()).find(t => t.type === "page"); } catch { /* démarrage */ } }
@@ -35,10 +41,10 @@ const js = async (expression) => { const r = await cdp("Runtime.evaluate", { exp
 const attendre = async (sel) => { for (let t = 0; t < 300; t++) { if (await js(`!!document.querySelector(${JSON.stringify(sel)})`)) return; await pause(50); } throw new Error(`introuvable : ${sel}`); };
 const souris = (type, x, y) => cdp("Input.dispatchMouseEvent", { type, x, y, button: type === "mouseMoved" ? "none" : "left", clickCount: type === "mouseMoved" ? 0 : 1, pointerType: "mouse" });
 
-async function ouvrir(l, h, mobile = false) {
+async function ouvrir(l, h, mobile = false, reduit = false) {
   await cdp("Emulation.setDeviceMetricsOverride", { width: l, height: h, deviceScaleFactor: mobile ? 2 : 1, mobile });
   await cdp("Emulation.setTouchEmulationEnabled", mobile ? { enabled: true, maxTouchPoints: 5 } : { enabled: false });
-  await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "no-preference" }] });
+  await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: reduit ? "reduce" : "no-preference" }] });
   await cdp("Page.navigate", { url: BANC }); await pause(900);
   await js(`localStorage.clear(); sessionStorage.clear(); localStorage.setItem("session_email", "banc@pharmacie.test"); localStorage.setItem("session_name", "PHARMACIE DU BANC D'ESSAI");
     localStorage.setItem("session_cip", "9000001"); localStorage.setItem("pharmacy_token", "essai-jeton"); true`);
@@ -77,6 +83,52 @@ try {
     op.forEach((o, i) => { if (o >= 0.99) vues.add(i); else if (vues.has(i) && o < 0.5) rechutes.push(`tuile ${i + 1} à ${y} px`); });
   }
   vrai("cascade : aucune tuile vue puis effacée", rechutes.length === 0, rechutes.join(", "));
+  // 5-9. mises en avant d'outils (seulement si le banc en montre)
+  await ouvrir(1280, 800);
+  const nbOutils = await js(`document.querySelectorAll(".mea-tuile--outil").length + document.querySelectorAll(".mea-actions--outil").length`);
+  if (!nbOutils) console.log("  · aucune mise en avant d'outil sur le banc (fixture-accueil.mjs --outils) : contrôles 5 à 9 sautés");
+  else {
+    const tuiles = await js(`[...document.querySelectorAll(".mea-tuile--outil")].map(t => ({ bouton: t.tagName === "BUTTON", imbriques: t.querySelectorAll("button, a, input").length,
+      nom: t.getAttribute("aria-label") || "", pied: t.querySelector(".mea-tuile-pied")?.textContent || "" }))`);
+    vrai("au moins une tuile outil dans la grille", tuiles.length > 0);
+    for (const t of tuiles) vrai(`tuile outil « ${t.pied} » : un seul bouton, nom avec le texte du bouton`, t.bouton && t.imbriques === 0 && !!t.pied && t.nom.includes(t.pied.trim()), JSON.stringify(t));
+    for (const [l, h, m] of [[375, 812, true], [1024, 768, false], [1280, 800, false]]) {
+      await ouvrir(l, h, m);
+      const i = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption/.test(b.textContent))`);
+      if (i > 0) { await js(`document.querySelectorAll(".mea-barre")[${i}].click(); true`); await pause(1200); }
+      const b = await js(`(() => { const c = document.querySelector(".mea-diapo .mea-actions--outil .mea-cta"); if (!c) return null; const r = c.getBoundingClientRect(), s = document.querySelector(".mea-cinema").getBoundingClientRect();
+        return { texte: c.textContent, sw: c.scrollWidth, cw: c.clientWidth, dedans: r.left >= s.left - 0.5 && r.right <= s.right + 0.5 }; })()`);
+      vrai(`${l} px : bouton de l'outil dans la vitrine entier${b ? ` (« ${b.texte} »)` : ""}`, b && b.sw <= b.cw + 0.5 && b.dedans, JSON.stringify(b));
+      if (m) vrai(`${l} px (outils) : pas de défilement horizontal`, await js("document.documentElement.scrollWidth <= document.documentElement.clientWidth"));
+    }
+    // Saisie : champ qui s'écrit, curseur arrêté (aucune animation infinie 10 s après l'arrivée)
+    await ouvrir(1440, 900);
+    const saisie = await js(`(() => { const p = document.querySelector(".mea-plaque-champ"); if (!p) return false; p.scrollIntoView({ block: "center" }); return true; })()`);
+    vrai("une Saisie (champ de recherche) sur le banc", saisie);
+    await souris("mouseMoved", 1, 1); await pause(10000);
+    const restantes = await js(`document.getAnimations().filter(a => a.playState === "running" && (a.effect?.getComputedTiming?.().iterations === Infinity || a.effect?.target?.closest?.(".mea-plaque-champ"))).map(a => a.animationName || a.effect?.target?.className || "web")`);
+    vrai("Saisie : 10 s après l'arrivée, aucune animation infinie, curseur arrêté", restantes.length === 0, restantes.join(", "));
+    await ouvrir(1440, 900, false, true);
+    await js(`document.querySelector(".mea-plaque-champ")?.scrollIntoView({ block: "center" }); true`); await pause(100);
+    const lettres = await js(`[...document.querySelectorAll(".mea-plaque-lettre")].map(l => Number(getComputedStyle(l).opacity))`);
+    vrai("mouvement réduit : lettres du champ visibles d'emblée", lettres.length > 0 && lettres.every(o => o >= 0.99), lettres.join(","));
+    // clic sur la Péremption (bouton de la vitrine) puis sur une tuile outil : rubrique ouverte, en haut de page
+    await ouvrir(1440, 900);
+    const ip = await js(`[...document.querySelectorAll(".mea-barre")].findIndex(b => /Péremption/.test(b.textContent))`);
+    if (ip >= 0) {
+      if (ip > 0) { await js(`document.querySelectorAll(".mea-barre")[${ip}].click(); true`); await pause(1200); }
+      await js("window.scrollTo(0, 120); true"); await pause(200);
+      await js(`document.querySelector(".mea-diapo .mea-actions--outil .mea-cta").click(); true`); await pause(1200);
+      const r = await js(`({ menu: new URLSearchParams(location.search).get("menu"), y: scrollY })`);
+      vrai("clic sur la Péremption (vitrine) : ?menu=peremption, haut de page", r.menu === "peremption" && r.y === 0, JSON.stringify(r));
+    }
+    await ouvrir(1440, 900);
+    const cle = await js(`(() => { const t = document.querySelector(".mea-tuile--outil"); t.scrollIntoView({ block: "center" }); return t.getAttribute("aria-label"); })()`);
+    await pause(1200);
+    await js(`document.querySelector(".mea-tuile--outil").click(); true`); await pause(1200);
+    const r2 = await js(`({ menu: new URLSearchParams(location.search).get("menu"), y: scrollY })`);
+    vrai(`clic sur la tuile outil « ${String(cle).split(",")[0]} » : rubrique ouverte, haut de page`, r2.menu && r2.menu !== "accueil" && r2.y === 0, JSON.stringify(r2));
+  }
 } catch (e) { ko++; console.log("✗", e.message); }
 finally {
   ws.close();

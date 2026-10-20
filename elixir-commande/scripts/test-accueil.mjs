@@ -250,5 +250,16 @@ const appel = async (jeton, extra, methode) => { const r = await creerGet(deps(e
     [12, new Date(maintenant).toISOString(), true]);
 }
 
+// ── 9. Sources des mises en avant d'outils (docs/accueil.md § 7.8) : injectables, comme les autres ──
+{
+  const { creerSources } = await import("../netlify/functions/_accueil-donnees.js");
+  const s = creerSources({ compter: async (chemin) => (chemin.includes("in_stock") ? 4526 : 27871), labosJustif: async () => [{ nom: "Takeda", medicaments: 4, presentations: 9 }] });
+  eq("creerSources : compter et labosJustif exposés et injectables", [typeof creerSources().compter, typeof creerSources().labosJustif, await s.compter("odoo_catalog?select=cip&in_stock=eq.true"),
+    (await s.labosJustif())[0].nom], ["function", "function", 4526, "Takeda"]);
+  let erreur = null;
+  try { await creerSources().compter("odoo_catalog?select=cip"); } catch (e) { erreur = e.message; }
+  eq("compter réel : passe par le réseau (interdit ici)", /réseau interdit/.test(erreur || ""), true);
+}
+
 console.log(`${ok} OK, ${ko} échec(s)`);
 process.exit(ko ? 1 : 0);

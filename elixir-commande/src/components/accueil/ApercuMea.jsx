@@ -4,6 +4,8 @@
 // Ajout au panier désactivé, pas de défilement automatique ; « Rejouer l'animation » remonte les deux vitrines.
 // Cinema et Bento sont pris dans le chunk de l'accueil (import dynamique : ils n'en sortent pas, aucun chunk partagé de plus
 // pour les pharmacies) ; ses styles viennent avec lui.
+// Outils du site : chiffres du moment lus par l'éditeur (outils_etat) ; Commandes groupées montrées comme pour une
+// pharmacie inscrite à une opération ouverte (légende) ; teinte de l'outil (accents du catalogue).
 import React, { useEffect, useRef, useState } from "react";
 import { construireMisesEnAvant, finEffective, jourParis } from "./vedettes.js";
 import { POINTEUR_FIN, REDUIT, useIllisibles, useMedia } from "./outils.js";
@@ -11,7 +13,7 @@ import { illisibles } from "./illisibles.js";
 
 const rien = () => {};
 
-export default function ApercuMea({ brouillon, statut, verif, promos = [], caches = new Set() }) {
+export default function ApercuMea({ brouillon, statut, verif, promos = [], caches = new Set(), outilsEtat = null, accents = {} }) {
   const [tour, setTour] = useState(0);
   const [mod, setMod] = useState(null);   // { Cinema, Bento } du chunk de l'accueil
   useEffect(() => { import("./Accueil.jsx").then(setMod).catch(() => setMod({ erreur: true })); }, []);
@@ -32,9 +34,10 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
     .map(i => { const o = i.type === "produit" ? verif[i.cip]?.offre : undefined;
       return { id: i.id, type: i.type, emplacement: i.emplacement, titre: i.titre, accroche: i.accroche, badge: i.badge, fin: finEffective(i.date_fin, finMenuDe(o)),
         fin_offre: finMenuDe(o) || null, image: i.image,
-        couleur: i.couleur, couleur_auto: i.couleur_auto, offre: o, menu_id: i.menu_id }; }) };
-  const mea = construireMisesEnAvant(ved, { catalogue: {}, catalogueCharge: false, stockData: {}, justifProducts: {}, menuOuvrable: (k) => !caches.has(k),
-    regleSaisie: () => null, estCampagne: () => false, photos: {}, teinte: () => null, promos, aujourdhui, illisibles: illisibles() });
+        couleur: i.couleur, couleur_auto: i.couleur_auto, offre: o, menu_id: i.menu_id, outil: i.outil, chiffres: i.type === "outil" ? outilsEtat?.[i.outil]?.chiffres ?? null : undefined }; }) };
+  const mea = construireMisesEnAvant(ved, { catalogue: accents, catalogueCharge: false, stockData: {}, justifProducts: {}, menuOuvrable: (k) => !caches.has(k),
+    regleSaisie: () => null, estCampagne: () => false, photos: {}, teinte: () => null, promos, aujourdhui, illisibles: illisibles(), gp: { autorise: true, ouvertes: null }, apercu: true });
+  const avecGroupees = [...mea.vitrine, ...mea.grille].some(e => e.outil?.cle === "groupees");
   const commun = { reduit, finPointer, apercu: true, pret: true, qteAuPanier: {}, onAjouter: rien, onModifier: rien, onOuvrirPanier: rien, onVoir: rien, onExpire: rien };
   const vide = !mea.vitrine.length && !mea.grille.length;
   const { Cinema, Bento } = mod || {};
@@ -46,7 +49,8 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
     <div style={{ margin: "10px 0 6px", padding: 12, background: "var(--cream)", border: "1px solid var(--line)", borderRadius: 14 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
         <b style={{ fontSize: 13, color: "var(--petrol)" }}>Aperçu du brouillon</b>
-        <span style={{ fontSize: 11, color: "var(--ink-mute)", flex: 1 }}>Aperçu : ajout désactivé, pas de défilement automatique. Produits aux prix vérifiés par le serveur.</span>
+        <span style={{ fontSize: 11, color: "var(--ink-mute)", flex: 1 }}>Aperçu : ajout désactivé, pas de défilement automatique. Produits aux prix vérifiés par le serveur.
+          {avecGroupees ? " Commandes groupées : montrée comme pour une pharmacie inscrite à une opération ouverte." : ""}</span>
         <button type="button" onClick={() => setTour(t => t + 1)} style={{ height: 30, padding: "0 12px", border: "none", borderRadius: 999, background: "var(--petrol)", color: "var(--paper)", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Rejouer l'animation</button>
       </div>
       {!mod ? <div style={{ fontSize: 12, color: "var(--ink-mute)", padding: 12 }}>Chargement…</div> : mod.erreur ? <div style={{ fontSize: 12, color: "var(--danger)", padding: 12 }}>Aperçu indisponible (rechargez la page).</div>

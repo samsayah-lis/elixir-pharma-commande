@@ -95,9 +95,11 @@ export const cleDuFichier = (url) => /\/elixir-images\/products\/([\w-]{1,80})\.
 export const liee = (o, photos = {}) => !!o?.cip && auCatalogue(o) && cleDuFichier(photos[o.cip]) === String(o.cip);
 
 // Clé d'une photo de l'accueil seul (mise en avant, produit hors catalogue) : « accueil-… », jamais un CIP (le catalogue
-// n'est pas modifié) et nouvelle à chaque envoi (la version en ligne garde son fichier jusqu'à « Publier »)
+// n'est pas modifié) et nouvelle à chaque envoi (la version en ligne garde son fichier jusqu'à « Publier ») ; outil du site :
+// « accueil-outil-peremption-… » (aucune ligne du catalogue n'a ce CIP)
 export function cleMiseEnAvant(it, t = Date.now()) {
-  const objet = it?.type === "menu" ? `menu-${String(it.menu_id ?? "").replace(/[^\w-]/g, "").slice(0, 40)}` : String(it?.cip ?? "").replace(/\D/g, "").slice(0, 14);
+  const objet = it?.type === "menu" ? `menu-${String(it.menu_id ?? "").replace(/[^\w-]/g, "").slice(0, 40)}`
+    : it?.type === "outil" ? `outil-${String(it.outil ?? "").replace(/[^a-z]/g, "").slice(0, 20)}` : String(it?.cip ?? "").replace(/\D/g, "").slice(0, 14);
   return `accueil-${objet}-${t.toString(36)}`;
 }
 // Clé d'envoi d'une ligne des plus commandés : CIP du dosage montré s'il est au catalogue (photo du produit), sinon accueil seul

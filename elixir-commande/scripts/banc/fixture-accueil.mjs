@@ -12,15 +12,22 @@
 //            evaluerVedettes, au moment du lancement), avec les menus promo de --promos (par défaut la donnée figée
 //            dev-fixtures/get/config-get__key=admin_promos.json) ; écrit aussi dev-fixtures/get/config-get__key=accueil_vedettes.json
 //            (lecture de l'éditeur de l'admin sur le banc). Produits mis en avant : ceux de la fixture (prix et stock figés).
+// --outils <dossier> : données figées des mises en avant d'outils (docs/accueil.md § 7.8 ; relevé du 20/10/2026 :
+//            peremption.json, remises.json, fauteuils.json, count.json, justif.json, produits.json) — péremptions réduites aux
+//            6 colonnes de la règle (ni lots ni stock), outils évalués par la règle du serveur (_accueil-outils.js) ; ajoute
+//            outils_etat à la réponse, écrit dev-fixtures/get/lab-justif__action=products.json et
+//            dev-fixtures/post/gp-pharmacy.access.json = { allowed: true, open_count: 2 } (valeur fictive, banc seulement ;
+//            --gp-non : { allowed: false }, pharmacie non inscrite).
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DOSSIER_FIXTURES } from "./commun.mjs";
 import { contexteMenus, diapoPublique, normaliser, NB_SLIDES, NB_RESERVES, VERSION, laboCourt } from "../../netlify/functions/_accueil-selection.js";
 import { evaluerVedettes } from "../../netlify/functions/_accueil-vedettes.js";
-import { DOSSIER_GET } from "./commun.mjs";
+import { OUTILS_MEA, evaluerOutil, fenetrePeremption, labosDeConfig } from "../../netlify/functions/_accueil-outils.js";
+import { DOSSIER_GET, DOSSIER_POST } from "./commun.mjs";
 
 const args = process.argv.slice(2);
-const source = args.find((a, i) => !a.startsWith("--") && !["--config", "--noms", "--vedettes", "--promos"].includes(args[i - 1]));
+const source = args.find((a, i) => !a.startsWith("--") && !["--config", "--noms", "--vedettes", "--promos", "--outils"].includes(args[i - 1]));
 if (!source) { console.error("Usage : node scripts/banc/fixture-accueil.mjs <top15j.json> [--config <display_config.json>] [--fictif]"); process.exit(2); }
 const F = JSON.parse(readFileSync(source, "utf8"));
 const conf = args.includes("--config") ? JSON.parse(readFileSync(args[args.indexOf("--config") + 1], "utf8")) : null;
@@ -75,11 +82,46 @@ if (args.includes("--vedettes")) {
   const brutPromos = lire(args.includes("--promos") ? args[args.indexOf("--promos") + 1] : resolve(DOSSIER_GET, "config-get__key=admin_promos.json"));
   const promos = Array.isArray(brutPromos) ? brutPromos : (typeof brutPromos.value === "string" ? JSON.parse(brutPromos.value) : brutPromos.value) || [];
   const maj = new Date().toISOString();
-  const ved = evaluerVedettes(valeur, maj, { catalogue, curees, menus: contexteMenus({ displayConfig, promos }), promos, justifs: new Set() }, Date.now());
+  const menus = contexteMenus({ displayConfig, promos });
+  const outils = args.includes("--outils") ? outilsFiges(args[args.indexOf("--outils") + 1], lire) : null;
+  const ctxV = { catalogue, curees, menus, promos, justifs: new Set(), outils };
+  const ved = evaluerVedettes(valeur, maj, ctxV, Date.now());
   reponse.vedettes = ved.publiques;
   reponse.vedettes_etat = ved.etats;   // lu par l'éditeur de l'admin (le banc ne distingue pas les jetons)
+  if (outils) {
+    reponse.outils_etat = Object.fromEntries(OUTILS_MEA.map(k => [k, evaluerOutil(k, ctxV, Date.now())]));
+    console.log(`✓ outils : ${OUTILS_MEA.map(k => `${k} ${reponse.outils_etat[k].raisons[0] || "visible"}`).join(" · ")}`);
+    const per = reponse.outils_etat.peremption;
+    if (per.chiffres) console.log(`  péremption : ${per.chiffres.nb} réf., dès ${per.chiffres.des} € HT, jusqu'à −${per.chiffres.jusqua} %, ${per.chiffres.mois.join(" → ")}, en_menu ${per.admin.en_menu}, honnêtes ${per.admin.honnetes}`);
+  }
   writeFileSync(resolve(DOSSIER_GET, "config-get__key=accueil_vedettes.json"), JSON.stringify({ key: "accueil_vedettes", value: valeur, updated_at: maj }, null, 1));
   console.log(`✓ mises en avant : ${ved.etats.map(e => `${e.id} ${e.statut}`).join(" · ")}`);
+}
+
+// Données figées des outils (--outils) : même forme que lireOutils (_accueil-outils.js) ; justifProducts et accès aux
+// Commandes groupées du banc écrits à côté
+function outilsFiges(dossierOutils, lire) {
+  const f = (nom) => lire(resolve(dossierOutils, nom));
+  const { min, max } = fenetrePeremption(Date.now());
+  const rows = (f("peremption.json").products || []).map(({ cip, list_price, discounted_price, discount_pct, earliest_expiry, updated_at }) => ({ cip, list_price, discounted_price, discount_pct, earliest_expiry, updated_at }));
+  const cips = new Set(rows.map(r => r.cip));
+  const curees = (f("produits.json").products || []).filter(p => cips.has(p.cip) && p.active !== false).map(({ cip, section }) => ({ cip, section }));
+  const remises = Object.fromEntries((f("remises.json") || []).map(r => [r.cip, r.discount_pct]));
+  const fa = f("fauteuils.json"), compte = f("count.json"), justif = f("justif.json");
+  const garde = ["cip", "list_price", "discounted_price", "discount_pct", "in_stock"];
+  const parCip = Object.fromEntries(Object.entries(fa.byCip || {}).map(([cip, r]) => [cip, Object.fromEntries(garde.map(k => [k, r[k]]))]));
+  const labs = {};
+  for (const [cip, p] of Object.entries(justif.products || {})) (labs[p.lab] ||= { key: p.lab, nom: p.labNom, produits: [] }).produits.push({ cip, nom: p.nom, court: p.court });
+  writeFileSync(resolve(DOSSIER_GET, "lab-justif__action=products.json"), JSON.stringify(justif, null, 1));
+  mkdirSync(DOSSIER_POST, { recursive: true });
+  writeFileSync(resolve(DOSSIER_POST, "gp-pharmacy.access.json"), JSON.stringify(args.includes("--gp-non") ? { allowed: false } : { allowed: true, open_count: 2 }));
+  return {
+    plan: { at: new Date().toISOString(), fauteuils: Object.fromEntries(Object.entries(fa.refs || {}).map(([code, l]) => [code, l.map(r => r.cip)])),
+      saisie: { references: compte.total, en_stock: compte.in_stock, maj: compte.updated_at } },
+    fauteuilsCat: { parCip },
+    peremption: { min, max, rows, remises, curees },
+    labos: labosDeConfig({ labs }),
+  };
 }
 
 const fuite = JSON.stringify(reponse).match(/"(nb_commandes|nb_pharmacies|odoo_product_id|famille_total|_cmd|_rythme|_pid|available)"/);

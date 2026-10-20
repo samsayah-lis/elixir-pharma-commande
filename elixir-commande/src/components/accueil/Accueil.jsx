@@ -11,6 +11,8 @@
 // puis la grille « À la une » (vedettes du même GET, recalées sur le catalogue par vedettes.js ; sans mise en avant
 // visible, ou GET absent ou plus lent que 4 s : repli automatique sur les menus promo actifs, la page n'est jamais nue).
 // Une seule rotation à la fois : la vitrine cinéma qui défile à l'écran met en pause celle des plus commandés.
+// Mises en avant d'outils (§ 7.8) : gp = accès de la pharmacie aux Commandes groupées et opérations ouvertes (appel
+// « access » déjà fait par App) ; le bouton d'un outil ouvre sa rubrique et remonte en haut, comme un menu promo.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./accueil.css";
 import "./mea.css";
@@ -22,6 +24,7 @@ import Cinema from "./Cinema.jsx";
 import Bento from "./Bento.jsx";
 import { construireDiapos, promosEnCours, jourParis } from "./resolution.js";
 import { construireMisesEnAvant } from "./vedettes.js";
+import { RUBRIQUES_HORS_CATALOGUE } from "./rubriques.js";
 import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useIllisibles, useMedia } from "./outils.js";
 import { illisibles } from "./illisibles.js";
 import { voler, rebondPanier } from "./vol.js";
@@ -29,7 +32,6 @@ import { voler, rebondPanier } from "./vol.js";
 // pour l'aperçu de l'admin (ApercuMea.jsx, chargé à part) : les vitrines viennent de ce chunk
 export { Cinema, Bento };
 
-const OUTILS = ["accueil", "saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"];
 const RAFRAICHIR_MS = 5 * 60e3;   // prix et stock des produits hors menu : relus comme le stock des menus (5 min)
 const DELAI_MAX_MS = 4000;        // GET plus lent : la page s'affiche (repli des mises en avant), la réponse tardive suit
 const vitrineValide = (d) => !!(d && !d.perime && Array.isArray(d.slides) && d.slides.length > 0);
@@ -37,13 +39,13 @@ const reponseValide = (d) => !!(d && typeof d === "object" && (vitrineValide(d) 
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
   estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
-  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null }) {
+  pauseExterne, promos: menusPromo = [], ouvrirMesCommandes, dateFin, suggestions = null, gp = null }) {
   // menus promo actifs et pas encore échus (une offre « jusqu'au 25 sept. » n'est plus mise en avant le 19 oct.)
   const promos = promosEnCours(menusPromo, jourParis());
   const teinteDe = (k) => catalogue[k]?.accent || catalogue.saisie?.accent || "#2d9cbc";
   // accès rapides : Saisie de commande, Mes commandes, puis les 4 premiers menus du catalogue (ordre de l'admin)
   const saisie = catalogue.saisie ? { icone: iconeMenu("saisie", catalogue.saisie, 22), label: catalogue.saisie.label } : null;
-  const menus = ordre.filter(k => catalogue[k] && !OUTILS.includes(k) && !k.startsWith("promo_")).slice(0, 4)
+  const menus = ordre.filter(k => catalogue[k] && !RUBRIQUES_HORS_CATALOGUE.includes(k) && !k.startsWith("promo_")).slice(0, 4)
     .map(k => ({ key: k, label: catalogue[k].label, sousTitre: catalogue[k].subtitle, icone: iconeMenu(k, catalogue[k], 22), couleur: catalogue[k].accent }));
   const reduit = useMedia(REDUIT), finPointer = useMedia(POINTEUR_FIN), isMobile = useMedia("(max-width: 767px)");   // mêmes seuils qu'App
   const large = useMedia("(min-width: 1280px)");
@@ -117,8 +119,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   const vedettes = donnees?.vedettes ?? null;
   const mea = useMemo(() => (donnees === undefined ? { vitrine: [], grille: [], defilement: false } : construireMisesEnAvant(vedettes, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
-    promos: menusPromo, aujourdhui: jourParis(), illisibles: illisibles(),
-  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute, nIllisibles]);   // eslint-disable-line react-hooks/exhaustive-deps
+    promos: menusPromo, aujourdhui: jourParis(), illisibles: illisibles(), gp: { autorise: gp?.autorise === true, ouvertes: gp?.ouvertes ?? null },
+  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute, nIllisibles, gp?.autorise, gp?.ouvertes]);   // eslint-disable-line react-hooks/exhaustive-deps
   const montreMea = mea.vitrine.length > 0 || mea.grille.length > 0;
   const menusMontres = new Set([...mea.vitrine, ...mea.grille].filter(x => x.menu).map(x => x.menu.id));
   const offresRestantes = promos.filter(ps => !menusMontres.has(String(ps.id)));
@@ -153,6 +155,8 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
     try { if (window.matchMedia?.("(pointer: coarse)").matches) navigator.vibrate?.(8); } catch { /* sans vibreur */ }
   };
   const voirVedette = (x) => {
+    // outil : même chemin qu'un menu promo ; false (commande groupée non confirmée, l'utilisateur reste) → pas de remontée
+    if (x.outil) return aller(naviguer(x.outil.cle));
     if (x.menu) return aller(naviguer(x.menu.key));
     const o = x.offre, k = o.menu?.key;
     return aller(k && k !== "saisie" ? naviguer(k, { terme: k.startsWith("promo_") ? "" : (o.boite?.marque || "") }) : voirDansSaisie(o.cip));
@@ -216,7 +220,7 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
       <section className="acc-section" aria-labelledby="acc-acces-titre">
         <h2 id="acc-acces-titre" className="acc-h2">Accès rapides</h2>
         <div className="acc-acces">
-          {saisie && <Tuile icone={saisie.icone} titre={saisie.label} texte="Par CIP ou par nom, stock en temps réel" onClick={() => aller(naviguer("saisie"))} />}
+          {saisie && <Tuile icone={saisie.icone} titre={saisie.label} texte="Par CIP, EAN ou nom" onClick={() => aller(naviguer("saisie"))} />}
           {ouvrirMesCommandes && <Tuile icone={<Icone nom="commandes" taille={22} />} titre="Mes commandes" texte="Suivre et recommander" onClick={ouvrirMesCommandes} />}
           {menus.map(m => <Tuile key={m.key} icone={m.icone} titre={sansEmoji(m.label)} texte={m.sousTitre} couleur={m.couleur} onClick={() => aller(naviguer(m.key))} />)}
         </div>

@@ -5,7 +5,12 @@
 // Ici : dates (heure de Paris), compte à rebours, repli automatique sur les menus promo, résumé d'un menu, teintes, et la
 // construction finale des deux emplacements à partir du GET accueil-offres (produits recalés sur le catalogue chargé par
 // resoudreOffre : le montant du bouton est ce que le panier facture).
+// Outils du site (type « outil », registre rubriques.js) : écartés pour une pharmacie qui ne peut pas les ouvrir (rubrique
+// non ouvrable ; Commandes groupées sans accès ou sans opération ouverte) ou sans chiffres quand ils en exigent — la
+// réserve prend la place ; chiffres du serveur, recalculés ici pour le justificatif (justifProducts) et les groupées
+// (opérations ouvertes de la pharmacie) ; jamais de compte à rebours.
 import { resoudreOffre, produitDuCatalogue, nombre, jourParis } from "./resolution.js";
+import { OUTILS, cartesOutil, chiffresJustif, chiffresTexte, rayonOutil } from "./rubriques.js";
 
 export const MAX_VISIBLES = 5;
 export const LIMITES = { titre: 60, accroche: 140, badge: 24 };
@@ -50,6 +55,9 @@ export function rebours(fin, t = Date.now(), secondes = true) {
 // ── Couleur ──
 const hexValide = (h) => (typeof h === "string" && RE_COULEUR.test(h.toLowerCase()) ? h.toLowerCase() : null);
 export const couleurMenu = (menu) => { const h = hexValide(menu?.color); return h && !COULEURS_DEFAUT.has(h) ? h : null; };
+// teinte d'un outil : accent de sa rubrique (renommage ou couleur de l'admin compris), sinon celui du registre ; le violet
+// par défaut (justificatif) est remplacé par la sarcelle Elixir
+export const accentOutil = (cle, catalogue) => { const h = hexValide(catalogue?.[cle]?.accent) || hexValide(OUTILS[cle]?.accent); return h ? (COULEURS_DEFAUT.has(h) ? ELIXIR : h) : null; };
 // teinte retenue et sa source : choisie > tirée de la photo > couleur du menu (sauf violet par défaut) > accent du rayon > Elixir
 export function couleurDe(v, { menu, accent } = {}) {
   const c = [[v?.couleur, "choisie"], [v?.couleur_auto, "photo"], [couleurMenu(menu), "menu"], [accent, "rayon"]].find(([h]) => hexValide(h));
@@ -133,7 +141,7 @@ export const titreMenu = (menu) => sansEmoji(menu?.name) || "Offre";
 
 // ── Construction finale (page des pharmacies, aperçu de l'admin) ──
 // ved : vedettes du GET ({ repli, defilement, items }) ou null (GET absent, refusé, trop lent) ; ctx : celui de
-// resoudreOffre (illisibles compris) + { promos, aujourdhui, apercu } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
+// resoudreOffre (illisibles compris) + { promos, aujourdhui, apercu, gp: { autorise, ouvertes } } → { vitrine: [entrée], grille: [entrée], auto: { vitrine, grille }, defilement }
 export function construireMisesEnAvant(ved, ctx) {
   const conf = ved && typeof ved === "object" ? ved : { repli: true, defilement: true, items: [] };
   const out = { vitrine: [], grille: [], auto: { vitrine: false, grille: false }, defilement: conf.defilement !== false };
@@ -142,7 +150,7 @@ export function construireMisesEnAvant(ved, ctx) {
   for (const v of Array.isArray(conf.items) ? conf.items : []) {
     const place = out[v?.emplacement];
     if (!place || place.length >= MAX_VISIBLES || (v.fin && aj > v.fin)) continue;
-    const e = v.type === "menu" ? entreeMenu(v, ctx, aj) : v.type === "produit" ? entreeProduit(v, ctx) : null;
+    const e = v.type === "menu" ? entreeMenu(v, ctx, aj) : v.type === "produit" ? entreeProduit(v, ctx) : v.type === "outil" ? entreeOutil(v, ctx) : null;
     if (!e || vus.has(e.cle)) continue;
     vus.add(e.cle); place.push(e);
   }
@@ -194,11 +202,36 @@ function entreeMenu(v, ctx, aj) {
     rayon: m.sansStock ? "Précommande" : "Menu promo", menu: { id: String(m.id), key, nom: titreMenu(m), icone: m.icon || "", sansStock: !!m.sansStock, ...res } };
 }
 
+// outil du site : null si la pharmacie ne peut pas l'ouvrir ou s'il lui manque ses chiffres (la réserve comble). Visuel :
+// photo de Zineb (lisible), sinon composition automatique (cartesOutil) ; halo : la photo, sinon la 1re photo du fabricant.
+// ctx.gp : { autorise (accès de la pharmacie, hors saisie Elixir), ouvertes (opérations ouvertes) } ; ctx.apercu : éditeur
+function entreeOutil(v, ctx) {
+  const cle = String(v.outil || ""), def = OUTILS[cle];
+  if (!def) return null;
+  if (ctx.menuOuvrable && !ctx.menuOuvrable(cle)) return null;
+  if (cle === "groupees" && !ctx.apercu && !(ctx.gp?.autorise === true && ctx.gp.ouvertes > 0)) return null;
+  let ch = v.chiffres && typeof v.chiffres === "object" ? v.chiffres : null;
+  if (cle === "justificatif") ch = chiffresJustif(ctx.justifProducts) || ch;
+  if (cle === "groupees") ch = { ouvertes: ctx.apercu ? null : ctx.gp.ouvertes };
+  if (def.chiffresRequis && !ch) return null;
+  const photo = photoLisible(v.image, ctx.illisibles);
+  const cartes = cartesOutil(cle, ch, { illisibles: ctx.illisibles });
+  const e = commun(v, `o:${cle}`, couleurDe(v, { accent: accentOutil(cle, ctx.catalogue) }), photo || cartes.find(c => c.url)?.url);
+  const long = chiffresTexte(cle, ch), court = chiffresTexte(cle, ch, { court: true });
+  const titre = v.titre || def.titre;
+  const outil = { cle, cta: def.cta(ch), ctaCourt: def.ctaCourt, icone: def.icone, photo, cartes, meta: long.meta, metaCourt: court.meta, meta2: long.meta2,
+    chiffresLu: long.lu, jusqua: cle === "peremption" && ch?.jusqua >= 1 ? ch.jusqua : null };
+  outil.lu = resumeOutilLu({ titre, outil });
+  return { ...e, titre, accroche: v.accroche || def.accroche(ch), fin: v.fin || null, finOffre: null, rayon: rayonOutil(cle, ctx.catalogue), outil };
+}
+
 // ── Textes accessibles ──
 const eur = (n) => `${Number(n).toFixed(2).replace(".", ",")} € HT`;
 export function prixLu(o) {
   if (!(o?.pn > 0)) return "";
   return [eur(o.pn), o.pct >= 1 ? `remise de ${String(Number(Math.abs(o.pct).toFixed(2))).replace(".", ",")} %` : "", o.pv > o.pn ? `prix de vente ${eur(o.pv)}` : ""].filter(Boolean).join(", ");
 }
+// « Péremption courte, petits prix, 167 références, dès 0,44 € HT, jusqu'à −50 % »
+export const resumeOutilLu = (e) => [e.titre, e.outil?.chiffresLu].filter(Boolean).join(", ");
 export const resumeMenuLu = (e) => [e.titre, `${e.menu.nb} référence${e.menu.nb > 1 ? "s" : ""}`, e.menu.des ? `dès ${eur(e.menu.des)}` : "",
   e.menu.jusqua ? `jusqu'à −${String(e.menu.jusqua).replace(".", ",")} %` : ""].filter(Boolean).join(", ");

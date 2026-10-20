@@ -106,6 +106,7 @@ egal("clé : pas d'adresse", cleDuFichier(undefined), null);
 const t0 = 1760950000000;
 egal("produit", cleMiseEnAvant({ type: "produit", cip: "3400930303122" }, t0), `accueil-3400930303122-${t0.toString(36)}`);
 egal("menu promo", cleMiseEnAvant({ type: "menu", menu_id: "1759327" }, t0), `accueil-menu-1759327-${t0.toString(36)}`);
+egal("outil du site (docs/accueil.md § 7.8)", cleMiseEnAvant({ type: "outil", outil: "peremption" }, t0), `accueil-outil-peremption-${t0.toString(36)}`);
 egal("caractères inattendus retirés", cleMiseEnAvant({ type: "menu", menu_id: "12/../x y" }, t0), `accueil-menu-12xy-${t0.toString(36)}`);
 vrai("clé acceptée par la fonction et le banc", /^[\w-]{1,80}$/.test(cleMiseEnAvant({ type: "produit", cip: "34009302929141234" }, t0)));
 vrai("deux envois : deux clés", cleMiseEnAvant({ type: "produit", cip: "1" }, t0) !== cleMiseEnAvant({ type: "produit", cip: "1" }, t0 + 1));

@@ -22,6 +22,8 @@
 //    banque, puis boîte générée ; halo jamais sur une photo illisible ; chaque carte photo a un texte d'attente ;
 //  • taille réduite en erreur (miniature, .400, 2x) : l'original d'abord, notée seulement s'il échoue aussi ; préchargement
 //    de l'offre suivante : de même, et jamais noté hors ligne.
+// Mises en avant d'outils du site (type « outil », docs/accueil.md § 7.8) : scripts/test-accueil-outils.mjs (registre,
+// validation, chiffres vivants, GET, fonction planifiée, navigateur) ; aucun contrôle de ce fichier n'est retiré.
 import { build } from "esbuild";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

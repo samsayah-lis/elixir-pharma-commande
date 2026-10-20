@@ -8,11 +8,17 @@
 // l'admin seulement. fin : fin effective (la mise en avant disparaît) ; fin_offre : fin du PRIX (menu promo daté, celui
 // de l'objet ou celui où le produit est rangé), seule montrée aux pharmacies (compte à rebours) : une date de fin posée
 // sur un produit d'un menu permanent arrête l'affichage, pas le prix (pas de fausse urgence).
+// Troisième type « outil » (docs/accueil.md § 7.8) : un outil du site (liste fermée OUTILS_MEA de _accueil-outils.js),
+// clé de doublon « o:<outil> » ; visibilité et chiffres du moment par evaluerOutil (masqué dans le menu, vide, rupture,
+// données anciennes ou illisibles) ; jamais de fin d'offre (pas de compte à rebours) ; Commandes groupées : « visible,
+// selon la pharmacie » (le navigateur l'écarte pour une pharmacie sans accès ni opération ouverte).
 import { offreDynamique, premierMenu, jourParis } from "./_accueil-selection.js";
+import { OUTILS_MEA, evaluerOutil } from "./_accueil-outils.js";
 
 export const MAX_ITEMS = 20, MAX_VISIBLES = 5, RESERVE = 3;
 const LIMITES = { titre: 60, accroche: 140, badge: 24 };
 const EMPLACEMENTS = ["vitrine", "grille"];
+const TYPES = ["produit", "menu", "outil"];
 const RE_ID = /^mea_[a-z0-9_]{4,32}$/, RE_CIP = /^\d{8,14}$/, RE_MENU = /^[\w-]{1,40}$/, RE_COULEUR = /^#[0-9a-f]{6}$/;
 const RE_IMAGE = /^https:\/\/[^\s"'()<>\\]+$/;
 export const jourValide = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && !Number.isNaN(Date.parse(`${s}T12:00:00Z`)) && new Date(`${s}T12:00:00Z`).toISOString().slice(0, 10) === s;
@@ -25,15 +31,16 @@ export function verifierVedette(x) {
   const t = (k) => String(x[k] ?? "").replace(/\s+/g, " ").trim();
   const c = (k) => (x[k] ? String(x[k]).trim().toLowerCase() : null);
   const it = { id: String(x.id ?? ""), type: x.type, cip: x.type === "produit" ? String(x.cip ?? "").trim() : null, menu_id: x.type === "menu" ? String(x.menu_id ?? "").trim() : null,
-    emplacement: x.emplacement, titre: t("titre"), accroche: t("accroche"), badge: t("badge"), date_debut: x.date_debut || null, date_fin: x.date_fin || null,
+    outil: x.type === "outil" ? String(x.outil ?? "").trim() : null, emplacement: x.emplacement, titre: t("titre"), accroche: t("accroche"), badge: t("badge"), date_debut: x.date_debut || null, date_fin: x.date_fin || null,
     ordre: Number.isFinite(Number(x.ordre)) ? Math.round(Number(x.ordre)) : 0, image: x.image ? String(x.image).trim() : null, couleur: c("couleur"), couleur_auto: c("couleur_auto"),
     actif: x.actif !== false, maj: typeof x.maj === "string" ? x.maj.slice(0, 40) : null };
   const e = [];
   const err = (champ, message, long) => e.push({ champ, message, ...(long ? { long: true } : {}) });
   if (!RE_ID.test(it.id)) err("id", "Identifiant invalide");
-  if (it.type !== "produit" && it.type !== "menu") err("type", "Type inconnu");
+  if (!TYPES.includes(it.type)) err("type", "Type inconnu");
   if (it.type === "produit" && !RE_CIP.test(it.cip)) err("cip", "CIP invalide (8 à 14 chiffres)");
   if (it.type === "menu" && !RE_MENU.test(it.menu_id)) err("menu_id", "Menu promo invalide");
+  if (it.type === "outil" && !OUTILS_MEA.includes(it.outil)) err("outil", "Outil inconnu");
   if (!EMPLACEMENTS.includes(it.emplacement)) err("emplacement", "Emplacement inconnu");
   for (const k of ["date_debut", "date_fin"]) if (it[k] && !jourValide(it[k])) err(k, "Date invalide");
   if (it.date_debut && it.date_fin && jourValide(it.date_debut) && jourValide(it.date_fin) && it.date_fin < it.date_debut) err("date_fin", "La fin précède le début");
@@ -43,7 +50,7 @@ export function verifierVedette(x) {
   return { item: it, erreurs: e };
 }
 const triPlace = (a, b) => EMPLACEMENTS.indexOf(a.emplacement) - EMPLACEMENTS.indexOf(b.emplacement) || a.ordre - b.ordre;
-const cleObjet = (it) => (it.type === "menu" ? `m:${it.menu_id}` : `p:${it.cip}`);
+const cleObjet = (it) => (it.type === "menu" ? `m:${it.menu_id}` : it.type === "outil" ? `o:${it.outil}` : `p:${it.cip}`);
 export function validerVedettes(valeur) {
   let v = valeur;
   if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = null; } }
@@ -96,13 +103,28 @@ export function evaluerMenu(menuId, ctx, aujourdhui) {
 }
 
 // ── Toutes les mises en avant au moment présent ──
-// → { publiques: { maj, repli, defilement, items (visibles, triées, 5 par emplacement + 3 en réserve) }, etats: [{ id, statut, detail? }] }
+// → { publiques: { maj, repli, defilement, items (visibles, triées, 5 par emplacement + 3 en réserve) }, etats: [{ id, statut, detail?, fin?, selon_pharmacie? }] }
+// ctx.outils : lectures des outils (_accueil-outils.js lireOutils), seulement ceux qui ont une mise en avant en cours
 export function evaluerVedettes(valeur, majCle, ctx, maintenant = Date.now()) {
   const aujourdhui = jourParis(maintenant);
   const { conf, ignores } = validerVedettes(valeur);
   const etats = ignores.map(x => ({ id: x.id, statut: "invalide", detail: x.erreurs.map(e => e.message).join(", ") }));
   const items = [], parPlace = { vitrine: 0, grille: 0 };
   for (const it of conf.items) {
+    if (it.type === "outil") {
+      // masquée → programmée → terminée (statuts de date d'abord : un outil qu'ils écartent n'est pas évalué) → motif de
+      // l'outil → au-delà de 5 → visible ; fin = date de fin seule, aucune fin d'offre
+      const fin = finEffective(it.date_fin, null);
+      const date = !it.actif ? "masquee" : it.date_debut && aujourdhui < it.date_debut ? "programmee" : fin && aujourdhui > fin ? "terminee" : null;
+      const ev = date ? null : evaluerOutil(it.outil, ctx, maintenant);
+      const statut = date || ev.raisons[0] || (parPlace[it.emplacement] >= MAX_VISIBLES ? "au_dela_de_5" : "visible");
+      etats.push({ id: it.id, statut, ...(fin ? { fin } : {}), ...(ev?.selon_pharmacie ? { selon_pharmacie: true } : {}) });
+      if (statut !== "visible" && !(statut === "au_dela_de_5" && parPlace[it.emplacement] < MAX_VISIBLES + RESERVE)) continue;
+      parPlace[it.emplacement]++;
+      items.push({ id: it.id, type: "outil", outil: it.outil, emplacement: it.emplacement, titre: it.titre, accroche: it.accroche, badge: it.badge, fin, fin_offre: null,
+        image: it.image, couleur: it.couleur, couleur_auto: it.couleur_auto, chiffres: ev.chiffres ?? null });
+      continue;
+    }
     const ev = it.type === "produit" ? evaluerProduit(it.cip, ctx) : evaluerMenu(it.menu_id, ctx, aujourdhui);
     const fin = finEffective(it.date_fin, ev.finMenu);
     // menu échu ou inactif : son motif (plus utile pour l'admin que « terminée ») ; sinon fin effective passée : terminée

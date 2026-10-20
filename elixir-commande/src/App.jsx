@@ -67,7 +67,7 @@ const SECTION_META = {
   covid:    { label: "Diagnostic & Covid",     subtitle: "Tests & traitements Covid",                                    color: "#1a2a5a", accent: "#6366f1", icon: "🧪", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   otc:      { label: "Centrale OTC / Para",    subtitle: "Vente libre & parapharmacie centrale",                         color: "#5a1a1a", accent: "#ef4444", icon: "🛒", columns: ["CIP","Désignation","PV","Remise %","Remise €","PN"] },
   ulabs:    { label: "Commande groupée U-Labs",       subtitle: "",       color: "#0d4f3c", accent: "#059669", icon: "🤝", columns: [], restrictedTo: [] },
-  saisie:   { label: "Saisie de commande",  subtitle: "Recherche par CIP ou nom — stock temps réel Odoo", color: "#0f2d3d", accent: "#2d9cbc", icon: "📝", columns: [], specialView: "orderEntry" },
+  saisie:   { label: "Saisie de commande",  subtitle: "Recherche par CIP, EAN ou nom", color: "#0f2d3d", accent: "#2d9cbc", icon: "📝", columns: [], specialView: "orderEntry" },
   peremption:{ label: "Péremption courte",  subtitle: "Produits à moins de 4 mois de péremption",         color: "#7c2d12", accent: "#ea580c", icon: "⏰", columns: [], specialView: "shortExpiry" },
   fauteuil: { label: "Fauteuil roulant",    subtitle: "Largeur d'assise → fauteuil Invacare, stock et prix Odoo", color: "#1e3a5f", accent: "#3b82f6", icon: "🦽", columns: [], specialView: "wheelchair" },
   transfert:{ label: "Fauteuil de transfert", subtitle: "Largeur d'assise → fauteuil de transfert Invacare (43 ou 45,5 cm)", color: "#1e3a5f", accent: "#3b82f6", icon: "🪑", columns: [], specialView: "transferChair" },
@@ -368,9 +368,12 @@ export default function App() {
   const [groupOrders, setGroupOrders] = useState([]); // commandes groupées ulabs
   // Commandes groupées (nouveau module) : null = vérification en cours
   const [gpAllowed, setGpAllowed] = useState(null);   // null | true | false | "reconnexion" (session à confirmer par code)
+  // opérations ouvertes auxquelles la pharmacie participe (open_count de la même réponse « access ») : mise en avant
+  // « Commandes groupées » de l'accueil montrée seulement s'il y en a (docs/accueil.md § 7.8)
+  const [gpOuvertes, setGpOuvertes] = useState(null);
   const [gpDirty, setGpDirty] = useState(false);   // saisie de commande groupée non confirmée
   useEffect(() => {
-    if (!pharmacyEmail) { setGpAllowed(false); return; }   // identité = compte (e-mail) → fiche Odoo, le CIP peut manquer
+    if (!pharmacyEmail) { setGpAllowed(false); setGpOuvertes(null); return; }   // identité = compte (e-mail) → fiche Odoo, le CIP peut manquer
     let cancelled = false;
     // jeton pharmacie (saisie Elixir : jeton admin + adresse de la pharmacie servie). Sans jeton valide (401) : menu
     // « Commandes groupées » gardé, qui invite à se reconnecter (gpAllowed = "reconnexion") — avant, il disparaissait
@@ -378,8 +381,8 @@ export default function App() {
     appelAuthentifie("/.netlify/functions/gp-pharmacy", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "access", cip: pharmacyCip, email: pharmacyEmail }) })
       .then(r => r.status === 401 && !actingFor ? { allowed: "reconnexion" } : r.ok ? r.json() : { allowed: false })
-      .then(j => { if (!cancelled) setGpAllowed(j.allowed === "reconnexion" ? "reconnexion" : !!j.allowed); })
-      .catch(() => { if (!cancelled) setGpAllowed(false); });
+      .then(j => { if (!cancelled) { setGpAllowed(j.allowed === "reconnexion" ? "reconnexion" : !!j.allowed); setGpOuvertes(Number.isFinite(j.open_count) ? j.open_count : null); } })
+      .catch(() => { if (!cancelled) { setGpAllowed(false); setGpOuvertes(null); } });
     return () => { cancelled = true; };
   }, [pharmacyCip, pharmacyEmail, appelAuthentifie]);
   const [validatedCampOrders, setValidatedCampOrders] = useState({}); // {tabKey: cip[]} commandes déjà validées
@@ -2476,6 +2479,7 @@ export default function App() {
                 ouvrirMesCommandes={pharmacyCip && pharmacyCip !== "0" ? () => { setShowMyOrders(true); fetchMyOrders(); } : null}
                 dateFin={dateFin}
                 suggestions={blocSuggestions}
+                gp={{ autorise: gpAllowed === true && !actingFor, ouvertes: gpOuvertes }}
               />
             </React.Suspense>
           )}

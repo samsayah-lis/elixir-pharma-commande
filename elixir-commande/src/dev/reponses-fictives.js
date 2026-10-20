@@ -101,6 +101,9 @@ function vedettesFictives() {
     objet("mea_apercu_vas", "menu", "vitrine", "Le baume culte, au prix de précommande", jourParis(10), { menu_id: "1792060000000" }),
     objet("mea_apercu_ven", "produit", "vitrine", "Ventoline au carton", jourParis(1), { couleur: "#2f6fa8", offre }),
     objet("mea_apercu_cla", "menu", "grille", "", null, { menu_id: "1792040000000" }),
+    // outil du site (docs/accueil.md § 7.8) : chiffres d'exemple (aperçu)
+    objet("mea_apercu_per", "outil", "vitrine", "", null, { outil: "peremption", chiffres: { nb: 167, des: 0.44, jusqua: 50,
+      mois: [jourParis(41).slice(0, 7), jourParis(130).slice(0, 7)], maj: new Date(Date.now() - 3 * 3600e3).toISOString() } }),
   ] };
 }
 export function accueilFictif() {

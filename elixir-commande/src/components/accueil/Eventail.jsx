@@ -10,8 +10,15 @@
 // une carte ajoutée entre avec la donne (ou seule si elle est finie) ; jamais de saut, jamais de carte visible avant la
 // donne. Photo pas encore chargée (lente, ou erreur en attente) : la carte montre son nom et son prix (après 0,3 s, sans
 // minuteur : délai CSS) au lieu d'une carte blanche.
+// Outils du site (rubriques.js, cartesOutil) : deux cartes de plus — la « plaque » pétrole et or (icône de l'outil au
+// trait, croix Elixir ; Saisie : champ de recherche dont les lettres « CIP · EAN · nom » s'écrivent une fois, curseur
+// qui clignote deux fois puis reste fixe, texte d'emblée en mouvement réduit) et la carte-chiffre (chiffre en grand,
+// légende, filet de la teinte). Éventail commençant par une plaque : disposition « outil », plus ouverte (les chiffres
+// des cartes de côté restent lisibles, alignés du côté découvert) ; plaque seule : droite, sans rotation. Photos du
+// fabricant (fauteuils, cartes « ouvert ») : même disposition, cartes plus grandes, photo presque bord à bord.
 import React, { useLayoutEffect, useRef, useState } from "react";
 import { fmtEur } from "../../theme.js";
+import { CroixElixir, Icone } from "../../icons.jsx";
 import { EASE, REDUIT, RESSORT, anime, photo, surErreurPhoto, useIllisibles, useMedia } from "./outils.js";
 import { estIllisible } from "./illisibles.js";
 
@@ -21,11 +28,18 @@ const GEO = {
   4: [[-12, -14, 5], [-4, -4.5, 1], [4, 4.5, 1], [12, 14, 5]], 5: [[-16, -18, 6], [-8, -9, 2], [0, 0, 0], [8, 9, 2], [16, 18, 6]],
 };
 const PLACE = { 1: [0], 2: [1, 0], 3: [1, 0, 2], 4: [1, 2, 0, 3], 5: [2, 1, 3, 0, 4] };
+// disposition « outil » (carte 0 = plaque, devant et au centre ; cartes-chiffres de part et d'autre, assez écartées pour
+// que leur chiffre reste lisible) : [rotation, x %, y %] de chaque carte, dans l'ordre des cartes
+const GEO_OUTIL = {
+  1: [[0, 0, 0]], 2: [[-3, -14, 0], [9, 30, 3]], 3: [[0, 0, 0], [-11, -40, 6], [11, 40, 6]],
+  4: [[-1, -14, 0], [-12, -54, 7], [10, 26, 5], [19, 58, 12]], 5: [[0, 0, 0], [-11, -40, 6], [11, 40, 6], [-19, -66, 13], [19, 66, 13]],
+};
 const transformDe = ([r, x, y], centre, ouvre) => ouvre
   ? `translate(calc(${x}% * (1 + .3 * var(--ouvre, 0))), calc(${y}% - ${centre ? 10 : 0}px * var(--ouvre, 0))) rotate(calc(${r}deg + ${Math.sign(r) * 4}deg * var(--ouvre, 0)))`
   : `translate(${x}%, ${y}%) rotate(${r}deg)`;
-// clé stable (adresse, ou nom d'une carte texte, uniques dans resumeMenu)
-const cleDe = (c) => (c.url ? `p:${c.url}` : `t:${c.nom}`);
+// clé stable (adresse, ou nom d'une carte texte, uniques dans resumeMenu ; plaque et carte-chiffre d'un outil)
+const cleDe = (c) => (c.type === "plaque" ? `x:${c.icone}` : c.chiffre != null ? `n:${c.chiffre}|${c.legende}` : c.url ? `p:${c.url}` : `t:${c.nom}`);
+const montrable = (c) => c.type === "plaque" || (c.chiffre != null && c.chiffre !== "") || (c.url ? !estIllisible(c.url) : !!c.nom);
 const DEPART = "translateY(30px) scale(.92)";
 const DUREE_DONNE = 640, ECART_DONNE = 70;
 // la donne d'une carte : partie empilée au centre (seule la première visible), jusqu'à sa place
@@ -35,12 +49,54 @@ const donnerCarte = (c, delai, premiere) => anime(c,
 // attente avant le départ d'une animation de donne (ms), 0 si elle est partie
 const attenteDe = (a) => { try { return Math.max(0, (Number(a.effect?.getTiming?.().delay) || 0) - (Number(a.currentTime) || 0)); } catch { return 0; } };
 
-// une carte : photo (nom et prix montrés tant qu'elle n'est pas chargée), ou carte texte
-function Carte({ c, style, fin, ordre }) {
+// Saisie : le champ de recherche s'écrit une fois au montage (arrivée, changement d'offre) — lettres une à une (60 ms),
+// puis le curseur clignote deux fois et reste fixe ; rien dans une copie sortante ni en mouvement réduit (texte d'emblée)
+const CHAMP = "CIP · EAN · nom";
+function Champ({ reduit }) {
+  const racine = useRef(null);
+  useLayoutEffect(() => {
+    const el = racine.current;
+    if (!el || reduit || el.closest(".mea-sortant, [inert]")) return undefined;
+    const lettres = [...el.querySelectorAll(".mea-plaque-lettre")], curseur = el.querySelector(".mea-plaque-curseur");
+    const DEBUT = 760, PAS = 60, n = lettres.length;
+    const a = lettres.map((l, i) => anime(l, [{ opacity: 0 }, { opacity: 1 }], { duration: 90, delay: DEBUT + i * PAS, easing: "linear" }));
+    // le curseur suit la dernière lettre écrite (translate par sauts, mesures de mise en page : aucune transformation lue)
+    const x0 = curseur ? curseur.offsetLeft : 0;
+    const sauts = curseur && n ? anime(curseur, [{ translate: `${lettres[0].offsetLeft - x0}px 0`, easing: "steps(1, end)" },
+      ...lettres.map((l, i) => ({ translate: `${l.offsetLeft + l.offsetWidth - x0}px 0`, offset: (i + 1) / n, easing: "steps(1, end)" }))], { duration: n * PAS, delay: DEBUT }) : null;
+    const c = anime(curseur, [{ opacity: 1 }, { opacity: 0, offset: 0.5 }, { opacity: 1 }], { duration: 900, delay: DEBUT + n * PAS + 150, iterations: 2, fill: "none" });
+    return () => { a.forEach(x => x?.cancel()); sauts?.cancel(); c?.cancel(); };
+  }, [reduit]);
+  return (
+    <span ref={racine} className="mea-plaque-champ">
+      <Icone nom="recherche" taille="1.15em" epaisseur={2.2} />
+      <span className="mea-plaque-texte">{[...CHAMP].map((x, i) => <span key={i} className="mea-plaque-lettre">{x === " " ? "\u00a0" : x}</span>)}</span>
+      <span className="mea-plaque-curseur" />
+    </span>
+  );
+}
+
+// une carte : photo (nom et prix montrés tant qu'elle n'est pas chargée), carte texte, plaque ou carte-chiffre d'un outil
+function Carte({ c, style, fin, ordre, cote, reduit }) {
   const img = useRef(null);
   const [chargee, setChargee] = useState(false);
   // photo déjà en cache : chargée avant même le premier affichage (aucun texte entrevu)
   useLayoutEffect(() => { const i = img.current; setChargee(!!(i?.complete && i.naturalWidth > 0)); }, [c.url]);
+  if (c.type === "plaque") return (
+    <span data-cle={cleDe(c)} className="mea-carte mea-carte--plaque" data-fin={fin} data-ordre={ordre} style={style}>
+      <CroixElixir taille={14} epaisseur={90} className="mea-plaque-croix" />
+      <Icone nom={c.icone} taille="56%" epaisseur={1.4} className="mea-plaque-icone" />
+      {c.champ && <Champ reduit={reduit} />}
+      <span className="mea-reflet" />
+    </span>
+  );
+  if (c.chiffre != null) return (
+    <span data-cle={cleDe(c)} className="mea-carte mea-carte--chiffre" data-fin={fin} data-ordre={ordre} data-cote={cote} style={style}>
+      <span className={`mea-carte-chiffre num${c.mot ? " mea-carte-chiffre--mot" : ""}`}>{c.chiffre}</span>
+      <span className="mea-carte-legende">{c.legende}</span>
+      <span className="mea-reflet" />
+    </span>
+  );
   const texte = (c.nom || c.pn > 0) && (!c.url || !chargee);
   return (
     <span data-cle={cleDe(c)} className={`mea-carte${c.url ? (chargee ? " mea-carte--chargee" : " mea-carte--attente") : " mea-carte--texte"}`} data-fin={fin}
@@ -58,8 +114,9 @@ export default function Eventail({ cartes = [], max = 5, taille = "l", balise: B
   const reduit = useMedia(REDUIT);
   const racine = useRef(null), avant = useRef(null);
   // carte de photo illisible, carte sans photo ni texte : retirées (la page refait l'éventail dans le même rendu)
-  const liste = cartes.filter(c => (c.url ? !estIllisible(c.url) : !!c.nom)).slice(0, max);
+  const liste = cartes.filter(montrable).slice(0, max);
   const n = liste.length;
+  const outil = liste[0]?.type === "plaque" || !!liste[0]?.ouvert;
   const cles = liste.map(cleDe).join("|");
   // liste changée (photo en erreur, photo revenue) : les cartes déjà là vont à leur nouvelle place, les nouvelles entrent ;
   // rien au premier affichage (donne() s'en charge) ni en mouvement réduit (remplacement immédiat)
@@ -100,11 +157,12 @@ export default function Eventail({ cartes = [], max = 5, taille = "l", balise: B
   }, [cles, reduit]);
   if (!n) return null;
   return (
-    <Balise ref={racine} className={`mea-eventail mea-eventail--${taille}`} aria-hidden="true">
+    <Balise ref={racine} className={`mea-eventail mea-eventail--${taille}${outil ? " mea-eventail--outil" : ""}`} aria-hidden="true">
       {liste.map((c, k) => {
-        const slot = PLACE[n][k], g = GEO[n][slot], centre = Math.abs(slot - (n - 1) / 2) < 1;
+        const slot = PLACE[n][k], g = outil ? GEO_OUTIL[n][k] : GEO[n][slot], centre = outil ? k === 0 : Math.abs(slot - (n - 1) / 2) < 1;
+        const ordre = outil ? Math.ceil(k / 2) : Math.round(Math.abs(slot - (n - 1) / 2));
         // clé stable : une carte retirée, les autres glissent à leur nouvelle place sans être recréées ni redemander leur photo
-        return <Carte key={cleDe(c)} c={c} fin={transformDe(g, centre, false)} ordre={Math.round(Math.abs(slot - (n - 1) / 2))}
+        return <Carte key={cleDe(c)} c={c} fin={transformDe(g, centre, false)} ordre={ordre} cote={g[0] < 0 ? "g" : g[0] > 0 ? "d" : "c"} reduit={reduit}
           style={{ transform: transformDe(g, centre, true), zIndex: 10 - k }} />;
       })}
     </Balise>

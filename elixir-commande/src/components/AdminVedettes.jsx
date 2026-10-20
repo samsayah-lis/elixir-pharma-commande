@@ -16,11 +16,17 @@
 // fichier absent, panne, connexion). Photos du brouillon et de la version en ligne contrôlées : « Photo illisible » avec
 // son motif (vignette, miniature du formulaire, ligne), avertissement à « Publier » (sans le bloquer), « Vérifier de nouveau ».
 // Couleur automatique : photo trop lente → « Relire la couleur » (jamais « l'hébergeur ne permet pas » à tort).
+// Outil du site (docs/accueil.md § 7.8) : « Ajouter : Un produit · Un menu promo · Un outil » ; liste des 6 outils avec
+// leurs chiffres du moment (outils_etat du GET, jeton admin), l'outil masqué ou vide signalé, ajout permis même non
+// visible ; badge pré-rempli, titre et accroche par défaut en indication ; photo de Zineb ou composition automatique ;
+// teinte de l'outil (pas de teinte automatique : photos du fabricant sans CORS) ; jamais de compte à rebours.
 import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { T, R, fmtEur, fmtPct, tone, ui } from "../theme.js";
+import { Icone } from "../icons.jsx";
 import { teinteDominante } from "./teinte-photo.js";
-import { LIMITES, MAX_VISIBLES, couleurDe, couleurMenu, dateTexte, finEffective, jourParis, menuEnCours, produitsVisibles,
+import { LIMITES, MAX_VISIBLES, accentOutil, couleurDe, couleurMenu, dateTexte, finEffective, jourParis, menuEnCours, produitsVisibles,
   repliMenus, teintes, titreMenu, titreParDefaut } from "./accueil/vedettes.js";
+import { OUTILS, OUTILS_MEA, cartesOutil, chiffresTexte } from "./accueil/rubriques.js";
 import { erreursBrouillon, etatDate } from "./accueil/vedettes-regles.js";
 import { photo, surErreurPhoto, useIllisibles, useMedia } from "./accueil/outils.js";
 import { estIllisible } from "./accueil/illisibles.js";
@@ -39,9 +45,12 @@ const STATUTS = {
   prix_anormal: ["danger", "Non visible : prix anormal"], justificatif: ["danger", "Non visible : sur justificatif labo"], campagne: ["danger", "Non visible : produit de campagne"],
   menu_masque: ["warn", "Non visible : menu masqué"], menu_inactif: ["warn", "Non visible : menu inactif"], menu_echu: ["warn", "Non visible : menu échu"],
   menu_vide: ["warn", "Non visible : menu vide"], invalide: ["danger", "À corriger"], au_dela_de_5: ["warn", "Au-delà de 5 : en réserve"],
+  outil_masque: ["warn", "Non visible : outil masqué dans le menu"], outil_vide: ["warn", "Non visible : aucun produit en ce moment"],
+  donnees_anciennes: ["warn", "Non visible : données de plus de 36 h"], donnees_indisponibles: ["warn", "Non visible : données illisibles"],
   verification: ["neutral", "Vérification…"], inconnu: ["neutral", "État inconnu"],
 };
-const ALERTE = new Set(["rupture", "introuvable", "sans_prix", "prix_anormal", "justificatif", "campagne", "menu_masque", "menu_inactif", "menu_echu", "menu_vide"]);
+const ALERTE = new Set(["rupture", "introuvable", "sans_prix", "prix_anormal", "justificatif", "campagne", "menu_masque", "menu_inactif", "menu_echu", "menu_vide",
+  "outil_masque", "outil_vide", "donnees_anciennes", "donnees_indisponibles"]);
 const vide = () => ({ version: 1, repli: true, defilement: true, items: [] });
 const lireValeur = (v) => {
   let x = v;
@@ -50,8 +59,12 @@ const lireValeur = (v) => {
 };
 const sansMaj = ({ maj, ...x }) => x;   // eslint-disable-line no-unused-vars
 // ce que la page montre à la place des photos choisies illisibles (mises en avant concernées)
-const aLaPlaceDe = (liste) => (liste.every(i => i.type === "menu") ? "les photos du menu" : liste.every(i => i.type === "produit") ? "la photo du catalogue (ou la boîte générée)"
-  : "la photo du catalogue (produit) ou les photos du menu (menu promo)");
+const A_LA_PLACE = { produit: "la photo du catalogue (ou la boîte générée)", menu: "les photos du menu", outil: "la composition automatique de l'outil" };
+const aLaPlaceDe = (liste) => {
+  const types = [...new Set(liste.map(i => i.type))].filter(t => A_LA_PLACE[t]);
+  return types.length === 1 ? A_LA_PLACE[types[0]] : types.map(t => `${A_LA_PLACE[t]} (${t === "produit" ? "produit" : t === "menu" ? "menu promo" : "outil"})`).join(" ou ");
+};
+const sansEmoji = (s) => String(s || "").replace(/[\p{Extended_Pictographic}\uFE0F\u200D]/gu, "").replace(/\s+/g, " ").trim();
 const nouvelId = () => `mea_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}`;
 const num = (x) => { const v = parseFloat(String(x ?? "").replace(",", ".").replace(/[^0-9.-]/g, "")); return Number.isFinite(v) ? v : null; };
 const renumeroter = (items) => {
@@ -75,6 +88,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   const [message, setMessage] = useState(null);       // { ton, texte, reessayer }
   const [conflit, setConflit] = useState(null);       // version en ligne refusée (409) : { valeur, maj }
   const [etats, setEtats] = useState({});             // publiés : id → { statut }
+  const [outilsEtat, setOutilsEtat] = useState(null); // outils du site : clé → { raisons, chiffres, admin, selon_pharmacie } (GET admin)
   const [verif, setVerif] = useState({});             // CIP → { offre, raisons } | { erreur }
   const [couleurMsg, setCouleurMsg] = useState({});   // id → message de la couleur automatique
   const [photoEtats, setPhotoEtats] = useState({});   // id → { occupe: "recherche" | "envoi" | null, texte, ton, n }
@@ -96,7 +110,11 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     } catch (e) { setEnLigne({ erreur: e.message }); }
   };
   const lireEtats = () => adminFetch?.(`/.netlify/functions/accueil-offres?_=${Date.now()}`).then(r => (r.ok ? r.json() : null))
-    .then(j => { if (Array.isArray(j?.vedettes_etat)) setEtats(Object.fromEntries(j.vedettes_etat.map(x => [x.id, x]))); }).catch(() => {});
+    .then(j => {
+      if (Array.isArray(j?.vedettes_etat)) setEtats(Object.fromEntries(j.vedettes_etat.map(x => [x.id, x])));
+      // outils : chiffres et motifs du moment ; illisibles (réponse refusée, ancien serveur) → état inconnu, plus « Vérification… »
+      setOutilsEtat(o => (j?.outils_etat && typeof j.outils_etat === "object" ? j.outils_etat : o || {}));
+    }).catch(() => setOutilsEtat(o => o || {}));
   const verifier = async (cips) => {
     // à vérifier : jamais vérifiés, ou vérification en échec (429, 502, réseau : refaite au prochain passage)
     const manquants = [...new Set(cips)].filter(c => /^\d{8,14}$/.test(c || "") && (!verifRef.current[c] || verifRef.current[c].erreur)).slice(0, 20);
@@ -144,6 +162,15 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   // état du brouillon (dates et menus : règles locales ; produits : vérification par le serveur)
   const evaluer = (it) => {
     if (erreurs.some(e => e.id === it.id)) return { statut: "invalide" };
+    if (it.type === "outil") {
+      // même ordre que le serveur : masquée, programmée, terminée, outil masqué dans le menu, motif de l'outil
+      const fin = finEffective(it.date_fin, null), d = etatDate(it, aujourdhui, fin);
+      if (d) return { statut: d, fin };
+      if (it.outil !== "groupees" && caches.has(it.outil)) return { statut: "outil_masque", fin };
+      const o = outilsEtat?.[it.outil];
+      if (!o) return { statut: outilsEtat ? "inconnu" : "verification", fin };
+      return { statut: o.raisons?.[0] || "visible", fin, selon: !!o.selon_pharmacie };
+    }
     const m = menuDe(it), v = it.type === "produit" ? verif[it.cip] : null;
     const fin = finEffective(it.date_fin, (m || menuRangement(it))?.endDate);
     // même ordre que le serveur : masquée, programmée, motif du menu, terminée, motif du produit
@@ -170,8 +197,11 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   }
   const liste = (p) => items.filter(i => i.emplacement === p).sort((a, b) => a.ordre - b.ordre);
   const visibles = (p) => liste(p).filter(i => evalues.get(i.id).statut === "visible");
-  const titreDe = (it) => it.titre || (it.type === "menu" ? titreMenu(menuDe(it)) || "Menu introuvable" : offreDe(it) ? titreParDefaut(offreDe(it)) : `Produit ${it.cip}`);
-  const accentDe = (it) => { const k = offreDe(it)?.menu?.key || ""; return k && !k.startsWith("promo_") && k !== "saisie" ? accents[k] : null; };
+  const titreDe = (it) => it.titre || (it.type === "outil" ? OUTILS[it.outil]?.titre || "Outil inconnu" : it.type === "menu" ? titreMenu(menuDe(it)) || "Menu introuvable"
+    : offreDe(it) ? titreParDefaut(offreDe(it)) : `Produit ${it.cip}`);
+  // teinte d'un outil : accent de sa rubrique (celui du catalogue du site), le violet par défaut remplacé par la sarcelle
+  const catalogueAccents = Object.fromEntries(Object.entries(accents || {}).map(([k, a]) => [k, { accent: a }]));
+  const accentDe = (it) => { if (it.type === "outil") return accentOutil(it.outil, catalogueAccents); const k = offreDe(it)?.menu?.key || ""; return k && !k.startsWith("promo_") && k !== "saisie" ? accents[k] : null; };
   const couleur = (it) => couleurDe(it, { menu: menuDe(it) || menuRangement(it), accent: accentDe(it) });
   // repli automatique (même règle que la page) : menus actifs non montrés
   const montrable = (m) => !caches.has(`promo_${m.id}`) && produitsVisibles(m).length > 0;
@@ -224,8 +254,9 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     });
   };
   // ── photo d'une mise en avant : banque d'images, ordinateur, adresse ; la dernière opération lancée l'emporte ──
-  const photoDefaut = (it) => (it.type === "produit" ? offreDe(it)?.image_url : (menuDe(it)?.products || []).find(p => p.image_url)?.image_url);
-  const changerImage = (it, image) => { modifier(it.id, { image }); calculerTeinte(it.id, image || photoDefaut(it)); };
+  // outil : aucune photo par défaut (photos du fabricant sans CORS) ; retour à la composition : teinte de l'outil
+  const photoDefaut = (it) => (it.type === "outil" ? null : it.type === "produit" ? offreDe(it)?.image_url : (menuDe(it)?.products || []).find(p => p.image_url)?.image_url);
+  const changerImage = (it, image) => { modifier(it.id, { image, ...(it.type === "outil" && !image ? { couleur_auto: null } : {}) }); calculerTeinte(it.id, image || photoDefaut(it)); };
   const noterPhoto = (id, e) => setPhotoEtats(x => ({ ...x, [id]: e ? { occupe: null, texte: "", ton: "neutral", ...e, n: (x[id]?.n || 0) + 1 } : null }));
   const jeton = (id) => { const n = (jetons.current.get(id) || 0) + 1; jetons.current.set(id, n); return () => jetons.current.get(id) === n; };
   // adresse collée, retour à la photo du catalogue, carte retirée : choix explicite, une réponse en cours ne l'écrase plus
@@ -266,11 +297,13 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
   };
   const ajouter = (type, place, objet) => {
     const dernier = Math.max(0, ...items.filter(i => i.emplacement === place).map(i => i.ordre));
-    const it = { id: nouvelId(), type, cip: type === "produit" ? objet.cip : null, menu_id: type === "menu" ? String(objet.id) : null, emplacement: place,
-      titre: "", accroche: "", badge: "", date_debut: null, date_fin: null, ordre: dernier + 10, image: null, couleur: null, couleur_auto: null, actif: true, maj: new Date().toISOString() };
+    const it = { id: nouvelId(), type, ...(type === "outil" ? { outil: objet.cle } : {}), cip: type === "produit" ? objet.cip : null, menu_id: type === "menu" ? String(objet.id) : null, emplacement: place,
+      titre: "", accroche: "", badge: type === "outil" ? OUTILS[objet.cle]?.badge || "" : "", date_debut: null, date_fin: null, ordre: dernier + 10, image: null, couleur: null,
+      couleur_auto: null, actif: true, maj: new Date().toISOString() };
     setBrouillon(b => ({ ...b, items: [...b.items, it] }));
     setOuvert(it.id); setAjout(null);
-    calculerTeinte(it.id, type === "produit" ? verif[objet.cip]?.offre?.image_url : (objet.products || []).find(p => p.image_url)?.image_url);
+    // outil : pas de teinte automatique (photos du fabricant sans CORS ; la teinte de l'outil suffit)
+    if (type !== "outil") calculerTeinte(it.id, type === "produit" ? verif[objet.cip]?.offre?.image_url : (objet.products || []).find(p => p.image_url)?.image_url);
   };
 
   // ── publication (base / 409) ──
@@ -300,21 +333,25 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
     setEnvoi(false);
   };
   const annuler = () => { if (window.confirm("Abandonner les modifications non publiées et revenir à la version en ligne ?")) { setBrouillon(valeurEnLigne); setOuvert(null); setMessage(null); } };
-  const titreEnLigne = (i) => i.titre || (i.type === "menu" ? titreMenu(promos.find(p => String(p.id) === String(i.menu_id))) : `produit ${i.cip}`);
+  const titreEnLigne = (i) => i.titre || (i.type === "outil" ? OUTILS[i.outil]?.titre || `outil ${i.outil}` : i.type === "menu" ? titreMenu(promos.find(p => String(p.id) === String(i.menu_id))) : `produit ${i.cip}`);
   const ecarts = conflit && (() => {
     const a = conflit.valeur.items, m = items;
     return { ajoutees: m.filter(i => !a.some(x => x.id === i.id)).map(titreDe), retirees: a.filter(x => !m.some(i => i.id === x.id)).map(titreEnLigne),
       modifiees: m.filter(i => { const x = a.find(y => y.id === i.id); return x && JSON.stringify(sansMaj(x)) !== JSON.stringify(sansMaj(i)); }).map(titreDe) };
   })();
 
-  const deja = (type, cle) => items.find(i => (type === "menu" ? String(i.menu_id) === String(cle) : i.cip === cle));
+  const deja = (type, cle) => items.find(i => (type === "outil" ? i.type === "outil" && i.outil === cle : type === "menu" ? i.type === "menu" && String(i.menu_id) === String(cle) : i.type === "produit" && i.cip === cle));
+  // outils : libellé (renommage de l'admin compris), chiffres du moment, résumé de la ligne
+  const libelleOutil = (cle) => sansEmoji(displayConfig.labels?.[cle]) || OUTILS[cle]?.libelle || cle;
+  const chiffresOutil = (cle) => outilsEtat?.[cle]?.chiffres || null;
+  const resumeOutil = (cle) => (cle === "groupees" ? "pharmacies inscrites seulement" : chiffresTexte(cle, chiffresOutil(cle)).meta.split(" · ")[0] || (outilsEtat ? "sans chiffres en ce moment" : "…"));
   const ouvrirPromos = setTab ? () => { if (!modifs || window.confirm("Des mises en avant ne sont pas publiées. Ouvrir l'onglet Promos quand même ?")) setTab("promos"); } : null;
   return (
     <div>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 6 }}>
         <div style={{ flex: "1 1 260px" }}>
           <div style={intertitre}>Mises en avant · au-dessus des plus commandés</div>
-          <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>Un produit ou un menu promo entier ; rien ne part avant « Publier ».</div>
+          <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>Un produit, un menu promo entier ou un outil du site ; rien ne part avant « Publier ».</div>
         </div>
         {modifs > 0 && <span style={{ ...ui.badge("warn"), fontSize: 12 }}>● {modifs} modification{modifs > 1 ? "s" : ""} non publiée{modifs > 1 ? "s" : ""}</span>}
         <button onClick={annuler} disabled={!modifs || envoi} style={{ ...ui.btn("ligne", "s"), opacity: modifs ? 1 : 0.5 }}>Annuler</button>
@@ -349,7 +386,7 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
       {terminees.length > 0 && <div style={{ ...ui.encart("neutral"), fontSize: 12, margin: "8px 0" }}>{terminees.length} mise{terminees.length > 1 ? "s" : ""} en avant {terminees.length > 1 ? "sont terminées" : "est terminée"} : vous pouvez {terminees.length > 1 ? "les" : "la"} supprimer.</div>}
       {apercu && (
         <Suspense fallback={<div style={{ fontSize: 12, color: T.inkMute, padding: 12 }}>Chargement de l'aperçu…</div>}>
-          <ApercuMea brouillon={brouillon} statut={(id) => evalues.get(id)?.statut} verif={verif} promos={promos} caches={caches} />
+          <ApercuMea brouillon={brouillon} statut={(id) => evalues.get(id)?.statut} verif={verif} promos={promos} caches={caches} outilsEtat={outilsEtat} accents={catalogueAccents} />
         </Suspense>
       )}
 
@@ -360,8 +397,10 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
             {liste(place).map((it, k, l) => (
               <Ligne key={it.id} it={it} titre={titreDe(it)} eval={evalues.get(it.id)} publie={etats[it.id]} premier={k === 0} dernier={k === l.length - 1} place={place}
                 menu={menuDe(it)} offre={offreDe(it)} couleur={couleur(it)} ouvert={ouvert === it.id} onOuvrir={() => setOuvert(o => (o === it.id ? null : it.id))}
+                outil={it.type === "outil" ? { libelle: libelleOutil(it.outil), resume: resumeOutil(it.outil), chiffres: chiffresOutil(it.outil) } : null}
                 onMonter={() => deplacer(it.id, -1)} onDescendre={() => deplacer(it.id, 1)} onMasquer={() => modifier(it.id, { actif: !it.actif })} onSupprimer={() => supprimer(it)} ouvrirPromos={ouvrirPromos}>
-                {ouvert === it.id && <Formulaire it={it} titreDefaut={it.type === "menu" ? titreMenu(menuDe(it)) : titreParDefaut(offreDe(it))} menu={menuDe(it) || menuRangement(it)}
+                {ouvert === it.id && <Formulaire it={it} titreDefaut={it.type === "outil" ? OUTILS[it.outil]?.titre : it.type === "menu" ? titreMenu(menuDe(it)) : titreParDefaut(offreDe(it))}
+                  accrocheDefaut={it.type === "outil" ? OUTILS[it.outil]?.accroche(chiffresOutil(it.outil)) : it.type === "menu" ? String(menuDe(it)?.description || "") : ""} menu={menuDe(it) || menuRangement(it)}
                   offre={offreDe(it)} couleur={couleur(it)} accent={accentDe(it)} erreurs={erreurs.filter(e => e.id === it.id)} couleurMsg={couleurMsg[it.id]} onRelireCouleur={(u) => calculerTeinte(it.id, u)}
                   nom={titreDe(it)} photoEtat={photoEtats[it.id]} onChercher={() => chercherPhoto(it)} onFichier={(f) => ajouterPhoto(it, f)} onImage={(image) => imageManuelle(it, image)}
                   onChange={(patch) => modifier(it.id, patch)} onPlace={(p) => changerPlace(it.id, p)} />}
@@ -376,11 +415,21 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
             )}
             {!liste(place).length && !auto[place].length && <div style={{ padding: "10px 12px", fontSize: 12, color: T.inkMute }}>Aucune mise en avant : {place === "vitrine" ? "pas de vitrine cinéma" : "pas de grille"} sur la page.</div>}
           </div>
-          <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
-            <button onClick={() => setAjout(a => (a?.place === place && a.type === "produit" ? null : { place, type: "produit" }))} style={ui.btn("ligne", "s")} aria-expanded={ajout?.place === place && ajout.type === "produit"}>+ Produit</button>
-            <button onClick={() => setAjout(a => (a?.place === place && a.type === "menu" ? null : { place, type: "menu" }))} style={ui.btn("ligne", "s")} aria-expanded={ajout?.place === place && ajout.type === "menu"}>+ Menu promo</button>
+          <div role="group" aria-label={`Ajouter dans : ${nom}`} style={{ display: "flex", gap: 6, marginTop: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: T.inkSoft, marginRight: 2 }}>Ajouter :</span>
+            {[["produit", "Un produit", "panier"], ["menu", "Un menu promo", "etiquette"], ["outil", "Un outil", "cible"]].map(([type, texte, icone]) => {
+              const actif = ajout?.place === place && ajout.type === type;
+              return (
+                <button key={type} type="button" onClick={() => setAjout(a => (a?.place === place && a.type === type ? null : { place, type }))} aria-expanded={actif}
+                  style={{ ...ui.pill(actif), height: 30, display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12 }}>
+                  <Icone nom={icone} taille={14} />{texte}
+                </button>
+              );
+            })}
           </div>
           {ajout?.place === place && ajout.type === "produit" && <AjoutProduit verif={verif} verifier={verifier} deja={(c) => deja("produit", c)} onChoisir={(p) => ajouter("produit", place, p)} />}
+          {ajout?.place === place && ajout.type === "outil" && <AjoutOutil outilsEtat={outilsEtat} caches={caches} libelle={libelleOutil} deja={(cle) => deja("outil", cle)}
+            onChoisir={(cle) => ajouter("outil", place, { cle })} />}
           {ajout?.place === place && ajout.type === "menu" && <AjoutMenu promos={promos} caches={caches} aujourdhui={aujourdhui} deja={(id) => deja("menu", id)} ouvrirPromos={ouvrirPromos} onChoisir={(m) => ajouter("menu", place, m)} />}
         </div>
       ))}
@@ -398,12 +447,15 @@ export default function AdminVedettes({ adminFetch, promos = [], displayConfig =
 
 // ── vignette 16:9 (CSS seul) : salle, débord de la teinte, photo ou mini-cartes, médaillon or si remise ──
 // Photo choisie illisible : retirée comme sur la page (photos du menu, photo du catalogue), pastille rouge « illisible »
-function Vignette({ it, menu, offre, couleur }) {
+// outil : sa photo, sinon la 1re photo du fabricant (fauteuils), sinon son icône en pétrole ; point or si « jusqu'à »
+function Vignette({ it, menu, offre, couleur, outil }) {
   const t = teintes(couleur.hex);
   const ok = (u) => u && !estIllisible(u);
-  const urls = it.type === "menu" ? [...new Set([it.image, ...(menu?.products || []).map(p => p.image_url)].filter(ok))].slice(0, 3) : [[it.image, offre?.image_url].find(ok)].filter(Boolean);
+  const urls = it.type === "outil" ? [[it.image, cartesOutil(it.outil, outil?.chiffres).find(c => c.url)?.url].find(ok)].filter(Boolean)
+    : it.type === "menu" ? [...new Set([it.image, ...(menu?.products || []).map(p => p.image_url)].filter(ok))].slice(0, 3) : [[it.image, offre?.image_url].find(ok)].filter(Boolean);
   const illisible = !!it.image && estIllisible(it.image);
-  const remise = it.type === "menu" ? Math.max(0, ...produitsVisibles(menu).map(p => Math.abs(num(p.pct) ?? 0)).filter(x => x < 100)) : offre?.pct;
+  const remise = it.type === "outil" ? (it.outil === "peremption" ? outil?.chiffres?.jusqua : 0)
+    : it.type === "menu" ? Math.max(0, ...produitsVisibles(menu).map(p => Math.abs(num(p.pct) ?? 0)).filter(x => x < 100)) : offre?.pct;
   return (
     <span aria-hidden="true" style={{ position: "relative", width: 112, height: 63, flexShrink: 0, borderRadius: 8, overflow: "hidden", opacity: it.actif ? 1 : 0.5,
       background: `radial-gradient(60% 90% at 66% 50%, ${t.sombre}, transparent 75%), linear-gradient(180deg, var(--deep), var(--petrol))` }}>
@@ -411,7 +463,8 @@ function Vignette({ it, menu, offre, couleur }) {
         display: "flex", alignItems: "center", justifyContent: "center" }}>
         {urls.length ? urls.map((u, k) => <img key={u} src={photo(u, "thumbnail")} alt="" draggable={false} onError={(ev) => surErreurPhoto(u, ev)} style={{ maxHeight: 42, maxWidth: urls.length > 1 ? 22 : 54, objectFit: "contain", mixBlendMode: "multiply",
           ...(urls.length > 1 ? { background: "#fff", borderRadius: 3, padding: 1, transform: `rotate(${(k - 1) * 9}deg)`, margin: "0 -3px", boxShadow: "0 2px 6px rgba(0,0,0,.25)" } : {}) }} />)
-          : <span style={{ width: 22, height: 30, borderRadius: 2, background: "var(--surface)", borderTop: `3px solid ${t.trait}`, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />}
+          : it.type === "outil" && OUTILS[it.outil] ? <span style={{ color: T.petrol, display: "inline-flex" }}><Icone nom={OUTILS[it.outil].icone} taille={26} epaisseur={1.8} /></span>
+            : <span style={{ width: 22, height: 30, borderRadius: 2, background: "var(--surface)", borderTop: `3px solid ${t.trait}`, boxShadow: "0 2px 6px rgba(0,0,0,.2)" }} />}
       </span>
       <span style={{ position: "absolute", left: 7, top: 14, width: 30, height: 4, borderRadius: 2, background: "rgba(251,248,242,.85)" }} />
       <span style={{ position: "absolute", left: 7, top: 22, width: 22, height: 4, borderRadius: 2, background: "rgba(251,248,242,.55)" }} />
@@ -435,14 +488,15 @@ function Miniature({ url, aLaPlace }) {
   </>);
 }
 
-function Puce({ statut, fin, debut }) {
+// selon : Commandes groupées, visibles seulement pour les pharmacies inscrites à une opération ouverte
+function Puce({ statut, fin, debut, selon }) {
   const [t, txt] = STATUTS[statut] || STATUTS.inconnu;
   const quand = statut === "programmee" && debut ? ` · à partir du ${dateTexte(debut, { court: true })}` : statut === "terminee" && fin ? ` le ${dateTexte(fin, { court: true })}` : "";
-  return <span style={{ ...ui.badge(t), whiteSpace: "normal" }}>{statut === "visible" ? "● " : ""}{txt}{quand}</span>;
+  return <span style={{ ...ui.badge(t), whiteSpace: "normal" }}>{statut === "visible" ? "● " : ""}{txt}{statut === "visible" && selon ? " · pharmacies concernées" : ""}{quand}</span>;
 }
 
-function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, offre, couleur, ouvert, onOuvrir, onMonter, onDescendre, onMasquer, onSupprimer, ouvrirPromos, children }) {
-  const meta = it.type === "menu"
+function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, offre, couleur, outil, ouvert, onOuvrir, onMonter, onDescendre, onMasquer, onSupprimer, ouvrirPromos, children }) {
+  const meta = it.type === "outil" ? `OUTIL · ${outil?.libelle || it.outil} · ${outil?.resume || "…"}` : it.type === "menu"
     ? `MENU PROMO · ${menu ? titreMenu(menu) : "introuvable"} · ${(menu?.products || []).length} produit${(menu?.products || []).length > 1 ? "s" : ""}`
     : `PRODUIT · ${offre?.menu?.label?.replace(/[\p{Extended_Pictographic}️‍]/gu, "").trim() || "…"} · ${offre?.pn > 0 ? `${fmtEur(offre.pn)} HT` : it.cip}${offre?.pct >= 1 ? ` · ${fmtPct(offre.pct)}` : ""}`;
   const dates = it.date_debut || it.date_fin || ev.fin ? `${it.date_debut ? `du ${dateTexte(it.date_debut, { court: true })} ` : ""}${ev.fin ? `${it.date_debut ? "au" : "jusqu'au"} ${dateTexte(ev.fin, { court: true })}` : "sans fin"}` : "";
@@ -451,13 +505,13 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
   return (
     <div className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
       <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 10px", flexWrap: "wrap" }}>
-        <Vignette it={it} menu={menu} offre={offre} couleur={couleur} />
+        <Vignette it={it} menu={menu} offre={offre} couleur={couleur} outil={outil} />
         <div style={{ flex: "1 1 220px", minWidth: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.ink, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titre}{premier && place === "grille" ? <span style={{ ...ui.badge("neutral"), marginLeft: 6 }}>En grand</span> : null}</div>
           <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>{meta}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 3, alignItems: "flex-start", minWidth: 150 }}>
-          <Puce statut={ev.statut} fin={ev.fin} debut={it.date_debut} />
+          <Puce statut={ev.statut} fin={ev.fin} debut={it.date_debut} selon={ev.selon} />
           {it.image && estIllisible(it.image) && <span style={{ ...ui.badge("danger"), whiteSpace: "normal" }}>Photo illisible</span>}
           {dates && <span style={{ fontSize: 11, color: T.inkMute }}>{dates}</span>}
           {publie && publie.statut !== ev.statut && <span style={{ fontSize: 10, color: T.inkMute }}>en ligne : {(STATUTS[publie.statut] || STATUTS.inconnu)[1].toLowerCase()}</span>}
@@ -478,7 +532,7 @@ function Ligne({ it, titre, eval: ev, publie, premier, dernier, place, menu, off
 
 function Compteur({ v, max }) { return <span style={{ fontSize: 11, fontWeight: 600, color: v > max ? T.danger : T.inkMute }}>{v}/{max}</span>; }
 
-function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, onRelireCouleur, nom, photoEtat, onChercher, onFichier, onImage, onChange, onPlace }) {
+function Formulaire({ it, titreDefaut, accrocheDefaut, menu, offre, couleur, accent, erreurs, couleurMsg, onRelireCouleur, nom, photoEtat, onChercher, onFichier, onImage, onChange, onPlace }) {
   const [adresse, setAdresse] = useState(it.image || "");
   useEffect(() => { setAdresse(it.image || ""); }, [it.image]);   // photo trouvée ou envoyée, même formulaire rouvert
   const etat = photoEtat || {}, occupe = !!etat.occupe, envoi = etat.occupe === "envoi";
@@ -487,6 +541,8 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
   // même propriété que le champ (border) : rien de mélangé quand l'erreur disparaît (avertissement de React, bordure perdue)
   const bord = (k) => (err(k) ? { border: `1px solid ${T.danger}`, boxShadow: `0 0 0 1px ${T.danger}` } : {});
   const medicament = it.type === "produit" && /^34009/.test(it.cip || "");
+  const outil = it.type === "outil" ? OUTILS[it.outil] : null;
+  const badges = outil ? [...new Set([outil.badge, ...BADGES])] : BADGES;
   const finMenu = menu?.endDate ? String(menu.endDate).slice(0, 10) : null;
   const choisir = () => { if (fichierRef.current) { fichierRef.current.value = ""; fichierRef.current.click(); } };
   const quoi = it.type === "menu" ? "la carte de devant" : "la photo";
@@ -525,12 +581,13 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
           <span style={{ ...aide, display: "block" }}>Court et parlant : il s'affiche en très grand. Vide : « {titreDefaut} ».</span></span>
       </label>
       <label style={ligne}><span style={etiquette}>Accroche <Compteur v={it.accroche.length} max={LIMITES.accroche} /></span>
-        <textarea value={it.accroche} rows={2} onChange={e => onChange({ accroche: e.target.value })} placeholder={it.type === "menu" ? String(menu?.description || "") : ""} style={{ ...champ, resize: "vertical", ...bord("accroche") }} />
+        <textarea value={it.accroche} rows={2} onChange={e => onChange({ accroche: e.target.value })} placeholder={accrocheDefaut || ""} style={{ ...champ, resize: "vertical", ...bord("accroche") }} />
       </label>
       <div style={ligne}><span style={etiquette}>Badge <Compteur v={it.badge.length} max={LIMITES.badge} /></span>
         <span><input value={it.badge} onChange={e => onChange({ badge: e.target.value })} aria-label="Badge" style={{ ...champ, ...bord("badge") }} />
-          <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>{BADGES.map(b => <button key={b} type="button" onClick={() => onChange({ badge: b })} style={{ ...ui.pill(it.badge === b), height: 26, fontSize: 12 }}>{b}</button>)}</span>
-          <span style={{ ...aide, display: "block" }}>La remise s'affiche d'elle-même dans le médaillon or.</span></span>
+          <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>{badges.map(b => <button key={b} type="button" onClick={() => onChange({ badge: b })} style={{ ...ui.pill(it.badge === b), height: 26, fontSize: 12 }}>{b}</button>)}</span>
+          <span style={{ ...aide, display: "block" }}>{!outil ? "La remise s'affiche d'elle-même dans le médaillon or." : it.outil === "peremption"
+            ? "« jusqu'à −50 % » s'affiche de lui-même dans le médaillon or. Vide : pas de badge." : "Vide : pas de badge."}</span></span>
       </div>
       <div style={ligne}><span style={etiquette}>Dates</span>
         <span>
@@ -539,14 +596,24 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
             au <input type="date" value={it.date_fin || ""} onChange={e => onChange({ date_fin: e.target.value || null })} aria-label="Date de fin" style={{ ...champ, width: 160, ...bord("date_fin") }} />
           </span>
           {err("date_fin") && <span style={{ ...aide, display: "block", color: T.danger }}>{err("date_fin").message}</span>}
-          <span style={{ ...aide, display: "block" }}>Vides : tout de suite, sans fin. Jours inclus (heure de Paris). La date de fin arrête l'affichage sur l'accueil.
+          {outil ? <span style={{ ...aide, display: "block" }}>Vides : tout de suite, sans fin. Jours inclus (heure de Paris). La date de fin arrête l'affichage. Pas de compte à rebours pour un outil.</span>
+            : <span style={{ ...aide, display: "block" }}>Vides : tout de suite, sans fin. Jours inclus (heure de Paris). La date de fin arrête l'affichage sur l'accueil.
             Le compte à rebours n'apparaît que si le prix lui-même s'arrête (fin du menu promo), dans ses 7 derniers jours.
-            {finMenu ? ` Le menu se termine le ${dateTexte(finMenu)} : la mise en avant s'arrête au plus tard ce jour-là.` : ""}</span>
+            {finMenu ? ` Le menu se termine le ${dateTexte(finMenu)} : la mise en avant s'arrête au plus tard ce jour-là.` : ""}</span>}
         </span>
       </div>
       <div style={ligne}><span style={etiquette}>Photo</span>
         <span>
-          {it.type === "produit" ? (<>
+          {outil ? (<>
+            <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 6 }}>
+              {it.image && <Miniature url={it.image} aLaPlace="L'accueil montre la composition automatique de l'outil à la place." />}
+              {boutonFichier}
+              {it.image && <button type="button" onClick={() => onImage(null)} disabled={occupe} style={ui.btn("ligne", "s")}>Revenir à la composition automatique</button>}
+              {message}
+            </span>
+            <input value={adresse} onChange={e => setAdresse(e.target.value)} onBlur={() => { if (adresse.trim() !== (it.image || "")) onImage(adresse.trim() || null); }} placeholder="Ou une adresse https://… (facultatif)" aria-label="Adresse https de la photo" style={{ ...champ, ...bord("image") }} />
+            <span style={{ ...aide, display: "block" }}>Sans photo : {outil.sansPhoto}. Photo sur fond blanc ou transparent de préférence : elle se fond dans l'écran.</span>
+          </>) : it.type === "produit" ? (<>
             <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
               {(it.image || offre?.image_url) ? <Miniature url={it.image || offre.image_url}
                 aLaPlace={it.image ? `L'accueil montre ${offre?.image_url && !estIllisible(offre.image_url) ? "la photo du catalogue" : "la boîte générée"} à la place.` : "L'accueil montre la boîte générée à la place."} />
@@ -572,7 +639,7 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
       <div style={ligne}><span style={etiquette}>Couleur</span>
         <span>
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-            {pastille(auto.hex, !it.couleur, `Auto (${SOURCES[auto.source]})`, () => onChange({ couleur: null }))}
+            {pastille(auto.hex, !it.couleur, `Auto (${outil && auto.source === "rayon" ? "couleur de l'outil" : SOURCES[auto.source]})`, () => onChange({ couleur: null }))}
             {NUANCIER.map(([nom, hex]) => pastille(hex, it.couleur === hex, nom, () => onChange({ couleur: hex })))}
             {couleurMenu(menu) && pastille(couleurMenu(menu), it.couleur === couleurMenu(menu), "Couleur du menu", () => onChange({ couleur: couleurMenu(menu) }))}
             <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 600, cursor: "pointer" }}>
@@ -584,6 +651,7 @@ function Formulaire({ it, titreDefaut, menu, offre, couleur, accent, erreurs, co
         </span>
       </div>
       {medicament && <div style={{ ...ui.encart("warn"), fontSize: 12 }}>Médicament : restez sur le prix, la disponibilité et le conditionnement (publicité réglementée : pas d'allégation thérapeutique).</div>}
+      {(it.outil === "peremption" || it.outil === "justificatif") && it.type === "outil" && <div style={{ ...ui.encart("warn"), fontSize: 12 }}>Médicaments : la carte ne montre ni nom ni photo de produit, seulement des chiffres d'ensemble (publicité réglementée).</div>}
     </div>
   );
 }
@@ -629,6 +697,45 @@ function AjoutProduit({ verif, verifier, deja, onChoisir }) {
             </span>
             <span style={ui.badge(p.in_stock ? "ok" : "danger")}>{p.in_stock ? "En stock" : "Rupture"}</span>
           </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// Les 6 outils du site, avec leur état du moment (outils_etat) ; ajout permis même non visible (comme un menu inactif)
+const MOTIFS_OUTIL = { outil_vide: "Aucun produit en ce moment : la carte resterait cachée", rupture: "Aucune largeur en stock : la carte resterait cachée",
+  donnees_anciennes: "Données de plus de 36 h : la carte resterait cachée", donnees_indisponibles: "Données illisibles en ce moment : la carte resterait cachée" };
+function AjoutOutil({ outilsEtat, caches, libelle, deja, onChoisir }) {
+  const etat = (cle) => {
+    if (cle !== "groupees" && caches.has(cle)) return { ton: "warn", texte: "Masqué dans le menu : réaffichez-le (icône œil, en haut de cet onglet)" };
+    if (cle === "groupees") return { ton: "info", texte: "Seulement pour les pharmacies inscrites à une opération ouverte" };
+    if (!outilsEtat) return { ton: "neutral", texte: "Lecture des chiffres du moment…" };
+    const o = outilsEtat[cle];
+    if (!o) return { ton: "neutral", texte: "Chiffres du moment indisponibles" };
+    const motif = o.raisons?.[0];
+    if (motif) return { ton: "warn", texte: MOTIFS_OUTIL[motif] || STATUTS[motif]?.[1] || motif };
+    const ch = o.chiffres;
+    const texte = cle === "peremption" && ch ? [chiffresTexte(cle, ch).meta, ch.jusqua ? `jusqu'à ${fmtPct(ch.jusqua)}` : ""].filter(Boolean).join(" · ")
+      : chiffresTexte(cle, ch, { court: cle === "fauteuil" || cle === "transfert" }).meta || (cle === "saisie" ? "Texte seul : comptes du catalogue pas encore calculés" : "");
+    return { ton: "ok", texte, info: cle === "peremption" && o.admin?.en_menu > 0
+      ? `${o.admin.en_menu} produit${o.admin.en_menu > 1 ? "s" : ""} aussi rangé${o.admin.en_menu > 1 ? "s" : ""} dans un menu (prix du menu au panier) : exclu${o.admin.en_menu > 1 ? "s" : ""} du « dès » et du « jusqu'à »` : "" };
+  };
+  return (
+    <div style={{ marginTop: 8, padding: 6, background: T.paper, border: `1px solid ${T.line}`, borderRadius: R.s }}>
+      {OUTILS_MEA.map(cle => {
+        const d = deja(cle), e = etat(cle);
+        return (
+          <div key={cle} className="ex-tr" style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px", borderBottom: `1px solid ${T.lineSoft}` }}>
+            <span aria-hidden="true" style={{ width: 34, height: 34, flexShrink: 0, borderRadius: 10, display: "inline-flex", alignItems: "center", justifyContent: "center",
+              background: "var(--petrol)", color: "var(--or-clair)" }}><Icone nom={OUTILS[cle].icone} taille={18} epaisseur={1.8} /></span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 600, color: T.ink }}>{libelle(cle)}</span>
+              {e.texte && <span style={{ display: "block", fontSize: 11, color: e.ton === "ok" ? T.ok : e.ton === "warn" ? T.warn : T.inkMute }}>{e.texte}</span>}
+              {e.info && <span style={{ display: "block", fontSize: 11, color: T.inkMute }}>{e.info}</span>}
+            </span>
+            <button type="button" disabled={!!d} onClick={() => onChoisir(cle)} style={{ ...ui.btn("ligne", "s"), opacity: d ? 0.5 : 1 }}>{d ? `Déjà en ${d.emplacement === "vitrine" ? "vitrine" : "grille"}` : "Mettre en avant"}</button>
+          </div>
         );
       })}
     </div>
