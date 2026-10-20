@@ -7,8 +7,11 @@
 // Produit sans photo au catalogue (boîte générée) : « Chercher les photos » lit la banque d'images de l'admin
 // (medipim-lookup, comme la fiche produit) pour chaque dosage et publie les adresses trouvées dans
 // display_config.accueil.photos (CIP → adresse) ; « Retirer les photos » revient à la boîte générée.
+// Trois intertitres dans l'ordre de la page : Mises en avant (AdminVedettes.jsx : vitrine cinéma et grille, clé
+// accueil_vedettes publiée par l'éditeur lui-même) · Les plus commandés (aperçu et exclusions) · Réglages (interrupteurs).
 import React, { useEffect, useRef, useState } from "react";
 import { T, R, fmtEur, ui } from "../theme.js";
+import AdminVedettes from "./AdminVedettes.jsx";
 
 const Case = ({ coche, onChange, titre, texte }) => (
   <label style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", cursor: "pointer" }}>
@@ -17,7 +20,9 @@ const Case = ({ coche, onChange, titre, texte }) => (
   </label>
 );
 
-export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFetch }) {
+const intertitre = { fontSize: 11, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", color: T.inkMute, margin: "20px 0 4px", paddingTop: 14, borderTop: "1px solid var(--line)" };
+
+export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFetch, promos, accents, setTab, onVedettesDirty }) {
   const acc = displayConfig.accueil || {};
   // réglages les plus récents (une recherche de photos se termine après d'autres changements : rien n'est écrasé)
   const accRef = useRef(acc); accRef.current = acc;
@@ -65,14 +70,10 @@ export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFe
   const lignes = apercu?.slides ? [...apercu.slides, ...(apercu.reserves || [])] : [];
   return (
     <div style={{ background: T.surface, borderRadius: 14, padding: "20px 24px", marginBottom: 20, border: "1px solid var(--line)" }}>
-      <div style={{ fontWeight: 700, fontSize: 15, color: T.petrol, marginBottom: 4 }}>Page d'accueil · les plus commandés (15 jours)</div>
+      <div style={{ fontWeight: 700, fontSize: 15, color: T.petrol, marginBottom: 10 }}>Page d'accueil</div>
+      <AdminVedettes adminFetch={adminFetch} promos={promos} displayConfig={displayConfig} accents={accents} setTab={setTab} onDirtyChange={onVedettesDirty} />
+      <div style={intertitre}>Les plus commandés · 15 jours</div>
       <div style={{ fontSize: 11, color: T.inkMute, marginBottom: 8 }}>Vitrine des produits les plus commandés et servis, recalculée toutes les 3 h de 6 h 40 à 21 h 40 ; les pharmacies en voient 10.</div>
-      <Case coche={!acc.masque} onChange={v => maj({ masque: !v })} titre="Afficher la page d'accueil"
-        texte="Décoché : plus d'entrée « Accueil » ni d'arrivée sur l'accueil (interrupteur d'urgence)." />
-      <Case coche={acc.arrivee !== false} onChange={v => maj({ arrivee: v })} titre="Ouvrir le site sur l'accueil"
-        texte="Sinon, l'onglet par défaut (étoile ci-dessous). Les liens ?menu= et ?cip= mènent toujours à leur vue." />
-      <Case coche={acc.auto !== false} onChange={v => maj({ auto: v })} titre="Défilement automatique sur ordinateur"
-        texte="7 s par produit, un tour puis arrêt sur le n°1 ; jamais sur mobile ni si l'utilisateur réduit les animations." />
       <div style={{ fontSize: 12, fontWeight: 700, color: T.inkSoft, margin: "12px 0 6px" }}>Classement en cours{apercu?.genere_le ? ` · calculé le ${new Date(apercu.genere_le).toLocaleString("fr-FR", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}` : ""}</div>
       {apercu === null ? <div style={{ fontSize: 12, color: T.inkMute }}>Chargement…</div>
         : apercu.erreur || apercu.perime ? <div style={{ ...ui.encart("warn"), fontSize: 12 }}>{apercu.erreur ? `Classement indisponible (${apercu.erreur}).` : "Classement périmé ou pas encore calculé : la vitrine est masquée chez les pharmacies."}</div>
@@ -100,6 +101,13 @@ export default function AdminAccueil({ displayConfig, saveDisplayConfig, adminFe
           </div>
         )}
       <div style={{ fontSize: 11, color: T.inkMute, marginTop: 6 }}>R : réserve (remplace une diapositive retirée ou en rupture). Écartés d'office : rupture, justificatif labo, stupéfiant, contingenté, prix anormal.</div>
+      <div style={intertitre}>Réglages</div>
+      <Case coche={!acc.masque} onChange={v => maj({ masque: !v })} titre="Afficher la page d'accueil"
+        texte="Décoché : plus d'entrée « Accueil » ni d'arrivée sur l'accueil (interrupteur d'urgence)." />
+      <Case coche={acc.arrivee !== false} onChange={v => maj({ arrivee: v })} titre="Ouvrir le site sur l'accueil"
+        texte="Sinon, l'onglet par défaut (étoile ci-dessous). Les liens ?menu= et ?cip= mènent toujours à leur vue." />
+      <Case coche={acc.auto !== false} onChange={v => maj({ auto: v })} titre="Défilement automatique des plus commandés sur ordinateur"
+        texte="7 s par produit, un tour puis arrêt sur le n°1 ; jamais sur mobile ni si l'utilisateur réduit les animations. En pause tant que la vitrine cinéma défile." />
     </div>
   );
 }
