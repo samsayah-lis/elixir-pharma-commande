@@ -7,18 +7,32 @@
 // dans l'en-tête de la vitrine sur grand écran), suggestions de recommande, « Accès rapides » (rien n'est accessible
 // uniquement par le carrousel). Pas de vitrine (session sans jeton, erreur, classement périmé) : la page commence par ces
 // rangées, sans message d'erreur. Résolution des offres : resolution.js (testée hors ligne).
+// Au-dessus des plus commandés, les mises en avant de Zineb (docs/accueil.md § 7) : la vitrine cinéma « Offre du moment »
+// puis la grille « À la une » (vedettes du même GET, recalées sur le catalogue par vedettes.js ; sans mise en avant
+// visible, ou GET absent ou plus lent que 4 s : repli automatique sur les menus promo actifs, la page n'est jamais nue).
+// Une seule rotation à la fois : la vitrine cinéma qui défile à l'écran met en pause celle des plus commandés.
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import "./accueil.css";
+import "./mea.css";
 import { Icone } from "../../icons.jsx";
 import SqueletteAccueil from "./Squelette.jsx";
 import Vitrine, { SceneCarte } from "./Vitrine.jsx";
 import Etiquette from "./Etiquette.jsx";
+import Cinema from "./Cinema.jsx";
+import Bento from "./Bento.jsx";
 import { construireDiapos, promosEnCours, jourParis } from "./resolution.js";
-import { POINTEUR_FIN, REDUIT, majTexte, sansEmoji, useMedia } from "./outils.js";
+import { construireMisesEnAvant } from "./vedettes.js";
+import { POINTEUR_FIN, REDUIT, RESSORT, anime, majTexte, photo, sansEmoji, useMedia } from "./outils.js";
+import { voler, rebondPanier } from "./vol.js";
+
+// pour l'aperçu de l'admin (ApercuMea.jsx, chargé à part) : les vitrines viennent de ce chunk
+export { Cinema, Bento };
 
 const OUTILS = ["accueil", "saisie", "peremption", "fauteuil", "transfert", "justificatif", "ulabs", "groupees"];
 const RAFRAICHIR_MS = 5 * 60e3;   // prix et stock des produits hors menu : relus comme le stock des menus (5 min)
+const DELAI_MAX_MS = 4000;        // GET plus lent : la page s'affiche (repli des mises en avant), la réponse tardive suit
 const vitrineValide = (d) => !!(d && !d.perime && Array.isArray(d.slides) && d.slides.length > 0);
+const reponseValide = (d) => !!(d && typeof d === "object" && (vitrineValide(d) || d.vedettes));
 
 export default function Accueil({ identite, lireOffres, catalogue = {}, catalogueCharge: chargementFini, ordre = [], iconeMenu, regleSaisie, menuOuvrable,
   estCampagne, justifProducts = {}, stockData = {}, qteAuPanier = {}, onAjouter, onModifier, onOuvrirPanier, naviguer, voirDansSaisie, reglages = {},
@@ -31,62 +45,106 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
   const menus = ordre.filter(k => catalogue[k] && !OUTILS.includes(k) && !k.startsWith("promo_")).slice(0, 4)
     .map(k => ({ key: k, label: catalogue[k].label, sousTitre: catalogue[k].subtitle, icone: iconeMenu(k, catalogue[k], 22), couleur: catalogue[k].accent }));
   const reduit = useMedia(REDUIT), finPointer = useMedia(POINTEUR_FIN), isMobile = useMedia("(max-width: 767px)");   // mêmes seuils qu'App
+  const large = useMedia("(min-width: 1280px)");
+  const format = isMobile ? "s" : large ? "l" : "m";
   // catalogue chargé (products-get) : sans lui, un produit d'un menu partirait au mauvais prix → ajout désactivé
   const catalogueCharge = chargementFini && Object.values(catalogue).some(c => c.products?.length);
-  const [donnees, setDonnees] = useState(undefined);   // undefined : chargement ; null : pas de vitrine
+  // undefined : chargement ; null : ni classement ni mises en avant (repli automatique des mises en avant)
+  const [donnees, setDonnees] = useState(undefined);
   const signature = useRef("");
   useEffect(() => {
-    let annule = false;
+    let annule = false, tardif = false;
     signature.current = "";
     if (!identite) { setDonnees(null); return undefined; }
+    // plus de 4 s : la page s'affiche avec le repli ; la réponse tardive montre le classement, mais ses mises en avant
+    // attendent le prochain rafraîchissement (jamais une vitrine déjà regardée remplacée sous les yeux)
+    const minuteur = setTimeout(() => { tardif = true; setDonnees(d => (d === undefined ? null : d)); }, DELAI_MAX_MS);
     lireOffres().then(d => {
+      clearTimeout(minuteur);
       if (annule) return;
-      const ok = vitrineValide(d);
-      if (!ok && import.meta.env.DEV) console.info("[accueil] pas de vitrine :", d ? (d.perime ? "classement périmé" : "aucun produit") : "réponse refusée ou absente");
-      signature.current = ok ? JSON.stringify(d) : "";
-      setDonnees(ok ? d : null);
+      const ok = reponseValide(d);
+      if (!vitrineValide(d) && import.meta.env.DEV) console.info("[accueil] pas de vitrine :", d ? (d.perime ? "classement périmé" : "aucun produit") : "réponse refusée ou absente");
+      signature.current = ok && !tardif ? JSON.stringify(d) : "";
+      setDonnees(!ok ? null : tardif ? { ...d, vedettes: null } : d);
     });
     // page laissée ouverte : prix et stock relus toutes les 5 min et au retour sur l'onglet (au plus une lecture par
     // minute : lireOffres garde la réponse 60 s) ; réponse invalide ou identique → rien ne change
     const relire = () => {
       if (document.hidden) return;
       lireOffres().then(d => {
-        if (annule || !vitrineValide(d)) return;
+        if (annule || !reponseValide(d)) return;
         const sig = JSON.stringify(d);
         if (sig !== signature.current) { signature.current = sig; setDonnees(d); }
       });
     };
-    const minuteur = setInterval(relire, RAFRAICHIR_MS);
+    const relecture = setInterval(relire, RAFRAICHIR_MS);
     document.addEventListener("visibilitychange", relire);
-    return () => { annule = true; clearInterval(minuteur); document.removeEventListener("visibilitychange", relire); };
+    return () => { annule = true; clearTimeout(minuteur); clearInterval(relecture); document.removeEventListener("visibilitychange", relire); };
   }, [identite]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // visibilité des mises en avant refiltrée chaque minute (fin d'offre) tant que l'onglet est affiché, et à la fin d'un
+  // compte à rebours
+  const [minute, setMinute] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => { if (!document.hidden) setMinute(m => m + 1); }, 60e3);
+    return () => clearInterval(t);
+  }, []);
 
   const exclus = (reglages.exclus || []).join(",");
   // photos choisies dans l'admin (display_config.accueil.photos : CIP → adresse) pour les produits sans photo au catalogue ;
   // réglages relus à chaque rendu d'App : clé texte, pour ne recalculer qu'à un vrai changement
   const photos = JSON.stringify(reglages.photos || {});
-  const slides = useMemo(() => construireDiapos(donnees, {
+  const classement = vitrineValide(donnees) ? donnees : null;
+  const slides = useMemo(() => construireDiapos(classement, {
     catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
     exclus: new Set(exclus ? exclus.split(",") : []),
-  }), [donnees, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }), [classement, catalogueCharge, catalogue, stockData, justifProducts, exclus, photos]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // mises en avant (chargement : rien ; réponse sans vedettes, refusée ou tardive : repli automatique)
+  const vedettes = donnees?.vedettes ?? null;
+  const mea = useMemo(() => (donnees === undefined ? { vitrine: [], grille: [], defilement: false } : construireMisesEnAvant(vedettes, {
+    catalogue, catalogueCharge, stockData, justifProducts, menuOuvrable, regleSaisie, estCampagne, photos: JSON.parse(photos), teinte: teinteDe,
+    promos: menusPromo, aujourdhui: jourParis(),
+  })), [donnees === undefined, vedettes, catalogueCharge, catalogue, stockData, justifProducts, photos, menusPromo, minute]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const montreMea = mea.vitrine.length > 0 || mea.grille.length > 0;
+  const menusMontres = new Set([...mea.vitrine, ...mea.grille].filter(x => x.menu).map(x => x.menu.id));
+  const offresRestantes = promos.filter(ps => !menusMontres.has(String(ps.id)));
+  const [cinemaDefile, setCinemaDefile] = useState(false);
 
   // « Voir dans… », offres, accès rapides : changement de menu, puis haut de page (la vue suivante commence en haut)
   const aller = (ok) => { if (ok) window.scrollTo({ top: 0 }); };
   const voir = (offre, slide) => aller(offre.menu?.key && offre.menu.key !== "saisie" ? naviguer(offre.menu.key, { terme: slide.famille }) : voirDansSaisie(offre.cip));
-  const maj = donnees?.genere_le ? majTexte(donnees.genere_le) : "";
+  const maj = classement?.genere_le ? majTexte(classement.genere_le) : "";
+  // mises en avant : ajout (mêmes règles que la Saisie : ajouterDepuisSaisie), petit bond, vol vers le panier ; « Voir »
+  const ajouterVedette = (x, qty, source) => {
+    const o = x.offre;
+    onAjouter({ cip: o.cip, name: o.nom_panier, qty, pn: o.pn, pv: o.pv, discount: o.pct > 0 ? o.pct : 0, tiers: o.price_tiers || null });
+    if (reduit || !source) return;
+    anime(source, [{ translate: "0 0" }, { translate: "0 -10px", offset: 0.4 }, { translate: "0 0" }], { duration: 280, easing: RESSORT });
+    voler(source, { image: o.image_url ? photo(o.image_url, "thumbnail") : null, marque: o.boite?.marque || x.titre, dosage: o.boite?.dosage, teinte: x.couleur });
+    setTimeout(rebondPanier, 520);
+    try { if (window.matchMedia?.("(pointer: coarse)").matches) navigator.vibrate?.(8); } catch { /* sans vibreur */ }
+  };
+  const voirVedette = (x) => {
+    if (x.menu) return aller(naviguer(x.menu.key));
+    const o = x.offre, k = o.menu?.key;
+    return aller(k && k !== "saisie" ? naviguer(k, { terme: k.startsWith("promo_") ? "" : (o.boite?.marque || "") }) : voirDansSaisie(o.cip));
+  };
+  const proprietesMea = { format, reduit, finPointer, qteAuPanier, pret: catalogueCharge, onAjouter: ajouterVedette, onModifier, onOuvrirPanier,
+    onVoir: voirVedette, onExpire: () => setMinute(m => m + 1) };
 
   return (
     <div className="acc-page">
-      {donnees === undefined && <SqueletteAccueil mobile={isMobile} />}
-      {donnees !== undefined && slides.length === 0 && <h1 className="acc-vh">Accueil</h1>}
+      {donnees === undefined && <SqueletteAccueil mobile={isMobile} vedettes={promos.length > 0} />}
+      {donnees !== undefined && (montreMea || slides.length === 0) && <h1 className="acc-vh">Accueil</h1>}
+      {mea.vitrine.length > 0 && <Cinema items={mea.vitrine} defilement={mea.defilement} pauseExterne={pauseExterne} onDefile={setCinemaDefile} {...proprietesMea} />}
+      {mea.grille.length > 0 && <Bento items={mea.grille} depart={mea.vitrine.length ? 1000 : 200} {...proprietesMea} />}
       {slides.length >= 3 && (
-        <Vitrine slides={slides} periode={donnees.periode} isMobile={isMobile} reduit={reduit} finPointer={finPointer} reglages={reglages} pauseExterne={pauseExterne}
+        <Vitrine slides={slides} periode={classement.periode} isMobile={isMobile} reduit={reduit} finPointer={finPointer} reglages={reglages} pauseExterne={pauseExterne || cinemaDefile}
           qteAuPanier={qteAuPanier} pret={catalogueCharge} onAjouter={onAjouter} onModifier={onModifier} onOuvrirPanier={onOuvrirPanier} onVoir={voir}
-          offres={promos} onOffre={(ps) => aller(naviguer(`promo_${ps.id}`))} />
+          offres={montreMea ? [] : promos} onOffre={(ps) => aller(naviguer(`promo_${ps.id}`))} niveauTitre={montreMea ? "h2" : "h1"} />
       )}
       {slides.length > 0 && slides.length < 3 && (
         <section className="acc-duo" aria-labelledby="acc-titre">
-          <h1 id="acc-titre" className="acc-h1">Les plus commandés par vos confrères</h1>
+          {React.createElement(montreMea ? "h2" : "h1", { id: "acc-titre", className: "acc-h1" }, "Les plus commandés par vos confrères")}
           <div className="acc-duo-cartes">
             {slides.map((s, i) => (
               <article key={s.famille} className="acc-carte" aria-label={`${i + 1} : ${s.famille}`}>
@@ -100,14 +158,15 @@ export default function Accueil({ identite, lireOffres, catalogue = {}, catalogu
         </section>
       )}
       {slides.length > 0 && (
-        <p className="acc-maj">Classement des produits commandés et servis par Elixir ces 15 derniers jours{maj ? ` · mis à jour ${maj}` : ""}{donnees.apercu ? " · aperçu : classement d'exemple" : ""}</p>
+        <p className="acc-maj">Classement des produits commandés et servis par Elixir ces 15 derniers jours{maj ? ` · mis à jour ${maj}` : ""}{classement.apercu ? " · aperçu : classement d'exemple" : ""}</p>
       )}
 
-      {promos.length > 0 && (
+      {/* « Offres du moment » : seulement les menus promo absents de la vitrine cinéma et de la grille */}
+      {offresRestantes.length > 0 && (
         <section className="acc-section" aria-labelledby="acc-offres-titre">
           <h2 id="acc-offres-titre" className="acc-h2">Offres du moment</h2>
           <div className="acc-offres">
-            {promos.map(ps => (
+            {offresRestantes.map(ps => (
               <button key={ps.id} type="button" className="ex-carte acc-offre" style={{ borderLeftColor: ps.color || undefined }} onClick={() => aller(naviguer(`promo_${ps.id}`))}>
                 <span className="acc-offre-icone" aria-hidden="true">{ps.icon || <Icone nom="etiquette" taille={20} />}</span>
                 <span className="acc-offre-textes">

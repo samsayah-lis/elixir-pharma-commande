@@ -5,9 +5,13 @@
 import React from "react";
 import EtatVide, { ActionEtat } from "../ui/EtatVide.jsx";
 
-export default function SqueletteAccueil({ mobile }) {
-  return <div role="status" aria-label="Chargement…" className="ex-squelette"
-    style={{ borderRadius: 16, marginBottom: 28, height: mobile ? "min(18vh + 506px, 676px)" : "min(52vh + 260px, 740px)" }} />;
+// vedettes : un menu promo actif existe → la vitrine cinéma s'affichera (repli automatique) : sa salle sombre est réservée
+// à sa hauteur, au-dessus du bloc sable (pas de flash clair, pas de décalage)
+export default function SqueletteAccueil({ mobile, vedettes }) {
+  return (<div role="status" aria-label="Chargement…">
+    {vedettes && <div style={{ background: "var(--deep)", borderRadius: mobile ? 0 : 28, margin: mobile ? "0 -10px 24px" : "0 0 24px", height: mobile ? 560 : "clamp(440px,58vh,560px)" }} />}
+    <div className="ex-squelette" style={{ borderRadius: 16, marginBottom: 28, height: mobile ? "min(18vh + 506px, 676px)" : "min(52vh + 260px, 740px)" }} />
+  </div>);
 }
 
 // chunk introuvable (nouvelle version mise en ligne pendant que la page était ouverte, connexion coupée)

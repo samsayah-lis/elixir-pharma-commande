@@ -2449,7 +2449,7 @@ export default function App() {
           {/* ── PAGE D'ACCUEIL « La Tête de gondole » (docs/accueil.md) : chunk à la demande, squelette en attendant.
               L'ajout passe par ajouterDepuisSaisie (règle du catalogue, justificatif, contingentement), « − » par setItemQty ── */}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "accueil" && (
-            <React.Suspense fallback={<SqueletteAccueil mobile={isMobile} />}>
+            <React.Suspense fallback={<SqueletteAccueil mobile={isMobile} vedettes={promoSections.some(p => p.active && !(p.endDate > "" && p.endDate.slice(0, 10) < new Date().toISOString().slice(0, 10)))} />}>
               <Accueil
                 identite={identiteAccueil}
                 lireOffres={() => lireOffres(appelAuthentifie, identiteAccueil)}

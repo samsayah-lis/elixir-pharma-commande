@@ -5,12 +5,14 @@
 // Le bouton central est toujours le même nœud : après l'ajout, le focus y reste (il devient « 120 au panier », qui ouvre
 // le panier) ; − et + apparaissent de part et d'autre ; à 0, il redevient « Ajouter ». Catalogue pas encore chargé :
 // bouton désactivé, « Chargement des prix… » (sans lui, un produit d'un menu partirait au mauvais prix).
+// compacte (petites tuiles de la grille à la une) : « Ajouter » seul (lot et montant écrits au-dessus par la tuile, nom
+// accessible complet), puis le même sélecteur − n + ; desactive (aperçu de l'admin) : bouton inerte, « Aperçu : ajout désactivé ».
 import React, { useLayoutEffect, useRef } from "react";
 import { Icone } from "../../icons.jsx";
 import { fmtEur } from "../../theme.js";
 import { libelleLot } from "./outils.js";
 
-export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = false, onAjouter, onModifier, onOuvrirPanier }) {
+export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = false, compacte = false, desactive = false, onAjouter, onModifier, onOuvrirPanier }) {
   const lot = offre.lot || { qte: 1, total: offre.pn, pu: offre.pn };
   const pas = Math.max(1, offre.regle?.step || 1);
   const carton = offre.menu?.key === "stratege" && pas > 1;
@@ -24,7 +26,8 @@ export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = 
   const montant = `${fmtEur(lot.total)} HT`;
   const libelleAjout = `Ajouter au panier : ${nom}, ${lot.qte > 1 ? `${libelleLot(lot.qte, offre.menu?.key)} boîtes` : "1 boîte"}, ${montant}`;
   const palier = pret && !plein && lot.pu != null && offre.pn != null && lot.pu < offre.pn;
-  const centre = !pret
+  const centre = desactive ? { onClick: undefined, "aria-disabled": "true", "aria-label": `${libelleAjout} (aperçu : ajout désactivé)` }
+    : !pret
     ? { onClick: undefined, "aria-disabled": "true", "aria-label": `Ajouter au panier : ${nom}, chargement des prix` }
     : plein
       ? { onClick: onOuvrirPanier, "aria-label": `${qte} au panier, ouvrir le panier` }
@@ -54,11 +57,12 @@ export default function BoutonLot({ offre, nom, qte = 0, pret = true, inactif = 
         {!pret ? <span>Chargement des prix…</span>
           : plein ? <span className="num"><b>{qte}</b> au panier</span>
           : <><Icone nom="plus" taille={17} epaisseur={2.6} />
-            <span className="acc-lot-textes"><span className="acc-lot-quoi">{quoi}</span><span className="acc-lot-sep" aria-hidden="true">·</span><span className="acc-lot-montant num">{montant}</span></span></>}
+            {compacte ? <span className="acc-lot-textes"><span className="acc-lot-quoi">Ajouter</span></span>
+              : <span className="acc-lot-textes"><span className="acc-lot-quoi">{quoi}</span><span className="acc-lot-sep" aria-hidden="true">·</span><span className="acc-lot-montant num">{montant}</span></span>}</>}
       </button>
       <button type="button" className="acc-lot-pas acc-lot-plus" tabIndex={plein ? tab : -1} aria-hidden={plein ? undefined : "true"} disabled={!plein}
         aria-label={`Ajouter ${unite}`} onClick={() => onAjouter(pas)}><Icone nom="plus" taille={18} epaisseur={2.4} /></button>
-      {palier && <p className="acc-lot-note num" aria-hidden="true">soit {fmtEur(lot.pu)} HT la boîte, palier compris</p>}
+      {palier && !compacte && <p className="acc-lot-note num" aria-hidden="true">soit {fmtEur(lot.pu)} HT la boîte, palier compris</p>}
     </div>
   );
 }

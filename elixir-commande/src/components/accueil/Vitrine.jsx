@@ -27,8 +27,10 @@ let rotationArretee = false;
 const nomLu = (s) => s.famille.charAt(0) + s.famille.slice(1).toLowerCase();
 const DUREE = 7000;
 
+// niveauTitre : h1, ou h2 quand les mises en avant de Zineb sont au-dessus (le h1 de la page est alors « Accueil »)
 export default function Vitrine({ slides, periode, isMobile, reduit, finPointer, reglages, pauseExterne, qteAuPanier, pret, onAjouter, onModifier, onOuvrirPanier, onVoir,
-  offres = [], onOffre }) {
+  offres = [], onOffre, niveauTitre = "h1" }) {
+  const Titre = niveauTitre === "h2" ? "h2" : "h1";
   const n = slides.length;
   // produit actif : sa famille ; disparue de la liste, la place qu'elle occupait (bornée au dernier produit)
   const [famActive, setFamActive] = useState(() => slides[0]?.famille);
@@ -226,7 +228,7 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
       <div className="acc-entete">
         <div className="acc-entete-titres">
           <p className="acc-eyebrow acc-eyebrow--titre">{titreEyebrow}</p>
-          <h1 id="acc-titre" className="acc-h1">Les plus commandés{isMobile ? <span className="acc-vh"> par vos confrères</span> : " par vos confrères"}</h1>
+          <Titre id="acc-titre" className="acc-h1">Les plus commandés{isMobile ? <span className="acc-vh"> par vos confrères</span> : " par vos confrères"}</Titre>
         </div>
         {/* grand écran : les menus promo en cours en bandeau, à côté du titre (au premier écran, sans fenêtre par-dessus) */}
         {!isMobile && offres.length > 0 && onOffre && (
