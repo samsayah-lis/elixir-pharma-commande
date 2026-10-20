@@ -29,6 +29,12 @@ export default [
     settings: { react: { version: "18.2" } },
     rules: regles,
   },
+  // Service worker des notifications (public/sw.js, script classique servi tel quel, sans build : docs/notifications.md)
+  {
+    files: ["public/sw.js"],
+    languageOptions: { ecmaVersion: 2020, sourceType: "script", globals: { ...globals.serviceworker } },
+    rules: { "no-undef": "error" },
+  },
   // Outillage (Node) : configuration Vite, banc d'essai, scripts
   {
     files: ["*.config.js", "scripts/**/*.{js,mjs}"],

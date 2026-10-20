@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src scripts eslint.config.js vite.config.js",
+    "lint": "eslint src scripts public/sw.js eslint.config.js vite.config.js",
     "banc:capture": "node scripts/banc/capture.mjs",
     "zones": "node scripts/verifie-zones.mjs",
     "prebuild": "node scripts/gen-cips.js",

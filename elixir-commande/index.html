@@ -3,6 +3,16 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <!-- Appli installable (docs/notifications.md) : manifeste, icônes, couleur de la barre ; iPhone : « Sur l'écran d'accueil » -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#0f2d3d" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="Elixir" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <!-- appli « Elixir Admin » (téléphone de l'équipe) : page ouverte sur #admin → manifeste et nom de l'admin -->
+    <script>if (location.hash === "#admin") { document.querySelector('link[rel="manifest"]').href = "/admin.webmanifest"; document.querySelector('meta[name="apple-mobile-web-app-title"]').content = "Elixir Admin"; }</script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Elixir Pharma — Commande</title>
     <meta name="description" content="Commande en ligne Elixir Pharma, réservée aux pharmacies clientes." />
