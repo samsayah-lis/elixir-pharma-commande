@@ -368,7 +368,8 @@ console.log("\nBudget du bundle (dist/assets, octets)");
     const fichiers = readdirSync(dossier).filter(n => /^index-.*\.(js|css)$/.test(n));
     const total = fichiers.reduce((s, n) => s + statSync(join(dossier, n)).size, 0);
     const detail = fichiers.map(n => `${n} ${statSync(join(dossier, n)).size.toLocaleString("fr-FR")}`).join(" · ");
-    const plusRecent = fichiersDe("src").reduce((t, f) => Math.max(t, statSync(join(APP, f)).mtimeMs), 0);
+    // fichiers de l'arbre seulement (une référence plus récente peut en contenir d'autres : alertes retour dans origin/master)
+    const plusRecent = fichiersDe("src").filter(f => existsSync(join(APP, f))).reduce((t, f) => Math.max(t, statSync(join(APP, f)).mtimeMs), 0);
     if (plusRecent > statSync(join(APP, "dist", "index.html")).mtimeMs) console.log("  · dist/ antérieur aux sources : relancer npm run build avant de lire ce chiffre");
     if (total <= BUDGET) ok(`${total.toLocaleString("fr-FR")} octets ≤ ${BUDGET.toLocaleString("fr-FR")} (marge ${(BUDGET - total).toLocaleString("fr-FR")}) — ${detail}`);
     else ko(`${total.toLocaleString("fr-FR")} octets > budget ${BUDGET.toLocaleString("fr-FR")} — ${detail}`);

@@ -144,6 +144,13 @@ function getCalcule(fn, q) {
     case "group-order": return [];
     case "lab-justif": return { products: {} };
     case "supplier-code-refs": return { refs: {}, byCip: {} };
+    // recherche de l'admin (pilote des notifications, saisie pour une pharmacie) : pharmacies d'exemple et pharmacie du banc
+    case "admin-pharmacy-find": {
+      const t = String(q.q || "").trim().toLowerCase();
+      const toutes = [...PHARMACIES_EXEMPLE.map(([name, cip], i) => ({ odoo_id: 9100 + i, name, cip, city: "Ville d'exemple", zip: "", phone: "", emails: [], odoo_emails: [], has_account: true })),
+        { odoo_id: 9999, name: banc.name, cip: banc.cip, city: "Banc d'essai", zip: "", phone: "", emails: [banc.email || "banc@exemple.fr"], odoo_emails: [], has_account: true }];
+      return { pharmacies: t.length < 2 ? [] : toutes.filter(p => `${p.name} ${p.cip} ${p.city}`.toLowerCase().includes(t)) };
+    }
     // notifications : clé fictive → la page simule le navigateur (aucun vrai abonnement)
     case "push-abonnement": return { disponible: true, cle_publique: "BANC-FICTIVE", ouverture: pushBanc.reglages.ouverture };
     // page d'accueil : vrai classement des 15 jours figé (dev-fixtures/accueil-offres.json, écrit par

@@ -26,7 +26,15 @@ const SCENARIOS = {
 };
 const pause = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
+// même scénario redemandé (onglet admin rechargé, nouvelle identité) : même navigateur simulé, abonnement compris
+let dernier = null;
 export function navigateurBanc(nom = "auto") {
+  if (dernier?.nom === nom) return dernier.nav;
+  const nav = creer(nom);
+  dernier = { nom, nav };
+  return nav;
+}
+function creer(nom) {
   const s = SCENARIOS[nom] || {};
   const reel = lireEnv(window);
   const etat = { permission: s.permission || "default", sub: null, n: 0 };

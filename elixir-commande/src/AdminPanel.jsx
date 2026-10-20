@@ -12,6 +12,7 @@ import AdminRelais, { RelaisCommande } from "./components/AdminRelais.jsx";
 import AdminLabJustif from "./components/AdminLabJustif";
 import AdminSanofiPro from "./components/AdminSanofiPro";
 import AdminAssistant from "./components/AdminAssistant.jsx";
+import AdminNotifications from "./components/AdminNotifications.jsx";
 import { envoisEnCours } from "./components/photo-manuelle.js";
 import { T, R, tone, alpha, adm } from "./theme.js";
 import { Icone, CroixElixir } from "./icons.jsx";
@@ -1078,6 +1079,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
     {k:"sanofipro",label:"💉 Sanofi Pro",icon:"💉"},
     {k:"assistant",label:"💬 Assistant",icon:"💬"},
+    {k:"notifications",label:"🔔 Notifications",icon:"🔔"},
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
     {k:"pharmacies",label:"🏥 Pharmacies",icon:"🏥"},
@@ -1671,6 +1673,10 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {tab==="assistant"&&(
           <AdminAssistant adminFetch={adminFetch} flash={flash} onDirtyChange={onAssistantDirty} />
+        )}
+        {/* Notifications de l'appli (docs/notifications.md) : service, ouverture, appareils de l'admin, annonces */}
+        {tab==="notifications"&&(
+          <AdminNotifications adminFetch={adminFetch} flash={flash} promos={promos} sections={allSectionsList} />
         )}
         {tab==="campaigns"&&(
           <AdminCampaigns campaigns={campaigns} setCampaigns={setCampaigns} adminFetch={adminFetch} flash={flash} />

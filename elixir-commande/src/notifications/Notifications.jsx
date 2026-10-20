@@ -344,7 +344,7 @@ export function PanneauNotifications({ appel, acting = null, pharmacyName, mobil
                       ))}
                     </ul>
                     <Bouton principal icone="cloche" onClick={activer} disabled={occupe} style={{ marginTop: 14 }}>{occupe ? "Activation…" : "Activer les notifications"}</Bouton>
-                    {!a.mobile && <p style={{ ...texteP, fontSize: 12.5, color: T.inkMute, marginTop: 10 }}>Sur votre téléphone : ouvrez elixir-commande.expepharma.com, connectez-vous, puis « Notifications ».</p>}
+                    {!a.mobile && <p style={{ ...texteP, fontSize: 12.5, color: T.inkMute, marginTop: 10 }}>Sur votre téléphone : ouvrez elixir-commande.expepharma.com, connectez-vous, puis « Notifications ».</p>}
                   </Carte>
                 ) : vue.parcours === "installer_ios" ? (
                   <Carte titre={`Installer l'application Elixir sur votre ${libelle}`}><GuideIphone appareil={libelle} /></Carte>
