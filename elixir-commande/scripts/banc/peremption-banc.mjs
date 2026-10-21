@@ -7,6 +7,10 @@
 // Variables : BANC_PEREMPTION_MODE=simulation|actif|creations_suspendues (défaut simulation), BANC_PEREMPTION_ECRITURE=1
 // (variable Netlify simulée ; écritures dans le FAUX Odoo seulement), BANC_PEREMPTION_ESSAI=1 (au démarrage, remises
 // d'exemple appliquées par le vrai code : Zinnat −12 %, Pneumovax −40 %, Surgam −45 %, avec confirmation sous le coût).
+// Règle panier (21/10/2026, docs/peremption.md) : tables expiry_discounts (remise affichée de l'admin) et peremption_ecarts
+// (suivi des rectifications) en mémoire ; BANC_PEREMPTION_ECARTS=1 : commandes du site d'exemple (pharmacies fictives,
+// passées ce jour) avec des lignes « Pér. » facturées plus cher par le faux Odoo, dont une commande à part (separeDe) et une
+// ligne déjà marquée « rectifiée » — pour le Contrôle des écarts de l'admin.
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { DOSSIER_FIXTURES, DOSSIER_GET } from "./commun.mjs";
@@ -33,6 +37,7 @@ export function mondePeremption() {
     odoo_catalog: w.catalogue.map(c => ({ ...c, lots: Array.isArray(c.lots) ? JSON.stringify(c.lots) : c.lots })),
     ec_config: promos ? [{ key: "admin_promos", value: typeof promos.value === "string" ? promos.value : JSON.stringify(promos.value ?? []) }] : [],
     elixir_products: produits.map(p => ({ cip: p.cip, section: p.section })),
+    expiry_discounts: [], peremption_ecarts: [],
   } });
   const mode = ["actif", "creations_suspendues"].includes(process.env.BANC_PEREMPTION_MODE) ? process.env.BANC_PEREMPTION_MODE : "simulation";
   S.table("peremption_reglages")[0].mode = mode;
@@ -41,7 +46,35 @@ export function mondePeremption() {
   const handler = creerHandler({ peremption: X, verifyAdmin: async () => ({ admin: { email: "admin@banc.local" } }), isCronAuthorized: () => true });
   monde = { O, S, X, handler, pret: null };
   if (process.env.BANC_PEREMPTION_ESSAI === "1") monde.pret = essai(X).catch(e => console.error("[banc péremption] essai :", e.message));
+  if (process.env.BANC_PEREMPTION_ECARTS === "1") semerEcarts(O, S, w.catalogue);
   return monde;
+}
+
+// Commandes d'exemple pour le Contrôle des écarts (pharmacies fictives) : lignes « Pér. » au prix de la page (−50 %) que le
+// faux Odoo facture au prix de la liste n° 5 ; Hec : 3 au menu (commande A) + 2 en péremption (commande B, à part), additionnées
+// par le connecteur sur une ligne de 5 sous la référence de A ; Euphytose : déjà rectifiée (avoir d'exemple).
+function semerEcarts(O, S, catalogue) {
+  const c = (cip) => catalogue.find(x => x.cip === cip);
+  const pid = (cip) => O.parCip.get(cip)?.id;
+  const page = (cip) => Math.round(Number(c(cip).list_price) * 50) / 100;
+  const ligne = (cip, qty, extra = {}) => ({ cip, name: c(cip).name, qty, pn: page(cip), total: Math.round(page(cip) * qty * 100) / 100, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise: 50, facture_odoo: false, ...extra });
+  const vente = (cip, qte, ref, commande) => { const x = c(cip); O.ajouterVente({ pid: pid(cip), qte, ref: String(ref), pu: Number(x.list_price), remise: Math.round((1 - Number(x.discounted_price) / Number(x.list_price)) * 10000) / 100, commande }); };
+  const t = Date.now();
+  const A = t - 3 * 3600e3, B = A + 2, C = t - 2 * 3600e3, D = t - 3600e3;
+  const HEC = "3400930470312", EUPHY = "3534510001778", ZADI = "3400932448951", RULID = "3400933761318", VERCYTE = "3400934872730";
+  if (![HEC, EUPHY, ZADI, RULID, VERCYTE].every(x => c(x) && pid(x))) { console.error("[banc péremption] écarts d'exemple : produits absents du relevé"); return; }
+  vente(HEC, 5, A, "S900101"); vente(ZADI, 2, A, "S900101");
+  vente(RULID, 3, C, "S900102"); vente(EUPHY, 2, C, "S900102");
+  vente(VERCYTE, 1, D, "S900103");
+  S.table("elixir_orders").push(
+    { id: A, date: new Date(A).toISOString(), pharmacy_name: "PHARMACIE DU BANC D'ESSAI", pharmacy_cip: "9999999", source: "catalogue",
+      items: [{ cip: HEC, name: c(HEC).name, qty: 3, pn: Number(c(HEC).discounted_price), total: Math.round(Number(c(HEC).discounted_price) * 300) / 100 }, ligne(ZADI, 2)] },
+    { id: B, date: new Date(B).toISOString(), pharmacy_name: "PHARMACIE DU BANC D'ESSAI", pharmacy_cip: "9999999", source: "catalogue", items: [ligne(HEC, 2, { separeDe: String(A) })] },
+    { id: C, date: new Date(C).toISOString(), pharmacy_name: "PHARMACIE EXEMPLE DES LILAS", pharmacy_cip: "9999998", source: "catalogue", items: [ligne(RULID, 3), ligne(EUPHY, 2)] },
+    { id: D, date: new Date(D).toISOString(), pharmacy_name: "PHARMACIE EXEMPLE DU MARCHÉ", pharmacy_cip: "9999997", source: "catalogue", items: [ligne(VERCYTE, 1)] });
+  S.table("peremption_ecarts").push({ cle: `${C}:${EUPHY}`, commande: String(C), cip: EUPHY, pharmacie: "PHARMACIE EXEMPLE DES LILAS", commande_odoo: "S900102", nom: c(EUPHY).name, qte: 2,
+    prix_page: page(EUPHY), prix_facture: Number(c(EUPHY).discounted_price), ecart: Math.round((Number(c(EUPHY).discounted_price) - page(EUPHY)) * 200) / 100, statut: "rectifie",
+    reference: "AV-2026-0042 (exemple)", par: "admin@banc.local", le: new Date(t - 1800e3).toISOString(), created_at: new Date(t).toISOString(), updated_at: new Date(t).toISOString() });
 }
 
 // Remises d'exemple (vrai code, faux Odoo) : aperçu puis application, comme l'admin

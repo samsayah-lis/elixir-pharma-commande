@@ -5,9 +5,10 @@
 //  1. registre : même liste au serveur et au navigateur, incluse dans OUTILS_LIEN d'App.jsx, ni U-Labs ni l'accueil ;
 //     FAUTEUILS = LINES ; textes par défaut dans les limites (titre 60, accroche 140 avec 9 labos, badge 24) ;
 //  2. validation (serveur = navigateur) : outil valide, « Outil inconnu », cip et menu_id nuls, doublon, troncature ;
-//  3. Péremption : fenêtre (UTC, aussi lancée avec TZ=Europe/Paris et TZ=UTC), bornes incluses ; lot 0 de « Odoo facture
-//     la remise » (20/10/2026) : ni « dès » ni « jusqu'à » (aucune remise péremption facturée), une seule lecture (3 colonnes,
-//     ni expiry_discounts ni produits curatés) ; vide / illisible / ancienne, mémoire de 5 min ;
+//  3. Péremption : fenêtre (UTC, aussi lancée avec TZ=Europe/Paris et TZ=UTC), bornes incluses ; règle du 21/10/2026 :
+//     « dès » et « jusqu'à » sur les prix AFFICHÉS par la page (−50 %, −20 % dès 500 €, remise affichée de l'admin, 0 =
+//     aucune, prix habituel plus bas, règle Odoo facturée), produits des menus compris (ligne à part au panier) ; 2 lectures
+//     (6 colonnes du catalogue, expiry_discounts) ; vide / illisible / ancienne, mémoire de 5 min ;
 //  4. fauteuils : correspondance du 20/10 (le 43 cm compte grâce au nouveau CIP), transfert, rupture, repli, fuite ;
 //  5. justificatif : labo hors site écarté, médicaments = marques, vide, recalcul du navigateur identique ;
 //  6. Saisie : sans comptes ou comptes anciens → visible, sans chiffres ;
@@ -16,8 +17,8 @@
 // 10. GET : sans outil, mêmes lectures qu'avant ; Péremption seule ; outils_etat et remises_facturees réservés à l'admin ; aucune
 //     écriture ; une lecture en échec n'écarte que son outil ;
 // 11. fonction planifiée : écriture d'accueil:outils, Odoo en panne, échecs indépendants du classement ;
-// 12. navigateur : bouton, teinte, compositions, médaillon (jamais pour la Péremption au lot 0), badge « Petits prix »
-//     d'avant le lot 0 non affiché, texte lu, type inconnu ignoré ;
+// 12. navigateur : bouton, teinte, compositions, médaillon (« jusqu'à −50 % » de la Péremption), titre « Péremption
+//     courte, petits prix », badge « Petits prix » (retiré seulement sans remise affichée), texte lu, type inconnu ignoré ;
 // 13. correctifs de la revue : kv illisible (fauteuils : jamais le repli), correspondance signalée à l'admin, sections
 //     ajoutées dans l'admin (sans effet au lot 0), valeur précédente illisible (fonction planifiée), lecture lente (délai),
 //     ?verifier= sans lecture d'outil, admin : outil masqué lu quand même, lj:config lue une fois, date de mise à jour
@@ -68,16 +69,16 @@ const objet = (type, cle, emplacement, extra = {}) => ({ id: `mea_outil_${String
 // ── données du 20/10/2026 (simplifiées) ──
 const MAJ = "2026-10-20T06:38:26.232Z";
 const ligne = (cip, list_price, discounted_price, discount_pct, earliest_expiry, extra = {}) => ({ cip, list_price, discounted_price, discount_pct, earliest_expiry, updated_at: MAJ, ...extra });
-// lignes du catalogue telles que la base les a (avant le lot 0, la règle lisait aussi les prix ; elle ne lit plus que cip,
-// earliest_expiry et updated_at : les prix restent dans la donnée pour montrer qu'ils ne donnent plus ni « dès » ni « jusqu'à »)
+// lignes du catalogue telles que la base les a (règle du 21/10/2026 : la carte lit de nouveau les prix et les remises affichées
+// de l'admin, comme avant le 20/10 ; les produits des menus comptent aussi, leur ajout depuis la page étant une ligne à part)
 const PER = [
-  ligne("3400930000101", 0.875, 0.83, 5.1, "2026-11-19"),   // borne basse incluse (avant : « dès 0,44 € », −50 % d'office)
-  ligne("3400930000102", 2000, 1910, 4.5, "2027-02-28"),     // borne haute incluse (avant : −20 % d'office, dès 500 €)
-  ligne("3400930000103", 499.99, 477.49, 4.5, "2027-01-15"),
-  ligne("3400930000104", 19.52, 18.64, 4.5, "2027-01-20"),   // rangé dans la Centrale OTC (curaté)
-  ligne("3400930000105", 4, 3.82, 4.5, "2027-01-21"),        // dans un menu promo actif
-  ligne("3400930000106", 6, 2.99, 50.2, "2027-02-01"),       // FFP2
-  ligne("3400930000107", 10, 9.55, 4.5, "2027-02-02"),       // remise notée dans l'admin (30 %, expiry_discounts) : non facturée
+  ligne("3400930000101", 0.875, 0.83, 5.1, "2026-11-19"),   // borne basse incluse : −50 % → « dès 0,44 € »
+  ligne("3400930000102", 2000, 1910, 4.5, "2027-02-28"),     // borne haute incluse : −20 % dès 500 € → 1 600 €
+  ligne("3400930000103", 499.99, 477.49, 4.5, "2027-01-15"), // 499,99 € : −50 % → 250 €
+  ligne("3400930000104", 19.52, 18.64, 4.5, "2027-01-20"),   // rangé dans la Centrale OTC (curaté) : compte (ligne à part au panier)
+  ligne("3400930000105", 4, 3.82, 4.5, "2027-01-21"),        // dans un menu promo actif : compte aussi
+  ligne("3400930000106", 6, 2.99, 50.2, "2027-02-01"),       // FFP2 : prix habituel (2,99 €) sous 6 × 0,5 → aucune remise affichée
+  ligne("3400930000107", 10, 9.55, 4.5, "2027-02-02"),       // remise affichée de l'admin (30 %, expiry_discounts) : 7 €
   ligne("3400930000108", 10, 9.55, 4.5, "2027-02-03"),
   ligne("3400930000109", 8, 7.64, 4.5, "2027-02-04"),        // produit d'une campagne active
   ligne("3400930000110", 8, 7.64, 4.5, "2026-11-18"),        // hors fenêtre (J+29)
@@ -147,11 +148,13 @@ const JUSTIF_PRODUITS = Object.fromEntries(Object.values(CONFIG_LJ.labs).filter(
 }
 
 // ── 3. Péremption ──
-const sbPeremption = (compte, { echec = false } = {}) => async (path) => {
+const REMISES_ADMIN = [{ cip: "3400930000107", discount_pct: 30 }];
+const sbPeremption = (compte, { echec = false, remises = REMISES_ADMIN } = {}) => async (path) => {
   compte.push(path.split("?")[0]);
   if (echec) throw new Error("Supabase en panne");
-  if (path.startsWith("odoo_catalog?select=cip,earliest_expiry,updated_at&")) return PER;
-  throw new Error(`lecture inattendue ${path}`);   // ni expiry_discounts ni elixir_products depuis le lot 0
+  if (path.startsWith("odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry,updated_at&")) return PER;
+  if (path === "expiry_discounts?select=cip,discount_pct") return remises;
+  throw new Error(`lecture inattendue ${path}`);   // ni elixir_products ni lots ni stock
 };
 {
   eq("fenêtre au 20/10/2026 11 h : J+30 → dernier jour du 4e mois (UTC)", O.fenetrePeremption(MAINTENANT), { min: "2026-11-19", max: "2027-02-28" });
@@ -159,30 +162,35 @@ const sbPeremption = (compte, { echec = false } = {}) => async (path) => {
   const fuseaux = ["Europe/Paris", "UTC"].map(TZ => execFileSync(process.execPath, ["--input-type=module", "-e", code], { env: { ...process.env, TZ }, encoding: "utf8" }));
   eq("fenêtre identique avec TZ=Europe/Paris et TZ=UTC (et le 31/10 à 23 h 30 UTC : encore octobre en UTC, comme Netlify)", fuseaux[0], fuseaux[1]);
   eq("… valeurs", JSON.parse(fuseaux[1]), [{ min: "2026-11-19", max: "2027-02-28" }, { min: "2026-11-30", max: "2027-02-28" }]);
-  eq("lot 0 : plus de remise d'office ni de prix de péremption calculé (remisePeremption, prixPeremption, REMISE_REFERENCE)",
-    ["remisePeremption", "prixPeremption", "REMISE_REFERENCE"].filter(k => k in O), []);
+  eq("règle du 21/10/2026 : « jusqu'à » rapporté au prix de base barré de la page (REMISE_REFERENCE « page ») ; remise calculée par le code de la page (src/peremption-panier.js), pas de copie",
+    [O.REMISE_REFERENCE, ["remisePeremption", "prixPeremption"].filter(k => k in O)], ["page", []]);
   O.oublierMemo();
   const lus = [];
   const src = { sb: sbPeremption(lus), maintenant: () => MAINTENANT };
   const lecture = await O.lirePeremption(src);
   const ev = O.evaluerOutil("peremption", { outils: { peremption: lecture }, menus: MENUS }, MAINTENANT);
   eq("bornes incluses, hors fenêtre exclus : nb compte tout le reste", ev.chiffres.nb, 9);
-  eq("lot 0 : ni « dès » ni « jusqu'à » (aucune remise péremption facturée par Odoo)", [ev.chiffres.des, ev.chiffres.jusqua], [null, null]);
+  eq("« dès » = plus bas prix affiché (0,875 × 0,5 = 0,44 €) ; « jusqu'à −50 % » (comme avant le 20/10/2026)", [ev.chiffres.des, ev.chiffres.jusqua], [0.44, 50]);
   eq("mois et mise à jour", [ev.chiffres.mois, ev.chiffres.maj], [["2026-11", "2027-02"], MAJ]);
-  eq("admin : aucune remise facturée", ev.admin, { remises_facturees: 0 });
+  eq("admin : 8 produits remisés sur la page (FFP2 au prix habituel), aucun facturé par Odoo", ev.admin, { remises_affichees: 8, remises_facturees: 0 });
   eq("champ public : nb, des, jusqua, mois, maj seulement", Object.keys(ev.chiffres), ["nb", "des", "jusqua", "mois", "maj"]);
   vrai("aucun CIP, stock ni lot dans les chiffres publics", !/\d{13}|available|lot|in_stock/.test(JSON.stringify(ev.chiffres)));
-  eq("lectures : le catalogue seulement (ni expiry_discounts, ni produits curatés)", lus, ["odoo_catalog"]);
+  eq("lectures : le catalogue et les remises affichées (ni produits curatés, ni lots)", lus, ["odoo_catalog", "expiry_discounts"]);
   const chemin = [];
   O.oublierMemo();
-  await O.lirePeremption({ sb: async (p) => { chemin.push(p); return PER; }, maintenant: () => MAINTENANT });
-  eq("lecture : 3 colonnes (ni prix, ni lots, ni stock), fenêtre de la page", chemin,
-    ["odoo_catalog?select=cip,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.2026-11-19&earliest_expiry=lte.2027-02-28&order=earliest_expiry.asc&limit=1000"]);
-  // même avec une remise notée dans l'admin (ancienne lecture « remises ») ou un produit seul hors menu : rien d'annoncé
-  const seul = O.evaluerOutil("peremption", { outils: { peremption: { ...lecture, remises: { "3400930000102": 30 }, rows: PER.filter(r => ["3400930000102", "3400930000104"].includes(r.cip)) } }, menus: MENUS }, MAINTENANT);
-  eq("remise notée (non facturée) : ni « dès » ni « jusqu'à »", [seul.chiffres.nb, seul.chiffres.des, seul.chiffres.jusqua], [2, null, null]);
-  const aucun = O.evaluerOutil("peremption", { outils: { peremption: { ...lecture, rows: PER.filter(r => r.cip === "3400930000101") } }, menus: MENUS }, MAINTENANT);
-  eq("un seul produit : visible, sans « dès » ni médaillon", [aucun.raisons, aucun.chiffres.nb, aucun.chiffres.des, aucun.chiffres.jusqua], [[], 1, null, null]);
+  await O.lirePeremption({ sb: async (p) => { chemin.push(p); return p.startsWith("odoo_catalog") ? PER : []; }, maintenant: () => MAINTENANT });
+  eq("lecture : 6 colonnes (prix, péremption ; ni lots, ni stock), fenêtre de la page ; remises de l'admin", chemin,
+    ["odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.2026-11-19&earliest_expiry=lte.2027-02-28&order=earliest_expiry.asc&limit=1000",
+      "expiry_discounts?select=cip,discount_pct"]);
+  // remises affichées de l'admin : 0 = aucune (le produit ne compte plus) ; remise propre au produit (30 % : 7 €)
+  O.oublierMemo();
+  const seule = await O.lirePeremption({ sb: sbPeremption([], { remises: [{ cip: "3400930000101", discount_pct: 0 }, { cip: "3400930000102", discount_pct: 10 }] }), maintenant: () => MAINTENANT });
+  const sans101 = O.evaluerOutil("peremption", { outils: { peremption: seule }, menus: MENUS }, MAINTENANT);
+  eq("admin à 0 % sur le moins cher : « dès » suivant (2 € = 4 × 0,5) ; −10 % de l'admin sur 2 000 € → 1 800 € (pas −20 %)",
+    [sans101.chiffres.des, sans101.chiffres.jusqua, seule.rows.find(r => r.cip === "3400930000102").prix], [2, 50, 1800]);
+  O.oublierMemo();
+  const aucun = O.evaluerOutil("peremption", { outils: { peremption: { ...lecture, rows: lecture.rows.filter(r => r.cip === "3400930000106") } }, menus: MENUS }, MAINTENANT);
+  eq("un seul produit sans remise affichée (FFP2, prix habituel plus bas) : visible, sans « dès » ni médaillon", [aucun.raisons, aucun.chiffres.nb, aucun.chiffres.des, aucun.chiffres.jusqua], [[], 1, null, null]);
   eq("liste vide → outil_vide", O.evaluerOutil("peremption", { outils: { peremption: { ...lecture, rows: [] } }, menus: MENUS }, MAINTENANT).raisons, ["outil_vide"]);
   eq("lecture en échec → donnees_indisponibles", O.evaluerOutil("peremption", { outils: { peremption: { erreur: "panne" } }, menus: MENUS }, MAINTENANT).raisons, ["donnees_indisponibles"]);
   const vieux = { ...lecture, rows: lecture.rows.map(r => ({ ...r, updated_at: "2026-10-18T20:00:00Z" })) };
@@ -206,31 +214,35 @@ const sbPeremption = (compte, { echec = false } = {}) => async (path) => {
   eq("lecture en échec : jamais gardée en mémoire", apresEchec.includes("odoo_catalog"), true);
   O.oublierMemo();
 }
-// ── 3 bis. Péremption, V1 de « Odoo facture la remise » : remises facturées par Odoo seulement (etatPublic) ──
+// ── 3 bis. Péremption en ligne : page des pharmacies (etatPublic) — remise de l'admin et règle Odoo facturée (V1) par produit ──
 {
   O.oublierMemo();
-  const page = { seuil_annonce_pct: 5, produits: PER.filter(r => r.cip !== "3400930000110" && r.cip !== "3400930000111").map(r => ({ cip: r.cip, earliest_expiry: r.earliest_expiry, updated_at: r.updated_at })) };
-  const fact = (cip, prix, remise, habituel) => Object.assign(page.produits.find(p => p.cip === cip), { facturee: true, prix, remise_pct: remise, prix_habituel: habituel, prix_base: 99, cout: 1 });
+  const page = { seuil_annonce_pct: 5, produits: PER.filter(r => r.cip !== "3400930000110" && r.cip !== "3400930000111")
+    .map(r => ({ ...r, remise_admin: r.cip === "3400930000107" ? 30 : null, prix_base: r.list_price, cout: 1 })) };
+  // règle facturée : discounted_price = prix facturé (prix du site repris), prix habituel figé à la décision
+  const fact = (cip, prix, remise, habituel) => Object.assign(page.produits.find(p => p.cip === cip), { facturee: true, discounted_price: prix, discount_pct: 50, prix, remise_pct: remise, prix_habituel: habituel });
   fact("3400930000108", 5, 50, 9.55);       // facturée : −50 % sur le prix de base, 5 € contre 9,55 € habituels
   fact("3400930000103", 455, 9, 477.49);    // facturée, économie de 4,7 % < seuil de 5 % : pas annoncée
   fact("3400930000104", 15.6, 20, 18.64);   // facturée : 15,60 € contre 18,64 €
   let appels = 0;
-  const src = { sb: async () => { throw new Error("V1 : le catalogue n'est plus lu directement"); }, peremption: async () => { appels++; return page; }, maintenant: () => MAINTENANT };
+  const src = { sb: async () => { throw new Error("en ligne : le catalogue n'est pas relu directement"); }, peremption: async () => { appels++; return page; }, maintenant: () => MAINTENANT };
   const lecture = await O.lirePeremption(src);
   const ev = O.evaluerOutil("peremption", { outils: { peremption: lecture }, menus: MENUS }, MAINTENANT);
-  eq("V1 : nb = produits de la page ; « dès » = plus bas prix facturé ; « jusqu'à » = plus forte remise de la facture",
-    [ev.chiffres.nb, ev.chiffres.des, ev.chiffres.jusqua, ev.admin], [9, 5, 50, { remises_facturees: 2 }]);
-  eq("V1 : champs publics inchangés, sans CIP, coût ni prix habituel", [Object.keys(ev.chiffres), /\d{13}|cout|habituel|prix_base/.test(JSON.stringify(ev.chiffres))], [["nb", "des", "jusqua", "mois", "maj"], false]);
-  vrai("V1 : la lecture ne garde que les champs de la carte (ni coût ni prix de base)", lecture.rows.every(r => !("cout" in r) && !("prix_base" in r)));
+  eq("en ligne : nb = produits de la page ; « dès » = plus bas prix affiché ; « jusqu'à » = plus forte remise affichée ; dont 2 facturées par Odoo",
+    [ev.chiffres.nb, ev.chiffres.des, ev.chiffres.jusqua, ev.admin], [9, 0.44, 50, { remises_affichees: 7, remises_facturees: 2 }]);
+  eq("en ligne : remise facturée (Odoo) prioritaire sur le −50 % par défaut ; remise de l'admin (30 %)", ["3400930000104", "3400930000107", "3400930000103"].map(c => { const r = lecture.rows.find(x => x.cip === c); return [r.prix, r.remise, r.facture_odoo]; }),
+    [[15.6, 20, true], [7, 30, false], [455, 9, true]]);
+  eq("en ligne : champs publics inchangés, sans CIP, coût ni prix habituel", [Object.keys(ev.chiffres), /\d{13}|cout|habituel|prix_base/.test(JSON.stringify(ev.chiffres))], [["nb", "des", "jusqua", "mois", "maj"], false]);
+  vrai("en ligne : la lecture ne garde que les champs de la carte (ni coût ni prix de base)", lecture.rows.every(r => !("cout" in r) && !("prix_base" in r)));
   await O.lirePeremption(src);
-  eq("V1 : lecture gardée 5 min", appels, 1);
+  eq("en ligne : lecture gardée 5 min", appels, 1);
   O.oublierMemo();
-  const sansFacture = { ...page, produits: page.produits.map(({ facturee, prix, remise_pct, prix_habituel, ...r }) => r) };   // eslint-disable-line no-unused-vars
-  const ev2 = O.evaluerOutil("peremption", { outils: { peremption: await O.lirePeremption({ ...src, peremption: async () => sansFacture }) }, menus: MENUS }, MAINTENANT);
-  eq("V1 sans remise facturée : comme le lot 0 (ni « dès » ni « jusqu'à »)", [ev2.chiffres.nb, ev2.chiffres.des, ev2.chiffres.jusqua, ev2.admin], [9, null, null, { remises_facturees: 0 }]);
+  const toutAZero = { ...page, produits: page.produits.map(({ facturee, prix, remise_pct, prix_habituel, ...r }) => ({ ...r, remise_admin: 0 })) };   // eslint-disable-line no-unused-vars
+  const ev2 = O.evaluerOutil("peremption", { outils: { peremption: await O.lirePeremption({ ...src, peremption: async () => toutAZero }) }, menus: MENUS }, MAINTENANT);
+  eq("toutes les remises affichées à 0 par l'admin, aucune facturée : ni « dès » ni « jusqu'à »", [ev2.chiffres.nb, ev2.chiffres.des, ev2.chiffres.jusqua, ev2.admin], [9, null, null, { remises_affichees: 0, remises_facturees: 0 }]);
   O.oublierMemo();
   const D = await import(pathToFileURL(join(RACINE, "netlify/functions/_accueil-donnees.js")).href);
-  eq("sources : en ligne (sans sb injecté), la carte lit la page des pharmacies (etatPublic) ; tests et banc (sb injecté) : lecture du lot 0",
+  eq("sources : en ligne (sans sb injecté), la carte lit la page des pharmacies (etatPublic) ; tests et banc (sb injecté) : lecture directe",
     [typeof D.creerSources({}).peremption, D.creerSources({ sb: async () => [] }).peremption], ["function", null]);
 }
 
@@ -287,7 +299,7 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   eq("serveur : 5 visibles + la 6e en réserve", r.etats.map(e => e.statut), ["visible", "visible", "visible", "visible", "visible", "au_dela_de_5"]);
   eq("objet public d'un outil", Object.keys(r.publiques.items[1]), ["id", "type", "outil", "emplacement", "titre", "accroche", "badge", "fin", "fin_offre", "image", "couleur", "couleur_auto", "chiffres"]);
   eq("fin = date de fin ; jamais de fin d'offre", [r.publiques.items[1].fin, r.publiques.items[1].fin_offre], ["2026-10-31", null]);
-  vrai("remises_facturees (admin) absent de la réponse publique", !/remises_facturees|en_menu|honnetes/.test(JSON.stringify(r.publiques)));
+  vrai("remises_affichees / remises_facturees (admin) absents de la réponse publique", !/remises_facturees|remises_affichees|en_menu|honnetes/.test(JSON.stringify(r.publiques)));
   // navigateur : groupées écartées sans accès, en reconnexion, en saisie Elixir (App : autorise faux) ou sans opération ouverte
   const vitrine = (gp) => C.construireMisesEnAvant(r.publiques, ctxPage({ gp })).vitrine.map(e => e.cle);
   eq("pharmacie inscrite, 2 opérations : groupées en 1re place", vitrine({ autorise: true, ouvertes: 2 })[0], "o:groupees");
@@ -322,10 +334,10 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
     if (opts?.method && opts.method !== "GET") throw new Error("écriture interdite");
     if (path.startsWith("elixir_pharmacies")) return [{ email: "compte@pharmacie-a.test" }];
     if (path.startsWith("ec_config")) return [{ key: "display_config", value: DISPLAY }, { key: "admin_promos", value: PROMOS }, { key: "accueil_vedettes", value: JSON.stringify(valeur), updated_at: "x" }];
-    if (path.startsWith("odoo_catalog?select=cip,earliest_expiry,updated_at&")) { lectures.push("péremption"); if (pannePeremption) throw new Error("table illisible"); return PER; }
+    if (path.startsWith("odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry,updated_at&")) { lectures.push("péremption"); if (pannePeremption) throw new Error("table illisible"); return PER; }
     if (path.startsWith("odoo_catalog?cip=in.")) return path.includes("select=cip,list_price,discounted_price,discount_pct,in_stock") ? FAUT_CAT.filter(r => listeCips(path).includes(r.cip))
       : [{ cip: "3400934438738", name: "VENTOLINE", list_price: 3.24, discounted_price: 3.01, discount_pct: 7.1, in_stock: true, available: 5000 }].filter(r => listeCips(path).includes(r.cip));
-    if (path.startsWith("expiry_discounts")) throw new Error("expiry_discounts n'est plus lue (lot 0)");
+    if (path.startsWith("expiry_discounts")) return [];
     if (path.startsWith("elixir_products")) return path.includes("select=cip,section") ? CUREES : [];
     if (path.startsWith("elixir_campaigns")) return [{ id: "camp1", active: true }];
     throw new Error(`table inattendue ${path}`);
@@ -343,15 +355,15 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   valeur = { items: [objet("outil", "peremption", "vitrine")] };
   r = await appel("jeton-a");
   eq("Péremption seule : péremptions lues (une lecture), pas de kv accueil:outils", [lectures.filter(x => x === "péremption").length, cles], [1, ["accueil:offres"]]);
-  eq("… chiffres publics dans la vedette : ni « dès » ni « jusqu'à »", r.corps.vedettes.items[0].chiffres, { nb: 9, des: null, jusqua: null, mois: ["2026-11", "2027-02"], maj: MAJ });
+  eq("… chiffres publics dans la vedette : « dès 0,44 € », « jusqu'à −50 % »", r.corps.vedettes.items[0].chiffres, { nb: 9, des: 0.44, jusqua: 50, mois: ["2026-11", "2027-02"], maj: MAJ });
   valeur = confOutils;
   r = await appel("jeton-a");
-  eq("pharmacie : ni outils_etat ni remises_facturees", ["outils_etat" in r.corps, /remises_facturees|en_menu|honnetes/.test(JSON.stringify(r.corps))], [false, false]);
+  eq("pharmacie : ni outils_etat ni remises_affichees / remises_facturees", ["outils_etat" in r.corps, /remises_facturees|remises_affichees|en_menu|honnetes/.test(JSON.stringify(r.corps))], [false, false]);
   eq("pharmacie : produit, péremption, saisie (avec ses comptes)", r.corps.vedettes.items.map(i => [i.type, i.outil || null, i.chiffres?.references ?? null]), [["produit", null, null], ["outil", "peremption", null], ["outil", "saisie", 27871]]);
   r = await appel("jeton-admin");
   eq("admin : outils_etat des 6 outils", Object.keys(r.corps.outils_etat), O.OUTILS_MEA);
   eq("admin : remises facturées, fauteuils, justificatif, groupées", [r.corps.outils_etat.peremption.admin, r.corps.outils_etat.fauteuil.chiffres.tailles.length, r.corps.outils_etat.justificatif.chiffres.presentations,
-    r.corps.outils_etat.groupees.selon_pharmacie], [{ remises_facturees: 0 }, 4, 17, true]);
+    r.corps.outils_etat.groupees.selon_pharmacie], [{ remises_affichees: 8, remises_facturees: 0 }, 4, 17, true]);
   O.oublierMemo(); pannePeremption = true;
   r = await appel("jeton-a");
   eq("lecture des péremptions en échec : les autres mises en avant sortent quand même", [r.statut, r.corps.vedettes.items.map(i => i.outil || i.type)], [200, ["produit", "saisie"]]);
@@ -410,20 +422,21 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   const pub = V.evaluerVedettes(conf, null, ctxS, MAINTENANT).publiques;
   const m = C.construireMisesEnAvant(pub, ctxPage({ justifProducts: JUSTIF_PRODUITS }));
   const [per, fau, jus] = m.vitrine, [sai, tra, grp] = m.grille;
-  eq("péremption : bouton, sur-titre, titre sans « petits prix », badge vide", [per.outil.cta, per.rayon, esp(per.titre), per.badge], ["Voir les 9 produits", "Péremption courte", "Lots à date courte, en stock", ""]);
-  eq("péremption : textes des chiffres, sans prix", [esp(per.outil.meta), esp(per.outil.metaCourt), per.outil.meta2], ["9 références", "9 réf.", "Péremptions de nov. 2026 à févr. 2027"]);
-  eq("péremption : plaque et 1 carte-chiffre (références), aucun prix, nom ni photo de produit", per.outil.cartes.map(c => c.type || esp(c.chiffre)), ["plaque", "9"]);
-  eq("péremption : accroche par défaut au prix habituel, sans remise annoncée", [esp(per.accroche), /remise|petits prix|−|%/i.test(per.accroche)],
-    ["Produits en stock à péremption entre J+30 et 4 mois, à leur prix habituel, avec la date de chaque lot.", false]);
+  eq("péremption : bouton, sur-titre, titre « petits prix » (rétabli le 21/10/2026), badge de la mise en avant (vide)", [per.outil.cta, per.rayon, esp(per.titre), per.badge], ["Voir les 9 produits", "Péremption courte", "Péremption courte, petits prix", ""]);
+  eq("péremption : textes des chiffres, « dès » le plus bas prix affiché", [esp(per.outil.meta), esp(per.outil.metaCourt), per.outil.meta2], ["9 références · dès 0,44 € HT", "9 réf. · dès 0,44 € HT", "Péremptions de nov. 2026 à févr. 2027"]);
+  eq("péremption : plaque et 2 cartes-chiffres (références, plus bas prix), aucun nom ni photo de produit", per.outil.cartes.map(c => c.type || esp(c.chiffre)), ["plaque", "9", "0,44 €"]);
+  eq("péremption : accroche « la remise est déjà dans le prix affiché »", esp(per.accroche), "Produits en stock à péremption entre J+30 et 4 mois : la remise est déjà dans le prix affiché.");
   vrai("… aucune carte avec un nom ou une photo", per.outil.cartes.every(c => !c.url && !c.nom));
-  eq("médaillon : aucun (Péremption au lot 0 comprise) ; jamais de fin d'offre", [per.outil.jusqua, fau.outil.jusqua, jus.outil.jusqua, sai.outil.jusqua, ...m.vitrine.map(e => e.finOffre)], [null, null, null, null, null, null, null]);
-  eq("texte lu exact", esp(C.resumeOutilLu(per)), "Lots à date courte, en stock, 9 références");
-  // badge « Petits prix » d'une mise en avant publiée avant le lot 0 (défaut d'alors) : pas affiché sans remise facturée ;
-  // un autre badge de Zineb : gardé ; « Petits prix » avec une remise facturée (jusqua, lots suivants) : gardé
+  eq("médaillon : « jusqu'à −50 % » pour la Péremption seulement ; jamais de fin d'offre", [per.outil.jusqua, fau.outil.jusqua, jus.outil.jusqua, sai.outil.jusqua, ...m.vitrine.map(e => e.finOffre)], [50, null, null, null, null, null, null]);
+  eq("texte lu exact", esp(C.resumeOutilLu(per)), "Péremption courte, petits prix, 9 références, dès 0,44 € HT, jusqu'à −50 %");
+  // badge « Petits prix » : gardé avec une remise affichée (jusqua) ; retiré seulement si la page n'affiche aucune remise ; un
+  // autre badge de Zineb : gardé
   const avecBadge = (badge, chiffres) => C.construireMisesEnAvant({ items: [{ ...pub.items[0], badge, ...(chiffres ? { chiffres } : {}) }] }, ctxPage()).vitrine[0].badge;
-  eq("badge « Petits prix » d'avant : retiré ; autre badge : gardé ; avec remise facturée : gardé",
-    [avecBadge("Petits prix"), avecBadge("  petits PRIX "), avecBadge("Nouveau"), avecBadge("Petits prix", { ...pub.items[0].chiffres, jusqua: 20, des: 3.1 })], ["", "", "Nouveau", "Petits prix"]);
-  eq("badge par défaut d'une nouvelle mise en avant Péremption", C.OUTILS.peremption.badge, "Date courte");
+  eq("badge « Petits prix » : gardé avec une remise ; retiré sans aucune remise affichée ; autre badge : gardé",
+    [avecBadge("Petits prix"), avecBadge("  petits PRIX ", { ...pub.items[0].chiffres, jusqua: null, des: null }), avecBadge("Nouveau", { ...pub.items[0].chiffres, jusqua: null, des: null }), avecBadge("Petits prix", { ...pub.items[0].chiffres, jusqua: 20, des: 3.1 })], ["Petits prix", "", "Nouveau", "Petits prix"]);
+  eq("badge par défaut d'une nouvelle mise en avant Péremption", C.OUTILS.peremption.badge, "Petits prix");
+  eq("sans remise affichée : accroche au prix habituel, sans remise annoncée", [esp(C.OUTILS.peremption.accroche({ nb: 3 })), /remise|petits prix|−|%/i.test(C.OUTILS.peremption.accroche({ nb: 3 }))],
+    ["Produits en stock à péremption entre J+30 et 4 mois, à leur prix habituel, avec la date de chaque lot.", false]);
   eq("teintes : outil (justificatif : sarcelle, violet écarté)", [per.couleur, fau.couleur, jus.couleur, jus.source, sai.couleur], ["#ea580c", "#3b82f6", "#3c7782", "rayon", "#2d9cbc"]);
   eq("justificatif : rubrique sans emoji, chiffres recalculés, cartes des labos", [jus.rayon, esp(jus.outil.meta), jus.outil.cartes.map(c => c.type || `${c.chiffre}:${c.legende}`), jus.accroche.split(" : ")[0]],
     ["Commande labo sur justificatif", "6 médicaments · 17 présentations", ["plaque", "Takeda:4 médicaments", "Pfizer:2 médicaments"], "Takeda et Pfizer"]);
@@ -464,7 +477,7 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
     [`6${NB}médicaments · 17${NB}présentations`, `167${NB}réf. · dès${NB}0,44${NB}€${NB}HT`, `2${NB}largeurs en stock · dès${NB}175,70${NB}€${NB}HT`,
       `27${FN}871${NB}références · 4${FN}526${NB}réf.${NB}en${NB}stock`, `2${NB}opérations ouvertes`]);
   eq("titres et accroche : « à la », « Transit Lite », « en stock », « 4 mois » insécables", [C.OUTILS.fauteuil.titre, C.OUTILS.transfert.titre, C.OUTILS.peremption.titre, C.OUTILS.peremption.accroche().includes(`4${NB}mois`)],
-    [`Le bon fauteuil, à${NB}la bonne${NB}largeur`, `Fauteuil de transfert Transit${NB}Lite`, `Lots à date courte, en${NB}stock`, true]);
+    [`Le bon fauteuil, à${NB}la bonne${NB}largeur`, `Fauteuil de transfert Transit${NB}Lite`, "Péremption courte, petits prix", true]);
   eq("péremption sur un seul mois ; un seul produit", [C.chiffresTexte("peremption", { nb: 1, des: 2, mois: ["2027-01", "2027-01"] }).meta2, C.OUTILS.peremption.cta({ nb: 1 })], ["Péremption en janv. 2027", "Voir le produit"]);
   let erreur = null;
   try { eq("type inconnu (« assistant ») ignoré sans erreur, comme une page restée sur l'ancien code", C.construireMisesEnAvant({ items: [{ id: "mea_x_1234", type: "assistant", emplacement: "vitrine" }, pub.items[0]] }, ctxPage()).vitrine.map(e => e.cle), ["o:peremption"]); }
@@ -495,11 +508,12 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   vrai("admin des fauteuils absent de la réponse publique", !("admin" in (V.evaluerVedettes({ items: [objet("outil", "fauteuil", "vitrine")] }, null,
     { menus: MENUS, outils: { plan: { fauteuils: CORRESPONDANCE }, fauteuilsCat: { parCip: parCip(FAUT_CAT) } } }, MAINTENANT).publiques.items[0] || {})));
 
-  // (b) section ajoutée dans l'admin (customSections) : au lot 0, plus de « dès » à protéger (aucun prix annoncé) ;
-  // lireOutils ne lit plus les sections perso
+  // (b) section ajoutée dans l'admin (customSections) : sans effet (règle panier : un produit d'un menu ou d'une section compte
+  // aussi, son ajout depuis la page est une ligne à part au prix de la page) ; lireOutils ne lit plus les sections perso
+  O.oublierMemo();
   const peremption = await O.lirePeremption({ sb: sbPeremption([]), maintenant: () => MAINTENANT });
   const avecPerso = O.evaluerOutil("peremption", { outils: { peremption, perso: ["maSection"] }, menus: MENUS }, MAINTENANT);
-  eq("section perso : sans effet, ni « dès » ni « jusqu'à »", [avecPerso.chiffres.nb, avecPerso.chiffres.des, avecPerso.chiffres.jusqua, avecPerso.admin], [9, null, null, { remises_facturees: 0 }]);
+  eq("section perso : sans effet sur « dès » et « jusqu'à »", [avecPerso.chiffres.nb, avecPerso.chiffres.des, avecPerso.chiffres.jusqua, avecPerso.admin], [9, 0.44, 50, { remises_affichees: 8, remises_facturees: 0 }]);
   eq("lireOutils : plus de clés des sections perso", "perso" in (await O.lireOutils({ sb: sbPeremption([]), maintenant: () => MAINTENANT }, ["peremption"], { displayConfig: { customSections: [{ key: "maSection" }] } })), false);
 
   // (c) fonction planifiée : valeur précédente illisible + Odoo en panne → accueil:outils inchangé
@@ -533,7 +547,8 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
     lectures.push(path.split("?")[0]);
     if (path.startsWith("elixir_pharmacies")) return [{ email: "compte@pharmacie-a.test" }];
     if (path.startsWith("ec_config")) return [{ key: "display_config", value: display }, { key: "admin_promos", value: PROMOS }, { key: "accueil_vedettes", value: JSON.stringify(valeur), updated_at: "x" }];
-    if (path.startsWith("odoo_catalog?select=cip,earliest_expiry,updated_at&")) { lectures.push("péremption"); return lente ? new Promise(() => {}) : PER; }
+    if (path.startsWith("odoo_catalog?select=cip,list_price,discounted_price,discount_pct,earliest_expiry,updated_at&")) { lectures.push("péremption"); return lente ? new Promise(() => {}) : PER; }
+    if (path.startsWith("expiry_discounts")) return [];
     if (path.startsWith("odoo_catalog?cip=in.")) return path.includes("in_stock&") || path.endsWith("in_stock") ? FAUT_CAT
       : [{ cip: "3400934438738", name: "VENTOLINE", list_price: 3.24, discounted_price: 3.01, discount_pct: 7.1, in_stock: true, available: 5000 }];
     if (path.startsWith("elixir_products")) return path.includes("select=cip,section") ? CUREES : [];

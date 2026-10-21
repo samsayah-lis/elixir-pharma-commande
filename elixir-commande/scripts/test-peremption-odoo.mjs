@@ -28,6 +28,7 @@ const vrai = (label, v) => eq(label, !!v, true);
 const lire = (f) => readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
 
 // ── 1. Parties pures ──
+// (règle panier du 21/10/2026 : écarts d'une ligne, section 15)
 const T0 = Date.parse("2026-10-21T09:14:07Z");
 eq("fenêtre de la page (UTC) : J+30 → fin du 4e mois", M.fenetre(T0), { aujourdhui: "2026-10-21", min: "2026-11-20", max: "2027-02-28" });
 eq("date de fin : lot court − 30 j, 22:59:59 UTC (28/02/2027 → 29/01/2027)", M.finRegle("2027-02-28"), "2027-01-29T22:59:59.000Z");
@@ -108,7 +109,7 @@ const LONG = { ZADI: [{ exp: "2026-12-31", qte: 43 }, { exp: "2028-05-31", qte: 
   PROCHE: [{ exp: "2026-11-24", qte: 6 }], RENI: [{ exp: "2027-01-31", qte: 41 }, { lot: false, qte: 2 }] };
 // latence : { odoo, sb } en ms par appel, ajoutés à l'horloge simulée (durée des appels HTTP, revue V1) ; crochet(model,
 // method, args) : appelé après chaque appel Odoo réussi (concurrence simulée)
-function monde({ env = { PEREMPTION_ODOO_ECRITURE: "1" }, mode = "actif", reglages = {}, t = T0, latence = null, crochet = null } = {}) {
+function monde({ env = { PEREMPTION_ODOO_ECRITURE: "1" }, mode = "actif", reglages = {}, t = T0, latence = null, crochet = null, suiviEcarts = true, remisesAffichees = [] } = {}) {
   const horloge = { t };
   const maintenant = () => horloge.t;
   const quants = [];
@@ -134,6 +135,9 @@ function monde({ env = { PEREMPTION_ODOO_ECRITURE: "1" }, mode = "actif", reglag
     elixir_products: [{ cip: P.CAMP.cip, section: "camp-1" }, { cip: P.HEC.cip, section: "otc" }],
     elixir_campaigns: [{ id: "camp-1", active: true }],
     kv_store: [{ key: "sp:ord:1", value: JSON.stringify({ lignes: [{ code: P.SANOFI.cip, qte: 1 }] }), updated_at: new Date(t).toISOString() }],
+    // règle panier (21/10/2026) : remises affichées de l'admin (table publique existante) et suivi des écarts (sql/peremption-ecarts.sql)
+    expiry_discounts: remisesAffichees,
+    ...(suiviEcarts ? { peremption_ecarts: [] } : {}),
   } });
   S.table("peremption_reglages")[0] = { ...S.table("peremption_reglages")[0], mode, ...reglages };
   const odoo = latence || crochet ? async (m, me, a, k) => { horloge.t += latence?.odoo || 0; const r = await O.odoo(m, me, a, k); if (crochet) await crochet(m, me, a); return r; } : O.odoo;
@@ -925,8 +929,8 @@ eq("verrous : déploiement « deploy-preview » avec la variable → aucune écr
     items: [{ cip: P.ZADI.cip, name: "ZADITEN", qty: 3, pn: 1.92 }, { cip: P.HEC.cip, name: "HEC", qty: 2, pn: 9.76 }] },
     { id: 1791000000001, date: "2026-10-18T11:00:00Z", pharmacy_name: "Pharmacie liste 15", source: "catalogue", items: [{ cip: P.SURB.cip, name: "SURBRONC", qty: 1, pn: 5.98 }] });
   const e = await w.X.ecarts({ depuis: "2026-10-01" });
-  eq("écarts : « page péremption probable » (PU = prix de base × 0,5) à part des autres écarts (client d'une autre liste), liste de la commande",
-    [e.lignes.map(l => [l.cip, l.page_peremption, l.liste]), e.total_peremption, e.total_autres], [[[P.ZADI.cip, true, 5], [P.SURB.cip, false, 15]], 5.04, 0.02]);
+  eq("écarts : « page péremption probable » (PU = prix de base × 0,5, ancienne page) à part des autres écarts (client d'une autre liste), liste de la commande",
+    [e.lignes.map(l => [l.cip, l.type, l.page_peremption, l.liste]), e.total_peremption, e.total_probable, e.total_autres], [[[P.ZADI.cip, "probable", true, 5], [P.SURB.cip, "autre", false, 15]], 0, 5.04, 0.02]);
 }
 // Site : produits « fantômes » renvoyés à part (paniers de l'ancienne page), page en base « prix habituel »
 {
@@ -941,6 +945,136 @@ eq("verrous : déploiement « deploy-preview » avec la variable → aucune écr
   const z = (await w.X.etatPublic()).produits.find(p => p.cip === P.ZINNAT.cip);
   eq("base « % du prix habituel » : la page barre le prix habituel (3,51 €) et annonce −10 % ; la règle porte 15,53 % (2 décimales)",
     [z.facturee, z.prix_barre, z.prix, z.remise_pct, w.O.reglesSite()[0].percent_price], [true, 3.51, 3.16, 10, 15.53]);
+}
+
+// ── 15. Règle panier (21/10/2026) : remise affichée, offre de la page, écarts et leur suivi ──
+{
+  // écart d'une ligne (pur) : ligne « Pér. » au prix de la page contre sa ligne de vente Odoo
+  const per = { cip: P.HEC.cip, qty: 2, pn: 5.16, peremption: "2026-12-31", remise: 50, facture_odoo: false };
+  const odoo = (qte, pu, remise) => ({ product_uom_qty: qte, price_unit: pu, discount: remise, price_subtotal: Math.round(pu * (1 - remise / 100) * qte * 100) / 100 });
+  const e1 = M.ecartLigne(per, odoo(2, 10.32, 5.43));
+  eq("écart : ligne « Pér. » à −50 % (5,16 €) facturée 9,76 € → 9,20 € à rectifier, cohérente", [e1.type, e1.qte, e1.net, e1.ecart, e1.coherent, e1.remise], ["peremption", 2, 9.76, 9.2, true, 50]);
+  eq("écart : ligne facturée par une règle Odoo (V1, facture_odoo) → jamais d'écart", [M.ecartLigne({ ...per, facture_odoo: true }, odoo(2, 10.32, 50)), M.ecartLigne({ ...per, remise: undefined, peremption_remise: 12 }, odoo(2, 10.32, 5.43))], [null, null]);
+  eq("écart : prix corrigé à la main dans Odoo (travail manuel fait) → aucun écart", M.ecartLigne(per, odoo(2, 10.32, 50)), null);
+  eq("écart : boîtes additionnées par le connecteur (menu 3 + péremption 2 sur une ligne de 5) → 2 boîtes seulement", [M.ecartLigne({ ...per, separeDe: "1" }, odoo(5, 10.32, 5.43)).qte, M.ecartLigne({ ...per, separeDe: "1" }, odoo(5, 10.32, 5.43)).ecart], [2, 9.2]);
+  eq("écart : quantité servie plus petite → boîtes servies", M.ecartLigne(per, odoo(1, 10.32, 5.43)).qte, 1);
+  eq("écart : prix plus bas que prix de base × (1 − remise) → « à vérifier »", M.ecartLigne({ ...per, pn: 1 }, odoo(2, 10.32, 5.43)).coherent, false);
+  eq("écart : ligne du lot 0 (mention sans remise) facturée plus cher → « autre » ; ancienne page → « probable »",
+    [M.ecartLigne({ cip: "1", qty: 1, pn: 9.5, peremption: "2026-12-31" }, odoo(1, 10.32, 5.43)).type, M.ecartLigne({ cip: "1", qty: 1, pn: 5.16 }, odoo(1, 10.32, 5.43)).type], ["autre", "probable"]);
+  eq("clé d'écart : « <n° commande>:<CIP> »", ["1792000000000:3400930470312", "1792000000000:3400930470312:2", "x:1", "1792000000000:12"].map(M.cleEcartValide), [true, true, false, false]);
+}
+{
+  // offre de la page (etatPublic) : −50 % par défaut, −20 % dès 500 €, remise de l'admin (0 = aucune), prix habituel plus bas,
+  // règle Odoo facturée (V1) prioritaire
+  const w = monde({ remisesAffichees: [{ cip: P.ZADI.cip, discount_pct: 30 }, { cip: P.SURB.cip, discount_pct: 0 }] });
+  await zinnatFacture(w, 12);
+  const page = await w.X.etatPublic();
+  const of = (k) => { const p = page.produits.find(x => x.cip === P[k].cip); return p ? [p.offre.pn, p.offre.remise, p.offre.source, p.offre.facture_odoo, p.remise_admin] : null; };
+  eq("page : Hec −50 % par défaut (10,32 → 5,16 €), comme avant le 20/10", of("HEC"), [5.16, 50, "defaut", false, null]);
+  eq("page : Ninlaro (5 000 €) −20 % dès 500 € → 4 000 €", of("TAKEDA"), [4000, 20, "defaut", false, null]);
+  eq("page : Zaditen −30 % (remise affichée de l'admin)", of("ZADI"), [2.68, 30, "admin", false, 30]);
+  eq("page : Surbronc à 0 % (admin) → prix habituel, sans remise", of("SURB"), [6, 0, "habituel", false, 0]);
+  eq("page : FFP2 au prix habituel (2,99 €, sous 5,99 × 0,5)", of("FFP2"), [2.99, 0, "habituel", false, null]);
+  eq("page : Zinnat facturé par Odoo (V1) à −12 % → 3,29 €, remise de la facture (pas −50 %)", of("ZINNAT"), [3.29, 12, "odoo", true, null]);
+  eq("page : nombre de produits remisés", page.remises, page.produits.filter(p => p.offre.remise >= 1).length);
+  vrai("page publique : ni coût ni marge", !/"cout"|marge/.test(JSON.stringify(page)));
+  // admin : remise affichée par produit et ce que facture Odoo
+  const etat = await w.X.etatAdmin();
+  const ad = (k) => etat.produits.find(p => p.cip === P[k].cip);
+  eq("admin : remise affichée et facturation par produit", [ad("HEC").affichage.remise, ad("HEC").affichage.facture_odoo, ad("ZADI").remise_admin, ad("ZINNAT").affichage.source, ad("SURB").affichage.motif],
+    [50, false, 30, "odoo", "admin_zero"]);
+  eq("admin : compteur des produits remisés sur la page", etat.compteurs.remises_affichees, etat.produits.filter(p => p.affichage?.remise >= 1 && !p.masque).length);
+}
+{
+  // HTTP : remise affichée (admin, expiry_discounts, aucune écriture Odoo) ; prix des produits sortis de la page (public)
+  const w = monde();
+  const admin = async (ev) => (/jeton-admin/.test(ev.headers?.authorization || "") ? { admin: { email: "Zineb@Elixir.test" } } : { error: { statusCode: 401, headers: {}, body: "{}" } });
+  const h = creerHandler({ peremption: w.X, verifyAdmin: admin });
+  const ev = (methode, { q, corps, jeton } = {}) => ({ httpMethod: methode, headers: jeton ? { authorization: `Bearer ${jeton}` } : {}, queryStringParameters: q || {}, body: corps ? JSON.stringify(corps) : null });
+  eq("remise affichée sans jeton admin : 401, rien écrit", [(await h(ev("POST", { corps: { action: "remise_affichee", cip: P.HEC.cip, remise_pct: 30 } }))).statusCode, w.S.table("expiry_discounts").length], [401, 0]);
+  eq("remise affichée hors bornes (95, 12,5, « abc ») : 400", await Promise.all([95, 12.5, "abc"].map(async r => (await h(ev("POST", { jeton: "jeton-admin", corps: { action: "remise_affichee", cip: P.HEC.cip, remise_pct: r } }))).statusCode)), [400, 400, 400]);
+  const r30 = await h(ev("POST", { jeton: "jeton-admin", corps: { action: "remise_affichee", cip: P.HEC.cip, remise_pct: 30, nom: "HEC" } }));
+  eq("remise affichée 30 % : enregistrée (clé serveur), page à 7,22 €", [r30.statusCode, w.S.table("expiry_discounts").map(x => [x.cip, x.discount_pct]), (await w.X.etatPublic()).produits.find(p => p.cip === P.HEC.cip).offre.pn],
+    [200, [[P.HEC.cip, 30]], 7.22]);
+  await h(ev("POST", { jeton: "jeton-admin", corps: { action: "remise_affichee", cip: P.HEC.cip, remise_pct: 0 } }));
+  eq("remise affichée 0 % : aucune remise, prix habituel (9,76 €)", (await w.X.etatPublic()).produits.find(p => p.cip === P.HEC.cip).offre.pn, 9.76);
+  await h(ev("POST", { jeton: "jeton-admin", corps: { action: "remise_affichee", cip: P.HEC.cip, remise_pct: null } }));
+  eq("remise affichée vide : retour au défaut (−50 %), ligne supprimée", [w.S.table("expiry_discounts").length, (await w.X.etatPublic()).produits.find(p => p.cip === P.HEC.cip).offre.remise], [0, 50]);
+  eq("remise affichée : journal (qui, avant → après), aucune écriture Odoo", [journalDe(w.S, "remise_affichee").length, journalDe(w.S, "remise_affichee")[0].acteur, journalDe(w.S, "remise_affichee")[0].mode, w.O.etat.ecritures.length],
+    [3, "zineb@elixir.test", "site", 0]);
+  const px = JSON.parse((await h(ev("GET", { q: { action: "prix", cips: `${P.HEC.cip},${P.ZADI.cip}` } }))).body);
+  eq("prix des produits sortis de la page : public, prix et paliers, ni stock ni lot", [px.produits.map(p => [p.cip, p.discounted_price]), /available|lots|cout/.test(JSON.stringify(px))], [[[P.HEC.cip, 9.76], [P.ZADI.cip, 3.6]], false]);
+  eq("prix : 51 CIP ou aucun → 400", [(await h(ev("GET", { q: { action: "prix", cips: Array.from({ length: 51 }, (_, i) => String(3400930000000 + i)).join(",") } }))).statusCode, (await h(ev("GET", { q: { action: "prix", cips: "abc" } }))).statusCode], [400, 400]);
+}
+{
+  // Contrôle des écarts : lignes « Pér. » de la règle panier, commande à part (separeDe : boîtes additionnées sur la ligne Odoo
+  // de l'autre commande), ligne facturée par une règle Odoo, ligne corrigée à la main ; statuts ; résumé ; table absente
+  const w = monde();
+  const A = 1792600000000, B = 1792600000002, C = 1792650000000, D = 1792800000000;
+  // Pharmacie 1 : menu Hec 3 (commande A) + Hec 2 en péremption (commande B, à part) → une ligne Odoo de 5 sous la réf. A
+  w.O.ajouterVente({ pid: P.HEC.id, qte: 5, ref: String(A), pu: 10.32, remise: 5.43, commande: "S400001" });
+  // Pharmacie 1 : Zaditen −50 % (1,92 €), facturé 3,60 €
+  w.O.ajouterVente({ pid: P.ZADI.id, qte: 2, ref: String(A), pu: 3.83, remise: 6, commande: "S400001" });
+  // Pharmacie 2 : Surbronc −50 %, prix corrigé à la main dans Odoo (3,52 €) → aucun écart ; Ninlaro facturé par une règle Odoo
+  w.O.ajouterVente({ pid: P.SURB.id, qte: 1, ref: String(C), pu: 7.03, remise: 50, commande: "S400002" });
+  w.O.ajouterVente({ pid: P.TAKEDA.id, qte: 1, ref: String(C), pu: 5000, remise: 5, commande: "S400002" });
+  // Pharmacie 3 : Zinnat −50 % (1,87 €) facturé 3,51 €, commande d'avant la règle panier (période)
+  w.O.ajouterVente({ pid: P.ZINNAT.id, qte: 4, ref: String(D), pu: 3.74, remise: 6.15, commande: "S400003" });
+  const ligne = (cip, qty, pn, remise, extra = {}) => ({ cip, name: Object.values(P).find(p => p.cip === cip).nom, qty, pn, total: pn * qty, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise, facture_odoo: false, ...extra });
+  w.S.table("elixir_orders").push(
+    { id: A, date: new Date(A).toISOString(), pharmacy_name: "Pharmacie Une", pharmacy_cip: "1111111", source: "catalogue", items: [{ cip: P.HEC.cip, name: "HEC", qty: 3, pn: 9.76, total: 29.28 }, ligne(P.ZADI.cip, 2, 1.92, 50)] },
+    { id: B, date: new Date(B).toISOString(), pharmacy_name: "Pharmacie Une", pharmacy_cip: "1111111", source: "catalogue", items: [ligne(P.HEC.cip, 2, 5.16, 50, { separeDe: String(A) })] },
+    { id: C, date: new Date(C).toISOString(), pharmacy_name: "Pharmacie Deux", source: "catalogue", items: [ligne(P.SURB.cip, 1, 3.52, 50), ligne(P.TAKEDA.cip, 1, 4750, 5, { facture_odoo: true })] },
+    { id: D, date: new Date(D).toISOString(), pharmacy_name: "Pharmacie Trois", source: "catalogue", items: [ligne(P.ZINNAT.cip, 4, 1.87, 50)] });
+  const e = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("écarts « Pér. » : Hec à part (2 boîtes sur la ligne de 5 de l'autre commande), Zaditen, Zinnat ; ni Surbronc (corrigé dans Odoo) ni Ninlaro (règle Odoo)",
+    e.lignes.map(l => [l.cle, l.commande, l.odoo, l.qte, l.pn, l.net, l.ecart, l.separe_de, l.statut]),
+    [[`${A}:${P.ZADI.cip}`, String(A), "S400001", 2, 1.92, 3.6, 3.36, null, "a_rectifier"], [`${B}:${P.HEC.cip}`, String(B), "S400001", 2, 5.16, 9.76, 9.2, String(A), "a_rectifier"],
+      [`${D}:${P.ZINNAT.cip}`, String(D), "S400003", 4, 1.87, 3.51, 6.56, null, "a_rectifier"]]);
+  eq("écarts : liste de prix, pharmacie, suivi installé", [e.lignes.map(l => l.liste), e.lignes.map(l => l.pharmacie), e.suivi], [[5, 5, 5], ["Pharmacie Une", "Pharmacie Une", "Pharmacie Trois"], "ok"]);
+  const periode = await w.X.ecarts({ depuis: "2026-10-21", jusqua: new Date(C).toISOString().slice(0, 10), types: ["peremption"] });
+  eq("écarts : filtre de période (jusqu'au jour de la commande C)", periode.lignes.map(l => l.commande), [String(A), String(B)]);
+  const res0 = await w.X.ecartsResume({ depuis: "2026-10-21", frais: true });
+  eq("résumé : « 19,12 € à rectifier pour 2 pharmacies »", [res0.a_rectifier, res0.rectifie.lignes, res0.pharmacies.map(p => [p.pharmacie, p.montant])],
+    [{ montant: 19.12, lignes: 3, pharmacies: 2 }, 0, [["Pharmacie Une", 12.56], ["Pharmacie Trois", 6.56]]]);
+  // marquer rectifié (avoir), puis annuler ; qui, quand, montants gardés ; journal
+  const lUne = e.lignes.filter(l => l.pharmacie === "Pharmacie Une");
+  const st = await w.X.changerStatutEcarts({ lignes: lUne, statut: "rectifie", reference: "  AV-2026-118  ", acteur: "zineb@elixir.test" });
+  eq("rectifié : 2 lignes, référence nettoyée, qui", [st.ok, st.lignes, st.reference, st.par, st.total], [true, 2, "AV-2026-118", "zineb@elixir.test", 12.56]);
+  const e2 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("écarts relus : statut, référence, qui, quand", e2.lignes.map(l => [l.statut, l.reference, l.par, !!l.le]),
+    [["rectifie", "AV-2026-118", "zineb@elixir.test", true], ["rectifie", "AV-2026-118", "zineb@elixir.test", true], ["a_rectifier", null, null, false]]);
+  eq("table : montants au moment du changement", w.S.table("peremption_ecarts").map(r => [r.cle, r.statut, r.prix_page, r.prix_facture, r.ecart, r.commande_odoo]),
+    [[`${A}:${P.ZADI.cip}`, "rectifie", 1.92, 3.6, 3.36, "S400001"], [`${B}:${P.HEC.cip}`, "rectifie", 5.16, 9.76, 9.2, "S400001"]]);
+  const res1 = await w.X.ecartsResume({ depuis: "2026-10-21" });
+  eq("résumé après rectification (cache vidé) : 6,56 € pour 1 pharmacie, 12,56 € rectifiés", [res1.a_rectifier, res1.rectifie], [{ montant: 6.56, lignes: 1, pharmacies: 1 }, { montant: 12.56, lignes: 2 }]);
+  await w.X.changerStatutEcarts({ lignes: [lUne[0]], statut: "a_rectifier", acteur: "zineb@elixir.test" });
+  eq("annuler : la ligne repasse « à rectifier »", (await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] })).lignes.map(l => l.statut), ["a_rectifier", "rectifie", "a_rectifier"]);
+  eq("statut : journal (ajout seul), aucune écriture Odoo", [journalDe(w.S, "ecart").length, w.O.etat.ecritures.length], [2, 0]);
+  eq("statut invalide ou clé invalide : refusé", [(await w.X.changerStatutEcarts({ lignes: lUne, statut: "paye" })).erreur != null, (await w.X.changerStatutEcarts({ lignes: [{ cle: "x" }], statut: "rectifie" })).erreur != null], [true, true]);
+  const tous = await w.X.ecarts({ depuis: "2026-10-21" });
+  eq("tous les types : Hec du menu au bon prix, pas d'écart ; aucune autre ligne", tous.lignes.length, 3);
+  // HTTP : résumé et statut (admin)
+  const h = creerHandler({ peremption: w.X, verifyAdmin: async (ev) => (/jeton-admin/.test(ev.headers?.authorization || "") ? { admin: { email: "z@e.test" } } : { error: { statusCode: 401, headers: {}, body: "{}" } }) });
+  const g = (q, jeton = "jeton-admin") => h({ httpMethod: "GET", headers: { authorization: `Bearer ${jeton}` }, queryStringParameters: q, body: null });
+  eq("HTTP : écarts et résumé réservés à l'admin", [(await g({ action: "ecarts_resume" }, "x")).statusCode, (await g({ action: "ecarts", depuis: "2026-10-21" }, "x")).statusCode], [401, 401]);
+  const rh = JSON.parse((await g({ action: "ecarts_resume", depuis: "2026-10-21", frais: "1" })).body);
+  eq("HTTP : résumé", rh.a_rectifier, { montant: 9.92, lignes: 2, pharmacies: 2 });
+  const eh = JSON.parse((await g({ action: "ecarts", depuis: "2026-10-21", types: "peremption,inconnu" })).body);
+  eq("HTTP : écarts filtrés par type (type inconnu ignoré)", eh.lignes.length, 3);
+  const sh = await h({ httpMethod: "POST", headers: { authorization: "Bearer jeton-admin" }, queryStringParameters: {}, body: JSON.stringify({ action: "ecart_statut", statut: "rectifie", reference: "AV-9", lignes: [eh.lignes[2]] }) });
+  eq("HTTP : statut (admin)", [sh.statusCode, JSON.parse(sh.body).par], [200, "z@e.test"]);
+}
+{
+  // suivi non installé (sql/peremption-ecarts.sql pas exécuté) : écarts lisibles, statut refusé (503), résumé sans erreur
+  const w = monde({ suiviEcarts: false });
+  w.O.ajouterVente({ pid: P.HEC.id, qte: 2, ref: "1792800000000", pu: 10.32, remise: 5.43, commande: "S400009" });
+  w.S.table("elixir_orders").push({ id: 1792800000000, date: "2026-10-22T10:00:00Z", pharmacy_name: "Pharmacie", source: "catalogue",
+    items: [{ cip: P.HEC.cip, name: "HEC", qty: 2, pn: 5.16, total: 10.32, peremption: "2026-12-31", remise: 50, facture_odoo: false }] });
+  const e = await w.X.ecarts({ depuis: "2026-10-21" });
+  eq("suivi absent : écart lisible, « à rectifier », suivi non installé", [e.lignes.length, e.lignes[0].statut, e.suivi], [1, "a_rectifier", "non_installe"]);
+  eq("suivi absent : statut refusé, message de mise en service", [(await w.X.changerStatutEcarts({ lignes: e.lignes, statut: "rectifie" })).erreur, (await w.X.ecartsResume({ depuis: "2026-10-21" })).suivi], ["non_installe", "non_installe"]);
+  vrai("sql/peremption-ecarts.sql : RLS activé, aucune policy, revoke anon, rejouable", (() => { const t = lire("sql/peremption-ecarts.sql"); return /enable row level security/.test(t) && !/create policy/i.test(t) && /revoke all on table peremption_ecarts from anon, authenticated/.test(t) && /create table if not exists peremption_ecarts/.test(t); })());
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

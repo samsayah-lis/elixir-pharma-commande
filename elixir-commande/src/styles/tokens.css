@@ -298,8 +298,8 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 
   /* Péremption courte : chaque produit devient une carte (le tableau défilait en largeur, la quantité et « Ajouter » hors
      de l'écran) — nom ; CIP et stock ; péremption ; lots ; prix ; quantité et « Ajouter ». Cellules repérées par leur
-     classe (ex-per-*) : la vue pharmacie a 7 colonnes depuis le lot 0 de la Péremption courte (ni prix de base barré, ni
-     remise), la vue admin 9 (prix de base, remise notée) */
+     classe (ex-per-*) : la vue pharmacie a 7 colonnes depuis le lot 0 de la Péremption courte (règle du 21/10/2026 : prix de
+     base barré et remise dans la cellule du prix, ex-per-prix), la vue admin 9 (prix de base, remise notée) */
   .ex-app .ex-peremption:not(.ex-admin *) thead { display: none; }
   .ex-app .ex-peremption:not(.ex-admin *), .ex-app .ex-peremption:not(.ex-admin *) tbody { display: block; }
   .ex-app .ex-peremption:not(.ex-admin *) tr {

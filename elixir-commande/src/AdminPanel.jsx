@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
-import { estPeremption, badgePeremption, datePeremption } from "./peremption-panier.js";
+import { estPeremption, badgePeremption, datePeremption, consigneOdoo, remiseLigne } from "./peremption-panier.js";
 // Onglet « Péremptions » (« Odoo facture la remise », docs/peremption-odoo.md) : chargé à la demande, à l'ouverture de l'onglet
 const PeremptionsAdmin = React.lazy(() => import("./components/PeremptionsAdmin.jsx"));
 import AdminSearchML from "./components/AdminSearchML";
@@ -783,6 +783,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           "Quantité": parseInt(it.qty) || 0,
           "Prix net HT": parseFloat(it.pn) || 0,
           "Total HT": Math.round((parseFloat(it.pn) || 0) * (parseInt(it.qty) || 0) * 100) / 100,
+          // péremption courte : « Pér. 31/12/2026 · −50 % » et quoi corriger dans Odoo (src/peremption-panier.js)
+          "Mention": estPeremption(it) ? [badgePeremption(it), remiseLigne(it).facture_odoo ? "facturée par Odoo" : consigneOdoo(it), it.separeDe ? `à part de la n° ${it.separeDe}` : ""].filter(Boolean).join(" · ") : "",
         });
       });
     });
@@ -1474,8 +1476,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                               </span>}
                               <span style={{width:110,flexShrink:0}}><CipCopy cip={item.cip}/></span>
                               <span style={{flex:1,paddingRight:8}}>{item.name}
-                                {/* péremption courte (src/peremption-panier.js) : ligne commandée depuis la page, date du lot ; prix habituel */}
-                                {estPeremption(item) && <span title={`Commandée depuis la page Péremption courte : lot au ${datePeremption(item.peremption)} (${Number(item.peremption_remise) >= 1 ? `remise péremption −${item.peremption_remise} % facturée par Odoo` : "prix habituel, sans remise péremption"})`} style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:tone("warn").bg,color:tone("warn").fg}}>{badgePeremption(item)}</span>}
+                                {/* péremption courte (src/peremption-panier.js) : ligne commandée depuis la page au prix de la page (« Pér. <date> ·
+                                    −X % ») ; Odoo facture le tarif de la liste du client tant qu'aucune règle ne la facture → boîtes à corriger
+                                    (sinon : Contrôle des écarts de l'onglet Péremptions) ; commande à part (separeDe) : additionnées dans Odoo à la
+                                    ligne de l'autre commande */}
+                                {estPeremption(item) && <span className="ex-admin-peremption" title={`Commandée depuis la page Péremption courte : lot au ${datePeremption(item.peremption)}${remiseLigne(item).facture_odoo ? ` · remise −${remiseLigne(item).remise} % facturée par Odoo` : consigneOdoo(item) ? ` · ${consigneOdoo(item)}` : " · prix habituel"}`} style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:tone("warn").bg,color:tone("warn").fg}}>{badgePeremption(item)}{remiseLigne(item).facture_odoo ? " · facturée par Odoo" : remiseLigne(item).remise >= 1 ? ` · prix non repris par Odoo : corriger ${parseInt(item.qty)||0} × ${(Number(item.pn)||0).toFixed(2).replace(".",",")} €` : ""}{item.separeDe ? ` · à part de la n° ${item.separeDe}` : ""}</span>}
                                 {!o.processed && !lineDone(item) && orderStock[item.cip]!==undefined && <span style={{marginLeft:6,fontSize:11,fontWeight:700,borderRadius:4,padding:"1px 5px",background:orderStock[item.cip]?T.okBg:tone("acting").bg,color:orderStock[item.cip]?T.ok:tone("acting").fg}}>{orderStock[item.cip]?"EN STOCK":"PRÉCOMMANDE"}</span>}
                                 {item.synced_at && (!o.processed || (o.items||[]).some(it=>it?.handled_at)) && <span style={{marginLeft:6,fontSize:11,color:T.ok,fontWeight:700}}>envoyée · réf. {item.synced_ref}</span>}
                                 {!item.synced_at && item.handled_at && <span style={{marginLeft:6,fontSize:11,color:T.inkSoft,fontWeight:700}}>traitée sans envoi

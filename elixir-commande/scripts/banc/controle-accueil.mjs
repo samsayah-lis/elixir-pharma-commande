@@ -74,7 +74,7 @@ await cdp("Page.enable"); await cdp("Runtime.enable");
 await cdp("Fetch.enable", { patterns: [{ urlPattern: "*/.netlify/functions/accueil-offres*", requestStage: "Request" }] });
 // variantes : mises en avant d'outils fabriquées depuis outils_etat du banc (chiffres de la règle du serveur)
 const base = await fetch(`${BANC}.netlify/functions/accueil-offres`, { headers: { Authorization: "Bearer essai-jeton" } }).then(r => r.json()).catch(() => null);
-const BADGES = { saisie: "Tout le catalogue", peremption: "Date courte", fauteuil: "Aide au choix", transfert: "Aide au choix", justificatif: "Suivi pas à pas", groupees: "Conditions négociées" };
+const BADGES = { saisie: "Tout le catalogue", peremption: "Petits prix", fauteuil: "Aide au choix", transfert: "Aide au choix", justificatif: "Suivi pas à pas", groupees: "Conditions négociées" };
 let nv = 0;
 const outilVar = (cle, emplacement) => ({ id: `mea_ctrl_${cle}_${++nv}`, type: "outil", outil: cle, emplacement, titre: "", accroche: "", badge: BADGES[cle], fin: null, fin_offre: null,
   image: null, couleur: null, couleur_auto: null, chiffres: base.outils_etat[cle]?.chiffres ?? null });

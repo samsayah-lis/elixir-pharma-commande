@@ -4,8 +4,16 @@ Choix de Zineb (20/10/2026) : « Une remise saisie dans l'onglet Péremptions de
 Odoo, puis le retire quand le produit sort de la page. Les produits qui ont aussi un lot long restent donc affichés au
 prix normal, sauf si vous choisissez de les remiser. »
 
-Ce document dit comment la fonction marche, comment la mettre en service, et que faire de chaque alerte. Le lot 0 (page
-au prix facturé, mention « Pér. ») est décrit dans `docs/peremption.md`.
+Ce document dit comment la fonction marche, comment la mettre en service, et que faire de chaque alerte. La page, le panier
+et la rectification des écarts sont décrits dans `docs/peremption.md`.
+
+**Depuis le 21/10/2026 (décision de Zineb : « par défaut le −50 s'affiche et c'est la règle panier qui s'applique ; si le
+travail manuel côté admin n'est pas fait, on rectifiera les écarts depuis l'affichage des écarts »)** : la page affiche
+−50 % par défaut (−20 % dès 500 €, ou la remise affichée choisie par l'admin) même sans règle Odoo, et le panier garde ce
+prix ; Odoo facture alors le tarif de la liste du client et l'écart se rectifie depuis le Contrôle des écarts. La V1 sert à
+faire **facturer** par Odoo, produit par produit, la remise affichée : une règle facturée l'emporte sur la remise affichée
+(la page dit « remise sur facture ») et ne laisse aucun écart. « Appliquer dans Odoo » est prérempli avec la remise
+affichée.
 
 **État à la livraison : simulation.** Aucune écriture dans Odoo tant que les **deux verrous** ne sont pas ouverts :
 
@@ -55,17 +63,17 @@ dernier jour, elle serait cachée aussitôt, voire déjà expirée dans Odoo.
 
 ### 1.3 Ce que voient les pharmacies
 
-- **Page « Péremption courte »** : une remise n'apparaît que si Odoo la facture **et** que le prix du site l'a reprise :
-  prix de base barré, prix facturé, « −X % » (celui de la facture), « habituellement Y € ». Les autres produits sont au prix
-  habituel avec « Péremption courte · lot au … ». Les produits « fantômes » (plus aucune boîte courte vendable, d'après la
-  lecture d'Odoo de moins de 24 h) ne sont plus montrés. La remise disparaît de la page 3 h avant la date de fin de la
-  règle, même si Odoo ne répond plus.
-- **Panier** : la ligne garde « Pér. <date> · remise péremption −X % facturée par Odoo » jusqu'à la commande (e-mail à
-  Elixir, onglet Commandes, « Mes commandes »). Si la remise finit pendant que la ligne attend dans un panier, la ligne
-  remonte au prix actuel avec « La remise péremption a pris fin » ; si elle baisse, « La remise péremption facturée a
-  changé ». Un panier enregistré par l'ancienne page (−50 % jamais facturés) remonte aussi pour un produit « fantôme ».
-- **Carte de l'accueil** : « dès » et « jusqu'à −X % » ne comptent que les remises facturées ; sans aucune, la carte annonce
-  les références sans prix (comme au lot 0).
+- **Page « Péremption courte »** : une remise facturée par Odoo (règle vérifiée **et** prix du site repris) s'affiche
+  comme celle de la facture : prix de base barré, prix facturé, « −X % », « remise sur facture », « habituellement Y € ». Les
+  autres produits ont la remise affichée (règle du 21/10/2026 : −50 % par défaut, `docs/peremption.md` § 1.1). Les produits
+  « fantômes » (plus aucune boîte courte vendable, d'après la lecture d'Odoo de moins de 24 h) ne sont plus montrés. La
+  remise facturée disparaît de la page 3 h avant la date de fin de la règle, même si Odoo ne répond plus : le produit
+  reprend alors la remise affichée.
+- **Panier** : ligne à part « Pér. <date> · −X % » au prix de la page, `facture_odoo` vrai (règle panier,
+  `docs/peremption.md` § 1.2) ; e-mail « remise −X % facturée par Odoo », sans boîtes à corriger. Si la règle finit pendant
+  que la ligne attend dans un panier, la ligne prend l'offre actuelle de la page (la remise affichée) ; si le produit a
+  quitté la page, le prix habituel.
+- **Carte de l'accueil** : « dès » et « jusqu'à −X % » comptent toutes les remises affichées par la page, facturées ou non.
 
 ### 1.4 Quand une remise s'arrête toute seule
 
@@ -236,10 +244,12 @@ la règle et la supprime ensuite).
 ### Étape 8 : surveillance pendant un mois
 
 Journal, alertes (e-mails « [Péremptions] » à `ADMIN_EMAIL`), compteur « perte prévue » (recalculé chaque jour sur le
-stock court restant), et chaque jour **Contrôle des écarts** (onglet Péremptions, en bas) : lignes « page péremption
-probable » (PU du panier = prix de base × 0,5, ou mention « Pér. ») à part des autres écarts (client d'une autre liste
-que la 5, prix changé entre le panier et l'import). « Exporter (CSV) » pour la vérification ligne à ligne et les avoirs.
-Premier contrôle de cohérence : on doit retrouver les 9 pharmacies et 172,56 € du relevé du 20/10 (conception § 16.1).
+stock court restant), et chaque jour la tuile **« Écarts à rectifier »** et le **Contrôle des écarts** (onglet
+Péremptions) : lignes « Pér. » prises au prix de la page et facturées plus cher (procédure de rectification, statuts
+« à rectifier / rectifié », référence d'avoir : `docs/peremption.md` § 2). Une ligne facturée par une règle Odoo n'y
+apparaît jamais. Sur demande, les lignes « probables » de l'ancienne page (avant le 20/10 : PU = prix de base × 0,5, sans
+mention) et les autres écarts (liste ≠ 5, prix changé) ; « Exporter (CSV) ». Premier contrôle de cohérence, depuis le
+14/03/2026 avec les « probables » : on doit retrouver l'ordre de grandeur du relevé du 20/10 (9 pharmacies, 172,56 €).
 
 ---
 
@@ -250,9 +260,12 @@ Premier contrôle de cohérence : on doit retrouver les 9 pharmacies et 172,56 �
   (avec le résumé de la nuit) et journal complet ; bandeau rouge « Filet horaire en échec depuis … » ; boutons
   « Actualiser depuis Odoo » (synchro des péremptions puis faits frais), « Réconcilier maintenant », « Retirer toutes les
   règles du site ».
-- **Compteurs** : produits sur la page (les « fantômes » masqués à part), facturés, non facturés dont à remiser, en cours,
-  en retrait, en erreur, perte prévue (stock court des produits facturés, faits du jour) contre la valeur de ce stock au
-  coût.
+- **Compteurs** : produits sur la page (les « fantômes » masqués à part), remisés sur la page (remise affichée), facturés,
+  non facturés dont à remiser, en cours, en retrait, en erreur, perte prévue (stock court des produits facturés, faits du
+  jour) contre la valeur de ce stock au coût. Tuile « Écarts à rectifier » (règle panier, `docs/peremption.md` § 1.6).
+- **Colonne « Page : remise affichée · facturée par Odoo ? »** : l'offre de la page (défaut, admin, facturée, aucune) et le
+  champ de la remise affichée (`expiry_discounts`, aucune écriture Odoo). La colonne « Règle Odoo : remise % » est préremplie
+  avec la remise affichée.
 - **Tableau** (ce qui demande une action d'abord) : lot court et fin de page, boîtes courtes / longues / sans date (lues
   dans Odoo), prix de base, prix habituel liste 5 (figé à la décision pour un produit remisé), coût, remise (sur le prix
   de base, comme la facture), prix péremption, économie pour la pharmacie sur son prix habituel, marge, ventes 30 j (dont
@@ -273,7 +286,7 @@ Premier contrôle de cohérence : on doit retrouver les 9 pharmacies et 172,56 �
 - **Journal** : en français (action, résultat, détail en phrases), « détail technique » repliable, lien « Voir dans Odoo »
   sur la société Elixir.
 - **Réglages** : voir § 5 ; une valeur hors limites est ramenée dans les bornes et signalée. **Contrôle des écarts** :
-  § 16.1 de la conception, export CSV.
+  `docs/peremption.md` § 2 (statuts, référence, totaux par pharmacie, export CSV).
 
 ## 4. Que faire sur chaque alerte
 
@@ -298,7 +311,7 @@ Premier contrôle de cohérence : on doit retrouver les 9 pharmacies et 172,56 �
 | Réglage | Valeur à la livraison | Question (conception § 16.3) |
 |---|---|---|
 | Base de la remise | % du prix de base, comme la facture | ou % du prix habituel liste 5 : la page barre alors le prix habituel, mais la facture affiche la remise équivalente sur le prix de base (ex. 15,53 % pour 10 %) |
-| Remise automatique | vide : seulement les remises saisies | une remise par défaut la nuit (jamais sous le coût) |
+| Remise automatique | vide : seulement les remises saisies | une règle Odoo posée la nuit (jamais sous le coût) ; sans rapport avec la remise affichée par la page (−50 % par défaut depuis le 21/10/2026) |
 | Vente sous le coût | confirmation explicite par produit, perte affichée | ou interdite ; perte maximale par produit ; budget mensuel |
 | Ventes par les logiciels | pas de limite | ou seulement les produits peu vendus par LGO |
 | Lot long reçu | retrait automatique et alerte | ou maintien jusqu'à décision |
@@ -324,13 +337,13 @@ BANC_PEREMPTION_ECRITURE=1 BANC_PEREMPTION_ESSAI=1 npx vite` (vrai code sur faux
 
 - **Prix de la liste 5** : la page affiche le prix de la liste 5 ; une pharmacie d'une liste dont le prix est déjà plus bas
   (VIP) paie moins. Jamais plus.
-- **Mention « Pér. »** : perdue pour un produit rangé dans un menu (l'ajout va sur la ligne du menu) ; le prix, lui, est
-  juste après la synchro des prix.
+- **Mention « Pér. »** : depuis la règle panier (21/10/2026), un ajout depuis la page est une ligne à part, même pour un
+  produit rangé dans un menu ; la mention n'est plus perdue.
 - **Commandes passées par les logiciels** : la remise vaut aussi pour elles (mécanisme Odoo) ; l'aperçu chiffre l'effet.
 - **Synchro « Prix remisés » lancée seule** avec des règles relues avant une suppression : peut remontrer une remise
   retirée ; le filet suivant (au plus 1 h) reprend le prix d'Odoo des remises retirées depuis 24 h. L'option `chargerRegles`
   d'`odoo-price-sync` (conception § 6) fermerait ce cas ; non faite (zone protégée).
 - **Lecture des lots par `odoo-expiry-sync`** (50 lots au plus par produit) : sans effet sur les décisions (lues à part),
   mais la page peut montrer une date fausse pour 22 produits ; correctif séparé recommandé.
-- **Ligne de la Saisie complétée depuis la page** sous une remise facturée : la ligne garde le prix de la Saisie (plus haut)
-  et prend la mention de la remise ; Odoo facture la remise (en faveur de la pharmacie).
+- **Même produit à la Saisie et sur la page** : deux lignes (la ligne péremption part dans une commande à part) ; sous une
+  règle facturée, Odoo facture la remise sur les deux (il facture le minimum des règles) : en faveur de la pharmacie.

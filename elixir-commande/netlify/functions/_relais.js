@@ -444,8 +444,10 @@ export async function envoiAuto({ orderId, user }) {
   const fiche = await fichePharmacie({ cip });
   if (!fiche || fiche.bloque) return { ok: false, code: "client", error: fiche ? "client bloqué dans Odoo" : "pas de fiche client Elixir pour ce CIP" };
   const its = items(o);
-  // même pharmacie, mêmes lignes en moins de 2 h (double clic, deux onglets, deux domaines) : à vérifier
-  const sig = createHash("sha256").update(its.map(i => `${i?.cip}x${parseInt(i?.qty) || 0}`).sort().join("+")).digest("hex").slice(0, 24);
+  // même pharmacie, mêmes lignes en moins de 2 h (double clic, deux onglets, deux domaines) : à vérifier. Ligne « péremption
+  // courte » marquée (:per) : sa commande à part (site, separerPeremption) n'est pas le double de la commande qui porte le même
+  // produit à la même quantité au prix du menu ; un vrai double de l'une ou de l'autre garde la même empreinte qu'elle
+  const sig = createHash("sha256").update(its.map(i => `${i?.cip}x${parseInt(i?.qty) || 0}${i?.peremption ? ":per" : ""}`).sort().join("+")).digest("hex").slice(0, 24);
   const cleE = `pmlr:empreinte:${cip}:${sig}`;
   const double = async (error, doubleDe) => { await kvSet(`pmlr:avis:${o.id}`, { code: "double", error, doubleDe, at: maintenant() }).catch(() => {}); return { ok: false, code: "double", error }; };
   if (!await kvCreate(cleE, { orderId: String(o.id), at: maintenant() })) {

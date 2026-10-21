@@ -58,7 +58,8 @@ const DOSSIERS = ["netlify/functions"];
 // Écarts en cours : le second correctif de sécurité du 19/10/2026 et sa relecture finale, appliqués seulement si la
 // référence ne contient pas encore ces correctifs (LOTS.securite : master local d'avant, pas origin/master) ; la mention
 // « Pér. » de la Péremption courte (attente : "peremptionMention", LOTS.peremptionMention), tant que la référence ne
-// contient pas ce lot. Un écart sans « attente » suit les correctifs de sécurité.
+// contient pas ce lot ; la règle panier de la Péremption courte (21/10/2026, attente : "peremptionPanier",
+// LOTS.peremptionPanier), appliquée après le lot 0. Un écart sans « attente » suit les correctifs de sécurité.
 const ECARTS_AUTORISES = [
   // Correctif de sécurité du 19/10/2026 (order-save, quota-status et group-order exigent un jeton) : envoi de la commande
   // et contingentement passent par appelAuthentifie ; la session est vérifiée avant tout envoi. À retirer dès que master les contient.
@@ -127,7 +128,81 @@ const ECARTS_AUTORISES = [
     apres: "${isJustif(i) ? \" — SUR JUSTIFICATIF LABO (\" + jp[i.cip].labNom + \")\" : \"\"}${mentionMail(i)}\\n  Qté : ${i.qty}" },
   { zone: "envoi de la commande", lot: "péremption courte, lot 0 (20/10/2026)", attente: "peremptionMention", motif: "lignes enregistrées : mention « Pér. … » et date du lot gardées (mentionCommande : admin, « Mes commandes ») ; le relais n'en lit que cip, name, qty et pn",
     avant: "    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}) }));",
-    apres: "    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)\n    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));" },
+    apres: "    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)\n    const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));" },  // ── Péremption courte, règle panier (21/10/2026, décision de Zineb : « par défaut le −50 s'affiche et c'est la règle panier qui
+  // s'applique », docs/peremption.md) : src/peremption-panier.js. Reprise de la branche peremption-prix-panier (d801990, 3774a17) sur
+  // le lot 0 et la V1 : ajout depuis la page = ligne à part au prix de la page (« Pér. <date> · −X % »), jamais fondue dans une
+  // ligne de menu ou de la Saisie du même CIP ; commande à part si le même produit est sur une autre ligne (separeDe), relayée
+  // après l'autre ; e-mail, bon copié. Appliqués après ceux du lot 0 (ordre du tableau), tant que la référence ne contient pas
+  // le lot (attente « peremptionPanier », LOTS.peremptionPanier). Avec eux : _relais.js (FICHIERS_AUTORISES, empreinte « :per »).
+  { zone: "quantités et ajout au panier", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "setItemQty : attestation et ordonnances gardées tant qu'une autre ligne du même CIP reste au panier (ligne du menu et ligne péremption, deux menus) ; avant, retirer l'une les effaçait pour l'autre",
+    avant: "    // ligne retirée : attestation et ordonnances valent pour UNE commande, jamais réutilisées\n    if ((parseInt(newQty) || 0) <= 0 && item.cip) setJustifInfo(",
+    apres: "    // ligne retirée : attestation et ordonnances valent pour UNE commande, jamais réutilisées ; gardées tant qu'une autre\n    // ligne du même CIP reste au panier (menu et péremption courte, deux menus) : elles valent pour elle\n    if ((parseInt(newQty) || 0) <= 0 && item.cip && !cartItems.some(j => j.key !== item.key && j.cip === item.cip)) setJustifInfo(" },
+  { zone: "quantités et ajout au panier", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "setItemQty : une ligne hors catalogue est retrouvée par son identité (idSpecial) — la ligne péremption d'un CIP se modifie et se retire seule, sans toucher la ligne de la Saisie du même CIP",
+    avant: "      const id = item.cip || item.name;\n      setSpecialItems(prev => q <= 0\n        ? prev.filter(s => (s.cip || s.name) !== id)\n        : prev.map(s => (s.cip || s.name) === id ? { ...s, qty: q } : s));",
+    apres: "      const id = item.specialId ?? (item.cip || item.name);   // ligne péremption courte : identité propre (idSpecial)\n      setSpecialItems(prev => q <= 0\n        ? prev.filter(s => idSpecial(s) !== id)\n        : prev.map(s => idSpecial(s) === id ? { ...s, qty: q } : s));" },
+  { zone: "quantités et ajout au panier", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "addItemToCart : un ajout depuis Péremption courte devient une ligne à part, au prix, à la remise et à la date de la page (ajouterPeremption) ; avant (lot 0), il allait sur la ligne d'un menu du même CIP, au prix du menu, et la mention se perdait",
+    avant: "    // article regroupant plusieurs références (même code fournisseur) : ligne hors catalogue, une seule\n    let added = false;",
+    apres: "    // Péremption courte : ligne à part, au prix de la page et avec sa date (src/peremption-panier.js) — jamais la ligne d'un menu\n    if (estPeremption(item)) setSpecialItems(prev => ajouterPeremption(prev, item));\n    // article regroupant plusieurs références (même code fournisseur) : ligne hors catalogue, une seule\n    let added = estPeremption(item);" },
+  { zone: "quantités et ajout au panier", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "addItemToCart : un ajout hors catalogue (Saisie) n'est jamais fondu dans la ligne péremption du même CIP ; la mention du lot 0 (champsMention) n'a plus lieu d'être ici (une ligne péremption n'arrive plus dans cette branche) : lignes d'avant le lot 0",
+    avant: "        const i = byCode >= 0 ? byCode : prev.findIndex(s => (s.cip || s.name) === id);\n        if (i >= 0) {\n          const n = [...prev];\n          // ajout depuis Péremption courte : la ligne garde la date du lot (champsMention) ; prix et identité inchangés\n          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) };",
+    apres: "        const i = byCode >= 0 ? byCode : prev.findIndex(s => idSpecial(s) === id);   // jamais la ligne péremption du CIP\n        if (i >= 0) {\n          const n = [...prev];\n          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) };" },
+  { zone: "quantités et ajout au panier", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "addItemToCart : nouvelle ligne hors catalogue sans champsMention (lot 0) : une ligne péremption passe par ajouterPeremption",
+    avant: "        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) }];",
+    apres: "        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) }];" },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "ligne péremption : clé propre (special-per-<cip>, distincte de special-<cip>) et rayon « Péremption courte »",
+    avant: "        key: `special-${s.cip || i}`,\n        cat: \"Hors catalogue\",",
+    apres: "        key: estPeremption(s) ? `special-per-${s.cip || i}` : `special-${s.cip || i}`,\n        cat: estPeremption(s) ? \"Péremption courte\" : \"Hors catalogue\"," },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "ligne péremption : pastille orange du menu Péremption courte",
+    avant: "        color: \"#2d9cbc\",",
+    apres: "        color: estPeremption(s) ? COULEUR_PEREMPTION : \"#2d9cbc\"," },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "identité de ligne pour setItemQty (specialId) ; date, mention « Pér. … », remise, facturation par Odoo et prix de base de la ligne péremption (champsPeremption) — rien d'autre ne change pour les autres lignes",
+    avant: "        ...champsPeremption(s),   // péremption courte : date du lot et mention « Pér. … » (rien d'autre ne change)",
+    apres: "        specialId: idSpecial(s),\n        ...champsPeremption(s),   // péremption courte : date, mention « Pér. … », remise, facturation par Odoo, prix de base" },
+  { zone: "copie du bon de commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "bon copié : mention « Pér. … · −X % » sous une ligne péremption",
+    avant: "        return `${cip}${nm}${qty}${pn}${tot}`;",
+    apres: "        // péremption courte : mention sous la ligne (« Pér. 31/12/2026 · −50 % · péremption courte »)\n        return `${cip}${nm}${qty}${pn}${tot}${estPeremption(i) ? `\\n${\"\".padEnd(18)}${notePeremption(i.peremption)}${remiseLigne(i).remise >= 1 ? ` · −${remiseLigne(i).remise} %` : \"\"} · péremption courte` : \"\"}`;" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "répartition multi-CIP : une ligne péremption n'est jamais répartie sur un autre CIP du même article (le lot court est celui de CE CIP)",
+    avant: "    const codeFor = (i) => i.isCampaign ? null : (i.supplierCode || codeOf[i.cip] || null);   // campagne (UG) : ligne laissée telle quelle",
+    apres: "    // campagne (UG), péremption courte (lot court de CE CIP) : ligne laissée telle quelle\n    const codeFor = (i) => i.isCampaign || estPeremption(i) ? null : (i.supplierCode || codeOf[i.cip] || null);" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "répartition multi-CIP : le stock pris par une ligne péremption est décompté pour les autres lignes",
+    avant: "    for (const i of items) if (i.isCampaign && i.cip) used[i.cip] = (used[i.cip] || 0) + i.qty;",
+    apres: "    for (const i of items) if ((i.isCampaign || estPeremption(i)) && i.cip) used[i.cip] = (used[i.cip] || 0) + i.qty;" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "e-mail à Elixir : mention PÉREMPTION COURTE (date, remise ; boîtes à corriger dans Odoo, sinon Contrôle des écarts) et numéros des deux commandes pour une ligne partie à part (mentionMail)",
+    avant: "${mentionMail(i)}\\n  Qté : ${i.qty}",
+    apres: "${mentionMail(i, perSepare.includes(i) ? { numero: saveSepare?.id, de: saveNormal?.id } : null)}\\n  Qté : ${i.qty}" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "ligne péremption dont le produit est sur une autre ligne : commande à part (separerPeremption — deux lignes d'un même CIP dans une commande PharmaML : comportement inconnu)",
+    avant: "    const normalItems = sendItems.filter(i => !isJustif(i));",
+    apres: "    // Péremption courte dont le produit est aussi sur une autre ligne : commande à part (separerPeremption)\n    const { principal: normalItems, separe: perSepare } = separerPeremption(sendItems.filter(i => !isJustif(i)));" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "lignes enregistrées : mention, date, remise et facturation par Odoo (mentionCommande) — commentaire seul",
+    avant: "    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)",
+    apres: "    // péremption courte : mention « Pér. … », date, remise et facturation par Odoo gardées dans la ligne (mentionCommande ; le\n    // relais n'en lit que cip, name, qty et pn)" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "total et CSV de la commande normale sans les lignes péremption parties à part",
+    avant: "        totalHt: justifLines.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,\n        nbLignes: normalItems.length,\n        csv: justifLines.length ? csvOf(normalItems) : csvContent,",
+    apres: "        totalHt: justifLines.length || perSepare.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,\n        nbLignes: normalItems.length,\n        csv: justifLines.length || perSepare.length ? csvOf(normalItems) : csvContent," },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "commande à part enregistrée juste après la commande normale, ses lignes portent separeDe (n° de l'autre commande : admin, e-mail, écarts) ; refusée → ses lignes restent au panier, comme les lignes « justificatif »",
+    avant: "      console.log(\"[order-save] ✓ Commande sauvegardée dans Supabase\");\n    }\n",
+    apres: "      console.log(\"[order-save] ✓ Commande sauvegardée dans Supabase\");\n    }\n    // Péremption courte à part : enregistrée juste après la commande normale (qui porte l'autre ligne du même produit,\n    // donc déjà enregistrée ici) ; refusée → ses lignes restent au panier, comme les lignes « justificatif »\n    let saveSepare = null, keepSepare = null;\n    if (perSepare.length) {\n      // separeDe : n° de la commande qui porte l'autre ligne du produit (admin, e-mail, écarts : quoi corriger dans Odoo)\n      saveSepare = await enregistrer({ ...order, id: baseId + 2, items: toItems(perSepare).map(l => ({ ...l, separeDe: String(saveNormal?.id ?? \"\") })),\n        totalHt: perSepare.reduce((t, i) => t + (i.total || 0), 0),\n        nbLignes: perSepare.length, csv: csvOf(perSepare) });\n      if (!saveSepare.ok) {\n        keepSepare = new Set(perSepare.map(i => i.cip));\n        flash(`⚠ Ligne(s) péremption courte NON enregistrée(s) (${saveSepare.error}) : elles restent dans votre panier, renvoyez-les`);\n      }\n    }\n" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "e-mail : lignes enregistrées seulement (lignes à part refusées exclues)",
+    avant: "    // ── 2. E-mail à Elixir : la commande est enregistrée, un e-mail refusé ou perdu ne la perd plus ──\n",
+    apres: "    // ── 2. E-mail à Elixir : la commande est enregistrée, un e-mail refusé ou perdu ne la perd plus ──\n    // lignes enregistrées seulement (« justificatif » ou péremption à part refusées : restées au panier)\n    const mailItems = sendItems.filter(i => !(keepJustif && justifLines.includes(i)) && !(keepSepare && perSepare.includes(i)));\n" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "e-mail : lignes enregistrées seulement (lignes à part refusées exclues)",
+    avant: "        body: JSON.stringify({ template_params: keepJustif\n          ? paramsMail(normalItems, normalItems.reduce((t, i) => t + (i.total || 0), 0), normalItems.reduce((n, i) => n + (i.qty || 0), 0))",
+    apres: "        body: JSON.stringify({ template_params: keepJustif || keepSepare\n          ? paramsMail(mailItems, mailItems.reduce((t, i) => t + (i.total || 0), 0), mailItems.reduce((n, i) => n + (i.qty || 0), 0))" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "commande à part : « Commande envoyée » après la demande de ses deux relais (onglet fermé trop tôt : la seconde ne partait jamais) ; sans commande à part, inchangé",
+    avant: "    } catch (err) { console.warn(\"[send-email] e-mail non envoyé (commande enregistrée) :\", err.message); }\n    setSendStatus(\"success\");",
+    apres: "    } catch (err) { console.warn(\"[send-email] e-mail non envoyé (commande enregistrée) :\", err.message); }\n    // commande à part : « Commande envoyée » une fois ses deux relais demandés (plus bas) — avant, la seconde, demandée après\n    // la réponse de la première (jusqu'à 20 s), ne partait jamais si l'onglet était fermé entre-temps\n    if (!saveSepare?.ok) setSendStatus(\"success\");" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "relais PharmaML : commande normale puis commande à part, l'une après l'autre (promesse gardée)",
+    avant: "    if (saveNormal?.ok) (async () => {\n      if (actingFor && !(pharmacyCip && pharmacyCip !== \"0\")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin\n      try {",
+    apres: "    // Péremption courte à part : relayée APRÈS la commande normale (une à la fois : le stock en file de l'une est décompté\n    // pour l'autre)\n    const aRelayer = [saveNormal, saveSepare].filter(s => s?.ok);\n    const relais = aRelayer.length > 0 && (async () => {\n      if (actingFor && !(pharmacyCip && pharmacyCip !== \"0\")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin\n      for (const enr of aRelayer) try {" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "relais : numéro de la commande relayée ; keepalive (onglet fermé juste après l'envoi : la demande déjà partie va jusqu'au serveur)",
+    avant: "          body: JSON.stringify({ orderId: saveNormal.id, pharmacyName, via: \"auto\" }),\n          ...delai(20000),",
+    apres: "          body: JSON.stringify({ orderId: enr.id, pharmacyName, via: \"auto\" }),\n          keepalive: true,   // onglet fermé juste après l'envoi : la demande déjà partie va jusqu'au serveur\n          ...delai(20000)," },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "commande à part : ses deux relais attendus (l'un après l'autre) avant « Commande envoyée »",
+    avant: "      } catch (err) { console.warn(\"[PharmaML] envoi automatique non demandé :\", err.message); }\n    })();\n",
+    apres: "      } catch (err) { console.warn(\"[PharmaML] envoi automatique non demandé :\", err.message); }\n    })();\n    if (saveSepare?.ok) { await relais; setSendStatus(\"success\"); }\n" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "fin d'envoi : lignes à part refusées gardées au panier, comme les lignes « justificatif »",
+    avant: "      if (keepJustif) {\n        // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)\n        setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {\n          const i = k.lastIndexOf(\"-\"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];\n          return p && keepJustif.has(p.cip);\n        })));\n        setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));\n        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));",
+    apres: "      if (keepJustif || keepSepare) {\n        // garder seulement les lignes non enregistrées, « justificatif » ou péremption à part (la commande normale est partie)\n        setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {\n          const i = k.lastIndexOf(\"-\"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];\n          return p && keepJustif?.has(p.cip);\n        })));\n        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));\n        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif?.has(c))));" },
 ];
 // Lots en attente de fusion dans la référence : leurs écarts ne valent que si la référence ne les contient pas encore,
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
@@ -148,6 +223,9 @@ const LOTS = {
   // Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : fonctions nouvelles (AJOUTS_AUTORISES) ;
   // la page des pharmacies ne lit plus le jeton admin (l'onglet admin est PeremptionsAdmin.jsx, appels par adminFetch)
   peremptionOdoo: { nom: "péremption courte, V1 (« Odoo facture la remise »)", repere: "scripts/test-peremption-odoo.mjs" },
+  // Péremption courte, règle panier (21/10/2026, docs/peremption.md) : −50 % affiché par défaut, ligne « Pér. » à part au prix
+  // de la page, commande à part, contrôle et suivi des écarts (ECARTS_AUTORISES, attente « peremptionPanier » ; _relais.js)
+  peremptionPanier: { nom: "péremption courte, règle panier", repere: "scripts/test-peremption-panier.mjs" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -178,6 +256,8 @@ const FICHIERS_AUTORISES = {
   // Assistant Elixir : fonction existante modifiée (les fonctions de lot 0 — order-list, restock-alert, pharmacy-lookup —
   // sont celles des correctifs ci-dessus depuis la fusion de master, 19/10/2026 ; l'agrégat de campagne ?agrege=1 est retiré)
   "netlify/functions/_odoo-rpc.js": { empreinte: "c405c5a8fadd", motif: "délai facultatif des lectures (5e argument), lectures de l'assistant coupées à 6 s" },
+  // Péremption courte, règle panier (21/10/2026) : seule fonction serveur existante modifiée par le lot (reprise de 3774a17)
+  "netlify/functions/_relais.js": { empreinte: "07965174f91d", motif: "péremption courte, règle panier (21/10/2026) : empreinte anti-doublon d'envoiAuto, ligne péremption marquée « :per » — la commande « à part » (même produit, même quantité que la ligne du menu de la commande voisine) n'est plus classée « POSSIBLE DOUBLON » ni écartée de l'envoi automatique ; sans ligne péremption, empreinte inchangée" },
 };
 // Projet « Assistant Elixir » (branche assistant-elixir, docs/assistant-contrat.md), en attente de fusion dans master :
 // fonctions ajoutées sous netlify/functions (chat*.js, _chat-*.js), admises tant qu'elles n'existent pas dans la référence.
@@ -193,7 +273,10 @@ const FICHIERS_AUTORISES = {
 // Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : peremption.js (page des pharmacies, admin,
 // chaîne de nuit), peremption-cron.js (filet horaire) et _peremption.js (logique, seule porte d'écriture Odoo, par
 // _odoo-rpc.js) ; aucune fonction existante modifiée (_accueil-outils.js et _accueil-donnees.js : admis d'office ;
-// odoo-price-sync.js, _odoo-rpc.js, _relais.js, odoo-catalog.js, restock-alert.js et _lab-justif.js : importés, inchangés).
+// odoo-price-sync.js, _odoo-rpc.js, odoo-catalog.js, restock-alert.js et _lab-justif.js : importés, inchangés). Règle panier
+// (21/10/2026) : _relais.js modifié (empreinte « :per », FICHIERS_AUTORISES) ; peremption.js, _peremption.js et
+// _accueil-outils.js complétés (remise affichée, écarts) ; restock-alert.js inchangé (sa lecture publique des remises sert
+// de repli à la page).
 const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage)|peremption(-cron)?|_peremption)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {

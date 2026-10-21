@@ -12,10 +12,11 @@ import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
-// Péremption courte, lot 0 : mention « Pér. <date> » d'une ligne commandée depuis la page (prix, identité et relais inchangés) ;
-// prix du menu affiché par la page (prixDuMenu) ; lignes d'un panier enregistré par l'ancienne page remontées (remonterPrix)
-import { estPeremption, notePeremption, champsMention, champsPeremption, mentionCommande, mentionMail,
-  prixDuMenu, prixARemonter, remonterPrix, messageRemontee, detailRemontee } from "./peremption-panier.js";
+// Péremption courte, règle panier (21/10/2026, docs/peremption.md) : ligne à part au prix de la page (« Pér. <date> · −X % »),
+// commande à part si le même produit est sur une autre ligne ; panier enregistré remis à l'offre actuelle de la page (controleLignes)
+import { COULEUR_PEREMPTION, estPeremption, idSpecial, ajouterPeremption, champsPeremption, mentionCommande, mentionMail,
+  notePeremption, separerPeremption, partiraAPart, baisseParCip, remiseLigne, controleLignes, appliquerControle, messageControle,
+  detailControle } from "./peremption-panier.js";
 // Renouvellement des jetons (un seul échange à la fois, partagé avec l'Assistant Elixir) : src/jetons.js
 import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
@@ -1078,14 +1079,15 @@ export default function App() {
   // Modifie la quantité d'un article du panier, qu'il vienne du catalogue (quantities)
   // ou soit hors-catalogue (specialItems). newQty <= 0 → suppression de l'article.
   const setItemQty = (item, newQty) => {
-    // ligne retirée : attestation et ordonnances valent pour UNE commande, jamais réutilisées
-    if ((parseInt(newQty) || 0) <= 0 && item.cip) setJustifInfo(prev => { if (!prev[item.cip]) return prev; const n = { ...prev }; delete n[item.cip]; return n; });
+    // ligne retirée : attestation et ordonnances valent pour UNE commande, jamais réutilisées ; gardées tant qu'une autre
+    // ligne du même CIP reste au panier (menu et péremption courte, deux menus) : elles valent pour elle
+    if ((parseInt(newQty) || 0) <= 0 && item.cip && !cartItems.some(j => j.key !== item.key && j.cip === item.cip)) setJustifInfo(prev => { if (!prev[item.cip]) return prev; const n = { ...prev }; delete n[item.cip]; return n; });
     if (item.isSpecial) {
       const q = Math.max(0, parseInt(newQty) || 0);
-      const id = item.cip || item.name;
+      const id = item.specialId ?? (item.cip || item.name);   // ligne péremption courte : identité propre (idSpecial)
       setSpecialItems(prev => q <= 0
-        ? prev.filter(s => (s.cip || s.name) !== id)
-        : prev.map(s => (s.cip || s.name) === id ? { ...s, qty: q } : s));
+        ? prev.filter(s => idSpecial(s) !== id)
+        : prev.map(s => idSpecial(s) === id ? { ...s, qty: q } : s));
     } else {
       setQty(item.key, newQty, item.step);
     }
@@ -1094,8 +1096,10 @@ export default function App() {
   // Ajoute un produit au panier depuis la Saisie de commande / Péremption courte.
   // S'il est dans le catalogue curaté → quantities (logique campagnes/UG) ; sinon → specialItems.
   const addItemToCart = (item, { ouvrirPanier = true } = {}) => {
+    // Péremption courte : ligne à part, au prix de la page et avec sa date (src/peremption-panier.js) — jamais la ligne d'un menu
+    if (estPeremption(item)) setSpecialItems(prev => ajouterPeremption(prev, item));
     // article regroupant plusieurs références (même code fournisseur) : ligne hors catalogue, une seule
-    let added = false;
+    let added = estPeremption(item);
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
       if (added || item.supplier_code) return;   // plusieurs références : toujours une ligne hors catalogue
       const idx = (c.products || []).findIndex(p => p.cip === item.cip);
@@ -1108,14 +1112,13 @@ export default function App() {
       const id = item.cip || item.name;
       setSpecialItems(prev => {
         const byCode = item.supplier_code ? prev.findIndex(s => s.supplier_code === item.supplier_code) : -1;
-        const i = byCode >= 0 ? byCode : prev.findIndex(s => (s.cip || s.name) === id);
+        const i = byCode >= 0 ? byCode : prev.findIndex(s => idSpecial(s) === id);   // jamais la ligne péremption du CIP
         if (i >= 0) {
           const n = [...prev];
-          // ajout depuis Péremption courte : la ligne garde la date du lot (champsMention) ; prix et identité inchangés
-          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) };
+          n[i] = { ...n[i], qty: n[i].qty + item.qty, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) };
           return n;
         }
-        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}), ...champsMention(item) }];
+        return [...prev, { cip: item.cip || null, name: item.name, qty: item.qty, pn: item.pn ?? null, pv: item.pv ?? null, tiers: item.tiers ?? null, ...(item.supplier_code ? { supplier_code: item.supplier_code } : {}) }];
       });
     }
     flash(`✓ ${item.qty}× ${item.name} ajouté au panier`);
@@ -1177,8 +1180,8 @@ export default function App() {
       const tiered = applyTiers(s.pn ?? null, s.tiers, s.qty);
       const pn = tiered.pn;
       items.push({
-        key: `special-${s.cip || i}`,
-        cat: "Hors catalogue",
+        key: estPeremption(s) ? `special-per-${s.cip || i}` : `special-${s.cip || i}`,
+        cat: estPeremption(s) ? "Péremption courte" : "Hors catalogue",
         catKey: "special",
         name: s.name,
         cip: s.cip || null,
@@ -1189,12 +1192,13 @@ export default function App() {
         qty: s.qty,
         qtyUG: 0,
         total: (pn || 0) * s.qty,
-        color: "#2d9cbc",
+        color: estPeremption(s) ? COULEUR_PEREMPTION : "#2d9cbc",
         step: 1,
         isCampaign: false,
         isSpecial: true,
         supplierCode: s.supplier_code || null,
-        ...champsPeremption(s),   // péremption courte : date du lot et mention « Pér. … » (rien d'autre ne change)
+        specialId: idSpecial(s),
+        ...champsPeremption(s),   // péremption courte : date, mention « Pér. … », remise, facturation par Odoo, prix de base
       });
     });
     return items;
@@ -1343,11 +1347,12 @@ export default function App() {
     return arrondi > 0 && r.min > 0 ? Math.max(r.min, arrondi) : arrondi;
   };
 
-  // ouvrirPanier : Péremption courte (revue du lot 0) ouvre le panier comme avant, avec les règles de la Saisie (colis,
-  // palier, justificatif, contingentement) ; Saisie et accueil ne l'ouvrent pas
+  // ouvrirPanier : Péremption courte ouvre le panier, comme avant ; Saisie et accueil ne l'ouvrent pas. Ligne péremption
+  // (règle panier du 21/10/2026) : à part, à son prix, sans la règle de colis du menu (le prix carton ne la concerne pas) ;
+  // justificatif et contingentement comme toute ligne
   const ajouterDepuisSaisie = (saisie, { ouvrirPanier = false } = {}) => {
     let item = saisie;
-    const regle = item.supplier_code ? null : regleSaisie(item.cip);
+    const regle = item.supplier_code || estPeremption(item) ? null : regleSaisie(item.cip);
     if (regle) {
       const q = arrondiSaisie(item.qty, regle);
       if (q <= 0) { flash(`⚠ ${item.name} se commande par ${regle.multiple} (${regle.rayon}) : saisissez ${Math.max(regle.min, regle.multiple)} ou plus`, 6000); return; }
@@ -1363,53 +1368,77 @@ export default function App() {
     });
   };
 
-  // ── Péremption courte, lot 0 : panier enregistré avant la mise en ligne (revue du 20/10/2026 ; conception § 8.3) ──
-  // L'ancienne page mettait au panier −50 % (−20 % dès 500 €), qu'Odoo n'a jamais facturés, et le panier enregistré garde ce
-  // prix. Au chargement, à l'ouverture et à la fermeture du panier et au changement de pharmacie (saisie Elixir), les lignes
-  // hors catalogue dont le CIP est sur la page sont remontées au prix de la page, celui de la Saisie (remonterPrix) ; un prix
-  // n'est jamais baissé. Lecture publique de la page partagée 5 min ; en échec, rien ne change et le contrôle suivant relit.
-  // Hors des zones protégées : la ligne change par setSpecialItems, comme une quantité.
-  // V1 (« Odoo facture la remise », conception § 8.3) : page des pharmacies (peremption?action=page) ; ses remises finies
-  // depuis 7 jours (retirees, prix actuel) remontent aussi les lignes ajoutées sous la remise (« la remise a pris fin ») ;
-  // ses produits masqués (« fantômes » : plus de boîte courte, prix actuel) remontent les lignes de l'ancienne page comme au
-  // lot 0 ; repli : odoo-catalog?expiry_months=4.
-  const [prixRemontes, setPrixRemontes] = useState({});   // cip → changement (encart de la ligne du panier)
+  // ── Péremption courte, panier enregistré (règle panier du 21/10/2026, docs/peremption.md) ──
+  // Une ligne péremption garde le prix du moment de l'ajout (localStorage). Au chargement, à l'ouverture et à la fermeture du
+  // panier, au changement de pharmacie (saisie Elixir) et au retour sur l'onglet, la page est relue (peremption?action=page,
+  // lecture publique partagée 5 min ; repli : odoo-catalog?expiry_months=4 et expiry_discounts) et controleLignes
+  // (src/peremption-panier.js) remet chaque ligne péremption à l'offre ACTUELLE de la page (prix, remise, règle Odoo, date),
+  // ou au prix habituel si le produit a quitté la page (la ligne est alors rajoutée comme un ajout ordinaire : ligne du menu
+  // s'il y en a une) ; une ligne d'un panier de l'ancienne page (−50 % sans mention, avant le 20/10) devient une ligne
+  // péremption. Prix habituel d'un produit sorti de la page et absent des listes de la page : peremption?action=prix.
+  // En échec de lecture, rien ne change et le contrôle suivant relit. Hors des zones protégées : setSpecialItems et
+  // addItemToCart, comme un ajout.
+  const [prixRemontes, setPrixRemontes] = useState({});   // identité de ligne (idSpecial) → changement (encart de la ligne)
   const pagePeremption = useRef(null);                     // { t, promesse } : lecture de la page partagée
-  const controlerPrixPanier = async (lignes) => {
-    if (!lignes.some(s => s?.cip && !s.supplier_code)) return;
+  const panierCourant = useRef(specialItems);              // lignes hors catalogue du dernier rendu (contrôle : panier inchangé ?)
+  panierCourant.current = specialItems;
+  const lirePagePeremption = () => {
     let lecture = pagePeremption.current;
     if (!lecture || Date.now() - lecture.t > 5 * 60e3) {
       const promesse = fetch("/.netlify/functions/peremption?action=page").then(r => (r.ok ? r.json() : null)).catch(() => null)
-        .then(j => (Array.isArray(j?.produits) ? [...j.produits, ...(Array.isArray(j.retirees) ? j.retirees : []).map(x => ({ ...x, fin_remise: true })), ...(Array.isArray(j.masques) ? j.masques : [])]
-          : fetch("/.netlify/functions/odoo-catalog?expiry_months=4").then(r => (r.ok ? r.json() : null)).then(k => (Array.isArray(k?.products) ? k.products : null))))
+        .then(j => (Array.isArray(j?.produits) ? { produits: j.produits, horsPage: [...(Array.isArray(j.retirees) ? j.retirees : []), ...(Array.isArray(j.masques) ? j.masques : [])], remises: null, v1: true }
+          : Promise.all([fetch("/.netlify/functions/odoo-catalog?expiry_months=4").then(r => (r.ok ? r.json() : null)),
+            fetch("/.netlify/functions/restock-alert?action=expiry_discounts").then(r => (r.ok ? r.json() : [])).catch(() => [])])
+            .then(([k, rem]) => (Array.isArray(k?.products) ? { produits: k.products, horsPage: [], v1: false,
+              remises: Object.fromEntries((Array.isArray(rem) ? rem : []).filter(d => d?.cip).map(d => [String(d.cip), d.discount_pct])) } : null))))
         .catch(() => null);
       lecture = pagePeremption.current = { t: Date.now(), promesse };
     }
-    const produits = await lecture.promesse;
-    if (!produits) { if (pagePeremption.current === lecture) pagePeremption.current = null; return; }
-    const changes = prixARemonter(lignes, produits);
-    if (!changes.length) return;
-    setSpecialItems(prev => remonterPrix(prev, produits));
-    setPrixRemontes(prev => ({ ...prev, ...Object.fromEntries(changes.map(c => [c.cip, c])) }));
-    flash(`⚠ ${messageRemontee(changes)}`, 9000);
+    return lecture;
+  };
+  const controlerPrixPanier = async (lignes) => {
+    if (!lignes.some(s => s?.cip && !s.supplier_code)) return;
+    const lecture = lirePagePeremption();
+    const page = await lecture.promesse;
+    if (!page) { if (pagePeremption.current === lecture) pagePeremption.current = null; return; }
+    let { changes, inconnus } = controleLignes(lignes, page);
+    // produits sortis de la page, absents des listes de la page : prix habituel demandé au serveur (lecture publique)
+    if (inconnus.length && page.v1) {
+      const hors = await fetch(`/.netlify/functions/peremption?action=prix&cips=${inconnus.slice(0, 50).join(",")}`).then(r => (r.ok ? r.json() : null)).catch(() => null);
+      if (Array.isArray(hors?.produits)) ({ changes } = controleLignes(lignes, { ...page, horsPage: [...page.horsPage, ...hors.produits] }));
+    }
+    // panier changé pendant la lecture (ajout, quantité) : rien n'est appliqué, le contrôle suivant reprend sur le panier à jour
+    if (!changes.length || panierCourant.current !== lignes) return;
+    setSpecialItems(appliquerControle(lignes, changes).lignes);
+    // lignes sorties de la page : rajoutées comme un ajout ordinaire (ligne du menu, ou ligne hors catalogue du CIP)
+    for (const c of changes.filter(x => x.type === "sortie")) addItemToCart({ cip: c.cip, name: c.name, qty: c.qty, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers }, { ouvrirPanier: false });
+    setPrixRemontes(prev => ({ ...prev, ...Object.fromEntries(changes.filter(c => c.type === "sortie" || c.prixChange).map(c => [c.type === "sortie" ? c.cip : `per:${c.cip}`, c])) }));
+    const m = messageControle(changes);
+    if (m) flash(`⚠ ${m}`, 9000);
   };
   useEffect(() => { controlerPrixPanier(specialItems); }, [cartOpen, actingFor]);   // eslint-disable-line react-hooks/exhaustive-deps
-  // V1 (conception § 8.3) : aussi au retour sur l'onglet (remise finie pendant que la page dormait ; lecture gardée 5 min)
+  // aussi au retour sur l'onglet (offre changée pendant que la page dormait ; lecture gardée 5 min)
   useEffect(() => {
     const auRetour = () => { if (document.visibilityState === "visible") controlerPrixPanier(specialItems); };
     document.addEventListener("visibilitychange", auRetour);
     return () => document.removeEventListener("visibilitychange", auRetour);
   }, [specialItems]);   // eslint-disable-line react-hooks/exhaustive-deps
-  // Péremption courte : prix que prendra le panier pour un CIP rangé dans un menu (même recherche qu'addItemToCart)
-  const prixMenuPeremption = (cip) => prixDuMenu(CATALOG_WITH_ADMIN, cip, getCampaign);
 
   // ── Page d'accueil (docs/accueil.md) : mêmes règles que le reste du site, rien de réécrit (le chunk reçoit le
   // catalogue, regleSaisie, ajouterDepuisSaisie et ces deux helpers) ──
-  // « − » du sélecteur de l'accueil : ligne du panier de ce CIP (celle qu'addItemToCart remplit), quantité par setItemQty
-  // (fonction du panier ; 0 retire la ligne)
+  // Quantités affichées par l'accueil : lignes des menus et de la Saisie (celles qu'il remplit, au prix de ses cartes) ;
+  // la ligne « Péremption courte » (autre prix) n'y est pas comptée et ne se modifie que depuis le panier
+  const qteAccueil = useMemo(() => qtyByCip(cartItems.filter(i => !estPeremption(i))), [cartItems]);
+  // « − » du sélecteur de l'accueil : quantité de ces lignes ramenée à n (plusieurs menus : baisseParCip), par setItemQty
+  // (fonction du panier ; 0 retire la ligne). Avant : la première ligne était mise à n, les autres lignes du CIP s'y
+  // ajoutaient ; un menu au colis (« − » sous le minimum → 0) retirait aussi la ligne péremption
   const modifierQte = (cip, n) => {
-    const ligne = cartItems.find(i => i.cip === cip);   // lignes des menus d'abord (ordre d'addItemToCart), puis hors catalogue
-    if (ligne) setItemQty(ligne, n);
+    const lignes = cartItems.filter(i => i.cip === cip && !estPeremption(i));
+    for (const [ligne, q] of baisseParCip(lignes, n)) setItemQty(ligne, q);
+    // plusieurs lignes retirées d'un coup : setItemQty, qui voit encore les autres, garde le justificatif ; retiré ici
+    // quand plus aucune ligne du CIP ne reste
+    if (lignes.length > 1 && (parseInt(n) || 0) <= 0 && !cartItems.some(i => i.cip === cip && estPeremption(i)))
+      setJustifInfo(prev => { if (!prev[cip]) return prev; const c = { ...prev }; delete c[cip]; return c; });
   };
   // Changement de menu par l'utilisateur (barre latérale, logo, accueil) : même enchaînement que le clic d'un menu —
   // confirmation d'une commande groupée non confirmée, entrée d'historique, recherche du menu (terme), tiroir fermé.
@@ -1577,7 +1606,8 @@ export default function App() {
         const qty = String(i.qty).padStart(4);
         const pn  = (i.pn != null ? i.pn.toFixed(2)+"€" : "—").padStart(9);
         const tot = (i.pn != null ? (i.pn*i.qty).toFixed(2)+"€" : "—").padStart(9);
-        return `${cip}${nm}${qty}${pn}${tot}`;
+        // péremption courte : mention sous la ligne (« Pér. 31/12/2026 · −50 % · péremption courte »)
+        return `${cip}${nm}${qty}${pn}${tot}${estPeremption(i) ? `\n${"".padEnd(18)}${notePeremption(i.peremption)}${remiseLigne(i).remise >= 1 ? ` · −${remiseLigne(i).remise} %` : ""} · péremption courte` : ""}`;
       }),
       `${"─".repeat(70)}`,
       `TOTAL : ${cartItems.reduce((s,i)=>s+(i.pn||0)*i.qty,0).toFixed(2)} €`,
@@ -1720,12 +1750,13 @@ export default function App() {
     if (!items.some(i => i.supplierCode || i.isSpecial || known[i.cip])) return items;
     const data = await loadGroups({ fresh: true });   // stock du moment
     const codeOf = codeOfCip(data);
-    const codeFor = (i) => i.isCampaign ? null : (i.supplierCode || codeOf[i.cip] || null);   // campagne (UG) : ligne laissée telle quelle
+    // campagne (UG), péremption courte (lot court de CE CIP) : ligne laissée telle quelle
+    const codeFor = (i) => i.isCampaign || estPeremption(i) ? null : (i.supplierCode || codeOf[i.cip] || null);
     // plusieurs lignes d'un même article (ancien panier : une ligne par CIP ; catalogue + menu…) : quantités
     // additionnées par prix et réparties une fois, avec le stock déjà pris par les lignes précédentes du panier
     // décompté, pour ne jamais compter deux fois le stock de la plus ancienne référence
     const used = {};   // CIP → unités déjà prises dans ce panier
-    for (const i of items) if (i.isCampaign && i.cip) used[i.cip] = (used[i.cip] || 0) + i.qty;
+    for (const i of items) if ((i.isCampaign || estPeremption(i)) && i.cip) used[i.cip] = (used[i.cip] || 0) + i.qty;
     const keyOf = (i, c) => `${c}|${i.pn}`;
     const qtyBy = {};
     for (const i of items) { const c = codeFor(i); if (c && data?.refs?.[c]?.length) qtyBy[keyOf(i, c)] = (qtyBy[keyOf(i, c)] || 0) + i.qty; }
@@ -1792,7 +1823,7 @@ export default function App() {
     const totalsSend = qtyByCip(sendItems);
     const isJustif = (i) => needsJustif(i, jp, totalsSend);
     const lignesMail = (arr) => arr.map(i =>
-      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}${mentionMail(i)}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
+      `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}${mentionMail(i, perSepare.includes(i) ? { numero: saveSepare?.id, de: saveNormal?.id } : null)}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
 
     // Build CSV and save order to localStorage for admin
@@ -1830,9 +1861,11 @@ export default function App() {
     // mêmes lignes (idsEnvoi) : si un enregistrement réussi n'a pas reçu sa réponse, order-save reconnaît le nouvel
     // essai ({ deja }) au lieu de créer un doublon. Lignes « sur justificatif labo » : commande à part (source
     // « justificatif »), jamais transmise automatiquement à PharmaML (Elixir commande au labo, puis synchronise à réception).
-    const normalItems = sendItems.filter(i => !isJustif(i));
+    // Péremption courte dont le produit est aussi sur une autre ligne : commande à part (separerPeremption)
+    const { principal: normalItems, separe: perSepare } = separerPeremption(sendItems.filter(i => !isJustif(i)));
     const justifLines = sendItems.filter(isJustif);
-    // péremption courte : mention « Pér. … » et date du lot gardées dans la ligne (mentionCommande ; le relais ne les lit pas)
+    // péremption courte : mention « Pér. … », date, remise et facturation par Odoo gardées dans la ligne (mentionCommande ; le
+    // relais n'en lit que cip, name, qty et pn)
     const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));
     const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
     const enregistrer = async (o) => {   // → { ok: true, id } | { ok: false, status, error }
@@ -1877,15 +1910,28 @@ export default function App() {
         pharmacyCip: (pharmacyCip && pharmacyCip !== "0") ? pharmacyCip : null,
         isClient,
         items: toItems(normalItems),
-        totalHt: justifLines.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,
+        totalHt: justifLines.length || perSepare.length ? normalItems.reduce((t, i) => t + (i.total || 0), 0) : cartTotal,
         nbLignes: normalItems.length,
-        csv: justifLines.length ? csvOf(normalItems) : csvContent,
+        csv: justifLines.length || perSepare.length ? csvOf(normalItems) : csvContent,
         processed: false,
         source: "catalogue",
       };
       saveNormal = await enregistrer(order);
       if (!saveNormal.ok) return bloquer(saveNormal);
       console.log("[order-save] ✓ Commande sauvegardée dans Supabase");
+    }
+    // Péremption courte à part : enregistrée juste après la commande normale (qui porte l'autre ligne du même produit,
+    // donc déjà enregistrée ici) ; refusée → ses lignes restent au panier, comme les lignes « justificatif »
+    let saveSepare = null, keepSepare = null;
+    if (perSepare.length) {
+      // separeDe : n° de la commande qui porte l'autre ligne du produit (admin, e-mail, écarts : quoi corriger dans Odoo)
+      saveSepare = await enregistrer({ ...order, id: baseId + 2, items: toItems(perSepare).map(l => ({ ...l, separeDe: String(saveNormal?.id ?? "") })),
+        totalHt: perSepare.reduce((t, i) => t + (i.total || 0), 0),
+        nbLignes: perSepare.length, csv: csvOf(perSepare) });
+      if (!saveSepare.ok) {
+        keepSepare = new Set(perSepare.map(i => i.cip));
+        flash(`⚠ Ligne(s) péremption courte NON enregistrée(s) (${saveSepare.error}) : elles restent dans votre panier, renvoyez-les`);
+      }
     }
     // Commande « sur justificatif » APRÈS la commande normale (celle-ci part sans attendre le labo)
     let jSave = null;
@@ -1915,30 +1961,38 @@ export default function App() {
     }
 
     // ── 2. E-mail à Elixir : la commande est enregistrée, un e-mail refusé ou perdu ne la perd plus ──
+    // lignes enregistrées seulement (« justificatif » ou péremption à part refusées : restées au panier)
+    const mailItems = sendItems.filter(i => !(keepJustif && justifLines.includes(i)) && !(keepSepare && perSepare.includes(i)));
     try {
       // jeton joint (send-email : adresse de la pharmacie vérifiée)
       const mail = await appelAuthentifie("/.netlify/functions/send-email", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ template_params: keepJustif
-          ? paramsMail(normalItems, normalItems.reduce((t, i) => t + (i.total || 0), 0), normalItems.reduce((n, i) => n + (i.qty || 0), 0))
+        body: JSON.stringify({ template_params: keepJustif || keepSepare
+          ? paramsMail(mailItems, mailItems.reduce((t, i) => t + (i.total || 0), 0), mailItems.reduce((n, i) => n + (i.qty || 0), 0))
           : paramsMail(sendItems, cartTotal, cartCount) }),
       });
       if (!mail.ok) console.warn("[send-email] e-mail non envoyé (commande enregistrée) :", mail.status);
     } catch (err) { console.warn("[send-email] e-mail non envoyé (commande enregistrée) :", err.message); }
-    setSendStatus("success");
+    // commande à part : « Commande envoyée » une fois ses deux relais demandés (plus bas) — avant, la seconde, demandée après
+    // la réponse de la première (jusqu'à 20 s), ne partait jamais si l'onglet était fermé entre-temps
+    if (!saveSepare?.ok) setSendStatus("success");
 
     // ── 3. Envoi automatique vers PharmaML (relais), commande normale enregistrée seulement ──
     // Le serveur relit la commande enregistrée, vérifie la pharmacie (jeton) et met les lignes EN STOCK dans
     // la file du relais, que l'agent du Mac du bureau envoie à PharmaML ; le reste attend la synchro manuelle.
-    if (saveNormal?.ok) (async () => {
+    // Péremption courte à part : relayée APRÈS la commande normale (une à la fois : le stock en file de l'une est décompté
+    // pour l'autre)
+    const aRelayer = [saveNormal, saveSepare].filter(s => s?.ok);
+    const relais = aRelayer.length > 0 && (async () => {
       if (actingFor && !(pharmacyCip && pharmacyCip !== "0")) return;   // saisie Elixir sans CIP : synchro manuelle depuis l'admin
-      try {
+      for (const enr of aRelayer) try {
         const ptok = actingFor ? localStorage.getItem("admin_token") : await freshPharmacyToken();
         const res = await fetch("/.netlify/functions/submit-order", {
           method: "POST",
           headers: ptok ? { "Content-Type": "application/json", "Authorization": `Bearer ${ptok}` } : { "Content-Type": "application/json" },
-          body: JSON.stringify({ orderId: saveNormal.id, pharmacyName, via: "auto" }),
+          body: JSON.stringify({ orderId: enr.id, pharmacyName, via: "auto" }),
+          keepalive: true,   // onglet fermé juste après l'envoi : la demande déjà partie va jusqu'au serveur
           ...delai(20000),
         });
         const json = await res.json().catch(() => ({}));
@@ -1946,6 +2000,7 @@ export default function App() {
         else console.log("[PharmaML] synchro par Elixir :", json.error || res.status);
       } catch (err) { console.warn("[PharmaML] envoi automatique non demandé :", err.message); }
     })();
+    if (saveSepare?.ok) { await relais; setSendStatus("success"); }
 
     // ── 4. Lignes « justificatif » enregistrées : demandes au laboratoire ──
     if (jSave?.ok) {
@@ -1960,14 +2015,14 @@ export default function App() {
     }
     setTimeout(() => {
       setSendStatus(null);
-      if (keepJustif) {
-        // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)
+      if (keepJustif || keepSepare) {
+        // garder seulement les lignes non enregistrées, « justificatif » ou péremption à part (la commande normale est partie)
         setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {
           const i = k.lastIndexOf("-"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];
-          return p && keepJustif.has(p.cip);
+          return p && keepJustif?.has(p.cip);
         })));
-        setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));
-        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));
+        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));
+        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif?.has(c))));
       } else {
         setQuantities({});
         setSpecialItems([]);
@@ -2545,7 +2600,7 @@ export default function App() {
                 estCampagne={estCampagne}
                 justifProducts={justifProducts}
                 stockData={stockData}
-                qteAuPanier={cartTotalsByCip}
+                qteAuPanier={qteAccueil}
                 onAjouter={ajouterDepuisSaisie}
                 onModifier={modifierQte}
                 onOuvrirPanier={() => setCartOpen(true)}
@@ -2612,7 +2667,6 @@ export default function App() {
               isAdmin={showAdmin}
               pharmacyCip={pharmacyCip}
               onAddToCart={(o) => ajouterDepuisSaisie(o, { ouvrirPanier: true })}
-              prixPanier={prixMenuPeremption}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
               couleur={CATALOG_WITH_ADMIN[activeTab].accent}
             />
@@ -3434,8 +3488,15 @@ export default function App() {
               // article à plusieurs références : une ligne au prix du jour (référence servie en premier),
               // répartie par CIP à l'envoi ; quantité remplacée comme pour les lignes du catalogue
               const groups = items.some(it => it.group) ? await loadGroups() : null;
+              // péremption courte : offre liée à un lot, pas reprise (sinon recommandée au prix d'un menu du même CIP)
+              const nPer = items.filter(estPeremption).length;
+              // commande de péremption courte seule (dont toute commande « à part ») : rien à reprendre, panneau laissé ouvert
+              if (nPer && nPer === items.length) {
+                flash("Commande de péremption courte : son prix était lié à un lot, elle n'est pas reprise. Les offres du moment sont dans le menu Péremption courte.", 6000);
+                return;
+              }
               items.forEach(it => {
-                if (!it.cip || !it.qty) return;
+                if (!it.cip || !it.qty || estPeremption(it)) return;
                 if (it.group) {
                   const refs = groups?.refs?.[it.group] || [];
                   const head = allocate(refs, 1).lines[0]?.ref || refs[0];
@@ -3454,7 +3515,7 @@ export default function App() {
                 });
               });
               setShowMyOrders(false);
-              flash(`✓ ${items.length} produit(s) ajoutés au panier`);
+              flash(`✓ ${items.length - nPer} produit(s) ajoutés au panier${nPer ? ` · péremption courte non reprise (${nPer}) : voir le menu Péremption courte` : ""}`, nPer ? 6000 : undefined);
             }}
           />
         )}
@@ -3506,7 +3567,7 @@ export default function App() {
                     texte="Ajoutez des produits depuis les menus du catalogue ou la Saisie de commande." />
                 ) : (
                   <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {cartItems.map((item, n) => (
+                  {cartItems.map((item, n) => { const suffixe = estPeremption(item) ? " (péremption courte)" : ""; const remonte = item.isSpecial ? prixRemontes[item.specialId] : null; return (
                     <li key={item.key} style={{ padding: "14px 0", borderTop: n ? `1px solid ${T.lineSoft}` : "none" }}>
                       {/* Rayon (eyebrow ; sa couleur n'est plus qu'une pastille de repère) + suppression */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
@@ -3514,25 +3575,28 @@ export default function App() {
                           <span aria-hidden="true" style={{ width: 8, height: 8, borderRadius: R.pill, background: item.color, flexShrink: 0 }} />
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.cat.toUpperCase()}</span>
                         </div>
-                        <button className="ex-btn-discret ex-cible" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name} du panier`}
+                        <button className="ex-btn-discret ex-cible" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name}${suffixe} du panier`}
                           style={{ ...pasPanier, width: isMobile ? 32 : 28, height: isMobile ? 32 : 28 }}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
                       </div>
                       {/* Nom du produit */}
                       <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
-                      {/* Péremption courte (src/peremption-panier.js) : date du lot de la page, gardée jusqu'à la commande ; prix habituel,
-                          celui de la Saisie (liste n° 5), ou remise péremption facturée par Odoo (V1, peremption_remise) */}
+                      {/* Péremption courte (ligne à part, src/peremption-panier.js) : date du lot, remise de la page sur le prix de base
+                          (ou remise facturée par Odoo) ; même produit sur une autre ligne → commande séparée (deux lignes d'un même CIP
+                          dans une commande PharmaML : non éprouvé) */}
                       {estPeremption(item) && (
-                        <div style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
+                        <div className="ex-panier-peremption" style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
                           <Icone nom="horloge" taille={14} style={iconeEncart} />
-                          <span><strong>{notePeremption(item.peremption)}</strong> · {Number(item.peremption_remise) >= 1
-                            ? `remise péremption ${fmtPct(item.peremption_remise)} facturée par Odoo` : "péremption courte, au prix habituel"}</span>
+                          <span><strong>{notePeremption(item.peremption)}</strong>{item.remise >= 1 ? <> · <strong>{fmtPct(item.remise)}</strong></> : null} · péremption courte
+                            {item.facture_odoo ? " · remise sur facture" : item.remise >= 1 && item.pv > item.basePn ? ` · prix de base ${fmt(item.pv)}` : item.remise >= 1 ? "" : ", au prix habituel"}
+                            {partiraAPart(item, cartItems) && <><br />Ce produit est aussi sur une autre ligne du panier : cette ligne partira dans une commande séparée.</>}
+                          </span>
                         </div>
                       )}
-                      {/* Prix remonté (panier enregistré par l'ancienne page, controlerPrixPanier) : tant que la ligne est à ce prix */}
-                      {item.isSpecial && prixRemontes[item.cip] && Math.abs((item.basePn ?? 0) - prixRemontes[item.cip].apres) < 0.005 && (
+                      {/* Prix mis à jour par le contrôle du panier enregistré (controlerPrixPanier) : tant que la ligne est à ce prix */}
+                      {remonte && Math.abs((item.basePn ?? 0) - remonte.apres.pn) < 0.005 && (
                         <div role="note" style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
                           <Icone nom="alerte" taille={14} style={iconeEncart} />
-                          <span><strong>Prix mis à jour</strong> : {detailRemontee(prixRemontes[item.cip])}</span>
+                          <span><strong>Prix mis à jour</strong> : {detailControle(remonte)}</span>
                         </div>
                       )}
                       {/* Unités gratuites des campagnes */}
@@ -3546,10 +3610,10 @@ export default function App() {
                       {/* Quantité (« − » sable, « + » pétrole, au pas du colis ; 40 px sous 768 px, classes ex-qte-*) + sous-total */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0, flexWrap: "wrap" }}>
-                          <button className="ex-qte-moins" onClick={() => setItemQty(item, item.qty - item.step)} aria-label={`Diminuer la quantité de ${item.name}`}
+                          <button className="ex-qte-moins" onClick={() => setItemQty(item, item.qty - item.step)} aria-label={`Diminuer la quantité de ${item.name}${suffixe}`}
                             style={pasPanier}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
                           <span className="num" style={{ fontWeight: 700, fontSize: 14, minWidth: 28, textAlign: "center", color: T.ink }}>{item.qty}</span>
-                          <button className="ex-qte-plus" onClick={() => setItemQty(item, item.qty + item.step)} aria-label={`Augmenter la quantité de ${item.name}`}
+                          <button className="ex-qte-plus" onClick={() => setItemQty(item, item.qty + item.step)} aria-label={`Augmenter la quantité de ${item.name}${suffixe}`}
                             style={pasPanier}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
                           <span className="num" style={{ fontSize: 12, color: T.inkMute, marginLeft: 4, whiteSpace: "nowrap" }}>× {fmt(item.pn)}</span>
                           {item.step > 1 && <span className="num" style={{ fontSize: 11, color: T.inkMute, whiteSpace: "nowrap" }}>· par {item.step}</span>}
@@ -3589,7 +3653,7 @@ export default function App() {
                         );
                       })()}
                       {/* Sur justificatif labo : attestation, renouvellement, ordonnance anonymisée */}
-                      {needsJustif(item, justifProducts, cartTotalsByCip) && (
+                      {needsJustif(item, justifProducts, cartTotalsByCip) && cartItems.findIndex(j => j.cip === item.cip) === n && (
                         <JustifCartBlock rule={justifProducts[item.cip]} info={justifInfo[item.cip]} onChange={(patch) => updateJustif(item.cip, patch)}
                           auth={actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken }} />
                       )}
@@ -3601,7 +3665,7 @@ export default function App() {
                         </div>
                       )}
                     </li>
-                  ))}
+                  ); })}
                   </ul>
                 )}
 

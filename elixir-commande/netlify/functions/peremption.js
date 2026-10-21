@@ -1,10 +1,16 @@
 // ── Péremption courte, « Odoo facture la remise » (V1) : point d'entrée HTTP (docs/peremption-odoo.md) ──
-// GET  ?action=page                 public : page « Péremption courte » et carte de l'accueil (etatPublic : ni coût ni marge)
-// GET  ?action=admin|journal|droits|ecarts|retrait_apercu    admin (verifyAdmin) ; droits, écarts et aperçu d'un retrait :
-//                                   lectures seulement (retrait_apercu&cips=… : décisions, règles vivantes, commandes en cours)
+// GET  ?action=page                 public : page « Péremption courte » et carte de l'accueil (etatPublic : ni coût ni marge ;
+//                                   offre de chaque produit, remise affichée de l'admin)
+// GET  ?action=prix&cips=a,b        public : prix habituel de produits sortis de la page (panier enregistré), 50 CIP au plus
+// GET  ?action=admin|journal|droits|ecarts|ecarts_resume|retrait_apercu    admin (verifyAdmin) ; droits, écarts et aperçu d'un
+//                                   retrait : lectures seulement (ecarts&depuis=&jusqua=&types=peremption,probable,autre&offset= :
+//                                   lignes prises au prix de la page et facturées plus cher, avec leur statut de rectification ;
+//                                   ecarts_resume[&frais=1] : « X € à rectifier pour N pharmacies » ; retrait_apercu&cips=… :
+//                                   décisions, règles vivantes, commandes en cours)
 // GET  ?step=nuit&offset=N          chaîne de nuit (GitHub Action, en-tête x-cron-secret) : faits, plan, exécution
 // POST { action, … }                admin : apercu, appliquer, etape, retirer, tout_retirer, reessayer, mode, reglages,
-//                                   reconcilier, faits. appliquer, retirer, tout_retirer et reessayer enregistrent le passage
+//                                   reconcilier, faits ; remise_affichee { cip, remise_pct: 0..90 | null } (expiry_discounts, sans
+//                                   Odoo) ; ecart_statut { lignes: [{ cle, … }], statut: rectifie | a_rectifier, reference }. appliquer, retirer, tout_retirer et reessayer enregistrent le passage
 //                                   et rendent la main ; le navigateur le fait avancer par « etape » (chaque appel sous 10 s).
 // Toute écriture Odoo passe par _peremption.js (deux verrous : PEREMPTION_ODOO_ECRITURE=1 et mode « Actif »).
 // creerHandler(deps) : peremption, verifyAdmin et isCronAuthorized injectables (scripts/test-peremption-odoo.mjs,
@@ -17,6 +23,8 @@ const CIP = /^\d{7,14}$/;
 const court = (e) => String(e?.message || e || "").replace(/\s+/g, " ").slice(0, 300);
 const cipsDe = (v) => (Array.isArray(v) ? [...new Set(v.map(String))] : []).filter(c => CIP.test(c));
 const entier = (v) => { const n = Number(v); return Number.isInteger(n) ? n : null; };
+const JOUR = /^\d{4}-\d{2}-\d{2}$/;
+const TYPES_ECART = ["peremption", "probable", "autre"];
 
 export function creerHandler(deps = {}) {
   let P = deps.peremption || null;
@@ -30,6 +38,11 @@ export function creerHandler(deps = {}) {
     const q = event.queryStringParameters || {};
     try {
       if (event.httpMethod === "GET" && q.action === "page") return rep(200, await module().etatPublic());
+      if (event.httpMethod === "GET" && q.action === "prix") {
+        const cips = cipsDe(String(q.cips || "").split(","));
+        if (!cips.length || cips.length > 50) return rep(400, { error: "cips : 1 à 50 CIP" });
+        return rep(200, await module().prixHorsPage(cips));
+      }
       if (event.httpMethod === "GET" && q.step === "nuit") {
         if (!cron(event)) return rep(403, { error: "réservé à la chaîne de nuit (x-cron-secret)" });
         try { return rep(200, await module().passageNuit({ offset: Math.max(0, entier(q.offset) ?? 0) })); }
@@ -48,7 +61,12 @@ export function creerHandler(deps = {}) {
           case "admin": return rep(200, await M.etatAdmin());
           case "journal": return rep(200, { lignes: await M.journalDe({ cip: CIP.test(String(q.cip || "")) ? q.cip : null, limit: q.limit }) });
           case "droits": return rep(200, await M.droits({ acteur }));
-          case "ecarts": return rep(200, await M.ecarts({ depuis: /^\d{4}-\d{2}-\d{2}$/.test(String(q.depuis || "")) ? q.depuis : undefined, offset: Math.max(0, entier(q.offset) ?? 0) }));
+          case "ecarts": {
+            const types = q.types ? String(q.types).split(",").filter(t => TYPES_ECART.includes(t)) : null;
+            return rep(200, await M.ecarts({ depuis: JOUR.test(String(q.depuis || "")) ? q.depuis : undefined, jusqua: JOUR.test(String(q.jusqua || "")) ? q.jusqua : null,
+              offset: Math.max(0, entier(q.offset) ?? 0), types: types?.length ? types : null }));
+          }
+          case "ecarts_resume": return rep(200, await M.ecartsResume({ depuis: JOUR.test(String(q.depuis || "")) ? q.depuis : undefined, frais: q.frais === "1" }));
           case "retrait_apercu": {
             const cips = q.cips ? cipsDe(String(q.cips).split(",")) : null;
             return rep(200, await M.apercuRetrait({ cips: cips?.length ? cips : null }));
@@ -99,6 +117,17 @@ export function creerHandler(deps = {}) {
           return rep(200, await M.changerMode({ mode: b.mode, acteur }));
         }
         case "reglages": return rep(200, await M.changerReglages({ valeurs: b.valeurs, acteur }));
+        case "remise_affichee": {
+          if (!CIP.test(String(b.cip || ""))) return rep(400, { error: "cip" });
+          const r = b.remise_pct == null || b.remise_pct === "" ? null : entier(b.remise_pct);
+          if (b.remise_pct != null && b.remise_pct !== "" && (r == null || r < 0 || r > 90)) return rep(400, { error: "remise_pct : entier de 0 à 90, ou null (remise par défaut)" });
+          const res = await M.remiseAffichee({ cip: String(b.cip), remise: r, nom: b.nom, acteur });
+          return rep(res.erreur ? 400 : 200, res);
+        }
+        case "ecart_statut": {
+          const res = await M.changerStatutEcarts({ lignes: b.lignes, statut: b.statut, reference: b.reference, acteur });
+          return rep(res.erreur === "non_installe" ? 503 : res.erreur ? 400 : 200, res);
+        }
         case "reconcilier": return rep(200, await M.reconcilier({ acteur, etendue: "admin", budgetMs: 7000 }));
         case "faits": {
           // « Actualiser depuis Odoo » : faits frais de la fenêtre et des décisions ouvertes, 25 CIP par appel

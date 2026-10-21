@@ -3,48 +3,47 @@ import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
-import { prixPage, offrePeremption, remiseFacturee, datePeremption } from "../peremption-panier.js";
+import { offreAffichee, offrePeremption, datePeremption } from "../peremption-panier.js";
 import { TierBadge } from "../tiers.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
-// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix de la Saisie de commande
-// (prixPage : prix remisé de la liste n° 5, sinon prix catalogue ; paliers d'Odoo) — avant, −50 % (−20 % dès 500 €) ou la
-// remise de l'admin, qu'Odoo ne facturait jamais. C'est le prix de la liste n° 5, comme partout sur le site : les clients
-// des listes 15, 1110 et 25 peuvent être facturés plus cher (hors remise péremption facturée, posée sur les 6 listes).
-// Produit rangé dans un menu : prix que prendra le panier (prixPanier, celui du menu ou de la campagne). Le panier reçoit
-// l'ajout par les règles de la Saisie (colis, contingentement) avec la date du lot (offrePeremption : mention « Pér. <date> »
-// jusqu'à la commande, ligne hors catalogue seulement). Sans prix : pas d'ajout.
-// V1 de « Odoo facture la remise » (docs/peremption-odoo.md, conception § 8.1) : la page lit peremption?action=page. Une
-// remise n'est annoncée que si Odoo la facture (règle vérifiée sur toutes les listes ET prix du site repris) : prix de base
-// barré, prix facturé (liste n° 5), remise de la facture, « habituellement X € » (réglage « % du prix habituel » : prix
-// habituel barré, remise rapportée à lui, prix_barre du serveur). Les autres produits : prix habituel et
-// « Péremption courte · lot au … ». Produits « fantômes » (plus de boîte courte vendable) retirés par le serveur. Lecture
-// en échec : repli sur odoo-catalog?expiry_months=4 (comportement du lot 0, aucune remise).
+// Péremption courte, règle du 21/10/2026 (décision de Zineb, docs/peremption.md) : la page affiche de nouveau la remise
+// péremption, comme avant le 20/10 : −50 % (−20 % dès 500 € de prix de base), ou la remise affichée choisie par l'admin pour
+// le produit (onglet Péremptions, expiry_discounts ; 0 = aucune), sur le prix de base barré ; ou, si une règle Odoo la
+// facture (V1, « Odoo facture la remise »), la remise de la facture (« remise sur facture »). Jamais plus cher que le prix
+// habituel (Saisie, liste n° 5) : sinon le prix habituel, sans remise. Offre calculée par offreAffichee
+// (src/peremption-panier.js), la même que le serveur (carte de l'accueil, admin) et que le contrôle du panier.
+// L'ajout va au panier sur une ligne À PART, au prix de la page, avec « Pér. <date> · −X % » (offrePeremption) : jamais
+// la ligne d'un menu ou de la Saisie du même CIP. Sans prix : pas d'ajout.
+// Lecture : peremption?action=page (remise_admin par produit, produits « fantômes » retirés) ; en échec, repli sur
+// odoo-catalog?expiry_months=4 et les remises de restock-alert?action=expiry_discounts (lecture publique).
 // L'onglet « Péremptions » de l'admin est src/components/PeremptionsAdmin.jsx (chargé à la demande par AdminPanel).
 const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
 
 // Péremption courte : vue des pharmacies (menu). isAdmin (admin ouvert par-dessus le site) : même vue.
 // icone, couleur : icône et couleur du menu (App) ; absentes → horloge et orange d'origine (filet et pastille).
-// prixPanier(cip) : prix du menu qui contient le CIP (prixDuMenu d'App.jsx), null hors menu.
-export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", prixPanier }) {
+export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" }) {
   const [products, setProducts] = useState([]);
+  const [remises, setRemises] = useState(null);           // repli seulement : { cip: % } de expiry_discounts
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [quantities, setQuantities] = useState({});
   const [sortBy, setSortBy] = useState("expiry");
 
-  // ── Chargement : page des pharmacies (remises facturées par Odoo) ; repli : catalogue de la fenêtre (lot 0) ──
+  // ── Chargement : page des pharmacies (offre de chaque produit) ; repli : catalogue de la fenêtre et remises de l'admin ──
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const page = await fetch("/.netlify/functions/peremption?action=page").then(r => (r.ok ? r.json() : null)).catch(() => null);
-      if (Array.isArray(page?.produits)) { setProducts(page.produits); return; }
-      const prodRes = await fetch("/.netlify/functions/odoo-catalog?expiry_months=4");
+      if (Array.isArray(page?.produits)) { setProducts(page.produits); setRemises(null); return; }
+      const [prodRes, rem] = await Promise.all([fetch("/.netlify/functions/odoo-catalog?expiry_months=4"),
+        fetch("/.netlify/functions/restock-alert?action=expiry_discounts").then(r => (r.ok ? r.json() : [])).catch(() => [])]);
       if (!prodRes.ok) throw new Error(`Erreur catalogue: HTTP ${prodRes.status}`);
       const prodData = await prodRes.json();
       if (prodData.error) throw new Error(prodData.error);
+      setRemises(Object.fromEntries((Array.isArray(rem) ? rem : []).filter(d => d?.cip).map(d => [String(d.cip), d.discount_pct])));
       setProducts(Array.isArray(prodData.products) ? prodData.products : []);
     } catch (e) {
       console.error("[short-expiry]", e.message);
@@ -81,22 +80,23 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", p
     return T.warn;
   };
 
-  // prix affiché : celui que prendra le panier (menu ou campagne : prixPanier ; sinon prix de la Saisie, liste n° 5 : pour un
-  // produit facturé, le prix péremption d'Odoo)
-  const prixAffiche = (p) => prixPanier?.(p.cip) || prixPage(p);
+  // prix affiché = prix que prend la ligne péremption du panier (offre de la page : src/peremption-panier.js)
+  const prixAffiche = (p) => offreAffichee(p, remises);
 
   const handleAdd = (p) => {
     const qty = parseInt(quantities[p.cip]) || 0;
     if (qty <= 0 || !(prixAffiche(p).pn > 0)) return;   // sans prix : pas d'ajout (l'envoi planterait sur un prix vide)
-    // prix de la Saisie et date du lot → mention « Pér. <date> » au panier (src/peremption-panier.js)
-    onAddToCart?.(offrePeremption(p, qty));
+    // ligne « Péremption courte » à part au panier : prix et remise de la page, date du lot (src/peremption-panier.js)
+    onAddToCart?.(offrePeremption(p, qty, remises));
     setQuantities(prev => ({ ...prev, [p.cip]: 0 }));
   };
 
   // colonnes (7, classes ex-per-* : cartes sous 768 px, src/styles/tokens.css)
   const colonnes = ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix HT", "Qté"];
   const aDroite = ["Prix HT"];
-  const nbFactures = products.filter(p => remiseFacturee(p)).length;
+  const offres = products.map(p => prixAffiche(p));
+  const nbRemises = offres.filter(o => o.remise >= 1).length;
+  const nbFactures = offres.filter(o => o.facture_odoo).length;
 
   return (
     <div>
@@ -109,12 +109,13 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", p
         aside={<CompteurVue chargement={loading} valeur={products.length.toLocaleString("fr-FR")} libelle={loading || products.length > 1 ? "références" : "référence"} />}
       />
 
-      {/* Ce que dit la page : remises facturées par Odoo seulement, les autres au prix habituel */}
-      <div role="note" style={{ ...encart("info"), marginBottom: 16 }}>
+      {/* Ce que dit la page : remise déjà déduite du prix affiché, ligne à part au panier */}
+      <div role="note" className="ex-peremption-encart" style={{ ...encart("info"), marginBottom: 16 }}>
         <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
-        {nbFactures > 0
-          ? <span>Les remises affichées sont celles qui figureront sur votre facture. Les autres produits sont à leur prix habituel. La
-            date est celle du lot le plus court en stock ; les lots sont détaillés sur chaque ligne.</span>
+        {nbRemises > 0 || loading
+          ? <span>La remise péremption est déjà déduite du prix affiché. Chaque produit ajouté garde ce prix et la date de son lot sur une
+            ligne à part de votre panier. La date est celle du lot le plus court en stock ; les lots sont détaillés sur chaque ligne.
+            {nbFactures > 0 ? " «\u00a0Remise sur facture\u00a0»\u00a0: la remise figure aussi sur votre facture." : ""}</span>
           : <span>Prix habituels, comme dans le reste du catalogue : aucune remise péremption pour l'instant. La date est celle du lot le
             plus court en stock ; les lots sont détaillés sur chaque ligne.</span>}
       </div>
@@ -172,10 +173,9 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", p
             <tbody>
               {sorted.map((p) => {
                 const days = daysUntil(p.earliest_expiry);
-                const prix = prixAffiche(p);
-                const menu = prix.rayon && Math.abs((prix.pn ?? 0) - (prixPage(p).pn ?? 0)) >= 0.005 ? prix.rayon : null;   // prix du menu ≠ prix de la Saisie
+                const prix = prixAffiche(p);   // { pn, base, remise, source, facture_odoo, tiers }
                 const sansPrix = !(prix.pn > 0);
-                const remise = remiseFacturee(p, prix);   // remise facturée par Odoo (V1), sinon null
+                const remise = prix.remise >= 1 ? prix.remise : null;
                 const qty = quantities[p.cip] || 0;
 
                 return (
@@ -206,23 +206,24 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", p
                         </div>
                       ))}
                     </td>
-                    {/* remise facturée par Odoo : prix de base barré, prix facturé, remise de la facture, prix habituel ; sinon prix
-                        habituel (Saisie, liste n° 5, ou menu) et « Péremption courte · lot au … » ; paliers d'Odoo */}
+                    {/* remise péremption : prix de base barré, prix de la page, « −X % » (règle Odoo facturée : « remise sur facture »,
+                        prix habituel figé à la décision) ; sans remise : prix habituel (Saisie, liste n° 5), paliers d'Odoo et
+                        « Péremption courte · lot au … » */}
                     <td className="ex-per-prix" style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      {remise && (p.prix_barre ?? p.prix_base) > prix.pn && <s style={{ fontSize: 12, color: T.inkMute, marginRight: 6 }}>{fmt(p.prix_barre ?? p.prix_base)}</s>}
+                      {remise && prix.base > prix.pn && <s style={{ fontSize: 12, color: T.inkMute, marginRight: 6 }}>{fmt(prix.base)}</s>}
                       <span style={{ fontWeight: 700, fontSize: 15, color: remise ? T.danger : T.ink }}>{fmt(prix.pn)}</span>
                       {!sansPrix && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
-                      {remise && <span className="ex-per-remise-facturee" style={{ ...ui.badge("danger"), fontSize: 11, padding: "1px 7px", marginLeft: 6 }}>{fmtPct(remise)}</span>}
+                      {remise && <span className={`ex-per-remise-badge${prix.facture_odoo ? " ex-per-remise-facturee" : ""}`} style={{ ...ui.badge("danger"), fontSize: 11, padding: "1px 7px", marginLeft: 6 }}>{fmtPct(remise)}</span>}
                       <TierBadge tiers={prix.tiers} pn={prix.pn} bloc />
-                      {remise && p.prix_habituel > prix.pn && Math.abs((p.prix_barre ?? p.prix_base) - p.prix_habituel) >= 0.005 && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>habituellement {fmt(p.prix_habituel)}</div>}
-                      {remise && p.force_lot_long && p.court_qte > 0 && (
+                      {remise && prix.facture_odoo && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>remise sur facture</div>}
+                      {remise && prix.facture_odoo && p.prix_habituel > prix.pn && Math.abs(prix.base - p.prix_habituel) >= 0.005 && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>habituellement {fmt(p.prix_habituel)}</div>}
+                      {remise && prix.facture_odoo && p.force_lot_long && p.court_qte > 0 && (
                         <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2, whiteSpace: "normal", maxWidth: 220, marginLeft: "auto" }}>
                           dont {p.court_qte} boîte{p.court_qte > 1 ? "s" : ""} à date courte ; les autres boîtes, à date longue, sont au même prix</div>
                       )}
                       {!remise && !sansPrix && p.earliest_expiry && (
                         <div style={{ marginTop: 3 }}><span style={{ ...ui.badge("warn"), fontSize: 11, padding: "1px 7px" }}>Péremption courte · lot au {datePeremption(String(p.earliest_expiry).slice(0, 10))}</span></div>
                       )}
-                      {menu && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix du menu « {menu} »</div>}
                       {sansPrix && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix à confirmer</div>}
                     </td>
                     <td className="ex-per-qte" style={{ padding: "10px 10px", textAlign: "center" }}>

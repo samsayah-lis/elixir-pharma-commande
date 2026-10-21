@@ -698,7 +698,7 @@ Date.now = dateReelle;
   const entre = (debut, fin) => { const i = src.indexOf(debut), j = src.indexOf(fin, i + 1); if (i < 0 || j < 0) throw new Error(`extrait de App.jsx introuvable : ${debut}`); return src.slice(i, j); };
   const code = `import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip } from ${JSON.stringify(new URL("../src/lab-justif-client.js", import.meta.url).href)};
 import { renouvelerUneFois, renouvelleAdmin } from ${JSON.stringify(new URL("../src/jetons.js", import.meta.url).href)};
-import { estPeremption, mentionCommande, mentionMail } from ${JSON.stringify(new URL("../src/peremption-panier.js", import.meta.url).href)};
+import { estPeremption, separerPeremption, mentionCommande, mentionMail } from ${JSON.stringify(new URL("../src/peremption-panier.js", import.meta.url).href)};
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 ${entre("const quotaOver = (quota, items) => {", "const quotaDay")}
 ${entre("const MESSAGE_ENVOI_BLOQUE = {", "class ErrorBoundary")}

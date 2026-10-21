@@ -219,8 +219,8 @@ function entreeOutil(v, ctx) {
   const e = commun(v, `o:${cle}`, couleurDe(v, { accent: accentOutil(cle, ctx.catalogue) }), photo || cartes.find(c => c.url)?.url);
   const long = chiffresTexte(cle, ch), court = chiffresTexte(cle, ch, { court: true });
   const titre = v.titre || def.titre;
-  // Péremption : « Petits prix », badge par défaut d'avant le lot 0 (gardé dans les mises en avant déjà publiées), ne
-  // s'affiche que si une remise est facturée par Odoo (jusqua) — sinon la carte promettrait une remise qui n'existe pas
+  // Péremption : « Petits prix » (badge par défaut, rétabli le 21/10/2026) ne s'affiche que si la page affiche une remise
+  // (jusqua) — sinon la carte promettrait une remise qui n'existe pas
   const badge = cle === "peremption" && !(ch?.jusqua >= 1) && /^\s*petits\s+prix\s*$/i.test(e.badge) ? "" : e.badge;
   const outil = { cle, cta: def.cta(ch), ctaCourt: def.ctaCourt, ctaMini: def.ctaMini || def.ctaCourt, icone: def.icone, photo, cartes, meta: long.meta, metaCourt: court.meta, meta2: long.meta2,
     chiffresLu: long.lu, jusqua: cle === "peremption" && ch?.jusqua >= 1 ? ch.jusqua : null };
@@ -234,8 +234,8 @@ export function prixLu(o) {
   if (!(o?.pn > 0)) return "";
   return [eur(o.pn), o.pct >= 1 ? `remise de ${String(Number(Math.abs(o.pct).toFixed(2))).replace(".", ",")} %` : "", o.pv > o.pn ? `prix de vente ${eur(o.pv)}` : ""].filter(Boolean).join(", ");
 }
-// « Lots à date courte, en stock, 167 références » (Péremption, lot 0 : ni « dès » ni « jusqu'à » tant qu'Odoo ne facture
-// aucune remise péremption)
+// « Péremption courte, petits prix, 167 références, dès 0,44 € HT, jusqu'à −50 % » (sans remise affichée : ni « dès » ni
+// « jusqu'à »)
 export const resumeOutilLu = (e) => [e.titre, e.outil?.chiffresLu].filter(Boolean).join(", ");
 export const resumeMenuLu = (e) => [e.titre, `${e.menu.nb} référence${e.menu.nb > 1 ? "s" : ""}`, e.menu.des ? `dès ${eur(e.menu.des)}` : "",
   e.menu.jusqua ? `jusqu'à −${String(e.menu.jusqua).replace(".", ",")} %` : ""].filter(Boolean).join(", ");
