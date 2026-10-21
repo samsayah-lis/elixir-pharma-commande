@@ -206,6 +206,33 @@ const sbPeremption = (compte, { echec = false } = {}) => async (path) => {
   eq("lecture en échec : jamais gardée en mémoire", apresEchec.includes("odoo_catalog"), true);
   O.oublierMemo();
 }
+// ── 3 bis. Péremption, V1 de « Odoo facture la remise » : remises facturées par Odoo seulement (etatPublic) ──
+{
+  O.oublierMemo();
+  const page = { seuil_annonce_pct: 5, produits: PER.filter(r => r.cip !== "3400930000110" && r.cip !== "3400930000111").map(r => ({ cip: r.cip, earliest_expiry: r.earliest_expiry, updated_at: r.updated_at })) };
+  const fact = (cip, prix, remise, habituel) => Object.assign(page.produits.find(p => p.cip === cip), { facturee: true, prix, remise_pct: remise, prix_habituel: habituel, prix_base: 99, cout: 1 });
+  fact("3400930000108", 5, 50, 9.55);       // facturée : −50 % sur le prix de base, 5 € contre 9,55 € habituels
+  fact("3400930000103", 455, 9, 477.49);    // facturée, économie de 4,7 % < seuil de 5 % : pas annoncée
+  fact("3400930000104", 15.6, 20, 18.64);   // facturée : 15,60 € contre 18,64 €
+  let appels = 0;
+  const src = { sb: async () => { throw new Error("V1 : le catalogue n'est plus lu directement"); }, peremption: async () => { appels++; return page; }, maintenant: () => MAINTENANT };
+  const lecture = await O.lirePeremption(src);
+  const ev = O.evaluerOutil("peremption", { outils: { peremption: lecture }, menus: MENUS }, MAINTENANT);
+  eq("V1 : nb = produits de la page ; « dès » = plus bas prix facturé ; « jusqu'à » = plus forte remise de la facture",
+    [ev.chiffres.nb, ev.chiffres.des, ev.chiffres.jusqua, ev.admin], [9, 5, 50, { remises_facturees: 2 }]);
+  eq("V1 : champs publics inchangés, sans CIP, coût ni prix habituel", [Object.keys(ev.chiffres), /\d{13}|cout|habituel|prix_base/.test(JSON.stringify(ev.chiffres))], [["nb", "des", "jusqua", "mois", "maj"], false]);
+  vrai("V1 : la lecture ne garde que les champs de la carte (ni coût ni prix de base)", lecture.rows.every(r => !("cout" in r) && !("prix_base" in r)));
+  await O.lirePeremption(src);
+  eq("V1 : lecture gardée 5 min", appels, 1);
+  O.oublierMemo();
+  const sansFacture = { ...page, produits: page.produits.map(({ facturee, prix, remise_pct, prix_habituel, ...r }) => r) };   // eslint-disable-line no-unused-vars
+  const ev2 = O.evaluerOutil("peremption", { outils: { peremption: await O.lirePeremption({ ...src, peremption: async () => sansFacture }) }, menus: MENUS }, MAINTENANT);
+  eq("V1 sans remise facturée : comme le lot 0 (ni « dès » ni « jusqu'à »)", [ev2.chiffres.nb, ev2.chiffres.des, ev2.chiffres.jusqua, ev2.admin], [9, null, null, { remises_facturees: 0 }]);
+  O.oublierMemo();
+  const D = await import(pathToFileURL(join(RACINE, "netlify/functions/_accueil-donnees.js")).href);
+  eq("sources : en ligne (sans sb injecté), la carte lit la page des pharmacies (etatPublic) ; tests et banc (sb injecté) : lecture du lot 0",
+    [typeof D.creerSources({}).peremption, D.creerSources({ sb: async () => [] }).peremption], ["function", null]);
+}
 
 // ── 4. Fauteuils ──
 {

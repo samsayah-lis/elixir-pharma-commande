@@ -145,6 +145,9 @@ const LOTS = {
   // Péremption courte, lot 0 (20/10/2026) : mention « Pér. » jusqu'à la commande (ECARTS_AUTORISES, attente
   // « peremptionMention »)
   peremptionMention: { nom: "péremption courte, lot 0 (mention « Pér. »)", repere: "scripts/test-peremption-mention.mjs" },
+  // Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : fonctions nouvelles (AJOUTS_AUTORISES) ;
+  // la page des pharmacies ne lit plus le jeton admin (l'onglet admin est PeremptionsAdmin.jsx, appels par adminFetch)
+  peremptionOdoo: { nom: "péremption courte, V1 (« Odoo facture la remise »)", repere: "scripts/test-peremption-odoo.mjs" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -187,7 +190,11 @@ const FICHIERS_AUTORISES = {
 // Notifications de l'appli installable (branche appli-notifications, docs/notifications.md) : fonctions NOUVELLES
 // (_push.js, push-abonnement.js, push-admin.js, push-envoi-background.js, push-menage.js) ; seule fonction existante
 // modifiée : _restock.js (crochet « Retour en stock » après l'e-mail, § 9.1), déjà admise ci-dessus avec les alertes retour.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage))\.js$/;
+// Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : peremption.js (page des pharmacies, admin,
+// chaîne de nuit), peremption-cron.js (filet horaire) et _peremption.js (logique, seule porte d'écriture Odoo, par
+// _odoo-rpc.js) ; aucune fonction existante modifiée (_accueil-outils.js et _accueil-donnees.js : admis d'office ;
+// odoo-price-sync.js, _odoo-rpc.js, _relais.js, odoo-catalog.js, restock-alert.js et _lab-justif.js : importés, inchangés).
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage)|peremption(-cron)?|_peremption)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -215,6 +222,8 @@ const CLES_AUTORISEES = {
   // sessionStorage notif_brouillon_annonce : brouillon de l'annonce en cours (onglet) — seuls appels de stockage du lot
   notifications: { "localStorage.getItem(cleCarte(identite": 1, "localStorage.setItem(cleCarte(identite": 1,
     'sessionStorage.getItem(CLE_BROUILLON': 1, "sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon": 1, "sessionStorage.removeItem(CLE_BROUILLON": 1 },
+  // src/components/ShortExpiry.jsx : la page des pharmacies ne lit plus le jeton admin (adminAuthHeaders retiré)
+  peremptionOdoo: { 'localStorage.getItem("admin_token"': -1 },
 };
 
 // ── lecture ──
@@ -304,7 +313,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : "de l'Assistant Elixir"})`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : /peremption/.test(chemin) ? "de la Péremption courte" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
@@ -324,7 +333,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte)` : ""}`);
 }
 
 // 3. clés de stockage

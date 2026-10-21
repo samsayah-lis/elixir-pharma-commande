@@ -1,6 +1,6 @@
 // Orchestration des syncs Odoo pour le cron GitHub Actions.
 // Rejoue la même séquence que l'admin, en appelant les étapes déjà validées.
-// Usage : node scripts/run-sync.mjs stock|price|expiry
+// Usage : node scripts/run-sync.mjs stock|price|expiry|peremption
 // Env   : CRON_SECRET (obligatoire), SITE_URL (défaut = prod)
 
 const SITE = (process.env.SITE_URL || "https://commandes-elixir.netlify.app").replace(/\/$/, "");
@@ -8,8 +8,8 @@ const SECRET = process.env.CRON_SECRET;
 const target = process.argv[2];
 
 if (!SECRET) { console.error("✗ CRON_SECRET manquant"); process.exit(1); }
-if (!["stock", "stock-quick", "price", "expiry", "pharmacies"].includes(target)) {
-  console.error("Usage: node scripts/run-sync.mjs stock|stock-quick|price|expiry|pharmacies");
+if (!["stock", "stock-quick", "price", "expiry", "peremption", "pharmacies"].includes(target)) {
+  console.error("Usage: node scripts/run-sync.mjs stock|stock-quick|price|expiry|peremption|pharmacies");
   process.exit(1);
 }
 
@@ -102,9 +102,22 @@ async function syncPrice() {
   await loop("odoo-price-sync", "apply");
 }
 
+// « expiry » enchaîne la Péremption courte (règles Odoo) juste après la page mise à jour : la chaîne de nuit de
+// .github/workflows/sync.yml (stock → price → expiry → pharmacies) n'a pas à changer (un jeton GitHub sans droit
+// « workflow » ne peut pas pousser ce fichier). Le prix du site des CIP touchés est recalculé par le passage lui-même.
 async function syncExpiry() {
   console.log("== PÉREMPTION ==");
   await loop("odoo-expiry-sync", null);
+  await syncPeremption();
+}
+
+// Péremption courte, « Odoo facture la remise » (docs/peremption-odoo.md) : faits frais de toute la page (par paquets de 30),
+// plan (retraits, compléments, orphelines, listes en usage, disjoncteurs), puis exécution, prix du site des CIP touchés
+// compris. Lancé après « expiry » (voir syncExpiry) ; seul : node scripts/run-sync.mjs peremption. Mode « Simulation » :
+// plan journalisé seul.
+async function syncPeremption() {
+  console.log("== PÉREMPTION COURTE (Odoo facture la remise) ==");
+  await loop("peremption", "nuit");
 }
 
 async function syncPharmacies() {
@@ -112,7 +125,7 @@ async function syncPharmacies() {
   console.log("  →", JSON.stringify(await call("pharmacy-sync-now", "")));
 }
 
-const runners = { stock: syncStock, "stock-quick": syncStockQuick, price: syncPrice, expiry: syncExpiry, pharmacies: syncPharmacies };
+const runners = { stock: syncStock, "stock-quick": syncStockQuick, price: syncPrice, expiry: syncExpiry, peremption: syncPeremption, pharmacies: syncPharmacies };
 runners[target]()
   .then(() => console.log(`✓ Sync « ${target} » terminée`))
   .catch((e) => { console.error(`✗ Sync « ${target} » échouée :`, e.message); process.exit(1); });

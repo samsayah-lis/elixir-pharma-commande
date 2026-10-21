@@ -80,11 +80,23 @@ et de l'envoi, comparé à la production), `node scripts/test-accueil-outils.mjs
   inférieur au prix de la Saisie (même contrôle que les factures passées) et les ajouter à la question des
   remboursements.
 
-## Suite (pas en service)
+## Suite : V1 « Odoo facture la remise » (livrée en simulation)
 
-Mécanisme prévu : une règle de prix Odoo par produit et par liste, créée seulement sur décision de l'admin, avec deux
-verrous avant toute écriture (variable Netlify `PEREMPTION_ODOO_ECRITURE=1` et mode « Actif » de l'admin), d'abord en
-simulation. Réglages proposés en attendant les réponses de Zineb (modifiables sans code, table `peremption_reglages`) :
+Mécanisme, mise en service, réglages et alertes : `docs/peremption-odoo.md`. En bref : une règle de prix Odoo par produit
+et par liste, créée seulement sur décision de l'admin (onglet Péremptions), avec deux verrous avant toute écriture
+(variable Netlify `PEREMPTION_ODOO_ECRITURE=1` et mode « Actif »), d'abord en simulation. Ce qui change par rapport au
+lot 0 :
+
+- la page lit `peremption?action=page` (repli : `odoo-catalog?expiry_months=4`) : une remise n'est annoncée que si Odoo la
+  facture (prix de base barré, « −X % », « habituellement Y € ») ; les produits « fantômes » (aucune boîte courte vendable
+  d'après Odoo) ne sont plus montrés ; tant qu'aucune remise n'est facturée, la page reste celle du lot 0 ;
+- la mention garde la remise facturée (« Pér. 31/12/2026 · −12 % », e-mail « remise péremption −12 % facturée par Odoo ») ;
+- le contrôle des prix du panier remonte aussi les lignes dont la remise a pris fin, au retour sur l'onglet compris ;
+- l'onglet Péremptions de l'admin est `src/components/PeremptionsAdmin.jsx` (chargé à la demande) ; la remise notée de
+  `expiry_discounts` n'est plus affichée (jamais reprise) ;
+- la carte de l'accueil donne « dès » et « jusqu'à » des seules remises facturées.
+
+Réglages à la livraison (propositions en attendant les réponses de Zineb, modifiables dans l'onglet sans code) :
 
 | Réglage | Proposition |
 |---|---|

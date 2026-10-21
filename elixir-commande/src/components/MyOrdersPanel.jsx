@@ -1,6 +1,6 @@
 import React from "react";
 import { JUSTIF_STATUTS } from "../lab-justif-client.js";
-import { estPeremption, notePeremption } from "../peremption-panier.js";
+import { estPeremption, badgePeremption } from "../peremption-panier.js";
 import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
@@ -97,7 +97,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                     <div key={j} className="num" style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:T.inkSoft }}>
                       <span className="ex-commande-nom" title={it.name} style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
                       {/* péremption courte : mention gardée dans la ligne enregistrée (src/peremption-panier.js) */}
-                      {estPeremption(it) && <span style={{ flexShrink:0, marginLeft:8, fontWeight:600, color:T.warn }}>{notePeremption(it.peremption)}</span>}
+                      {estPeremption(it) && <span style={{ flexShrink:0, marginLeft:8, fontWeight:600, color:T.warn }}>{badgePeremption(it)}</span>}
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600 }}>×{it.qty}</span>
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600, minWidth:72, textAlign:"right" }}>{it.pn ? fmtEur(parseFloat(it.pn * it.qty)) : ""}</span>
                     </div>

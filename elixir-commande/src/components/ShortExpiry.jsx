@@ -3,91 +3,55 @@ import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
-import { prixPage, offrePeremption } from "../peremption-panier.js";
+import { prixPage, offrePeremption, remiseFacturee, datePeremption } from "../peremption-panier.js";
 import { TierBadge } from "../tiers.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
-// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix habituel, celui de la
-// Saisie de commande (prixPage : prix remisé de la liste n° 5, sinon prix catalogue ; paliers d'Odoo), sans remise
-// péremption ni prix barré — avant, −50 % (−20 % dès 500 €) ou la remise de l'admin, qu'Odoo ne facturait jamais. C'est le
-// prix de la liste n° 5, comme partout sur le site : les clients des listes 15, 1110 et 25 peuvent être facturés plus cher.
+// Lot 0 de « Odoo facture la remise » (20/10/2026, docs/peremption.md) : la page affiche le prix de la Saisie de commande
+// (prixPage : prix remisé de la liste n° 5, sinon prix catalogue ; paliers d'Odoo) — avant, −50 % (−20 % dès 500 €) ou la
+// remise de l'admin, qu'Odoo ne facturait jamais. C'est le prix de la liste n° 5, comme partout sur le site : les clients
+// des listes 15, 1110 et 25 peuvent être facturés plus cher (hors remise péremption facturée, posée sur les 6 listes).
 // Produit rangé dans un menu : prix que prendra le panier (prixPanier, celui du menu ou de la campagne). Le panier reçoit
 // l'ajout par les règles de la Saisie (colis, contingentement) avec la date du lot (offrePeremption : mention « Pér. <date> »
 // jusqu'à la commande, ligne hors catalogue seulement). Sans prix : pas d'ajout.
+// V1 de « Odoo facture la remise » (docs/peremption-odoo.md, conception § 8.1) : la page lit peremption?action=page. Une
+// remise n'est annoncée que si Odoo la facture (règle vérifiée sur toutes les listes ET prix du site repris) : prix de base
+// barré, prix facturé (liste n° 5), remise de la facture, « habituellement X € » (réglage « % du prix habituel » : prix
+// habituel barré, remise rapportée à lui, prix_barre du serveur). Les autres produits : prix habituel et
+// « Péremption courte · lot au … ». Produits « fantômes » (plus de boîte courte vendable) retirés par le serveur. Lecture
+// en échec : repli sur odoo-catalog?expiry_months=4 (comportement du lot 0, aucune remise).
+// L'onglet « Péremptions » de l'admin est src/components/PeremptionsAdmin.jsx (chargé à la demande par AdminPanel).
 const fmt = (n) => n != null ? fmtEur(parseFloat(n)) : "–";
 
-// En-têtes d'authentification admin (sync péremptions + remises = endpoints protégés), quand l'admin ne passe pas adminFetch
-const adminAuthHeaders = () => {
-  const t = (typeof localStorage !== "undefined" && localStorage.getItem("admin_token")) || "";
-  return t ? { Authorization: `Bearer ${t}` } : {};
-};
-
-// Péremption courte : vue pharmacie (menu) et onglet « Péremptions » de l'admin (isAdmin : remises notées en lecture seule,
-// synchro Odoo ; adminFetch : appels authentifiés de l'admin, jeton renouvelé ; admin : encart et cellule « Remise notée » de
-// src/components/PeremptionsAdmin.jsx, passés par AdminPanel — chargés avec l'admin, hors du bundle des pharmacies).
-// icone, couleur : icône et couleur du menu (App) ; absentes dans l'admin → horloge et orange d'origine (filet et pastille).
-// prixPanier(cip) : prix du menu qui contient le CIP (prixDuMenu d'App.jsx), null hors menu ; vue pharmacie seulement.
-export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#ea580c", adminFetch, admin = null, prixPanier }) {
+// Péremption courte : vue des pharmacies (menu). isAdmin (admin ouvert par-dessus le site) : même vue.
+// icone, couleur : icône et couleur du menu (App) ; absentes → horloge et orange d'origine (filet et pastille).
+// prixPanier(cip) : prix du menu qui contient le CIP (prixDuMenu d'App.jsx), null hors menu.
+export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c", prixPanier }) {
   const [products, setProducts] = useState([]);
-  const [discounts, setDiscounts] = useState({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState("");
   const [quantities, setQuantities] = useState({});
   const [sortBy, setSortBy] = useState("expiry");
 
-  const [syncing, setSyncing] = useState(false);
-  const [syncProgress, setSyncProgress] = useState(null); // { current, total }
-
-  const appelAdmin = (url, options = {}) => (adminFetch ? adminFetch(url, options)
-    : fetch(url, { ...options, headers: { ...(options.headers || {}), ...adminAuthHeaders() } }));
-
-  const triggerExpirySync = async () => {
-    setSyncing(true);
-    setSyncProgress(null);
-    try {
-      let offset = 0;
-      let totalUpdated = 0;
-      while (true) {
-        const res = await appelAdmin(`/.netlify/functions/odoo-expiry-sync?offset=${offset}`);
-        if (!res.ok) { console.error("[sync] échec HTTP", res.status, "— êtes-vous connecté en admin ?"); break; }
-        const data = await res.json();
-        if (data.error) { console.error("[sync]", data.error); break; }
-        totalUpdated += data.updated || 0;
-        setSyncProgress({ current: offset + (data.batch_size || 0), total: data.total_in_stock || 0, updated: totalUpdated });
-        if (data.done || !data.next_offset) break;
-        offset = data.next_offset;
-      }
-      // Recharger les produits
-      await fetchData();
-    } catch (e) { console.warn("[sync]", e.message); }
-    finally { setSyncing(false); setSyncProgress(null); }
-  };
-
-  // ── Chargement : tous les produits en stock < 4 mois de péremption ; remises notées : admin seulement ────
+  // ── Chargement : page des pharmacies (remises facturées par Odoo) ; repli : catalogue de la fenêtre (lot 0) ──
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [prodRes, discRes] = await Promise.all([
-        fetch("/.netlify/functions/odoo-catalog?expiry_months=4"),
-        isAdmin ? fetch("/.netlify/functions/restock-alert?action=expiry_discounts") : null,
-      ]);
+      const page = await fetch("/.netlify/functions/peremption?action=page").then(r => (r.ok ? r.json() : null)).catch(() => null);
+      if (Array.isArray(page?.produits)) { setProducts(page.produits); return; }
+      const prodRes = await fetch("/.netlify/functions/odoo-catalog?expiry_months=4");
       if (!prodRes.ok) throw new Error(`Erreur catalogue: HTTP ${prodRes.status}`);
       const prodData = await prodRes.json();
       if (prodData.error) throw new Error(prodData.error);
       setProducts(Array.isArray(prodData.products) ? prodData.products : []);
-
-      const discData = discRes ? await discRes.json().catch(() => []) : [];
-      const map = {};
-      (Array.isArray(discData) ? discData : []).forEach(d => { map[d.cip] = d.discount_pct; });
-      setDiscounts(map);
     } catch (e) {
       console.error("[short-expiry]", e.message);
       setError(e.message);
     }
     finally { setLoading(false); }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -117,9 +81,9 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
     return T.warn;
   };
 
-  // prix affiché : pharmacie, celui que prendra le panier (menu ou campagne : prixPanier ; sinon prix de la Saisie) ;
-  // admin, prix de la liste n° 5
-  const prixAffiche = (p) => (!isAdmin && prixPanier?.(p.cip)) || prixPage(p);
+  // prix affiché : celui que prendra le panier (menu ou campagne : prixPanier ; sinon prix de la Saisie, liste n° 5 : pour un
+  // produit facturé, le prix péremption d'Odoo)
+  const prixAffiche = (p) => prixPanier?.(p.cip) || prixPage(p);
 
   const handleAdd = (p) => {
     const qty = parseInt(quantities[p.cip]) || 0;
@@ -129,12 +93,10 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
     setQuantities(prev => ({ ...prev, [p.cip]: 0 }));
   };
 
-  // colonnes : pharmacie (7, classes ex-per-* : cartes sous 768 px, src/styles/tokens.css) ; admin (9 : prix de base et
-  // remise notée en plus)
-  const colonnes = isAdmin
-    ? ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix de base", "Prix liste 5", "Remise notée", "Qté"]
-    : ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix HT", "Qté"];
-  const aDroite = ["Prix de base", "Prix liste 5", "Prix HT"];
+  // colonnes (7, classes ex-per-* : cartes sous 768 px, src/styles/tokens.css)
+  const colonnes = ["CIP", "Désignation", "Stock", "Péremption", "Lots", "Prix HT", "Qté"];
+  const aDroite = ["Prix HT"];
+  const nbFactures = products.filter(p => remiseFacturee(p)).length;
 
   return (
     <div>
@@ -144,24 +106,18 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
         couleur={couleur}
         titre="Péremption courte"
         sousTitre="Produits en stock avec péremption entre J+30 et 4 mois"
-        actions={isAdmin && (
-          <button className={syncing ? undefined : "ex-btn-ligne"} onClick={triggerExpirySync} disabled={syncing}
-            style={{ ...btnLigne, marginTop: 10, ...(syncing ? { cursor: "default", opacity: 0.6 } : {}) }}>
-            <Icone nom={syncing ? "horloge" : "actualiser"} taille={14} />
-            {syncing && syncProgress ? `${syncProgress.current}/${syncProgress.total} (${syncProgress.updated} màj)` : syncing ? "Démarrage…" : "Actualiser depuis Odoo"}
-          </button>
-        )}
         aside={<CompteurVue chargement={loading} valeur={products.length.toLocaleString("fr-FR")} libelle={loading || products.length > 1 ? "références" : "référence"} />}
       />
 
-      {/* Ce que dit la page : pharmacie, prix habituel sans remise ; admin, remises non facturées, plus aucune saisie */}
-      {isAdmin ? (admin?.Encart && <admin.Encart style={{ ...encart("warn"), marginBottom: 16 }} />) : (
-        <div role="note" style={{ ...encart("info"), marginBottom: 16 }}>
-          <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
-          <span>Prix habituels, comme dans le reste du catalogue : aucune remise péremption pour l'instant. La date est celle du lot le
-            plus court en stock ; les lots sont détaillés sur chaque ligne.</span>
-        </div>
-      )}
+      {/* Ce que dit la page : remises facturées par Odoo seulement, les autres au prix habituel */}
+      <div role="note" style={{ ...encart("info"), marginBottom: 16 }}>
+        <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
+        {nbFactures > 0
+          ? <span>Les remises affichées sont celles qui figureront sur votre facture. Les autres produits sont à leur prix habituel. La
+            date est celle du lot le plus court en stock ; les lots sont détaillés sur chaque ligne.</span>
+          : <span>Prix habituels, comme dans le reste du catalogue : aucune remise péremption pour l'instant. La date est celle du lot le
+            plus court en stock ; les lots sont détaillés sur chaque ligne.</span>}
+      </div>
 
       {/* Recherche en pastille blanche + tri (comme la recherche de section du catalogue) */}
       <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
@@ -188,18 +144,10 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
           actions={<ActionEtat principal icone="actualiser" onClick={fetchData}>Réessayer</ActionEtat>} />
       )}
 
-      {/* Liste vide : bouton de synchronisation inchangé (même onClick, même état) */}
+      {/* Liste vide */}
       {!loading && !error && products.length === 0 && (
-        <EtatVide cadre icone="horloge"
-          titre={syncing ? "Synchronisation des péremptions en cours…" : "Aucune donnée de péremption"}
-          texte="Les dates de péremption doivent être synchronisées depuis Odoo."
-          actions={
-            <button className={syncing ? undefined : "ex-btn-petrole"} onClick={triggerExpirySync} disabled={syncing}
-              style={{ ...ui.btn("primaire", "l"), background: syncing ? T.sand : undefined, color: syncing ? T.inkSoft : undefined, cursor: syncing ? "default" : "pointer" }}>
-              <Icone nom={syncing ? "horloge" : "actualiser"} taille={18} />
-              {syncing ? "Synchronisation en cours…" : "Synchroniser les péremptions Odoo"}
-            </button>
-          } />
+        <EtatVide cadre icone="horloge" titre="Aucun produit à date courte en ce moment"
+          texte="Revenez plus tard : la liste suit les lots en stock dont la péremption tombe entre J+30 et 4 mois." />
       )}
 
       {/* Filtre sans résultat (était : rien d'affiché) */}
@@ -227,7 +175,7 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
                 const prix = prixAffiche(p);
                 const menu = prix.rayon && Math.abs((prix.pn ?? 0) - (prixPage(p).pn ?? 0)) >= 0.005 ? prix.rayon : null;   // prix du menu ≠ prix de la Saisie
                 const sansPrix = !(prix.pn > 0);
-                const notee = discounts[p.cip] != null && Number(discounts[p.cip]) !== 0 ? Number(discounts[p.cip]) : null;
+                const remise = remiseFacturee(p, prix);   // remise facturée par Odoo (V1), sinon null
                 const qty = quantities[p.cip] || 0;
 
                 return (
@@ -258,26 +206,25 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
                         </div>
                       ))}
                     </td>
-                    {isAdmin && (
-                      <td className="ex-per-base" style={{ padding: "10px 10px", textAlign: "right", fontSize: 13, color: T.inkMute, whiteSpace: "nowrap" }}>
-                        {fmt(p.list_price)}
-                      </td>
-                    )}
-                    {/* prix habituel : celui de la Saisie (liste n° 5) ou du menu, ni prix barré ni remise péremption ; paliers d'Odoo */}
+                    {/* remise facturée par Odoo : prix de base barré, prix facturé, remise de la facture, prix habituel ; sinon prix
+                        habituel (Saisie, liste n° 5, ou menu) et « Péremption courte · lot au … » ; paliers d'Odoo */}
                     <td className="ex-per-prix" style={{ padding: "10px 10px", textAlign: "right", whiteSpace: "nowrap" }}>
-                      <span style={{ fontWeight: 700, fontSize: 15, color: T.ink }}>{fmt(prix.pn)}</span>
-                      {!isAdmin && !sansPrix && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
+                      {remise && (p.prix_barre ?? p.prix_base) > prix.pn && <s style={{ fontSize: 12, color: T.inkMute, marginRight: 6 }}>{fmt(p.prix_barre ?? p.prix_base)}</s>}
+                      <span style={{ fontWeight: 700, fontSize: 15, color: remise ? T.danger : T.ink }}>{fmt(prix.pn)}</span>
+                      {!sansPrix && <span style={{ fontSize: 11, color: T.inkMute, marginLeft: 4 }}>HT</span>}
+                      {remise && <span className="ex-per-remise-facturee" style={{ ...ui.badge("danger"), fontSize: 11, padding: "1px 7px", marginLeft: 6 }}>{fmtPct(remise)}</span>}
                       <TierBadge tiers={prix.tiers} pn={prix.pn} bloc />
+                      {remise && p.prix_habituel > prix.pn && Math.abs((p.prix_barre ?? p.prix_base) - p.prix_habituel) >= 0.005 && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>habituellement {fmt(p.prix_habituel)}</div>}
+                      {remise && p.force_lot_long && p.court_qte > 0 && (
+                        <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2, whiteSpace: "normal", maxWidth: 220, marginLeft: "auto" }}>
+                          dont {p.court_qte} boîte{p.court_qte > 1 ? "s" : ""} à date courte ; les autres boîtes, à date longue, sont au même prix</div>
+                      )}
+                      {!remise && !sansPrix && p.earliest_expiry && (
+                        <div style={{ marginTop: 3 }}><span style={{ ...ui.badge("warn"), fontSize: 11, padding: "1px 7px" }}>Péremption courte · lot au {datePeremption(String(p.earliest_expiry).slice(0, 10))}</span></div>
+                      )}
                       {menu && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix du menu « {menu} »</div>}
-                      {!isAdmin && sansPrix && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix à confirmer</div>}
+                      {sansPrix && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 2 }}>prix à confirmer</div>}
                     </td>
-                    {isAdmin && (
-                      <td className="ex-per-remise" style={{ padding: "10px 10px", textAlign: "left" }}>
-                        {admin?.CelluleRemise
-                          ? <admin.CelluleRemise p={p} notee={notee} />
-                          : <span style={{ fontSize: 12, color: T.inkSoft }}>{notee != null ? `${fmtPct(notee)} · notée, non reprise` : "—"}</span>}
-                      </td>
-                    )}
                     <td className="ex-per-qte" style={{ padding: "10px 10px", textAlign: "center" }}>
                       <div style={{ display: "flex", alignItems: "center", gap: 4, justifyContent: "center" }}>
                         <button className="ex-qte-moins" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
@@ -313,8 +260,6 @@ export default function ShortExpiry({ isAdmin, onAddToCart, icone, couleur = "#e
 }
 
 // ── Atomes (refonte charte, lot 7) ──
-// bouton secondaire à filet (synchro admin) : survol par la classe ex-btn-ligne
-const btnLigne = { ...ui.btn("ligne", "s"), background: undefined, boxShadow: `inset 0 0 0 1.5px ${T.lineField}`, fontSize: 12 };
 // « − » / « + » de 24 px du tableau : fond et survol par les classes ex-qte-moins / ex-qte-plus
 const pas = { width: 24, height: 24, padding: 0, border: "none", borderRadius: R.pill, cursor: "pointer", flexShrink: 0,
   display: "flex", alignItems: "center", justifyContent: "center" };

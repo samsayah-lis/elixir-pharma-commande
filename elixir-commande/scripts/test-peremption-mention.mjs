@@ -18,6 +18,9 @@
 //    jamais baissé) ; ajout depuis la page par les règles de la Saisie (ajouterDepuisSaisie : colis, panier ouvert) ; prix
 //    du menu affiché pour un CIP rangé dans un menu ou une campagne (prixDuMenu = prix du panier calculé) ; paliers ; pas
 //    d'ajout sans prix ; remise notée de l'admin en lecture seule (plus aucune écriture de expiry_discounts).
+//  • V1 (« Odoo facture la remise », docs/peremption-odoo.md) : la page lit peremption?action=page (repli odoo-catalog) ;
+//    remise facturée gardée sur la ligne (peremption_remise : panier, commande, e-mail, badges) ; remise finie → ligne
+//    remontée au prix actuel (« la remise péremption a pris fin ») ; onglet admin chargé à la demande (PeremptionsAdmin.jsx).
 import { build } from "esbuild";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -29,13 +32,14 @@ const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
   stdin: { contents: 'export * from "./src/peremption-panier.js"; export { applyTiers } from "./src/tiers.jsx";'
     + ' export { qtyByCip, needsJustif, justifIssues, rxFrais } from "./src/lab-justif-client.js";'
-    + ' export { remiseSaisie, PEREMPTIONS_ADMIN } from "./src/components/PeremptionsAdmin.jsx";', resolveDir: RACINE, loader: "js" },
+    + ' export { remiseSaisie, prixVise, ETATS, habituelDe, economie, detailJournal, csvEcarts, texteFinLot, texteDecision, FACTURATION, ACTIONS_JOURNAL, RESULTATS_JOURNAL } from "./src/components/PeremptionsAdmin.jsx";', resolveDir: RACINE, loader: "js" },
   bundle: true, format: "esm", platform: "neutral", write: false,
   loader: { ".jsx": "jsx", ".js": "jsx" }, jsx: "automatic", logLevel: "silent",
   // React vide (les composants ne sont pas rendus ici) ; JSX automatique (src/icons.jsx n'importe pas React)
   plugins: [{ name: "sans-react", setup(b) {
     b.onResolve({ filter: /^react(\/jsx-runtime)?$/ }, (a) => ({ path: a.path, namespace: "vide" }));
     b.onLoad({ filter: /.*/, namespace: "vide" }, () => ({ contents: "export default {}; export const useState = (v) => [v, () => {}];"
+      + " export const useEffect = () => {}; export const useCallback = (f) => f; export const useMemo = (f) => f(); export const useRef = (v) => ({ current: v });"
       + " export const jsx = (t, p) => ({ t, p }); export const jsxs = jsx; export const Fragment = {};", loader: "js" }));
   } }],
 });
@@ -122,8 +126,27 @@ eq("ligne péremption : champs ajoutés", [M.champsMention({ peremption: "2026-1
 eq("e-mail : mention sans remise péremption", M.mentionMail({ peremption: "2026-12-31" }), " — PÉREMPTION COURTE (Pér. 31/12/2026, sans remise péremption)");
 eq("prix de la page : liste n° 5 si remise, sinon prix catalogue", [M.prixPage(PAGE_HEC).pn, M.prixPage(PAGE_CHER).pn, M.prixPage(PAGE_SANS_REMISE).pn, M.prixPage({ ...PAGE_HEC, discount_pct: 0 }).pn], [9.76, 1910, 8, 10.32]);
 eq("prix de la page : paliers d'Odoo gardés", M.prixPage(PAGE_ZADI).tiers, [{ min_qty: 6, price: 3.4 }]);
-eq("remise notée (admin) : entier de 0 à 90, sinon refusée", ["30", "0", "90", "91", "-5", "12.5", "abc", "", " 15 ", "20,0"].map(M.remiseSaisie), [30, 0, 90, null, null, null, null, null, 15, 20]);
-eq("parties admin : encart et cellule « Remise notée »", Object.keys(M.PEREMPTIONS_ADMIN), ["Encart", "CelluleRemise"]);
+eq("remise saisie (admin, V1) : entier de 0 à 90, sinon refusée", ["30", "0", "90", "91", "-5", "12.5", "abc", "", " 15 ", "20,0"].map(M.remiseSaisie), [30, 0, 90, null, null, null, null, null, 15, 20]);
+eq("admin (V1) : prix visé du tableau (% du prix de base, ou du prix habituel selon le réglage)", [M.prixVise({ list_price: 3.74, prix_listes: { 5: 3.51 } }, 12), M.prixVise({ list_price: 3.74, prix_listes: { 5: 3.51 } }, 10, "prix_liste5"), M.prixVise({}, 10)],
+  [3.29, 3.16, null]);
+eq("admin (V1) : états affichés (§ 7)", Object.keys(M.ETATS).slice(0, 4), ["facture", "en_cours", "simule", "a_remiser"]);
+// revue V1 (admin) : prix habituel figé à la décision, économie, journal lisible, export des écarts, message de fin de lot
+{
+  const esp = (t) => String(t).replace(/\s/g, " ");
+  eq("admin (revue V1) : prix habituel L5 figé à la décision (les faits relus portent notre remise), sinon celui des faits",
+    [M.habituelDe({ decision: { prix_habituel: { 5: 3.51 } }, faits: { prix_listes: { 5: 3.29 } } }), M.habituelDe({ faits: { prix_listes: { 5: 3.51 } } }), M.habituelDe({})], [3.51, 3.51, null]);
+  eq("admin : prix visé en base « prix habituel » calculé sur l'habituel figé (3,51 € × 0,9)", M.prixVise({ list_price: 3.74, prix_listes: { 5: 3.29 } }, 10, "prix_liste5", 3.51), 3.16);
+  eq("admin : économie pour la pharmacie sur son prix habituel (Zinnat −12 % sur le prix de base = −6,3 % sur l'habituel)", [M.economie(3.29, 3.51), M.economie(null, 3.51)], [6.3, null]);
+  eq("admin : journal en français (action, résultat, détail en phrases)", [M.ACTIONS_JOURNAL.controler, M.RESULTATS_JOURNAL.simule, esp(M.detailJournal({ action: "controler", pricelist_id: 5, apres: { prix_facture: 1.18, prix_attendu: 1.18 } })),
+    esp(M.detailJournal({ action: "creer", apres: { pricelist_id: 25, compute_price: "percentage", percent_price: 40, date_start: "2026-10-21 09:12:07", date_end: "2026-12-01 22:59:59" } })), M.detailJournal({ action: "x", message: "texte du serveur" })],
+    ["Contrôle du prix facturé", "simulé", "Liste n° 5 : facturé 1,18 €, attendu 1,18 €", "Liste n° 25 : remise 40 % sur le prix de base, du 21/10/2026 au 01/12/2026", "texte du serveur"]);
+  const csv = M.csvEcarts([{ date: "2026-10-18T10:00:00Z", pharmacie: "Pharmacie; d'essai", commande: "1791000000000", odoo: "S351354", liste: 5, cip: "3400932448951", nom: "ZADITEN", qte: 3, pn: 1.92, net: 3.6, ecart: 5.04, peremption: null, page_peremption: true, facturation: "to invoice" }]).split("\r\n");
+  eq("admin : export CSV des écarts (séparateur « ; », décimales à virgule, facturation traduite)", [csv[0].split(";").length, csv[1]],
+    [14, '18/10/2026;"Pharmacie; d\'essai";1791000000000;S351354;5;3400932448951;ZADITEN;3;1,92;3,6;5,04;;oui;à facturer']);
+  eq("admin : message de fin de lot avec les noms", M.texteFinLot({ resultats: [{ item: { cip: "1" }, statut: "facturee" }, { item: { cip: "2" }, statut: "facturee" }], refus: [{ cip: "3", raisons: [{ texte: "lot long" }] }] }, (c) => ({ 1: "Zinnat", 2: "Pneumovax", 3: "Surgam" }[c])),
+    "Zinnat, Pneumovax : facturés par Odoo · refusé : Surgam (lot long)");
+  eq("admin : décision simulée retirée → « rien à supprimer dans Odoo »", M.texteDecision({ simulee: true, remise_pct: 12, statut: "retrait_demande" }, { delai_retrait_min: 120, listes: [5] }), "12 % · simulé : aucune règle dans Odoo, rien à supprimer");
+}
 {
   // revue du lot 0 : lignes d'un panier enregistré par l'ancienne page, remontées au prix de la page (jamais baissées)
   const page = [PAGE_ZADI, PAGE_EUPHY, PAGE_CHER, { ...PAGE_SANS_REMISE, cip: "3400930000104", list_price: null }];
@@ -166,23 +189,20 @@ eq("parties admin : encart et cellule « Remise notée »", Object.keys(M.PEREMP
   eq("page : lot avec heure → jour seul", ajoutPage(PAGE_EUPHY, 1).peremption, "2027-01-31");
   eq("page : quantité 0, rien d'ajouté", ajoutPage(PAGE_HEC, 0), null);
   eq("page : produit sans prix, rien d'ajouté (l'envoi planterait sur un prix vide)", ajoutPage({ ...PAGE_SANS_REMISE, list_price: null }, 2), null);
-  eq("page : prix du menu affiché si le CIP est rangé dans un menu (prixPanier), sinon prix de la Saisie ; admin : liste n° 5",
-    [prixAffichePage(PAGE_HEC, { prixPanier: () => ({ pn: 6.54, rayon: "Campagne" }) }).pn, prixAffichePage(PAGE_HEC, { prixPanier: () => null }).pn,
-      prixAffichePage(PAGE_HEC, { prixPanier: () => ({ pn: 6.54 }), isAdmin: true }).pn], [6.54, 9.76, 9.76]);
+  eq("page : prix du menu affiché si le CIP est rangé dans un menu (prixPanier), sinon prix de la Saisie",
+    [prixAffichePage(PAGE_HEC, { prixPanier: () => ({ pn: 6.54, rayon: "Campagne" }) }).pn, prixAffichePage(PAGE_HEC, { prixPanier: () => null }).pn], [6.54, 9.76]);
   eq("page : ligne de menu sans prix → pas d'ajout", ajoutPage(PAGE_HEC, 2, { prixPanier: () => ({ pn: null, rayon: "Menu" }) }), null);
   vrai("page : paliers d'Odoo affichés (TierBadge) et « Ajouter » désactivé sans prix", /<TierBadge tiers=\{prix\.tiers\} pn=\{prix\.pn\} bloc \/>/.test(SHORT) && /sansPrix \? \(\s*<button className="ex-peremption-ajouter" disabled/.test(SHORT));
   vrai("page : plus aucune remise d'office ni remise notée dans le calcul du prix (getDiscount, 50/20)", !/getDiscount|>= 500 \? 20 : 50/.test(SHORT));
-  vrai("page : remises notées lues par l'admin seulement", /isAdmin \? fetch\("\/\.netlify\/functions\/restock-alert\?action=expiry_discounts"\) : null/.test(SHORT));
+  vrai("page (V1) : lit peremption?action=page, repli odoo-catalog ; plus aucune lecture de expiry_discounts ni du jeton admin",
+    /fetch\("\/\.netlify\/functions\/peremption\?action=page"\)/.test(SHORT) && /odoo-catalog\?expiry_months=4/.test(SHORT) && !/restock-alert|expiry_discounts|admin_token/.test(SHORT));
   const PER_ADMIN = lire("src/components/PeremptionsAdmin.jsx");
-  vrai("admin : remise notée en lecture seule, plus aucune écriture de expiry_discounts (ancienne page des onglets non rechargés)",
-    ![SHORT, PER_ADMIN].some(t => /set_expiry_discount|method: "POST"|onEnregistree/.test(t)));
-  const cellule = M.PEREMPTIONS_ADMIN.CelluleRemise;
-  eq("admin : cellule sans valeur → « — », avec valeur → « 30 % · notée, non reprise », sans bouton",
-    [JSON.stringify(cellule({ notee: null })).includes("—"), JSON.stringify(cellule({ notee: 30 })).includes("notée, non reprise"), /onClick/.test(JSON.stringify(cellule({ notee: 30 })))], [true, true, false]);
+  vrai("admin (V1) : plus aucune écriture de expiry_discounts ; tout passe par peremption.js et adminFetch",
+    ![SHORT, PER_ADMIN].some(t => /set_expiry_discount|restock-alert/.test(t)) && /const API = "\/\.netlify\/functions\/peremption"/.test(PER_ADMIN) && !/localStorage/.test(PER_ADMIN));
   const ADMIN = lire("src/AdminPanel.jsx");
-  vrai("parties admin hors du bundle des pharmacies : importées par AdminPanel seulement (chargé à la demande)",
-    /from "\.\/components\/PeremptionsAdmin\.jsx"/.test(ADMIN) && /admin=\{PEREMPTIONS_ADMIN\}/.test(ADMIN) && !/^import[^\n]*PeremptionsAdmin/m.test(SHORT) && !/^import[^\n]*PeremptionsAdmin/m.test(APP)
-    && /React\.lazy\(\(\) => import\("\.\/AdminPanel"\)/.test(APP));
+  vrai("onglet admin hors du bundle des pharmacies : chargé à la demande par AdminPanel (lui-même chargé à la demande)",
+    /React\.lazy\(\(\) => import\("\.\/components\/PeremptionsAdmin\.jsx"\)\)/.test(ADMIN) && /<PeremptionsAdmin adminFetch=\{adminFetch\} \/>/.test(ADMIN)
+    && !/import[^\n]*PeremptionsAdmin/.test(SHORT) && !/import[^\n]*PeremptionsAdmin/.test(APP) && /React\.lazy\(\(\) => import\("\.\/AdminPanel"\)/.test(APP));
   const prodShort = enProd("src/components/ShortExpiry.jsx");
   if (prodShort) {   // production : −50 % d'office (Hec 5,16 € affiché, 9,76 € facturé)
     let envoye = null;
@@ -217,11 +237,15 @@ const PER_EUPHY = ajoutPage(PAGE_EUPHY, 2), PER_HEC = ajoutPage(PAGE_HEC, 2), PE
 const SAI_EUPHY = ajoutSaisie(PAGE_EUPHY, 3);
 // contrôle des prix du panier (controlerPrixPanier d'App.jsx, vrai code) : lecture de la page simulée (aucun réseau)
 const PAGE_PRODUITS = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI, PAGE_CHER, PAGE_SANS_REMISE];
-async function controle(lignes, { page = PAGE_PRODUITS, echec = false, cache = { current: null } } = {}) {
-  const S = { specialItems: lignes, prixRemontes: {}, flashes: [], lectures: 0 };
+// V1 : page des pharmacies (peremption?action=page : produits et remises finies) ; v1 = false : fonction absente (déploiement
+// d'avant la V1) → repli sur odoo-catalog?expiry_months=4
+async function controle(lignes, { page = PAGE_PRODUITS, retirees = [], masques = [], echec = false, v1 = true, cache = { current: null } } = {}) {
+  const S = { specialItems: lignes, prixRemontes: {}, flashes: [], lectures: 0, urls: [] };
   const maj = (k) => (v) => { S[k] = typeof v === "function" ? v(S[k]) : v; };
   const ctx = { ...M, pagePeremption: cache, setSpecialItems: maj("specialItems"), setPrixRemontes: maj("prixRemontes"), flash: (m, d) => S.flashes.push([m, d]),
-    fetch: async (url) => { S.lectures++; if (url !== "/.netlify/functions/odoo-catalog?expiry_months=4") throw new Error(url);
+    fetch: async (url) => { S.lectures++; S.urls.push(url);
+      if (url === "/.netlify/functions/peremption?action=page") return echec || !v1 ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({ produits: page, retirees, masques }) };
+      if (url !== "/.netlify/functions/odoo-catalog?expiry_months=4") throw new Error(url);
       return echec ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({ products: page }) }; } };
   await charge(expr(bloc(APP, /^  const controlerPrixPanier = async \(lignes\) => \{$/)), ctx)(lignes);
   return S;
@@ -343,6 +367,9 @@ async function controle(lignes, { page = PAGE_PRODUITS, echec = false, cache = {
   const cacheEchec = { current: null };
   const e = await controle(ancien, { echec: true, cache: cacheEchec });
   eq("page illisible : panier inchangé, nouvel essai au contrôle suivant", [e.specialItems, e.flashes.length, cacheEchec.current], [ancien, 0, null]);
+  const r0 = await controle(ancien, { v1: false });
+  eq("V1 : fonction peremption absente (avant sa mise en ligne) → repli sur odoo-catalog, même remontée", [r0.urls, r0.specialItems[0].pn],
+    [["/.netlify/functions/peremption?action=page", "/.netlify/functions/odoo-catalog?expiry_months=4"], 3.6]);
   eq("panier sans ligne hors catalogue (ou seulement multi-CIP) : aucune lecture", [(await controle([])).lectures, (await controle([{ cip: ZADI, qty: 1, pn: 1, supplier_code: "Z" }])).lectures], [0, 0]);
   vrai("contrôle lancé au chargement, à l'ouverture du panier et au changement de pharmacie, hors des zones protégées",
     /useEffect\(\(\) => \{ controlerPrixPanier\(specialItems\); \}, \[cartOpen, actingFor\]\);/.test(APP));
@@ -449,6 +476,54 @@ const sansId = (c) => { const { id, date, ...r } = c; return r; };   // eslint-d
     eq("sans ligne de la page : commande et e-mail identiques à la production", [sansId(a.appels[0].corps), { ...a.appels[1].corps.template_params, order_date: "" }],
       [sansId(b.appels[0].corps), { ...b.appels[1].corps.template_params, order_date: "" }]);
   }
+}
+
+// ── 4 bis. V1 (« Odoo facture la remise ») : remise facturée annoncée par la page, gardée jusqu'à la commande ──
+{
+  const ZIN = "3400933121549";
+  // ligne de peremption?action=page : règle vérifiée dans Odoo et prix du site repris (discounted_price = prix péremption)
+  const PAGE_ZIN = { cip: ZIN, name: "ZINNAT 125 mg B/8", list_price: 3.74, discounted_price: 3.29, discount_pct: 12, price_tiers: null, earliest_expiry: "2027-02-28",
+    facturee: true, prix: 3.29, prix_base: 3.74, remise_pct: 12, prix_habituel: 3.51 };
+  const o = ajoutPage(PAGE_ZIN, 2);
+  eq("V1 : ajout depuis la page sous une remise facturée → prix d'Odoo et remise de la facture sur la ligne", [o.pn, o.peremption_remise, o.note], [3.29, 12, "Pér. 28/02/2027"]);
+  eq("V1 : produit non facturé → aucune remise sur la ligne", "peremption_remise" in ajoutPage({ ...PAGE_ZIN, facturee: false }, 1), false);
+  eq("V1 : CIP rangé dans un menu au prix différent → la page n'annonce pas la remise", M.remiseFacturee(PAGE_ZIN, { pn: 3.51 }), null);
+  eq("V1 : badge de l'admin et de « Mes commandes »", [M.badgePeremption(o), M.badgePeremption({ peremption: "2027-02-28" })], ["Pér. 28/02/2027 · −12 %", "Pér. 28/02/2027"]);
+  const { S, ctx } = application(APP);
+  ctx.addItemToCart(o);
+  eq("V1 : panier — ligne hors catalogue avec la remise facturée", S.specialItems, [{ cip: ZIN, name: PAGE_ZIN.name, qty: 2, pn: 3.29, pv: 3.74, tiers: null, peremption: "2027-02-28", peremption_remise: 12 }]);
+  eq("V1 : ligne du panier calculé", [ctx.cartItems[0].note, ctx.cartItems[0].peremption_remise, ctx.cartItems[0].pn], ["Pér. 28/02/2027", 12, 3.29]);
+  const r = await envoyer(APP, { specialItems: S.specialItems });
+  eq("V1 : commande enregistrée avec la remise facturée ; le relais lit le même prix", r.appels[0].corps.items.map(i => [i.cip, i.qty, i.pn, i.peremption_remise]), [[ZIN, 2, 3.29, 12]]);
+  vrai("V1 : e-mail à Elixir « remise péremption −12 % facturée par Odoo »", r.appels[1].corps.template_params.order_lines.includes("PÉREMPTION COURTE (Pér. 28/02/2027, remise péremption −12 % facturée par Odoo)"));
+  // fin de la remise pendant que la ligne attend dans un panier : remontée au prix actuel (remises finies de la page)
+  const fin = await controle(S.specialItems, { page: [], retirees: [{ cip: ZIN, name: PAGE_ZIN.name, list_price: 3.74, discounted_price: 3.51, discount_pct: 6.1, price_tiers: null, prix: 3.51 }] });
+  eq("V1 : remise finie → ligne remontée à 3,51 €, remise retirée de la ligne, mention gardée", fin.specialItems, [{ cip: ZIN, name: PAGE_ZIN.name, qty: 2, pn: 3.51, pv: 3.74, tiers: null, peremption: "2027-02-28" }]);
+  eq("V1 : message « la remise péremption a pris fin »", [fin.flashes[0]?.[0], M.detailRemontee(fin.prixRemontes[ZIN])],
+    [`⚠ La remise péremption a pris fin : prix mis à jour (${PAGE_ZIN.name} : 3,51 €)`, "3,51 € au lieu de 3,29 € : la remise péremption a pris fin"]);
+  const encore = await controle(S.specialItems, { page: [PAGE_ZIN] });
+  eq("V1 : remise toujours facturée → ligne inchangée, aucun message", [encore.specialItems[0].pn, encore.specialItems[0].peremption_remise, encore.flashes.length], [3.29, 12, 0]);
+  eq("V1 : e-mail d'une ligne remontée : « sans remise péremption »", M.mentionMail(fin.specialItems[0]), " — PÉREMPTION COURTE (Pér. 28/02/2027, sans remise péremption)");
+  // revue V1 (site) : remise finie, produit RESTÉ sur la page au prix habituel (il est aussi dans « retirees ») → « a pris fin »,
+  // jamais « n'était pas facturée » ; même pour une remise de 50 % (même prix que l'ancienne page)
+  const PAGE_ZIN_FINI = { ...PAGE_ZIN, facturee: false, discounted_price: 3.51, discount_pct: 6.1, prix: 3.51, remise_pct: undefined, prix_habituel: undefined };
+  const RET_ZIN = { cip: ZIN, name: PAGE_ZIN.name, list_price: 3.74, discounted_price: 3.51, discount_pct: 6.1, price_tiers: null, prix: 3.51 };
+  const surPage = await controle(S.specialItems, { page: [PAGE_ZIN_FINI], retirees: [RET_ZIN] });
+  eq("revue V1 : remise finie, produit resté sur la page → « la remise péremption a pris fin »", [surPage.flashes[0]?.[0], surPage.prixRemontes[ZIN]?.finRemise], [`⚠ La remise péremption a pris fin : prix mis à jour (${PAGE_ZIN.name} : 3,51 €)`, true]);
+  const f50 = await controle([{ ...S.specialItems[0], pn: 1.87, peremption_remise: 50 }], { page: [PAGE_ZIN_FINI] });
+  eq("revue V1 : remise facturée de 50 % finie (prix de l'ancienne page) → « a pris fin », pas « n'était pas facturée »", [f50.prixRemontes[ZIN]?.finRemise, f50.prixRemontes[ZIN]?.ancienneRemise], [true, false]);
+  // remise baissée (−30 % → −12 %) : la ligne remonte au nouveau prix facturé et garde la nouvelle remise (mention, e-mail)
+  const baisse = await controle([{ ...S.specialItems[0], pn: 2.62, peremption_remise: 30 }], { page: [PAGE_ZIN] });
+  eq("revue V1 : remise baissée → ligne au nouveau prix, nouvelle remise gardée, message juste",
+    [baisse.specialItems[0].pn, baisse.specialItems[0].peremption_remise, baisse.flashes[0]?.[0], M.mentionMail(baisse.specialItems[0])],
+    [3.29, 12, `⚠ La remise péremption facturée a changé : prix mis à jour (${PAGE_ZIN.name} : 3,29 €, −12 %)`, " — PÉREMPTION COURTE (Pér. 28/02/2027, remise péremption −12 % facturée par Odoo)"]);
+  // produit « fantôme » (plus de boîte courte : absent de la page, renvoyé dans « masques ») : panier de l'ancienne page à −50 % remonté
+  const PARLO = { cip: "3400935000017", name: "PARLODEL 10 mg", list_price: 8.2, discounted_price: 7.83, discount_pct: 4.5, price_tiers: null, prix: 7.83 };
+  const fant = await controle([{ cip: PARLO.cip, name: PARLO.name, qty: 3, pn: 4.1, pv: 8.2, tiers: null, peremption: "2026-12-31" }], { page: [], masques: [PARLO] });
+  eq("revue V1 : produit « fantôme » d'un panier de l'ancienne page (−50 %) → remonté au prix facturé (régression du lot 0 corrigée)",
+    [fant.specialItems[0].pn, fant.prixRemontes[PARLO.cip]?.ancienneRemise], [7.83, true]);
+  vrai("App.jsx : contrôle du panier sur produits + remises finies + produits masqués", /\.\.\.\(Array\.isArray\(j\.masques\) \? j\.masques : \[\]\)/.test(APP));
+  vrai("page : prix barré du serveur (prix habituel en base « % du prix habituel »)", /p\.prix_barre \?\? p\.prix_base/.test(SHORT));
 }
 
 // ── 5. Ce que le lot ne touche pas ──

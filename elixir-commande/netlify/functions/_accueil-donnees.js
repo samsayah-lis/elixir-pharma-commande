@@ -41,6 +41,10 @@ export function creerSources(deps = {}, { delaiOdoo = 0 } = {}) {
     verrou: deps.verrou || ((fn) => avecVerrou(fn, 60e3, CLE_VERROU)),
     verifierJeton: deps.verifierJeton || verifierJeton,
     maintenant: deps.maintenant || (() => Date.now()),
+    // Péremption courte (V1, docs/peremption-odoo.md) : page des pharmacies (remises facturées par Odoo seulement) ; tests
+    // et banc qui injectent sb sans peremption : lecture du lot 0 (_accueil-outils.js lirePeremption)
+    // (chargée à la demande : seulement quand une mise en avant Péremption est lue)
+    peremption: deps.peremption || (deps.sb ? null : () => import("./_peremption.js").then(m => m.creerPeremption().etatPublic())),
   };
 }
 

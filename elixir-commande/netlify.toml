@@ -80,3 +80,11 @@
 # depuis 12 mois ou dont le compte n'est plus rattaché à la pharmacie, annonce bloquée (docs/notifications.md § 8)
 [functions."push-menage"]
   schedule = "35 3 * * *"
+
+# Péremption courte, « Odoo facture la remise » (docs/peremption-odoo.md) : filet complet à h:25. Décisions ouvertes
+# seulement : faits frais (stock et dates), retraits (page cachée 3 h avant la fin de la règle, stock court épuisé, lot long
+# reçu), suppression dans Odoo après le délai et l'import des commandes en cours. Aucune création. Aux autres quarts
+# d'heure : rien, sauf des retraits immédiats pas finis (« Tout retirer » navigateur fermé). Mode « Simulation » par défaut :
+# aucune écriture Odoo sans PEREMPTION_ODOO_ECRITURE=1 (portée « Production ») ET le mode « Actif » de l'admin.
+[functions."peremption-cron"]
+  schedule = "10,25,40,55 * * * *"

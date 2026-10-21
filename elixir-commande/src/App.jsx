@@ -1367,16 +1367,22 @@ export default function App() {
   // L'ancienne page mettait au panier −50 % (−20 % dès 500 €), qu'Odoo n'a jamais facturés, et le panier enregistré garde ce
   // prix. Au chargement, à l'ouverture et à la fermeture du panier et au changement de pharmacie (saisie Elixir), les lignes
   // hors catalogue dont le CIP est sur la page sont remontées au prix de la page, celui de la Saisie (remonterPrix) ; un prix
-  // n'est jamais baissé. Lecture publique de la page (odoo-catalog?expiry_months=4), partagée 5 min ; en échec, rien ne
-  // change et le contrôle suivant relit. Hors des zones protégées : la ligne change par setSpecialItems, comme une quantité.
+  // n'est jamais baissé. Lecture publique de la page partagée 5 min ; en échec, rien ne change et le contrôle suivant relit.
+  // Hors des zones protégées : la ligne change par setSpecialItems, comme une quantité.
+  // V1 (« Odoo facture la remise », conception § 8.3) : page des pharmacies (peremption?action=page) ; ses remises finies
+  // depuis 7 jours (retirees, prix actuel) remontent aussi les lignes ajoutées sous la remise (« la remise a pris fin ») ;
+  // ses produits masqués (« fantômes » : plus de boîte courte, prix actuel) remontent les lignes de l'ancienne page comme au
+  // lot 0 ; repli : odoo-catalog?expiry_months=4.
   const [prixRemontes, setPrixRemontes] = useState({});   // cip → changement (encart de la ligne du panier)
   const pagePeremption = useRef(null);                     // { t, promesse } : lecture de la page partagée
   const controlerPrixPanier = async (lignes) => {
     if (!lignes.some(s => s?.cip && !s.supplier_code)) return;
     let lecture = pagePeremption.current;
     if (!lecture || Date.now() - lecture.t > 5 * 60e3) {
-      const promesse = fetch("/.netlify/functions/odoo-catalog?expiry_months=4")
-        .then(r => (r.ok ? r.json() : null)).then(j => (Array.isArray(j?.products) ? j.products : null)).catch(() => null);
+      const promesse = fetch("/.netlify/functions/peremption?action=page").then(r => (r.ok ? r.json() : null)).catch(() => null)
+        .then(j => (Array.isArray(j?.produits) ? [...j.produits, ...(Array.isArray(j.retirees) ? j.retirees : []).map(x => ({ ...x, fin_remise: true })), ...(Array.isArray(j.masques) ? j.masques : [])]
+          : fetch("/.netlify/functions/odoo-catalog?expiry_months=4").then(r => (r.ok ? r.json() : null)).then(k => (Array.isArray(k?.products) ? k.products : null))))
+        .catch(() => null);
       lecture = pagePeremption.current = { t: Date.now(), promesse };
     }
     const produits = await lecture.promesse;
@@ -1388,6 +1394,12 @@ export default function App() {
     flash(`⚠ ${messageRemontee(changes)}`, 9000);
   };
   useEffect(() => { controlerPrixPanier(specialItems); }, [cartOpen, actingFor]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // V1 (conception § 8.3) : aussi au retour sur l'onglet (remise finie pendant que la page dormait ; lecture gardée 5 min)
+  useEffect(() => {
+    const auRetour = () => { if (document.visibilityState === "visible") controlerPrixPanier(specialItems); };
+    document.addEventListener("visibilitychange", auRetour);
+    return () => document.removeEventListener("visibilitychange", auRetour);
+  }, [specialItems]);   // eslint-disable-line react-hooks/exhaustive-deps
   // Péremption courte : prix que prendra le panier pour un CIP rangé dans un menu (même recherche qu'addItemToCart)
   const prixMenuPeremption = (cip) => prixDuMenu(CATALOG_WITH_ADMIN, cip, getCampaign);
 
@@ -3508,11 +3520,12 @@ export default function App() {
                       {/* Nom du produit */}
                       <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
                       {/* Péremption courte (src/peremption-panier.js) : date du lot de la page, gardée jusqu'à la commande ; prix habituel,
-                          celui de la Saisie, liste n° 5 (aucune remise péremption tant qu'Odoo ne la facture pas) */}
+                          celui de la Saisie (liste n° 5), ou remise péremption facturée par Odoo (V1, peremption_remise) */}
                       {estPeremption(item) && (
                         <div style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
                           <Icone nom="horloge" taille={14} style={iconeEncart} />
-                          <span><strong>{notePeremption(item.peremption)}</strong> · péremption courte, au prix habituel</span>
+                          <span><strong>{notePeremption(item.peremption)}</strong> · {Number(item.peremption_remise) >= 1
+                            ? `remise péremption ${fmtPct(item.peremption_remise)} facturée par Odoo` : "péremption courte, au prix habituel"}</span>
                         </div>
                       )}
                       {/* Prix remonté (panier enregistré par l'ancienne page, controlerPrixPanier) : tant que la ligne est à ce prix */}

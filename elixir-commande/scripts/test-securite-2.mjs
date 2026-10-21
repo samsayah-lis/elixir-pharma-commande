@@ -22,6 +22,8 @@
 //  • pharmacy-otp-verify : la connexion qui a demandé le code n'est pas bloquée par les codes faux d'un tiers ;
 //  • quarantaine : justificatif nettoyé gardé ; menageOrdonnances garde les ordonnances des commandes « a_verifier » ;
 //  • Supabase Auth en panne : 503 « indisponible » (jamais 401), aucun accès, rien lu ni écrit.
+// Péremption courte, V1 (« Odoo facture la remise ») : peremption.js — page publique ; admin, journal, droits, écarts et
+// toute action POST réservés à l'admin (401/403 sans jeton, 403 jeton pharmacie) ; chaîne de nuit : x-cron-secret.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
 process.env.ODOO_URL = "https://odoo.test";
@@ -123,6 +125,9 @@ globalThis.fetch = async (url, opts = {}) => {
     if (methode === "DELETE") return rep(null, 204);
     return rep(GROUPE.filter(r => !p.fournisseur || r.fournisseur === val(p.fournisseur)));
   }
+  // peremption ?action=page : fenêtre de la page (lecture publique du catalogue)
+  if (url.startsWith("https://supabase.test/rest/v1/odoo_catalog?select=cip,name,list_price,discounted_price")) return rep([{ cip: "3400933121549", name: "ZINNAT", list_price: 3.74,
+    discounted_price: 3.51, discount_pct: 6.1, in_stock: true, available: 10, earliest_expiry: "2027-02-28", lots: "[]", updated_at: "2026-10-20T06:00:00Z" }]);
   if (url.startsWith("https://supabase.test/rest/v1/kv_store")) {
     if (kvEnPanne) return rep({ message: "kv indisponible" }, 503);
     if (methode === "POST") { const b = JSON.parse(opts.body); kv.set(b.key, { value: b.value, updated_at: b.updated_at || new Date(Date.now()).toISOString() }); return rep(null, 201); }
@@ -847,6 +852,39 @@ ${entre("  const sendingRef = useRef(false);", "  // ── ONBOARDING SCREEN")}
   authEnPanne = null;
   eq("site : groupement en panne d'Auth (503) → pas de demande de reconnexion", [g2.ev.bloque.length, appelsVers("elixir_group_orders").length], [0, 0]);
   site = null; baseCommandes = null; delete globalThis.localStorage;
+}
+
+// ════════════════════════ peremption (« Odoo facture la remise », V1) ════════════════════════
+// Page publique ; tout le reste réservé à l'admin (jeton vérifié par Supabase Auth) ou à la chaîne de nuit (x-cron-secret).
+// Sans SUPABASE_SERVICE_ROLE_KEY (tables privées) : la page reste servie sans remise, l'admin reçoit 503 « non_installe ».
+{
+  const { handler: peremption } = await import("../netlify/functions/peremption.js");
+  const odooAvant = () => appelsVers("odoo.test").length;
+  const avant = odooAvant();
+  const pe = async (methode, o) => { appels = []; return lit(await peremption(ev(methode, o))); };
+  let x = await pe("GET", { q: { action: "page" } });
+  eq("peremption ?action=page : public (sans jeton), sans cache, aucune remise sans les tables", [x.statut, x.entetes["Cache-Control"], x.corps.facturees, x.corps.etat], [200, "no-store", 0, "non_installe"]);
+  for (const [label, o] of [["GET admin", { q: { action: "admin" } }], ["GET journal", { q: { action: "journal" } }], ["GET droits", { q: { action: "droits" } }], ["GET ecarts", { q: { action: "ecarts" } }], ["GET retrait_apercu", { q: { action: "retrait_apercu", cips: "3400933121549" } }]]) {
+    x = await pe("GET", o);
+    eq(`peremption ${label} sans jeton : refusé, rien lu`, [[401, 403].includes(x.statut), appelsVers("rest/v1").length], [true, 0]);
+    x = await pe("GET", { ...o, jeton: "jeton-a" });
+    eq(`peremption ${label} jeton pharmacie : 403`, x.statut, 403);
+  }
+  for (const action of ["apercu", "appliquer", "etape", "retirer", "tout_retirer", "reessayer", "mode", "reglages", "reconcilier", "faits"]) {
+    x = await pe("POST", { corps: { action, cips: ["3400933121549"], remise_pct: 12, confirmation: "RETIRER" } });
+    eq(`peremption POST ${action} sans jeton : refusé, rien lu ni écrit`, [[401, 403].includes(x.statut), appelsVers("rest/v1").length], [true, 0]);
+    x = await pe("POST", { jeton: "jeton-b", corps: { action, cips: ["3400933121549"], remise_pct: 12, confirmation: "RETIRER" } });
+    eq(`peremption POST ${action} jeton pharmacie : 403`, x.statut, 403);
+  }
+  x = await pe("GET", { q: { step: "nuit" } });
+  eq("peremption chaîne de nuit sans x-cron-secret : 403", x.statut, 403);
+  x = await pe("GET", { q: { action: "admin" }, jeton: "jeton-admin" });
+  eq("peremption admin sans la clé service_role : 503 non_installe", [x.statut, x.corps.error], [503, "non_installe"]);
+  authEnPanne = 503;
+  x = await pe("POST", { jeton: "jeton-admin", corps: { action: "tout_retirer", confirmation: "RETIRER" } });
+  authEnPanne = null;
+  eq("peremption : Supabase Auth en panne → 503 indisponible, rien fait", [x.statut, x.corps.error], [503, "indisponible"]);
+  eq("peremption : aucun appel Odoo pendant ces refus", odooAvant() - avant, 0);
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

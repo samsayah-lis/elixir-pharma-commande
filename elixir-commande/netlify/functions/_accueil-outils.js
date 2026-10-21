@@ -15,6 +15,13 @@
 //    calculés d'une remise d'office (50 %, 20 % dès 500 €) ou de expiry_discounts, qu'Odoo ne facturait pas.
 //    Lecture (3 colonnes, ni prix, ni lots, ni stock) gardée 5 min par instance (clé : jour de Paris et fenêtre) ;
 //    fenêtre recalculée à chaque évaluation.
+//    V1 de « Odoo facture la remise » (docs/peremption-odoo.md, conception § 10) : en ligne, la lecture est etatPublic() de
+//    _peremption.js (src.peremption, fourni par _accueil-donnees.js) : produits « fantômes » retirés, et pour chaque
+//    produit « facturee » (règle vérifiée dans Odoo ET reprise par le prix du site), son prix (liste n° 5), la remise de
+//    la facture et le prix habituel figé à la décision. « dès » = plus bas prix facturé, « jusqu'à » = plus forte remise
+//    de la facture (référence « page » : % du prix de base, comme la facture), seulement pour les produits dont l'économie
+//    sur le prix habituel atteint le seuil d'annonce des réglages ; sans produit facturé : comme le lot 0. Sans
+//    src.peremption (tests et banc qui injectent sb) : lecture du lot 0.
 // Délai (GET) : chaque lecture d'outil est bornée (delaiMs) : au-delà, seul cet outil passe en donnees_indisponibles, la
 // réponse de l'accueil part sans l'attendre (une lecture finie plus tard reste gardée 5 min : elle est complète).
 //  • fauteuil, transfert : correspondance code fournisseur → CIP (plus ancien d'abord) calculée par la fonction planifiée
@@ -81,8 +88,17 @@ export async function lirePeremption(src) {
   const { min, max } = fenetrePeremption(t);
   const cle = `${jourParis(t)}|${min}|${max}`;
   if (memo.valeur && memo.cle === cle && t - memo.at >= 0 && t - memo.at < MEMO_MS) return memo.valeur;
-  const rows = await src.sb(`odoo_catalog?select=cip,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.${min}&earliest_expiry=lte.${max}&order=earliest_expiry.asc&limit=1000`);
-  const valeur = { min, max, rows: (Array.isArray(rows) ? rows : []).filter(r => r && r.cip) };
+  let valeur;
+  if (typeof src.peremption === "function") {
+    // V1 : page des pharmacies (etatPublic) ; seulement les champs de la carte
+    const e = await src.peremption();
+    const rows = (Array.isArray(e?.produits) ? e.produits : []).filter(r => r && r.cip).map(r => ({ cip: r.cip, earliest_expiry: r.earliest_expiry, updated_at: r.updated_at,
+      ...(r.facturee ? { facturee: true, prix: num(r.prix), remise_pct: num(r.remise_pct), prix_habituel: num(r.prix_habituel) } : {}) }));
+    valeur = { min, max, rows, seuil: num(e?.seuil_annonce_pct) ?? 5 };
+  } else {
+    const rows = await src.sb(`odoo_catalog?select=cip,earliest_expiry,updated_at&in_stock=eq.true&earliest_expiry=not.is.null&earliest_expiry=gte.${min}&earliest_expiry=lte.${max}&order=earliest_expiry.asc&limit=1000`);
+    valeur = { min, max, rows: (Array.isArray(rows) ? rows : []).filter(r => r && r.cip) };
+  }
   memo = { cle, at: t, valeur };
   return valeur;
 }
@@ -170,10 +186,12 @@ export function evaluerOutil(cle, ctx = {}, maintenant = Date.now()) {
     const maj = rows.map(r => r.updated_at).filter(x => Number.isFinite(Date.parse(x || ""))).sort().at(-1) || null;
     if (ageMs(maj, maintenant) > AGE_MAX_MS) raisons.push("donnees_anciennes");
     const jours = rows.map(r => jour10(r.earliest_expiry)).sort();
-    // lot 0 : Odoo ne facture aucune remise péremption → ni « dès » ni « jusqu'à » (champs gardés, à null : même forme
-    // pour les pages déjà ouvertes) ; admin : nombre de remises facturées (0), pour l'éditeur des mises en avant
-    return { raisons, chiffres: { nb: rows.length, des: null, jusqua: null, mois: [jours[0].slice(0, 7), jours.at(-1).slice(0, 7)], maj },
-      admin: { remises_facturees: 0 } };
+    // remises facturées par Odoo (V1) : économie d'au moins le seuil d'annonce sur le prix habituel figé à la décision ;
+    // sans aucune : ni « dès » ni « jusqu'à » (champs gardés, à null : même forme pour les pages déjà ouvertes)
+    const seuil = num(P.seuil) ?? 5;
+    const honnetes = rows.filter(r => r.facturee && r.prix > 0 && r.prix_habituel > 0 && r.remise_pct >= 1 && r.prix <= r.prix_habituel * (1 - seuil / 100) + 0.0001);
+    return { raisons, chiffres: { nb: rows.length, des: honnetes.length ? Math.min(...honnetes.map(r => r.prix)) : null, jusqua: honnetes.length ? Math.max(...honnetes.map(r => r.remise_pct)) : null,
+      mois: [jours[0].slice(0, 7), jours.at(-1).slice(0, 7)], maj }, admin: { remises_facturees: honnetes.length } };
   }
   if (cle === "fauteuil" || cle === "transfert") {
     const F = FAUTEUILS[cle], cat = o.fauteuilsCat;

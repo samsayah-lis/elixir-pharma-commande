@@ -26,6 +26,10 @@
 //           src/notifications/banc.js, ?banc_push=<scénario>) ; appareils, réglages et annonces gardés en mémoire jusqu'au
 //           redémarrage, deux appareils d'exemple pour la pharmacie du banc ; rien n'est envoyé. BANC_PUSH=reconnexion :
 //           statut et actions répondent 401 (écran « Se reconnecter » du panneau).
+//  • peremption (« Odoo facture la remise », docs/peremption-odoo.md) : VRAI code de peremption.js et _peremption.js sur
+//           un faux Odoo et un faux Supabase en mémoire (scripts/banc/peremption-banc.mjs, relevé Odoo du 20/10/2026) ;
+//           odoo-catalog?expiry_months=4 et la carte Péremption de l'accueil suivent ce monde (prix du site à jour).
+//           BANC_PEREMPTION_MODE, BANC_PEREMPTION_ECRITURE=1, BANC_PEREMPTION_ESSAI=1 : voir peremption-banc.mjs.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>, BANC_PHOTOS=prive,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
@@ -38,6 +42,8 @@ import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/r
 import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
 import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
 import { categoriesAffichees, filtrerCategories, verifierAnnonce, verifierReglages, fusionnerReglages, CATEGORIES_DEFAUT } from "../../src/notifications/regles.js";
+import { lirePeremption, evaluerOutil, oublierMemo } from "../../netlify/functions/_accueil-outils.js";
+import { mondePeremption, repondrePeremption, cataloguePeremption } from "./peremption-banc.mjs";
 
 // Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
 const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
@@ -616,6 +622,19 @@ export default function bancEssai() {
           if (methode === "GET" || methode === "HEAD") {
             const { fn: f, query: q } = decoupe(url);
             if (f === "chat-fichier") return envoieFichier(res, await fichierFictif(q), log);
+            if (f === "peremption") { const r = await repondrePeremption({ methode: "GET", url, corps: null }); if (r) return envoie(r.statut, r.corps, r.source); }
+            if (f === "odoo-catalog" && q.expiry_months) { const c = await cataloguePeremption(); if (c) return envoie(200, c, "banc péremption (prix du site à jour)"); }
+            if (f === "accueil-offres" && !q.verifier && mondePeremption()) {
+              // carte « Péremption courte » : règle du serveur sur la page du monde du banc (remises facturées seulement)
+              const r = reponseGet(url);
+              const m = mondePeremption(); if (m.pret) await m.pret;
+              oublierMemo();
+              const lu = await lirePeremption({ peremption: () => m.X.etatPublic(), maintenant: () => Date.now() });
+              const ev = evaluerOutil("peremption", { outils: { peremption: lu }, menus: { caches: new Set() } }, Date.now());
+              const corps = { ...r.corps, ...(r.corps?.outils_etat ? { outils_etat: { ...r.corps.outils_etat, peremption: ev } } : {}),
+                vedettes: r.corps?.vedettes ? { ...r.corps.vedettes, items: r.corps.vedettes.items.map(i => (i.outil === "peremption" ? { ...i, chiffres: ev.chiffres } : i)) } : r.corps?.vedettes };
+              return envoie(200, corps, "figé + carte Péremption du banc");
+            }
             const r = f === "chat" && q.tour ? await attenteFictive(q) : reponseGet(url);
             if (r.statut !== 200) log(`GET ${url.slice(0, 120)} → ${r.statut} (${r.source})`);
             return envoie(r.statut, r.corps, r.source);
@@ -624,6 +643,10 @@ export default function bancEssai() {
           const brut = await litCorps(req);
           let corps; try { corps = brut ? JSON.parse(brut) : null; } catch { corps = brut; }
           const fichier = journalise({ methode, url, fn, corps, entetes: req.headers });
+          if (fn === "peremption") {
+            const rp = await repondrePeremption({ methode, url, corps });
+            if (rp) { log(`${methode} peremption (${corps?.action || "?"}) → ${rp.statut} (vrai code, faux Odoo), journal ${fichier}`); return envoie(rp.statut, rp.corps, rp.source); }
+          }
           const r = reponsePost({ fn, methode, corps });
           log(`${methode} ${fn}${corps?.action ? ` (${corps.action})` : ""} → rien n'est parti, journal ${fichier}`);
           return envoie(r.statut || 200, r.corps, r.source);

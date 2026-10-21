@@ -624,7 +624,7 @@ function Formulaire({ it, titreDefaut, accrocheDefaut, menu, offre, couleur, acc
         <span><input value={it.badge} onChange={e => onChange({ badge: e.target.value })} aria-label="Badge" style={{ ...champ, ...bord("badge") }} />
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 }}>{badges.map(b => <button key={b} type="button" onClick={() => onChange({ badge: b })} style={{ ...ui.pill(it.badge === b), height: 26, fontSize: 12 }}>{b}</button>)}</span>
           <span style={{ ...aide, display: "block" }}>{!outil ? "La remise s'affiche d'elle-même dans le médaillon or." : it.outil === "peremption"
-            ? "Aucune remise annoncée : les remises péremption ne sont pas facturées par Odoo pour l'instant (onglet Péremptions). « Petits prix » ne s'affiche pas. Vide : pas de badge." : "Vide : pas de badge."}</span></span>
+            ? "« jusqu'à −X % » ne compte que les remises facturées par Odoo (onglet Péremptions) ; sans aucune, ni remise ni « Petits prix » ne s'affichent. Vide : pas de badge." : "Vide : pas de badge."}</span></span>
       </div>
       <div style={ligne}><span style={etiquette}>Dates</span>
         <span>
@@ -768,6 +768,8 @@ function AjoutOutil({ outilsEtat, caches, libelle, deja, onChoisir }) {
       : chiffresTexte(cle, ch, { court: cle === "fauteuil" || cle === "transfert" }).meta;
     const info = cle === "peremption" && o.admin?.remises_facturees === 0
       ? "Aucune remise péremption facturée par Odoo : la carte annonce les références, sans prix ni remise"
+      : cle === "peremption" && o.admin?.remises_facturees > 0
+      ? `${o.admin.remises_facturees} remise${o.admin.remises_facturees > 1 ? "s" : ""} facturée${o.admin.remises_facturees > 1 ? "s" : ""} par Odoo : « dès » et « jusqu'à » ne comptent qu'elle${o.admin.remises_facturees > 1 ? "s" : ""}`
       : (cle === "fauteuil" || cle === "transfert") && o.admin?.correspondance && o.admin.correspondance !== "odoo" ? AVERTISSEMENT_CORRESPONDANCE : "";
     return { ton: info === AVERTISSEMENT_CORRESPONDANCE ? "warn" : "ok", texte, info };
   };
