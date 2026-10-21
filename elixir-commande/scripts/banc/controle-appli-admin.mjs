@@ -9,10 +9,14 @@
 //  2. « /admin » : adresse /admin#admin, manifeste de l'admin (identifiant d'appli « /admin », start_url /admin), nom
 //     « Elixir Admin », connexion de l'admin ; « /admin/ » et l'ancienne « /#admin » aussi ;
 //  3. la page de départ de l'appli (start_url du manifeste lu par Chrome) affiche l'admin ;
-//  4. fermer l'admin (croix) → « / », connexion des pharmacies ; retour arrière → l'admin ; avancer → « / » ;
-//  5. jeton admin : « Ouvrir l'administration Elixir » sur la connexion des pharmacies → admin ; « Retour au catalogue » → « / » ;
+//  4. fermer l'admin (croix), navigateur → page RECHARGÉE sur « / » : manifeste et nom des pharmacies (celui que Chrome lit,
+//     identifiant d'appli « / »), connexion des pharmacies ; retour arrière → l'admin (manifeste de l'admin) ; avancer → « / » ;
+//  5. jeton admin : « Ouvrir l'administration Elixir » sur la connexion des pharmacies → admin ; « Retour au catalogue » → « / »
+//     rechargée (manifeste des pharmacies) ; catalogue d'une pharmacie avec jeton admin, 375 px : cadenas « Administration
+//     Elixir » → admin, rien ne dépasse ;
 //  6. appli « Elixir Admin » simulée (navigator.standalone, sans jeton) : croix → connexion des pharmacies avec le lien de
-//     retour → admin ; appli des pharmacies simulée sur « / » : aucun lien ;
+//     retour (même page) → admin ; page ouverte plus tard dans l'appli sur « / » (clé appli_admin) : lien gardé ; session de
+//     pharmacie dans l'appli : cadenas → admin ; appli des pharmacies simulée sur « / » : aucun lien ni cadenas ;
 //  7. onglet 📲 Notifications, iPhone dans Safari simulé (?banc_push=ios-safari), 375 px : consigne « …/admin », sans débord.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -55,6 +59,8 @@ const ETAT = `(() => ({
   panneauAdmin: document.body.innerText.includes("Administration Elixir Pharma"),
   connexionPharmacie: !!document.querySelector("#ident-email"),
   lienAdmin: [...document.querySelectorAll("button")].some((b) => b.textContent.includes("Ouvrir l'administration Elixir")),
+  cadenas: !!document.querySelector('button[aria-label="Administration Elixir"]'),
+  catalogue: !!document.querySelector("[data-cible-panier]"),
 }))()`;
 const etat = () => js(ETAT);
 const pret = () => attendreQue(`!!document.querySelector(".ex-admin, #ident-email, [data-cible-panier], .ex-panier-flottant, header")`);
@@ -98,8 +104,8 @@ try {
   eq("1. « / » : connexion des pharmacies, pas d'admin, aucun lien vers l'admin (pas de jeton)", [e.connexionPharmacie, e.admin, e.lienAdmin], [true, false, false]);
   if (!CONSTRUIT) {
     e = await ouvrir("/?menu=accueil", { stockage: { session_email: "banc@pharmacie.test", session_name: "PHARMACIE DU BANC D'ESSAI", session_cip: "9000001", pharmacy_token: "essai-jeton" } });
-    eq("1. session de pharmacie : adresse des pharmacies, manifeste des pharmacies, pas d'admin", [e.adresse, await js("location.search.includes('menu=')"), e.manifestes, e.admin],
-      ["/", true, ["/manifest.webmanifest"], false]);
+    eq("1. session de pharmacie : adresse des pharmacies, manifeste des pharmacies, pas d'admin, pas de cadenas", [e.adresse, await js("location.search.includes('menu=')"), e.manifestes, e.admin, e.catalogue, e.cadenas],
+      ["/", true, ["/manifest.webmanifest"], false, true, false]);
   }
 
   // 2. adresse de l'admin
@@ -116,18 +122,23 @@ try {
   e = await ouvrir(m.start_url || "/admin", { stockage: vierge });
   eq("3. page de départ de l'appli « Elixir Admin » : admin", [e.adresse, e.connexionAdmin], ["/admin#admin", true]);
 
-  // 4. fermer l'admin, retour arrière, avancer
+  // 4. fermer l'admin (navigateur : page rechargée sur « / »), retour arrière, avancer
   {
+    await js("window.__memePage = 1; true");   // effacé par un rechargement
     vrai("4. croix de la connexion de l'admin trouvée", await clic("Fermer", 'document.querySelector(".ex-admin")'));
-    await attendreQue(`!document.querySelector(".ex-admin")`); await pause(300);
+    await attendreQue(`!window.__memePage && !document.querySelector(".ex-admin") && !!document.querySelector("#ident-email")`); await pause(600);
     e = await etat();
-    eq("4. croix : « / », connexion des pharmacies", [e.adresse, e.admin, e.connexionPharmacie], ["/", false, true]);
-    await js("history.back(); true"); await attendreQue(`!!document.querySelector(".ex-admin")`); await pause(300);
+    eq("4. croix : page rechargée sur « / », manifeste des pharmacies seul, nom « Elixir », connexion des pharmacies",
+      [await js("!window.__memePage"), e.adresse, e.manifestes, e.titre, e.admin, e.connexionPharmacie], [true, "/", ["/manifest.webmanifest"], "Elixir", false, true]);
+    m = await manifesteChrome();
+    eq("4. croix : manifeste lu par Chrome = celui des pharmacies (installer depuis ce catalogue donne l'appli « Elixir »)", [m.url, m.start_url], ["/manifest.webmanifest", "/"]);
+    if (m.appId) eq("4. croix : identifiant d'appli des pharmacies", m.appId, `${ORIGINE}/`);
+    await js("history.back(); true"); await attendreQue(`!!document.querySelector(".ex-admin")`); await pause(600);
     e = await etat();
-    eq("4. retour arrière : l'admin de nouveau", [e.adresse, e.connexionAdmin], ["/admin#admin", true]);
-    await js("history.forward(); true"); await attendreQue(`!document.querySelector(".ex-admin")`); await pause(300);
+    eq("4. retour arrière : l'admin de nouveau, avec son manifeste", [e.adresse, e.connexionAdmin, e.manifestes, e.titre], ["/admin#admin", true, ["/admin.webmanifest"], "Elixir Admin"]);
+    await js("history.forward(); true"); await attendreQue(`!document.querySelector(".ex-admin") && !!document.querySelector("#ident-email")`); await pause(600);
     e = await etat();
-    eq("4. avancer : « / » de nouveau", [e.adresse, e.admin], ["/", false]);
+    eq("4. avancer : « / » de nouveau, manifeste des pharmacies", [e.adresse, e.admin, e.manifestes], ["/", false, ["/manifest.webmanifest"]]);
   }
 
   if (!CONSTRUIT) {
@@ -138,27 +149,60 @@ try {
     await attendreQue(`location.hash === "#admin" && !!document.querySelector(".ex-admin")`); await pause(800);
     e = await etat();
     eq("5. lien → /admin#admin, manifeste de l'admin (page rechargée), administration affichée", [e.adresse, e.manifestes, e.panneauAdmin], ["/admin#admin", ["/admin.webmanifest"], true]);
+    await js("window.__memePage = 1; true");
     vrai("5. « Retour au catalogue » trouvé", await clic("Retour au catalogue", 'document.querySelector(".ex-admin")'));
-    await attendreQue(`!document.querySelector(".ex-admin")`); await pause(300);
+    await attendreQue(`!window.__memePage && !document.querySelector(".ex-admin") && !!document.querySelector("#ident-email")`); await pause(600);
     e = await etat();
-    eq("5. « Retour au catalogue » → « / », connexion des pharmacies avec le lien de retour", [e.adresse, e.admin, e.lienAdmin], ["/", false, true]);
+    eq("5. « Retour au catalogue » → « / » rechargée (manifeste et nom des pharmacies), connexion des pharmacies avec le lien de retour",
+      [await js("!window.__memePage"), e.adresse, e.manifestes, e.titre, e.admin, e.lienAdmin], [true, "/", ["/manifest.webmanifest"], "Elixir", false, true]);
     await capture("connexion-pharmacies-lien-admin");
+
+    // catalogue d'une pharmacie avec un jeton admin, téléphone 375 px : cadenas « Administration Elixir » dans l'en-tête
+    await cdp("Emulation.setDeviceMetricsOverride", { width: 375, height: 812, deviceScaleFactor: 2, mobile: true });
+    e = await ouvrir("/?menu=accueil", { stockage: { session_email: "banc@pharmacie.test", session_name: "PHARMACIE DU BANC D'ESSAI AU NOM TRÈS LONG", session_cip: "9000001", pharmacy_token: "essai-jeton", admin_token: "essai-jeton-admin" } });
+    eq("5. catalogue avec jeton admin : cadenas « Administration Elixir » dans l'en-tête", [e.catalogue, e.cadenas, e.admin], [true, true, false]);
+    vrai("5. en-tête à 375 px : aucun défilement horizontal, cadenas dans l'écran", await js(`(() => { const b = document.querySelector('button[aria-label="Administration Elixir"]'); const r = b?.getBoundingClientRect();
+      return document.documentElement.scrollWidth <= document.documentElement.clientWidth && !!r && r.left >= 0 && r.right <= innerWidth + 0.5; })()`));
+    await capture("catalogue-cadenas-admin", "header");
+    await clic("Administration Elixir");
+    await attendreQue(`location.hash === "#admin" && !!document.querySelector(".ex-admin")`); await pause(800);
+    e = await etat();
+    eq("5. cadenas → /admin#admin rechargée, manifeste de l'admin, administration", [e.adresse, e.manifestes, e.panneauAdmin], ["/admin#admin", ["/admin.webmanifest"], true]);
+    await cdp("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 2, mobile: true });
 
     // 6. appli installée simulée (comme l'icône de l'iPhone : navigator.standalone)
     const { identifier } = await cdp("Page.addScriptToEvaluateOnNewDocument", { source: `Object.defineProperty(Navigator.prototype, "standalone", { get: () => true, configurable: true });` });
     e = await ouvrir("/admin", { stockage: vierge });
     eq("6. appli « Elixir Admin » : connexion de l'admin à l'ouverture", [e.adresse, e.connexionAdmin, await js("navigator.standalone === true")], ["/admin#admin", true, true]);
     await capture("appli-admin-ouverture");
+    await js("window.__memePage = 1; true");
     await clic("Fermer", 'document.querySelector(".ex-admin")');
     await attendreQue(`!document.querySelector(".ex-admin")`); await pause(300);
     e = await etat();
-    eq("6. appli, croix sans jeton : connexion des pharmacies AVEC le lien de retour (pas d'autre chemin)", [e.adresse, e.connexionPharmacie, e.lienAdmin], ["/", true, true]);
+    eq("6. appli, croix sans jeton : même page, « / », connexion des pharmacies AVEC le lien de retour (pas d'autre chemin)",
+      [await js("window.__memePage === 1"), e.adresse, e.connexionPharmacie, e.lienAdmin, await js("localStorage.getItem('appli_admin')")], [true, "/", true, true, "1"]);
     await clic("Ouvrir l'administration Elixir");
     await attendreQue(`!!document.querySelector(".ex-admin")`); await pause(500);
     e = await etat();
     eq("6. appli : le lien rouvre la connexion de l'admin", [e.adresse, e.connexionAdmin], ["/admin#admin", true]);
+    // page ouverte plus tard dans l'appli sur une autre adresse (aperçu d'annonce, appli fermée), sans jeton admin
+    e = await ouvrir("/?menu=accueil");
+    eq("6. appli rouverte sur « / » (clé appli_admin), sans jeton : connexion des pharmacies avec le lien de retour", [e.adresse, e.connexionPharmacie, e.lienAdmin], ["/", true, true]);
+    // session de pharmacie dans l'appli de l'admin : le cadenas de l'en-tête ramène à l'admin
+    await js(`localStorage.setItem("session_email", "banc@pharmacie.test"); localStorage.setItem("session_name", "PHARMACIE DU BANC D'ESSAI"); localStorage.setItem("session_cip", "9000001"); localStorage.setItem("pharmacy_token", "essai-jeton"); true`);
+    e = await ouvrir("/admin");
+    await clic("Fermer", 'document.querySelector(".ex-admin")');
+    await attendreQue(`!document.querySelector(".ex-admin") && !!document.querySelector("[data-cible-panier]")`); await pause(500);
+    e = await etat();
+    eq("6. appli avec session de pharmacie, croix : catalogue avec le cadenas « Administration Elixir »", [e.adresse, e.catalogue, e.cadenas, e.connexionPharmacie], ["/", true, true, false]);
+    await clic("Administration Elixir");
+    await attendreQue(`!!document.querySelector(".ex-admin")`); await pause(500);
+    e = await etat();
+    eq("6. appli : le cadenas rouvre l'admin", [e.adresse, e.connexionAdmin], ["/admin#admin", true]);
     e = await ouvrir("/", { stockage: vierge });
     eq("6. appli des pharmacies simulée sur « / » : aucun lien vers l'admin", [e.adresse, e.connexionPharmacie, e.lienAdmin, e.manifestes], ["/", true, false, ["/manifest.webmanifest"]]);
+    e = await ouvrir("/?menu=accueil", { stockage: { session_email: "banc@pharmacie.test", session_name: "PHARMACIE DU BANC D'ESSAI", session_cip: "9000001", pharmacy_token: "essai-jeton" } });
+    eq("6. appli des pharmacies simulée, catalogue : aucun cadenas", [e.catalogue, e.cadenas], [true, false]);
     await cdp("Page.removeScriptToEvaluateOnNewDocument", { identifier });
 
     // 7. onglet 📲 Notifications, iPhone dans Safari simulé, 375 px
@@ -168,9 +212,9 @@ try {
     vrai("7. onglet 📲 Notifications trouvé", await clic("📲", 'document.querySelector(".ex-admin")'));
     const vu = await attendreQue(`!!document.querySelector('section[aria-labelledby="notif-appareils"]') && document.querySelector('section[aria-labelledby="notif-appareils"]').innerText.includes("expepharma.com/admin")`, 10000);
     const encart = await js(`(() => { const s = document.querySelector('section[aria-labelledby="notif-appareils"]'); if (!s) return null; const t = s.innerText; return { texte: t.includes("elixir-commande.expepharma.com/admin") && t.includes("Sur l'écran d'accueil") && t.includes("supprimez-la"),
-      ancien: t.includes("#admin") || t.includes("depuis cette page"), deborde: [...s.querySelectorAll("*")].some((x) => x.getBoundingClientRect().right > innerWidth + 0.5), extrait: t.slice(0, 300) }; })()`);
+      ancien: t.replace("l'ancienne adresse en /#admin", "").includes("#admin") || t.includes("depuis cette page") || t.includes("21/10/2026"), deborde: [...s.querySelectorAll("*")].some((x) => x.getBoundingClientRect().right > innerWidth + 0.5), extrait: t.slice(0, 300) }; })()`);
     vrai("7. consigne d'installation affichée (adresse …/admin, icône ancienne à supprimer)", vu && encart?.texte === true, JSON.stringify(encart));
-    eq("7. ni « #admin » ni « depuis cette page », rien ne dépasse de l'écran à 375 px", [encart?.ancien, encart?.deborde], [false, false]);
+    eq("7. « #admin » seulement pour désigner l'ancienne icône, ni « depuis cette page » ni date, rien ne dépasse de l'écran à 375 px", [encart?.ancien, encart?.deborde], [false, false]);
     vrai("7. aucun défilement horizontal de la page", await js("document.documentElement.scrollWidth <= document.documentElement.clientWidth"));
     await capture("admin-notifications-consigne-iphone", 'section[aria-labelledby="notif-appareils"]');
   }

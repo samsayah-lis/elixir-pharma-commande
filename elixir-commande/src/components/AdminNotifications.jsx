@@ -315,9 +315,10 @@ function MesAppareils({ etat, api, flash, onChange }) {
           <Icone nom="cloche" taille={15} style={{ flexShrink: 0 }} />{busy ? "Activation…" : "Recevoir les notifications sur cet appareil"}</Bouton>
         : p === "installer_ios" ? (
           <div style={ui.encart("info")}>
-            <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b>&nbsp;: dans Safari, tapez l'adresse <b style={{ overflowWrap: "anywhere" }}>elixir-commande.expepharma.com<wbr />/admin</b>, puis Partager → <b>Sur l'écran d'accueil</b> → Ajouter.
+            <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b>&nbsp;: dans Safari, tapez l'adresse <b style={{ overflowWrap: "anywhere" }}>elixir-commande.expepharma.com<wbr />/admin</b>, puis Partager → <b>Sur l'écran d'accueil</b> → Ajouter
+            (sur iOS 26, laissez «&nbsp;Ouvrir en tant qu'app web&nbsp;» activé).
             Ouvrez ensuite l'icône «&nbsp;Elixir Admin&nbsp;», connectez-vous à l'admin, revenez dans 📲 Notifications et touchez «&nbsp;Recevoir les notifications sur cet appareil&nbsp;». iOS 16.4 ou plus récent.
-            <br />Une icône «&nbsp;Elixir Admin&nbsp;» qui ouvre l'accueil des pharmacies (ajoutée avant le 21/10/2026)&nbsp;: supprimez-la de l'écran d'accueil, puis ajoutez-la de nouveau ainsi.
+            <br />Une icône «&nbsp;Elixir Admin&nbsp;» qui ouvre l'accueil des pharmacies (ajoutée depuis l'ancienne adresse en /#admin)&nbsp;: supprimez-la de l'écran d'accueil, puis ajoutez-la de nouveau ainsi.
           </div>
         ) : p === "refuse" ? <div style={ui.encart("warn")}>Notifications bloquées pour ce site sur cet appareil&nbsp;: autorisez-les dans les réglages du navigateur, puis actualisez.</div>
         : p === "maj_ios" ? <div style={ui.encart("warn")}>Cet iPhone doit passer à iOS 16.4 ou plus récent (Réglages → Général → Mise à jour logicielle).</div>

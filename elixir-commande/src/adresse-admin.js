@@ -22,22 +22,43 @@ export function surAdresseAdmin(url) {
 // paramètres (?menu=…) gardés
 export const adresseHorsAdmin = (loc) => (cheminAdmin(loc.pathname) ? "/" : loc.pathname) + (loc.search || "");
 
-// Quitter l'admin dans la même page (« Retour au catalogue », croix de la connexion, Ctrl+Maj+A) :
-//  • sur /admin : nouvelle entrée d'historique « / » (le retour arrière rouvre l'admin), puis rappel() — aucun hashchange
-//    entre deux chemins différents ;
-//  • ailleurs (/#admin ouvert par Ctrl+Maj+A) : « # » vidé comme avant (hashchange).
-export function quitterAdresseAdmin(rappel, w = window) {
-  if (!cheminAdmin(w.location.pathname)) { w.location.hash = ""; return; }
-  try { w.history.pushState(null, "", adresseHorsAdmin(w.location)); } catch { /* historique indisponible : affichage seulement */ }
-  rappel();
-}
-
-// Appli « Elixir Admin » ouverte depuis l'écran d'accueil (ou installée) : fenêtre sans barre d'adresse, démarrée sur
-// l'admin. Lu une fois, au chargement du site (le script d'index.html a déjà complété l'adresse en /admin#admin). Sert à
-// toujours proposer le retour à l'admin depuis l'écran de connexion des pharmacies : sans barre d'adresse, pas d'autre
-// chemin pour y revenir.
+// Appli installée ou ouverte depuis l'écran d'accueil : fenêtre sans barre d'adresse
 export function enAppli(w) {
   const media = (q) => { try { return !!w.matchMedia?.(q).matches; } catch { return false; } };
   return w?.navigator?.standalone === true || media("(display-mode: standalone)") || media("(display-mode: fullscreen)");
 }
+
+// Quitter l'admin (« Retour au catalogue », croix de la connexion, Ctrl+Maj+A) :
+//  • sur /admin, dans un navigateur : VRAIE navigation vers « / » (paramètres gardés). La page des pharmacies est rechargée
+//    avec SON manifeste et son nom (« Elixir ») : « Sur l'écran d'accueil » ou « Installer l'application » depuis ce
+//    catalogue donne l'appli des pharmacies, jamais une icône « Elixir Admin » ouverte sur « / » (la confusion d'origine).
+//    Le retour arrière rouvre /admin (nouveau chargement). Une saisie non enregistrée de l'admin peut faire demander
+//    confirmation par le navigateur, en plus de celle de l'admin : quitter la page l'abandonne (le rappel n'est pas appelé,
+//    l'admin reste affiché si la navigation est refusée) ;
+//  • sur /admin, dans l'appli « Elixir Admin » (sans barre d'adresse, manifeste de l'admin voulu) : nouvelle entrée
+//    d'historique « / » (le retour arrière rouvre l'admin, popstate), puis rappel() — aucun hashchange entre deux chemins ;
+//  • ailleurs (#admin ajouté par Ctrl+Maj+A sur une page des pharmacies, manifeste des pharmacies) : « # » vidé comme
+//    avant (hashchange).
+export function quitterAdresseAdmin(rappel, w = window) {
+  if (!cheminAdmin(w.location.pathname)) { w.location.hash = ""; return; }
+  if (!enAppli(w)) { w.location.assign(adresseHorsAdmin(w.location)); return; }
+  try { w.history.pushState(null, "", adresseHorsAdmin(w.location)); } catch { /* historique indisponible : affichage seulement */ }
+  rappel();
+}
+
+// Appli « Elixir Admin » : fenêtre sans barre d'adresse, démarrée sur l'admin (le script d'index.html a déjà complété
+// l'adresse en /admin#admin). Lu une fois, au chargement du site. Sert à toujours proposer le retour à l'admin (lien de la
+// connexion des pharmacies, cadenas de l'en-tête du catalogue) : sans barre d'adresse, pas d'autre chemin pour y revenir.
 export const OUVERT_EN_APPLI_ADMIN = typeof window !== "undefined" && window.location?.hash === "#admin" && enAppli(window);
+// Mémorisé (clé appli_admin = "1") pour les pages ouvertes plus tard dans la même appli sur une autre adresse (aperçu d'une
+// annonce ouvert par une notification, appli fermée) : APPLI_ADMIN reste vrai dans l'appli, même sans jeton admin valide.
+// Stockage propre à l'appli sur l'iPhone ; sur Android, partagé avec Chrome et les autres applis du site, mais posé
+// seulement par un appareil qui a ouvert l'admin dans une fenêtre d'appli (équipe Elixir). Jamais vrai dans un navigateur.
+export function appliAdmin(w, ouvertEnAppliAdmin) {
+  if (!enAppli(w)) return false;
+  try {
+    if (ouvertEnAppliAdmin) { w.localStorage.setItem("appli_admin", "1"); return true; }
+    return w.localStorage.getItem("appli_admin") === "1";
+  } catch { return !!ouvertEnAppliAdmin; }   // stockage refusé : seulement la page ouverte sur l'admin
+}
+export const APPLI_ADMIN = typeof window !== "undefined" && appliAdmin(window, OUVERT_EN_APPLI_ADMIN);

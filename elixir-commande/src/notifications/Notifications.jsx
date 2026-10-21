@@ -560,7 +560,7 @@ function VueSaisie({ vue, pharmacyName }) {
       <Carte>
         <Message ton="acting" role="note">Saisie pour {pharmacyName}&nbsp;: les notifications s'activent sur le téléphone ou l'ordinateur de la pharmacie, jamais sur le vôtre.</Message>
         {vue.sansCip && <Message ton="warn">Pas de CIP dans Odoo&nbsp;: notifications impossibles pour cette fiche.</Message>}
-        {vue.erreur && <Message ton="danger">{vue.erreur === "admin" ? "Session admin expirée\u00a0: ouvrez l'admin (#admin) pour vous reconnecter." : MESSAGES.indisponible}</Message>}
+        {vue.erreur && <Message ton="danger">{vue.erreur === "admin" ? "Session admin expirée\u00a0: ouvrez l'administration (elixir-commande.expepharma.com/admin) pour vous reconnecter." : MESSAGES.indisponible}</Message>}
         {vue.raison && <Message ton="info">Cette pharmacie n'est pas encore dans l'ouverture des notifications ({vue.raison === "hors_pilote" ? "hors pilote" : "ouverture fermée"}).</Message>}
         {vue.appareils && !vue.appareils.length && (
           <>
