@@ -31,7 +31,7 @@ Vos demandes :
 **Pour vous, dans l'admin, onglet « 📲 Notifications »**
 - **État du service** : des coches. Nouveau point : « Tables des messages » (script `sql/push-messages.sql`).
 - **Ouverture aux pharmacies** (fermée, pilote, toutes) et les **trois plafonds** : offres, informations, sécurité des commandes et réclamations.
-- **Vos appareils** : pour recevoir vous-même les tests et les aperçus.
+- **Vos appareils** : pour recevoir vous-même les tests et les aperçus (sur iPhone : appli « Elixir Admin », installée depuis `https://elixir-commande.expepharma.com/admin`, § 3 f).
 - **Pharmacies joignables** : statistiques par alerte et par appareil, liste, retrait.
 - **Nouveau message** (§ 4), **en tête de l'onglet** (sur iPhone, il arrive sans défilement) : type, modèle, texte, lien, destinataires (une pharmacie, plusieurs, toutes), e-mail de secours, envoi maintenant ou **programmé** (§ 5), estimation avant l'envoi, aperçus Android et iPhone (repliés sur téléphone).
 - **Historique** (§ 7) : messages (à venir en tête, avec « Annuler »), par pharmacie, outil entrepôt ; en cartes sur téléphone.
@@ -107,8 +107,23 @@ Puis Supabase → SQL Editor → New query → Cmd+V → Run. Il affiche le nomb
 
 **e. Vérifier dans l'admin.** 📲 Notifications → « État du service » : toutes les coches vertes, aucune ligne « Tables des messages absentes ». Les plafonds de « Ouverture aux pharmacies » affichent 2, 2 et 10.
 
-**f. Essayer avec une pharmacie pilote** (votre propre téléphone ne reçoit que les tests et les aperçus, jamais les messages des pharmacies) :
-1. « M'envoyer l'aperçu » d'un message : il arrive sur votre téléphone.
+**f. Votre téléphone : l'appli « Elixir Admin »** (adresse `/admin`).
+
+*Sur iPhone :*
+1. Ouvrez Safari et **tapez** l'adresse `https://elixir-commande.expepharma.com/admin` dans la barre d'adresse (pas l'ancienne adresse en `/#admin`). L'écran « Espace Admin » s'affiche (ou directement l'administration si vous y êtes déjà connectée dans Safari).
+2. Touchez Partager (sur iOS 26 : « ••• » en bas à droite, puis Partager) → « Sur l'écran d'accueil ». Le nom proposé est « Elixir Admin ». Sur iOS 26, laissez « Ouvrir en tant qu'app web » activé, puis touchez Ajouter.
+3. Ouvrez l'icône « Elixir Admin » : l'écran « Espace Admin » s'affiche (ou directement l'administration), jamais celui des pharmacies (à confirmer au premier essai). Connectez-vous si besoin.
+4. Allez dans 📲 Notifications → « Recevoir les notifications sur cet appareil », puis « Autoriser ».
+5. Touchez « M'envoyer un test » et verrouillez l'écran : la notification doit arriver.
+6. Composez un message et touchez « M'envoyer l'aperçu ». Toucher l'aperçu ouvre son lien dans une nouvelle fenêtre : votre brouillon reste en place.
+7. Profitez-en pour relire le guide iPhone du panneau (côté pharmacie) : sur iOS 26, le libellé exact de l'interrupteur « Ouvrir en tant qu'app web » est à confirmer.
+
+*Sur Android :* ouvrez Chrome à la même adresse `https://elixir-commande.expepharma.com/admin`, puis suivez les mêmes boutons. L'installation est facultative (⋮ → Installer l'application) ; elle doit donner une appli « Elixir Admin » à part, sans toucher à l'appli « Elixir » des pharmacies (vérifié seulement dans Chrome sur ordinateur). Si l'appli « Elixir » des pharmacies est déjà installée sur ce téléphone, Chrome peut proposer « Ouvrir dans Elixir » au lieu d'« Installer l'application » : restez alors dans Chrome sur `…/admin` ; l'installation est facultative et les notifications s'activent aussi dans Chrome (à confirmer au premier essai).
+
+*Si l'icône « Elixir Admin » de l'iPhone ouvre l'accueil des pharmacies au lieu de l'admin* : c'est une icône ajoutée depuis l'ancienne adresse en `/#admin` (avant la mise en ligne de l'adresse `/admin`) : elle ne retient pas l'adresse de l'admin (détail au § 10). Supprimez-la (appui long sur l'icône → Supprimer, puis confirmez), puis refaites les étapes 1 à 3 ci-dessus depuis `https://elixir-commande.expepharma.com/admin`.
+
+**g. Essayer avec une pharmacie pilote** (votre propre téléphone ne reçoit que les tests et les aperçus, jamais les messages des pharmacies) :
+1. « M'envoyer l'aperçu » d'un message : il arrive sur votre téléphone (appli « Elixir Admin », étape f).
 2. Un message « Réclamation / SAV » à **une** pharmacie pilote prévenue, sans e-mail de secours. L'historique affiche « Envoyé » et le nombre d'appareils joints.
 3. L'e-mail de secours (Communication, Réclamation / SAV ou Commande ; jamais Promotion) : **il part vraiment** aux adresses du compte de la pharmacie. Faites le premier essai avec une pharmacie amie prévenue, ou un compte de test à votre adresse s'il en existe un.
 4. Un message programmé dans 10 minutes, puis « Annuler et modifier » ; un autre laissé partir.
@@ -390,7 +405,7 @@ Option possible plus tard : une sortie d'entrepôt lue dans Odoo (`stock.picking
   - `src/App.jsx` : lien `?commandes=1` → « Mes commandes » ouvert une fois la pharmacie connue (+0,4 Ko dans le bundle des pharmacies) ;
   - `src/notifications/Notifications.jsx` : textes de la carte (selon les plafonds non nuls) et plafond des informations ;
   - `src/dev/reponses-fictives.js` et `scripts/banc/plugin.mjs` : nouvelles actions (aperçus Netlify et banc local).
-- `scripts/verifie-zones.mjs` : `push-evenement` et `push-programmes` ajoutés aux fonctions nouvelles admises (`AJOUTS_AUTORISES`) ; aucune zone protégée ni clé de stockage modifiée (le brouillon du composeur garde la même clé de session et un seul appel d'écriture, partagé avec « Écrire à cette pharmacie »).
+- `scripts/verifie-zones.mjs` : `push-evenement` et `push-programmes` ajoutés aux fonctions nouvelles admises (`AJOUTS_AUTORISES`) ; aucune zone protégée ni clé de stockage modifiée par les messages (le brouillon du composeur garde la même clé de session et un seul appel d'écriture, partagé avec « Écrire à cette pharmacie ») ; la clé `appli_admin` de l'appli « Elixir Admin » a son propre lot (`appliAdmin`, ci-dessous).
 
 **Règles tenues**
 - Identité de l'admin par `verifyAdmin` ; jamais de 401/403 pour une raison métier.
@@ -403,11 +418,31 @@ Option possible plus tard : une sortie d'entrepôt lue dans Odoo (`stock.picking
 
 **Essais**
 - `node scripts/test-push-messages.mjs` (nouveau, 185) : règles, modèles, plafonds par catégorie, e-mail de secours (adresses de compte seulement, piège de l'adresse partagée, idempotence, alerte coupée, plafond — pharmacie sans appareil, appareil en échec, ouverture fermée —, Promotion jamais, téléphones seulement, échappement), Resend borné, programmation (5 min, 60 jours, annulation en file, deux passages simultanés, relance en journée, jamais le soir, expiration après 3 h, garde de diffusion), API (signature identique à chatbot-intake, horodatage, corps altéré, débit avant signature, panne passagère rejouée, réservation orpheline, appareils en échec, doublons sur 10 minutes, statut connu sans texte libre, montants, différé de nuit et envoi à 8 h, plafond, aperçu, charge déchiffrée), actions de l'admin (estimation = envoi, clé idem par contenu, modèles remplacés, effacement), ménage à 12 mois, chemins PostgREST, rendu React de l'onglet, empaquetage esbuild ;
-- `node scripts/test-push-serveur.mjs` (259), `test-push-client.mjs` (98), `test-push-sw.mjs` (32) : étendus (4 catégories, nouveaux plafonds, lien `/?commandes=1`, empaquetage de `push-evenement` et `push-programmes`) ; stock en mémoire partagé : `scripts/push-stock-memoire.mjs` ;
+- `node scripts/test-push-serveur.mjs` (259), `test-push-client.mjs` (98), `test-push-sw.mjs` (36, dont 4 de l'appli « Elixir Admin ») : étendus (4 catégories, nouveaux plafonds, lien `/?commandes=1`, empaquetage de `push-evenement` et `push-programmes`) ; stock en mémoire partagé : `scripts/push-stock-memoire.mjs` ;
 - `sql/push-schema.sql` puis `sql/push-messages.sql`, deux fois de suite, puis `sql/push-messages-apres.sql` deux fois, sur un Postgres 17 local : contraintes (réclamation à une pharmacie, pas d'e-mail de secours pour une Promotion, nouveaux statuts), index, migration et rattrapage faits une seule fois, RLS ; ancienne version du script puis la nouvelle ;
 - banc local (`npm run dev`, données fictives) : onglet 📲 Notifications (pharmacies d'exemple avec et sans appareils, historique, outil entrepôt avec un événement différé), panneau des pharmacies avec 4 alertes (`?banc_push=abonne`) ; contrôles à 375 px (composeur dans le premier écran, aucun défilement horizontal, historique en cartes).
 
-**Bundle des pharmacies** : 904 541 octets pour un budget de 940 000 (+378 octets depuis `b1dbd3e`, le lien `?commandes=1`). L'onglet admin est dans le chunk de l'admin, chargé à la demande.
+**Appli « Elixir Admin » à l'adresse `/admin`** (branche `appli-admin-ios`, comprise dans celle-ci ; à mettre en ligne avant elle ou avec elle, § 3)
+- Fichiers :
+  - `index.html` (script en ligne : choix du manifeste, adresse `/admin#admin`), `public/admin.webmanifest` (`start_url` `/admin`) et `src/adresse-admin.js` (nouveau : quitter l'admin, revenir à l'admin) ;
+  - `public/sw.js` (fenêtre sur `/admin` reconnue comme l'admin, test de l'admin sans fenêtre → `/admin` ; `VERSION` 2026-10-21.1) et `src/notifications/client.js` (même règle, `surAdresseAdmin`) ;
+  - `src/App.jsx` (retour arrière `popstate`, « Ouvrir l'administration Elixir → », cadenas de l'en-tête, « Réinitialiser et recharger »), `src/components/AdminNotifications.jsx` (« Vos appareils » : installation depuis `…/admin`), textes « Session admin expirée » (`App.jsx`, `Notifications.jsx`) ;
+  - `scripts/verifie-zones.mjs` : lot `appliAdmin` (clé de stockage `appli_admin`).
+- Règles tenues :
+  - **Service worker** : aucun gestionnaire `fetch`, aucun cache, servi en `no-store`. Un test met la fenêtre au premier plan sans la recharger ; un aperçu ou une fenêtre sur l'admin (`/admin#admin`, ancienne `/#admin`) ouvre le lien dans une nouvelle fenêtre ; sans fenêtre ouverte, le test de l'admin (`test-admin`) ouvre `/admin`, pas l'accueil des pharmacies. Les catégories et étiquettes des messages (« commandes », « infos », `msg-…`, `evt-…`) suivent les règles d'une fenêtre de pharmacie.
+  - **Appli « Elixir Admin » = adresse `/admin`** (21/10/2026). Une icône d'iPhone ajoutée depuis `/#admin` s'ouvrait sur la connexion des pharmacies : l'ancien `index.html` avait une balise manifeste fixe (celle des pharmacies) que le script ne changeait qu'au chargement d'une page déjà sur `#admin` — Safari lit la première balise manifeste de la page et garde le manifeste déjà lu pour la page (WebKit, `DocumentLoader::loadApplicationManifest`), donc un `#admin` ajouté sans rechargement gardait celui des pharmacies — et un fragment `#…` dans l'adresse de départ d'une appli d'écran d'accueil n'est pas fiable sur iOS (perdu selon plusieurs signalements). La cause exacte sur l'iPhone de Zineb ne peut pas être observée d'ici ; la correction écarte les deux. Désormais :
+    - `index.html` n'a plus de balise manifeste fixe : son script en ligne en ajoute UNE, avant le démarrage du site, selon l'adresse (`/admin`, `/admin/` ou `#admin` → `admin.webmanifest`, nom « Elixir Admin » ; sinon `manifest.webmanifest`, nom « Elixir ») ;
+    - `admin.webmanifest` : `start_url` `/admin` (sans fragment), `id` `/admin` (distinct de `/`, celui des pharmacies : deux applis pour Chrome, vérifié par `Page.getAppId` dans Chrome sur ordinateur ; sur un Android où l'appli des pharmacies est déjà installée, Chrome peut rattacher `/admin` à celle-ci par sa portée `/` et proposer « Ouvrir dans Elixir » : non vérifié, consigne au § 3 f ; la portée des pharmacies n'est pas touchée), `scope` `/` ;
+    - le même script complète `/admin`, `/admin/` et l'ancienne `/#admin` en `/admin#admin` (`history.replaceState`) : le site affiche toujours l'admin sur `#admin`. Les liens des e-mails (`…/#admin`) marchent toujours. Netlify sert `index.html` pour `/admin` (`/* /index.html 200`, sans fichier `admin` dans `public/`) ;
+    - quitter l'admin (`src/adresse-admin.js`) : « Retour au catalogue », la croix de la connexion et Ctrl+Maj+A mènent à `/`. Dans un navigateur, la page est **rechargée** sur `/` : manifeste et nom des pharmacies (sinon « Sur l'écran d'accueil » ou « Installer l'application » depuis ce catalogue aurait donné une icône « Elixir Admin », ouverte sur `/` si Safari prend l'adresse de la page) ; une modification non enregistrée de l'admin peut faire demander confirmation une seconde fois, par le navigateur ; le retour arrière rouvre `/admin`. Dans l'appli « Elixir Admin », même page : nouvelle entrée d'historique `/`, le retour arrière rouvre l'admin. « Commander pour une pharmacie » remplace l'adresse par `/` (même page, manifeste de l'admin gardé jusqu'au prochain chargement) ; « Réinitialiser et recharger » (erreur de l'admin) recharge `/admin` : connexion de l'admin ;
+    - retour à l'admin, page rechargée sur `/admin` : « Ouvrir l'administration Elixir → » sur l'écran de connexion des pharmacies, et le cadenas « Administration Elixir » de l'en-tête du catalogue (aussi pendant une saisie pour une pharmacie), quand ce navigateur a un jeton admin ou dans l'appli « Elixir Admin » (sans barre d'adresse, aucun autre chemin pour revenir). L'appli est reconnue à son ouverture sur l'admin (`OUVERT_EN_APPLI_ADMIN`), puis par la clé `appli_admin` = « 1 » de son stockage (`APPLI_ADMIN`) : une page ouverte plus tard dans l'appli sur une autre adresse (aperçu d'un message, appli fermée) garde ce retour, même sans jeton admin valide. Jamais dans un navigateur ; sur Android, le stockage est partagé avec Chrome et l'appli des pharmacies du même téléphone, qui montre alors aussi ce retour (appareil de l'équipe seulement) ;
+    - textes « Session admin expirée » (envoi d'une saisie, choix de la pharmacie, notifications d'une pharmacie servie) : « ouvrez l'administration (elixir-commande.expepharma.com/admin) », plus « #admin ».
+- Essais :
+  - `node scripts/test-push-sw.mjs` (36, avec les messages) : dont fenêtres sur `/admin#admin` et `/admin`, test de l'admin sans fenêtre → `/admin` ;
+  - `node scripts/test-appli-admin.mjs` : script d'`index.html` exécuté pour chaque adresse (une seule balise manifeste, `/admin` → `/admin#admin`, pages des pharmacies inchangées), manifestes, routage Netlify, `src/adresse-admin.js`, textes d'installation ; aussi sur `dist/index.html` après `npm run build` ;
+  - `node scripts/banc/controle-appli-admin.mjs <banc>` : Chrome sans tête sur le banc local (manifeste lu par Chrome, identifiants d'appli, admin ou connexion des pharmacies affichés, fermer avec rechargement sur le manifeste des pharmacies, retour arrière, cadenas de l'en-tête, appli « Elixir Admin » simulée).
+
+**Bundle des pharmacies** : 906 018 octets pour un budget de 940 000 (`npm run zones`), soit +1 855 octets depuis `b1dbd3e` : le lien `?commandes=1` (+378) et l'adresse `/admin` (+1 477 : `src/adresse-admin.js`, lien et cadenas de retour à l'admin). L'onglet admin est dans le chunk de l'admin, chargé à la demande.
 
 ---
 
@@ -443,6 +478,9 @@ Option possible plus tard : une sortie d'entrepôt lue dans Odoo (`stock.picking
 | « En file » qui dure | Une autre diffusion plafonnée est en cours, ou le lancement a été perdu : relance automatique toutes les 5 minutes aux heures ouvertes, pendant 3 heures après l'heure prévue ; ensuite, erreur « Non envoyé ». « Annuler » reste possible tant qu'il est en file. |
 | L'outil entrepôt reçoit 401 | Secret différent des deux côtés, ou horloge du serveur de l'outil décalée de plus de 5 minutes. |
 | L'outil entrepôt reçoit 503 « configuration » | `PUSH_EVENEMENT_SECRET` absent de Netlify (ou plus court que 32 caractères), ou déploiement pas relancé après l'avoir ajouté. |
+| L'icône « Elixir Admin » ouvre l'accueil des pharmacies | Icône ajoutée depuis l'ancienne adresse `/#admin`. Supprimez l'icône, puis ajoutez-la de nouveau depuis Safari à l'adresse `https://elixir-commande.expepharma.com/admin` (§ 3 f). |
+| Dans l'appli « Elixir Admin », je suis sur la connexion des pharmacies (après « Retour au catalogue », la croix, ou « Terminer » une saisie pour une pharmacie) | Touchez « Ouvrir l'administration Elixir → » sous le bouton « Continuer » : l'admin se rouvre. |
+| Dans l'appli « Elixir Admin », je suis sur le catalogue (session de pharmacie dans l'appli, ou saisie pour une pharmacie) | Touchez le cadenas en haut, à côté du nom de la pharmacie (« Administration Elixir ») : l'admin se rouvre. |
 | « Le bouton n'apparaît pas sur mon iPhone » | Ajouter l'application à l'écran d'accueil depuis Safari, puis l'ouvrir depuis l'icône (une ancienne icône qui ouvre Safari : la supprimer et la rajouter). |
 | « Bloquées » | Autorisation refusée : iPhone → Réglages → Notifications → Elixir ; Android et ordinateur → icône à gauche de l'adresse → Notifications. |
 
@@ -470,4 +508,4 @@ Faite avec la version en ligne `b1dbd3e` ; détail complet dans l'historique git
 - Clés VAPID générées par vous sur le Mac (`npx web-push generate-vapid-keys`), jamais montrées à personne, gardées dans votre gestionnaire de mots de passe. Variables Netlify : `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (secret), `VAPID_SUBJECT` = `mailto:pharmacien@elixirpharma.fr` ; déjà en place : `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`. **Ne jamais changer les clés VAPID** (tous les appareils devraient se réabonner).
 - `sql/push-schema.sql` dans Supabase.
 - Ouverture « Fermée », puis « Pilote » avec une ou deux pharmacies volontaires, puis « Toutes » **seulement après l'étape « Bloc 1 » du plan de fermeture de Supabase**.
-- Test sur votre téléphone : iPhone → Safari sur `…/#admin` → Partager → « Sur l'écran d'accueil » (« Elixir Admin ») → 📲 Notifications → « Recevoir les notifications sur cet appareil » → « M'envoyer un test ».
+- Test sur votre téléphone : iPhone → Safari sur `…/#admin` → Partager → « Sur l'écran d'accueil » (« Elixir Admin ») → 📲 Notifications → « Recevoir les notifications sur cet appareil » → « M'envoyer un test ». Depuis l'appli « Elixir Admin » à l'adresse `/admin`, l'installation se fait depuis `https://elixir-commande.expepharma.com/admin` (§ 3 f) ; une icône ajoutée depuis `…/#admin` est à supprimer, puis à rajouter ainsi.

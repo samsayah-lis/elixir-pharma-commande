@@ -10,6 +10,7 @@
 // nouvelle activation — sinon « Réactiver » réenregistrerait sans fin une adresse morte.
 import { lireEnv, libelleAppareil, plateformeDe, estInstalle } from "./plateforme.js";
 import { hotePushConnu } from "./regles.js";
+import { surAdresseAdmin } from "../adresse-admin.js";
 
 export const API = "/.netlify/functions/push-abonnement";
 export const API_ADMIN = "/.netlify/functions/push-admin";
@@ -29,7 +30,7 @@ function navigateurReel(w = window) {
     ecouterMessages: (fn) => { if (!sw) return; sw.addEventListener("message", fn); sw.startMessages?.(); },
     aller: (url) => w.location.assign(url),
     origine: () => w.location.origin,
-    surAdmin: () => /^#admin/.test(w.location.hash || ""),
+    surAdmin: () => surAdresseAdmin(w.location.href),   // /admin#admin (appli « Elixir Admin »), ancienne /#admin
   };
 }
 let nav = null;

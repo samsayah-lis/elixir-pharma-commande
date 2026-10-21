@@ -148,6 +148,8 @@ const LOTS = {
   // Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : fonctions nouvelles (AJOUTS_AUTORISES) ;
   // la page des pharmacies ne lit plus le jeton admin (l'onglet admin est PeremptionsAdmin.jsx, appels par adminFetch)
   peremptionOdoo: { nom: "péremption courte, V1 (« Odoo facture la remise »)", repere: "scripts/test-peremption-odoo.mjs" },
+  // appli « Elixir Admin » à l'adresse /admin (21/10/2026, docs/notifications.md § 10) : retour à l'admin dans l'appli
+  appliAdmin: { nom: "appli « Elixir Admin » (adresse /admin)", repere: "src/adresse-admin.js" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -227,6 +229,9 @@ const CLES_AUTORISEES = {
     'sessionStorage.getItem(CLE_BROUILLON': 1, "sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon": 1, "sessionStorage.removeItem(CLE_BROUILLON": 1 },
   // src/components/ShortExpiry.jsx : la page des pharmacies ne lit plus le jeton admin (adminAuthHeaders retiré)
   peremptionOdoo: { 'localStorage.getItem("admin_token"': -1 },
+  // src/adresse-admin.js, clé appli_admin = "1" : posée par l'appli « Elixir Admin » ouverte sur l'admin (fenêtre d'appli
+  // seulement), relue par les pages ouvertes ensuite dans l'appli sur une autre adresse (retour à l'admin toujours proposé)
+  appliAdmin: { 'localStorage.setItem("appli_admin", "1"': 1, 'localStorage.getItem("appli_admin"': 1 },
 };
 
 // ── lecture ──
