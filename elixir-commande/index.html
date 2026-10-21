@@ -3,16 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <!-- Appli installable (docs/notifications.md) : manifeste, icônes, couleur de la barre ; iPhone : « Sur l'écran d'accueil » -->
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <!-- Appli installable (docs/notifications.md) : icônes, couleur de la barre ; iPhone : « Sur l'écran d'accueil ». Le manifeste
+         est ajouté par le script ci-dessous (une seule balise, choisie selon l'adresse) -->
     <meta name="theme-color" content="#0f2d3d" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="Elixir" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <!-- appli « Elixir Admin » (téléphone de l'équipe) : page ouverte sur #admin → manifeste et nom de l'admin -->
-    <script>if (location.hash === "#admin") { document.querySelector('link[rel="manifest"]').href = "/admin.webmanifest"; document.querySelector('meta[name="apple-mobile-web-app-title"]').content = "Elixir Admin"; }</script>
+    <!-- Appli « Elixir Admin » (téléphone de l'équipe) ou appli des pharmacies « Elixir » : UNE balise manifeste, ajoutée ici avant
+         tout le reste (aucune balise fixe : Safari prend la première trouvée et garde celle qu'il a déjà lue). Admin = adresse
+         /admin (src/adresse-admin.js) : l'appli de l'iPhone ajoutée depuis /#admin perdait le « #admin » et s'ouvrait sur
+         l'accueil des pharmacies. /admin, /admin/ et l'ancienne /#admin deviennent /admin#admin avant le démarrage du site,
+         qui affiche l'admin sur #admin. Toute autre adresse : manifeste des pharmacies, adresse inchangée.
+         Vérifié par scripts/test-appli-admin.mjs et scripts/banc/controle-appli-admin.mjs. -->
+    <script>
+      (function () {
+        var l = location, chemin = /^\/admin\/?$/.test(l.pathname), admin = chemin || l.hash === "#admin";
+        if (admin && (chemin || l.pathname === "/") && !(l.pathname === "/admin" && l.hash === "#admin")) {
+          try { history.replaceState(history.state, "", "/admin" + l.search + "#admin"); } catch (e) { /* adresse laissée telle quelle */ }
+        }
+        var m = document.createElement("link");
+        m.rel = "manifest";
+        m.href = admin ? "/admin.webmanifest" : "/manifest.webmanifest";
+        document.head.appendChild(m);
+        if (admin) document.querySelector('meta[name="apple-mobile-web-app-title"]').content = "Elixir Admin";
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Elixir Pharma — Commande</title>
     <meta name="description" content="Commande en ligne Elixir Pharma, réservée aux pharmacies clientes." />

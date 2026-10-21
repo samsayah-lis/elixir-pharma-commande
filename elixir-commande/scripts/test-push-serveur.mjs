@@ -25,6 +25,7 @@ import * as P from "../netlify/functions/_push.js";
 import { creerHandler as handlerAbonnement } from "../netlify/functions/push-abonnement.js";
 import { creerHandler as handlerAdmin } from "../netlify/functions/push-admin.js";
 import { creerHandler as handlerEnvoi } from "../netlify/functions/push-envoi-background.js";
+import { stockMemoire } from "./push-stock-memoire.mjs";
 
 const RACINE = new URL("..", import.meta.url).pathname;
 let ok = 0, ko = 0;
@@ -50,20 +51,23 @@ for (const [u, attendu] of [["/", "/"], ["/?menu=promo_12", "/?menu=promo_12"], 
   eq("annonce liste sans CIP refusée", R.verifierAnnonce({ titre: "t", corps: "c", url: "/", audience: "liste", cips: [] }).ok, false);
   eq("annonce liste : doublons retirés", R.verifierAnnonce({ titre: "t", corps: "c", url: "/", audience: "liste", cips: ["2000001", "2000001"] }).annonce.cips, ["2000001"]);
   eq("réglages valides", R.verifierReglages({ ouverture: "pilote", pilote_cips: ["2000001", " 2000001 "], plafond_offres_7j: 3 }),
-    { ok: true, erreurs: [], reglages: { ouverture: "pilote", pilote_cips: ["2000001"], plafond_offres_7j: 3 } });
+    { ok: true, erreurs: [], reglages: { ouverture: "pilote", pilote_cips: ["2000001"], plafond_offres_7j: 3, plafond_infos_7j: 2, plafond_commandes_jour: 10 } });
   eq("réglages : ouverture, CIP et plafond refusés", R.verifierReglages({ ouverture: "x", pilote_cips: ["abc"], plafond_offres_7j: 8 }).erreurs.length, 3);
   eq("réglages : plafond 0 admis (plus aucune offre)", R.verifierReglages({ ouverture: "toutes", pilote_cips: [], plafond_offres_7j: 0 }).ok, true);
-  eq("réglages illisibles → défauts (fermée, plafond 2)", R.fusionnerReglages("{pas du json"), { ouverture: "fermee", pilote_cips: [], plafond_offres_7j: 2 });
+  eq("réglages illisibles → défauts (fermée, plafonds 2, 2 et 10)", R.fusionnerReglages("{pas du json"),
+    { ouverture: "fermee", pilote_cips: [], plafond_offres_7j: 2, plafond_infos_7j: 2, plafond_commandes_jour: 10 });
   eq("ouverture : toutes / pilote / fermée", [R.raisonOuverture({ ouverture: "toutes", pilote_cips: [] }, "1"), R.raisonOuverture({ ouverture: "pilote", pilote_cips: ["2000001"] }, "2000001"),
     R.raisonOuverture({ ouverture: "pilote", pilote_cips: [] }, "2000001"), R.raisonOuverture({ ouverture: "fermee", pilote_cips: [] }, "2000001")], [null, null, "hors_pilote", "fermee"]);
   eq("catégories filtrées (inconnues retirées, ordre fixe)", R.filtrerCategories(["offres", "x", "stock", "stock"]), ["stock", "offres"]);
   eq("catégories illisibles → null", R.filtrerCategories("stock"), null);
   eq("aide des offres selon le plafond", [R.aideOffres(2), R.aideOffres(1), R.aideOffres(0)],
     ["Nos offres et nouveaux produits, 2 par semaine au plus.", "Nos offres et nouveaux produits, 1 par semaine au plus.", "Nos offres et nouveaux produits (aucun envoi en ce moment)."]);
-  // « Retour en stock » branché (_restock.js, docs/notifications.md § 9.1) : plus de « bientôt » ; « Mes commandes » : pas encore (§ 9.2)
+  // « Retour en stock » branché (_restock.js, docs/notifications.md § 9.1) ; « Mes commandes et réclamations » branché aux
+  // messages de l'admin et à l'outil entrepôt (§ 4 et 6) : plus de « bientôt » nulle part
   const aideDe = (id) => R.CATEGORIES.find((c) => c.id === id)?.aide || "";
-  eq("Retour en stock : branché, sans « bientôt », bouton de la Saisie nommé ; Mes commandes : « bientôt »",
-    [/bientôt/.test(aideDe("stock")), aideDe("stock").includes("M’avertir du retour"), /bientôt/.test(aideDe("commandes"))], [false, true, true]);
+  eq("Retour en stock et Mes commandes et réclamations : branchés, sans « bientôt », bouton de la Saisie nommé",
+    [/bientôt/.test(aideDe("stock")), aideDe("stock").includes("M’avertir du retour"), /bientôt/.test(aideDe("commandes")), R.CATEGORIES.find((c) => c.id === "commandes").libelle],
+    [false, true, false, "Mes commandes et réclamations"]);
 }
 
 // ── 2. Configuration ──
@@ -197,78 +201,8 @@ const adresse = (chemin) => `http://${HOTE}${chemin}`;
   eq("Content-Length absent des en-têtes donnés à fetch", Object.keys(entetesVues).includes("Content-Length"), false);
 }
 
-// ── Stock en mémoire (même interface que creerStockPush) ──
+// ── Stock en mémoire (même interface que creerStockPush) : scripts/push-stock-memoire.mjs (partagé avec test-push-messages)
 // comptes : Map(e-mail → CIP actuel dans elixir_pharmacies) ; absent : chaque e-mail d'abonnement rattaché à son CIP
-function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], envois = [], comptes = null } = {}) {
-  const db = { ab: lignes.map((l) => ({ failures: 0, created_at: new Date().toISOString(), categories: ["stock", "commandes", "offres"], ...l })), reglages: R.fusionnerReglages(reglages),
-    annonces: [], envois: envois.map((e, i) => ({ id: i + 1, ...e })), appels: [], comptes, hotes: new Map(), supprimes: [] };
-  const copie = (x) => (x ? JSON.parse(JSON.stringify(x)) : x);
-  const trace = (n) => db.appels.push(n);
-  return {
-    db,
-    abonnements: {
-      async parEndpoint(e) { trace("parEndpoint"); return copie(db.ab.find((l) => l.endpoint === e)) || null; },
-      async deIdentite(i) { trace("deIdentite"); return copie(db.ab.filter((l) => (i.role === "admin" ? l.role === "admin" && l.compte_email === i.email : l.role === "pharmacie" && l.pharmacy_cip === i.cip))); },
-      async enregistrer(ligne) {
-        trace("enregistrer");
-        const ex = db.ab.find((l) => l.endpoint === ligne.endpoint);
-        if (ex) { Object.assign(ex, ligne); return copie(ex); }
-        const n = { id: crypto.randomUUID(), failures: 0, created_at: new Date().toISOString(), last_success_at: null, ...ligne };
-        db.ab.push(n); return copie(n);
-      },
-      async modifier(id, champs) { trace("modifier"); const l = db.ab.find((x) => x.id === id); if (l) Object.assign(l, champs); return copie(l) || null; },
-      async supprimerIds(ids) { trace("supprimerIds"); db.supprimes.push(...ids); db.ab = db.ab.filter((l) => !ids.includes(l.id)); },
-      async purgerInactifs(avant) { trace("purgerInactifs"); db.ab = db.ab.filter((l) => l.role !== "pharmacie" || (l.last_seen_at || l.created_at) >= avant); },
-      async succes(ids, quand) { trace("succes"); for (const l of db.ab) if (ids.includes(l.id)) Object.assign(l, { last_success_at: quand, failures: 0, last_error: null }); },
-      async echec(id, failures, quand, erreur) { trace("echec"); const l = db.ab.find((x) => x.id === id); if (l) Object.assign(l, { failures, last_failure_at: quand, last_error: erreur }); },
-      async dePharmacie(cip) { return copie(db.ab.filter((l) => l.role === "pharmacie" && l.pharmacy_cip === cip)); },
-      async pourAnnonce({ cips = null } = {}) { return copie(db.ab.filter((l) => l.role === "pharmacie" && l.categories.includes("offres") && (!cips || cips.includes(l.pharmacy_cip)))); },
-      async tous() { return copie(db.ab); },
-    },
-    reglages: { async lire() { return copie(db.reglages); }, async ecrire(v) { db.reglages = R.fusionnerReglages(v); return copie(db.reglages); } },
-    annonces: {
-      async creer(l) {
-        if (l.idem && db.annonces.some((a) => a.idem === l.idem)) return { annonce: copie(db.annonces.find((a) => a.idem === l.idem)), existante: true };
-        const a = { id: crypto.randomUUID(), created_at: new Date().toISOString(), ...l }; db.annonces.push(a); return { annonce: copie(a), existante: false };
-      },
-      async parIdem(idem) { return copie(db.annonces.find((a) => a.idem === idem)) || null; },
-      async lire(id) { return copie(db.annonces.find((a) => a.id === id)) || null; },
-      async enCours(depuis) { return copie(db.annonces.filter((a) => ["en_file", "en_cours"].includes(a.statut) && a.created_at >= depuis)); },
-      // index unique push_annonces_une_en_cours : une seule annonce « en_cours »
-      async reclamer(id) {
-        const a = db.annonces.find((x) => x.id === id && x.statut === "en_file");
-        if (!a || db.annonces.some((x) => x.statut === "en_cours")) return null;
-        a.statut = "en_cours"; a.started_at = new Date().toISOString(); return copie(a);
-      },
-      async diffusionEnCours() { return copie(db.annonces.filter((a) => a.statut === "en_cours")); },
-      async liberer(avant) { for (const a of db.annonces) if (a.statut === "en_cours" && a.started_at < avant) Object.assign(a, { statut: "erreur", erreur: "Envoi interrompu" }); },
-      async terminer(id, champs) { Object.assign(db.annonces.find((a) => a.id === id), champs, { finished_at: new Date().toISOString() }); },
-      async lister() { return copie(db.annonces.slice().reverse()); },
-    },
-    envois: {
-      async ajouter(l) { for (const e of l) db.envois.push({ id: db.envois.length + 1, created_at: new Date().toISOString(), ...e }); },
-      async corriger(annonceId, reussis) { for (const e of db.envois) if (e.annonce_id === annonceId && reussis.has(e.pharmacy_cip)) e.nb_reussis = reussis.get(e.pharmacy_cip); },
-      async plafond(depuis) { const n = new Map(); for (const e of db.envois) if (e.categorie === "offres" && e.nb_reussis > 0 && e.created_at >= depuis) n.set(e.pharmacy_cip, (n.get(e.pharmacy_cip) || 0) + 1); return n; },
-      async dejaEnvoye(cip, tag) { return db.envois.some((e) => e.pharmacy_cip === cip && e.tag === tag && e.nb_reussis > 0); },
-      async purger(avant) { db.envois = db.envois.filter((e) => e.created_at >= avant); },
-    },
-    async nomPharmacie() { return "PHARMACIE DU TEST"; },
-    async comptes(emails) {
-      trace("comptes");
-      const m = new Map();
-      for (const e of emails) {
-        if (db.comptes) { if (db.comptes.has(e)) m.set(e, db.comptes.get(e)); }
-        else { const l = db.ab.find((x) => x.role === "pharmacie" && String(x.compte_email || "").toLowerCase() === e); if (l) m.set(e, l.pharmacy_cip); }
-      }
-      return m;
-    },
-    hotes: {
-      async noter(h) { db.hotes.set(h, new Date().toISOString()); },
-      async lister() { return [...db.hotes].map(([hote, vu_le]) => ({ hote, vu_le })); },
-      async purger(avant) { for (const [h, d] of db.hotes) if (d < avant) db.hotes.delete(h); },
-    },
-  };
-}
 // ligne d'abonnement d'essai ; e-mail de compte par défaut : p<CIP>@pharma.fr
 const ligneDe = (ap, extra = {}) => ({ id: crypto.randomUUID(), endpoint: ap.abonnement.endpoint, ...ap.abonnement.keys, role: "pharmacie",
   ...(extra.pharmacy_cip && !extra.compte_email ? { compte_email: `p${extra.pharmacy_cip}@pharma.fr` } : {}), ...extra });
@@ -349,13 +283,13 @@ const avecTrace = (h) => async (e) => { const r = await h(e); toutesReponses.pus
   eq("Supabase Auth en panne → 503 indisponible (jamais « reconnectez-vous »)", [panne.statusCode, corpsDe(panne).error], [503, "indisponible"]);
   // statut sans appareil
   const s0 = corpsDe(await h(EVT({ action: "statut" })));
-  eq("statut : disponible, aucun appareil, 3 catégories", [s0.disponible, s0.raison, s0.appareil, s0.appareils, s0.categories_disponibles.map((c) => c.id), s0.cle_publique],
-    [true, null, null, [], ["stock", "commandes", "offres"], VAPID.publicKey]);
+  eq("statut : disponible, aucun appareil, 4 catégories (Informations Elixir comprise), plafond des informations", [s0.disponible, s0.raison, s0.appareil, s0.appareils,
+    s0.categories_disponibles.map((c) => c.id), s0.cle_publique, s0.plafond_infos_7j], [true, null, null, [], ["stock", "commandes", "infos", "offres"], VAPID.publicKey, 2]);
   // abonner
   const ap = nouvelAppareil(adresse("/ab/1"));
   const a1 = await h(EVT({ action: "abonner", abonnement: ap.abonnement, appareil: { libelle: "Android · Chrome", plateforme: "android", installe: false },
     pharmacy_cip: "9999999", cip: "9999999", email: "pirate@x.fr" }));
-  eq("abonner : 200, catégories par défaut", [a1.statusCode, corpsDe(a1).appareil.categories, corpsDe(a1).appareil.appareil], [200, ["stock", "commandes", "offres"], "Android · Chrome"]);
+  eq("abonner : 200, catégories par défaut (les 4)", [a1.statusCode, corpsDe(a1).appareil.categories, corpsDe(a1).appareil.appareil], [200, ["stock", "commandes", "infos", "offres"], "Android · Chrome"]);
   const l1 = stock.db.ab.find((l) => l.endpoint === ap.abonnement.endpoint);
   eq("identité prise du JETON (CIP et e-mail du corps ignorés)", [l1.pharmacy_cip, l1.compte_email, l1.role, l1.pharmacie_nom], ["2000001", "a@pharma.fr", "pharmacie", "PHARMACIE DU TEST"]);
   // statut avec cet appareil
@@ -469,7 +403,7 @@ const lancements = [];
   eq("jeton pharmacie → 403", (await h(EVT({ action: "etat" }))).statusCode, 403);
   const etat = corpsDe(await h(A({ action: "etat" })));
   eq("état : service complet, tables", [etat.disponible, etat.service.tables, etat.service.vapid_paire, etat.service.defauts, etat.cle_publique], [true, true, true, [], VAPID.publicKey]);
-  eq("état : statistiques", etat.stats, { pharmacies: 3, appareils: 4, par_categorie: { stock: 1, commandes: 1, offres: 2 }, par_plateforme: { ios: 2, android: 1, ordinateur: 1, autre: 0 },
+  eq("état : statistiques", etat.stats, { pharmacies: 3, appareils: 4, par_categorie: { stock: 1, commandes: 1, infos: 0, offres: 2 }, par_plateforme: { ios: 2, android: 1, ordinateur: 1, autre: 0 },
     installes: 2, en_echec: 1, vus_30j: 4 });
   eq("état : pharmacies triées par nom", etat.pharmacies.map((p) => [p.nom, p.appareils, p.categories]), [["PHARMACIE A", 2, ["stock", "offres"]], ["PHARMACIE B", 1, ["commandes"]], ["PHARMACIE C", 1, ["offres"]]]);
   const etatSans = corpsDe(await handlerAdmin({ stock, config: () => P.configPush({ ...ENV, VAPID_PUBLIC_KEY: "", CRON_SECRET: "" }), verifierAdmin, journal: () => {} })(A({ action: "etat" })));
@@ -497,8 +431,10 @@ const lancements = [];
   // estimer et plafond
   stock.db.envois.push({ id: 99, categorie: "offres", pharmacy_cip: "2000003", nb_reussis: 1, created_at: new Date(Date.now() - 3 * 86400e3).toISOString() },
     { id: 100, categorie: "offres", pharmacy_cip: "2000003", nb_reussis: 1, created_at: new Date(Date.now() - 1 * 86400e3).toISOString() });
-  eq("estimer : 2 visées (offres), 1 plafonnée (2 offres ces 7 jours), 1 recevra", corpsDe(await h(A({ action: "estimer", audience: "toutes" }))),
-    { visees: 2, plafonnees: 1, recevront: 1, appareils: 1, fermee: false, plafond_offres_7j: 2 });
+  eq("estimer : 2 visées (offres), 1 plafonnée (2 offres ces 7 jours), 1 recevra ; 1 pharmacie sans l'alerte, aucune cliente sans appareil",
+    corpsDe(await h(A({ action: "estimer", audience: "toutes" }))),
+    { categorie: "offres", visees: 2, plafonnees: 1, recevront: 1, appareils: 1, fermee: false, plafond: { max: 2, fenetre: "7 jours" }, plafond_offres_7j: 2,
+      sans_appareil: 0, alerte_coupee: 1, hors_ouverture: 0 });
   eq("estimer liste", corpsDe(await h(A({ action: "estimer", audience: "liste", cips: ["2000001", "2000002"] }))).visees, 1);
   // envoyer : validation, idempotence, en cours, lancement
   const annonce = { titre: "Vaseline : précommande", corps: "13 références à prix net.", url: "/?menu=promo_1", audience: "toutes" };
@@ -527,7 +463,7 @@ const lancements = [];
   const e4 = await h(A({ action: "envoyer", annonce: { ...annonce, audience: "liste", cips: ["2000001"] }, idem: "idem-00000003" }));
   eq("nouvelle annonce après la fin de la précédente → 202", e4.statusCode, 202);
   eq("relancer trop tôt → 409", corpsDe(await h(A({ action: "relancer", id: corpsDe(e4).annonce.id }))).error, "trop_tot");
-  stock.db.annonces.find((a) => a.id === corpsDe(e4).annonce.id).created_at = new Date(Date.now() - 3 * 60e3).toISOString();
+  Object.assign(stock.db.annonces.find((a) => a.id === corpsDe(e4).annonce.id), { created_at: new Date(Date.now() - 3 * 60e3).toISOString(), en_file_le: new Date(Date.now() - 3 * 60e3).toISOString() });
   const nLanc = lancements.length;
   eq("relancer après 2 min → 202, relancée", [(await h(A({ action: "relancer", id: corpsDe(e4).annonce.id }))).statusCode, lancements.length], [202, nLanc + 1]);
   const hEchec = handlerAdmin({ stock, config: () => CONF, verifierAdmin, lancer: async () => "HTTP 500", journal: () => {} });
@@ -651,7 +587,8 @@ const lancements = [];
   eq("reclamer : annonce bloquée « en_cours » libérée d'abord, puis écriture conditionnelle (statut en_file)",
     [appels[3].init.method, /statut=eq\.en_cours&started_at=lt\./.test(appels[3].u), appels[4].init.method, appels[4].u.includes("statut=eq.en_file")], ["PATCH", true, "PATCH", true]);
   await s.envois.plafond("2026-10-13T00:00:00.000Z");
-  eq("plafond : offres réussies depuis 7 jours", /categorie=eq\.offres&nb_reussis=gt\.0&created_at=gte\./.test(appels[5].u), true);
+  eq("plafond : offres réussies (appareil joint ou e-mail de secours parti) depuis 7 jours", [/categorie=eq\.offres&created_at=gte\./.test(appels[5].u),
+    decodeURIComponent(appels[5].u).includes("or=(nb_reussis.gt.0,email.eq.envoye)")], [true, true]);
   const s409 = P.creerStockPush({ url: "u", cle: "k", fetch: async (u, init) => new Response(init.method === "PATCH" && u.includes("statut=eq.en_file")
     ? JSON.stringify({ code: "23505", message: "duplicate key value violates unique constraint" }) : "[]", { status: u.includes("statut=eq.en_file") ? 409 : 200 }) });
   eq("reclamer : autre annonce en cours (index unique, 23505) → null, l'annonce reste en file", await s409.annonces.reclamer("00000000-0000-4000-8000-000000000000"), null);
@@ -857,12 +794,16 @@ eq("aucune réponse ne contient de secret auth d'appareil", toutesReponses.filte
 {
   const dossier = mkdtempSync(join(tmpdir(), "test-push-paquet-"));
   try {
-    for (const nom of ["push-abonnement", "push-admin", "push-envoi-background", "restock-notify", "restock-notify-cron"]) {
+    for (const nom of ["push-abonnement", "push-admin", "push-envoi-background", "push-menage", "push-programmes", "push-evenement", "restock-notify", "restock-notify-cron"]) {
       const sortie = join(dossier, `${nom}.mjs`);
       await build({ entryPoints: [join(RACINE, "netlify/functions", `${nom}.js`)], bundle: true, platform: "node", target: "node18", format: "esm", outfile: sortie,
         logLevel: "silent", banner: { js: 'import { createRequire as ___creerRequire } from "module"; const require = ___creerRequire(import.meta.url);' } });
       const m = await import(pathToFileURL(sortie).href);
       eq(`${nom} : empaqueté, handler exporté`, typeof m.handler, "function");
+      if (nom === "push-evenement") {
+        const r = await m.handler({ httpMethod: "POST", headers: {}, body: "{}" });
+        eq("push-evenement empaqueté, sans secret : 503 configuration, rien lu", [r.statusCode, corpsDe(r).error], [503, "configuration"]);
+      }
       if (nom === "push-abonnement") {
         const r = await m.handler({ httpMethod: "GET", headers: {} });
         eq("push-abonnement empaqueté, sans variables : GET indisponible, sans erreur", corpsDe(r), { disponible: false, cle_publique: null, ouverture: "fermee" });

@@ -5,7 +5,7 @@
   "description": "Administration du site de commande Elixir Pharma (notifications de l'équipe Elixir).",
   "lang": "fr",
   "dir": "ltr",
-  "start_url": "/#admin",
+  "start_url": "/admin",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f4efe4",

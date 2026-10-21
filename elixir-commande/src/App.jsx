@@ -31,6 +31,8 @@ import { PanneauAssistant, GroupeAide, CoucheAssistant } from "./components/assi
 import { authAssistant, etatAssistant } from "./assistant-client.js";
 // Notifications de l'appli installable (docs/notifications.md) : entrée du menu et chargement à la demande seulement ici
 import { CarteNotifications, PanneauNotifications, EntreeMenuNotifications, demarrerNotifications, oublierAppareilNotifications } from "./notifications/entree.jsx";
+// Adresse de l'admin (/admin, appli « Elixir Admin » de l'iPhone) : quitter l'admin, revenir à l'admin (src/adresse-admin.js)
+import { CHEMIN_ADMIN, adresseHorsAdmin, quitterAdresseAdmin, APPLI_ADMIN } from "./adresse-admin.js";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
@@ -47,7 +49,7 @@ const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 const MESSAGE_ENVOI_BLOQUE = {
   reconnexion: "Reconnexion nécessaire : pour envoyer votre commande, reconnectez-vous avec le code reçu par e-mail. Rien n'est parti, votre panier est conservé.",
   fiche: "Aucune pharmacie n'est rattachée à ce compte : la commande ne peut pas partir. Contactez Elixir Pharma au 01 86 04 39 95 (votre panier est conservé).",
-  admin: "Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis renvoyez la commande",
+  admin: "Session admin expirée : ouvrez l'administration (elixir-commande.expepharma.com/admin) pour vous reconnecter, puis renvoyez la commande",
   erreur: "Envoi impossible pour le moment (serveur injoignable) : rien n'est parti, votre panier est conservé. Réessayez dans un instant.",
   // annoncé avant tout envoi : session sans aucun jeton (ouverte avant la connexion par code, ou sans code)
   sansJeton: "Pour envoyer votre commande, confirmez votre session avec le code reçu par e-mail (session ouverte sans code). Votre panier est conservé.",
@@ -512,16 +514,18 @@ export default function App() {
   useEffect(() => {
     const onHash = () => setShowAdmin(window.location.hash === "#admin");
     window.addEventListener("hashchange", onHash);
+    // retour arrière / avant entre « / » et /admin#admin (chemins différents : aucun hashchange, seulement popstate)
+    window.addEventListener("popstate", onHash);
     // Keyboard shortcut: Ctrl+Shift+A (or Cmd+Shift+A on Mac)
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "A") {
         e.preventDefault();
-        if (window.location.hash === "#admin") { window.location.hash = ""; }
+        if (window.location.hash === "#admin") { quitterAdresseAdmin(() => setShowAdmin(false)); }
         else { window.location.hash = "#admin"; }
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("keydown", onKey); };
+    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("popstate", onHash); window.removeEventListener("keydown", onKey); };
   }, []);
 
   // Campagnes groupement (config dynamique depuis Supabase)
@@ -982,7 +986,7 @@ export default function App() {
     const [q, sp, lj] = readCart(a);
     setActingFor(a); setQuantities(q); setSpecialItems(sp); setJustifInfo(lj);
     setPharmacyName(a.name); setPharmacyEmail(a.email); setPharmacyCip(a.cip); setIsClient(true);
-    setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", window.location.pathname + window.location.search);
+    setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", adresseHorsAdmin(window.location));
   };
   const stopActing = () => {
     if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return;
@@ -1040,6 +1044,15 @@ export default function App() {
     try { const u = new URL(window.location.href); u.searchParams.delete("notifications"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
     if (notif.visible) ouvrirNotifications();
   }, [notif]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // lien ?commandes=1 (notification « Mes commandes et réclamations ») : « Mes commandes » ouvert une fois la pharmacie
+  // connue ; paramètre retiré
+  const lienCommandes = useRef((() => { try { return new URLSearchParams(window.location.search).get("commandes") === "1"; } catch { return false; } })());
+  useEffect(() => {
+    if (!lienCommandes.current || !onboardingDone || !pharmacyCip || pharmacyCip === "0") return;
+    lienCommandes.current = false;
+    try { const u = new URL(window.location.href); u.searchParams.delete("commandes"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
+    setShowMyOrders(true); fetchMyOrders();
+  }, [onboardingDone, pharmacyCip]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");
@@ -2166,6 +2179,9 @@ export default function App() {
           {obErreur}
           <button className="ex-btn-petrole" onClick={handleEmailLookup} style={obBtn}>Continuer →</button>
           {reconnexion && <button onClick={annulerReconnexion} style={{ ...obLien, marginTop:8 }}>← Revenir au catalogue sans me reconnecter</button>}
+          {/* équipe Elixir (jeton admin dans ce navigateur, ou appli « Elixir Admin » sans barre d'adresse : APPLI_ADMIN) : retour
+              à l'admin, page rechargée sur /admin (manifeste et adresse de l'admin) */}
+          {!reconnexion && (hasAdminToken || APPLI_ADMIN) && <button onClick={() => window.location.assign(CHEMIN_ADMIN)} style={{ ...obLien, marginTop:8 }}>Ouvrir l'administration Elixir →</button>}
           {obFooter}
         </div>
       )}
@@ -2473,9 +2489,13 @@ export default function App() {
                   mobile ; ailleurs classe ex-nom-pharmacie, clamp(110px, 10vw, 150px), jusqu'à 220 px dès 1 280 px.
                   Crayon au trait au lieu de l'emoji 🛠 (comme le bandeau de saisie et l'admin, lots 7 et 10) */}
               <span title={pharmacyName} className={isMobile ? undefined : "ex-nom-pharmacie"} style={{ fontSize: isMobile ? 11 : 12, fontWeight: 600, color: actingFor ? "#fdba74" : T.paper, maxWidth: isMobile ? 140 : undefined, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", display: "inline-block", marginRight: 4 }}>{actingFor && <Icone nom="crayon" taille={12} epaisseur={2.4} style={{ marginRight: 4 }} />}{pharmacyName}</span>
+              {/* équipe Elixir (jeton admin, ou appli « Elixir Admin » : APPLI_ADMIN) : retour à l'administration, page rechargée
+                  sur /admin — seul chemin dans l'appli sans barre d'adresse (catalogue d'une pharmacie, saisie pour une pharmacie
+                  dont la session admin a expiré) ; jamais affiché aux pharmacies (ni jeton admin, ni appli de l'admin) */}
+              {(hasAdminToken || APPLI_ADMIN) && <button className="ex-icone-entete ex-icone-pastille" onClick={() => window.location.assign(CHEMIN_ADMIN)} title="Ouvrir l'administration Elixir" aria-label="Administration Elixir" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="cadenas" taille={15} /></button>}
               {!actingFor && hasAdminToken && <button className="ex-icone-entete ex-icone-pastille" onClick={() => setShowPharmacyPicker(true)} title="Commander à la place d'une pharmacie (saisie Elixir)" aria-label="Commander pour une pharmacie" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="crayon" taille={15} /></button>}
-              {/* zone de toucher élargie (ex-cible) seulement sans le bouton crayon voisin (2 px d'écart : elle le chevaucherait) */}
-              {!actingFor && <button className={hasAdminToken ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
+              {/* zone de toucher élargie (ex-cible) seulement sans bouton voisin (cadenas, crayon : 2 px d'écart, elle le chevaucherait) */}
+              {!actingFor && <button className={hasAdminToken || APPLI_ADMIN ? "ex-icone-entete ex-icone-pastille" : "ex-icone-entete ex-icone-pastille ex-cible"} onClick={handleLogout} title="Se déconnecter" aria-label="Se déconnecter" style={{ ...btnEntete, width: 28, height: 28 }}><Icone nom="deconnexion" taille={16} /></button>}
             </div>
             {!isMobile && <button className="ex-icone-entete" onClick={handlePrint} title="Imprimer" aria-label="Imprimer" style={btnEntete}><Icone nom="imprimer" /></button>}
             {/* Notifications : grand écran seulement (tablette : la recherche garderait trop peu de place ; menu → MON COMPTE) */}
@@ -3872,11 +3892,12 @@ export default function App() {
 
       {/* Admin Panel */}
       {showAdmin && (
-        /* erreur de l'admin (lot 8) : même dessin que les autres erreurs, textes et bouton (même onClick) inchangés */
+        /* erreur de l'admin (lot 8) : même dessin que les autres erreurs, textes inchangés. « Réinitialiser et recharger » : jeton admin
+           retiré, page rechargée sur /admin → connexion de l'admin (appli « Elixir Admin » comprise ; avant : « # » vidé et rechargement) */
         <ErrorBoundary fallback={<div style={{position:"fixed",inset:0,zIndex:9999,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <EtatVide erreur icone="alerte" titre="Erreur Admin Panel" texte="Une erreur s'est produite. Essayez de vider le cache du navigateur."
             style={{ ...ui.modal, maxWidth: 500, border: `1px solid ${T.line}`, padding: "40px 32px" }}
-            actions={<button className="ex-btn-petrole" onClick={() => { localStorage.removeItem("admin_token"); window.location.hash = ""; window.location.reload(); }}
+            actions={<button className="ex-btn-petrole" onClick={() => { localStorage.removeItem("admin_token"); window.location.replace(CHEMIN_ADMIN); }}
               style={{ ...ui.btn("primaire", "l"), background: undefined, color: undefined }}>
               Réinitialiser et recharger
             </button>} />
@@ -3888,7 +3909,7 @@ export default function App() {
             sectionMeta={SECTION_META}
             onOrderForPharmacy={() => setShowPharmacyPicker(true)}
             onClose={() => {
-              window.location.hash = "";
+              quitterAdresseAdmin(() => setShowAdmin(false));   // /admin → « / » (navigateur : page rechargée ; appli « Elixir Admin » : même page) ; #admin de Ctrl+Maj+A → « # » vidé
               fetchProducts();
               try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
             }}
@@ -3927,7 +3948,7 @@ function PharmacyPicker({ onPick, onClose }) {
     try {
       const r = await fetch(`/.netlify/functions/admin-pharmacy-find?q=${encodeURIComponent(q.trim())}`, { headers: { Authorization: `Bearer ${localStorage.getItem("admin_token") || ""}` } });
       const j = await r.json().catch(() => ({}));
-      if (r.status === 401 || r.status === 403) throw new Error("Session admin expirée : ouvrez l'admin (#admin) pour vous reconnecter, puis recommencez.");
+      if (r.status === 401 || r.status === 403) throw new Error("Session admin expirée : ouvrez l'administration (elixir-commande.expepharma.com/admin) pour vous reconnecter, puis recommencez.");
       if (!r.ok) throw new Error(j.error || `Erreur ${r.status}`);
       setRes(j.pharmacies || []);
     } catch (e) { setErr(e.message); setRes(null); }

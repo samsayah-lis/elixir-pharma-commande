@@ -229,21 +229,26 @@ export function reponseChatFictive(b = {}, pharmacie = PHARMACIE_FICTIVE) {
 // Le GET (clé publique, ouverture) reste réel sur un aperçu : l'abonnement du navigateur peut être pris, il n'est jamais
 // enregistré et rien ne lui est envoyé.
 export function reponsePushFictive(b = {}) {
-  if (b.action === "statut") return { disponible: true, raison: null, cle_publique: null, plafond_offres_7j: 2, categories_disponibles: categoriesAffichees(2),
+  if (b.action === "statut") return { disponible: true, raison: null, cle_publique: null, plafond_offres_7j: 2, plafond_infos_7j: 2, categories_disponibles: categoriesAffichees(2, 2),
     appareil: null, autre_identite: false, appareils: [], apercu: true };
   if (b.action === "oublier") return { success: true, role: null, apercu: true };
   return { success: true, apercu: true };
 }
 export function reponsePushAdminFictive(b = {}) {
-  const vide = { stock: 0, commandes: 0, offres: 0 };
+  const vide = { stock: 0, commandes: 0, infos: 0, offres: 0 };
   switch (b.action) {
     case "etat": return { apercu: true, disponible: true, service: { vapid_publique: true, vapid_privee: true, vapid_paire: true, sujet: true, sujet_defaut: false,
-      cle_serveur: true, cron_secret: true, tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: null, reglages: REGLAGES_DEFAUT,
+      cle_serveur: true, cron_secret: true, tables: true, tables_messages: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: null, reglages: REGLAGES_DEFAUT,
       stats: { pharmacies: 0, appareils: 0, par_categorie: vide, par_plateforme: { ios: 0, android: 0, ordinateur: 0, autre: 0 }, installes: 0, en_echec: 0, vus_30j: 0 },
       pharmacies: [], mes_appareils: [], hotes_refuses: [], appareil_inconnu: null };
-    case "estimer": return { apercu: true, visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond_offres_7j: 2 };
+    case "estimer": return { apercu: true, categorie: "offres", visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond: null, plafond_offres_7j: 2,
+      sans_appareil: 0, alerte_coupee: 0, hors_ouverture: 0 };
     case "envoyer": return { apercu: true, annonce: { id: "apercu", statut: "envoyee", created_at: new Date().toISOString() } };
-    case "historique": return { apercu: true, annonces: [] };
+    case "historique": return b.cip ? { apercu: true, cip: b.cip, nom: null, envois: [], appareils: { appareils: 0, plateformes: [], categories: [] }, adresses: 0 } : { apercu: true, annonces: [] };
+    case "evenements": return { apercu: true, evenements: [] };
+    case "chercher": return { apercu: true, pharmacies: [] };
+    case "modeles": return { apercu: true, modeles: [] };
+    case "message": return { apercu: true, annonce: null };
     case "pharmacie": return { apercu: true, appareils: [], raison: null, disponible: true };
     case "retirer_pharmacie": return { apercu: true, success: true, retires: 0 };
     case "test": case "apercu": return { apercu: true, envoyes: 0, echecs: 0, retires: 0 };

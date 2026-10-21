@@ -5,9 +5,10 @@
 //  • push : charge valide (titre, texte, étiquette, icône, badge, lien) ; charge illisible, vide ou texte brut → notification
 //    générique (jamais aucune : exigence d'iOS) ; textes coupés ; lien d'une autre origine ou javascript: → accueil ;
 //  • notificationclick : fenêtre ouverte → focus puis navigate ; navigate absent ou refusé → message à la page ; aucune
-//    fenêtre → openWindow ;
+//    fenêtre → openWindow ; fenêtre sur l'admin (/#admin, /admin#admin, /admin) → nouvelle fenêtre ;
 //  • pushsubscriptionchange : ancien abonnement → POST renouveler avec la preuve ; sans nouvel abonnement → subscribe avec
-//    la clé publique du GET ; sans ancien → aucun appel.
+//    la clé publique du GET ; sans ancien → aucun appel ;
+//  • messages de l'admin et outil entrepôt : catégories « commandes » et « infos », lien /?commandes=1.
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import webpush from "web-push";
@@ -90,6 +91,15 @@ const donnees = (valeur) => ({ json: () => { if (typeof valeur === "string") ret
     await evenement("push", { data: donnees({ titre: "t", url: u }) });
     eq(`lien ${JSON.stringify(u)} → ${attendu}`, t.notifications.at(-1).options.data.url, attendu);
   }
+  // messages de l'admin et outil entrepôt (docs/notifications.md § 4 à 6) : « Mes commandes et réclamations » (commandes),
+  // « Informations Elixir » (infos) ; le service worker les affiche comme les autres, lien « Mes commandes » compris
+  await evenement("push", { data: donnees({ v: 1, categorie: "commandes", titre: "Réclamation traitée", corps: "Votre réclamation EN-601-2026-12 est traitée.",
+    url: "/?commandes=1", tag: "evt-AbCdEf0123456789", id: "m1", ts: 1760950000001 }) });
+  const c = t.notifications.at(-1);
+  eq("push « commandes » : titre, lien Mes commandes, catégorie, étiquette (remplace le statut précédent)", [c.titre, c.options.data.url, c.options.data.categorie, c.options.tag, c.options.renotify],
+    ["Réclamation traitée", `${ORIGINE}/?commandes=1`, "commandes", "evt-AbCdEf0123456789", true]);
+  await evenement("push", { data: donnees({ v: 1, categorie: "infos", titre: "Fermeture exceptionnelle", corps: "Elixir Pharma sera fermé le 1er novembre.", url: "/", tag: "msg-1a2b3c4d" }) });
+  eq("push « infos » : catégorie gardée, lien accueil", [t.notifications.at(-1).options.data.categorie, t.notifications.at(-1).options.data.url], ["infos", `${ORIGINE}/`]);
   eq("aucun accès à Cache Storage pendant l'exécution", t.caches, 0);
 }
 
@@ -110,6 +120,13 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   const { evenement } = bac({ fenetres: [fen] });
   await evenement("notificationclick", { notification: notif(`${ORIGINE}/?outil=saisie`) });
   eq("navigate absent (Safari) → message à la page", journal, ["focus", `message elixir-notification ${ORIGINE}/?outil=saisie`]);
+}
+{
+  const journal = [];
+  const fen = { url: `${ORIGINE}/?menu=otc`, focus: async () => { journal.push("focus"); }, navigate: async (u) => { journal.push(`navigate ${u}`); } };
+  const { evenement } = bac({ fenetres: [fen] });
+  await evenement("notificationclick", { notification: { tag: "evt-x", data: { url: `${ORIGINE}/?commandes=1`, categorie: "commandes" }, close() {} } });
+  eq("notification « Mes commandes et réclamations » : la fenêtre va sur /?commandes=1 (App ouvre « Mes commandes »)", journal, ["focus", `navigate ${ORIGINE}/?commandes=1`]);
 }
 {
   const journal = [];
@@ -138,6 +155,15 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   const { t, evenement } = bac({ fenetres: [admin] });
   await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
   eq("fenêtre sur #admin : lien ouvert dans une nouvelle fenêtre, l'admin n'est pas rechargé", [journal.splice(0), t.ouvertes.splice(0)], [[], [`${ORIGINE}/?menu=promo_1`]]);
+  // appli « Elixir Admin » (adresse /admin, docs/notifications.md § 10) : /admin#admin, ou /admin sans fragment → nouvelle fenêtre ;
+  // /administration n'est pas l'admin → navigation comme une fenêtre de pharmacie
+  for (const [adresse, attendu] of [[`${ORIGINE}/admin?menu=accueil#admin`, [[], [`${ORIGINE}/?menu=promo_1`]]], [`${ORIGINE}/admin`, [[], [`${ORIGINE}/?menu=promo_1`]]],
+    [`${ORIGINE}/administration`, [["focus", `navigate ${ORIGINE}/?menu=promo_1`], []]]]) {
+    const fen = { ...admin, url: adresse };
+    const b = bac({ fenetres: [fen] });
+    await b.evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
+    eq(`fenêtre sur ${adresse.slice(ORIGINE.length)} : ${attendu[1].length ? "nouvelle fenêtre, l'admin n'est pas rechargé" : "navigation (pas l'admin)"}`, [journal.splice(0), b.t.ouvertes], attendu);
+  }
   const pharmacie = { url: `${ORIGINE}/?menu=otc`, focused: true, focus: async () => journal.push("focus"), navigate: async (u) => journal.push(`navigate ${u}`) };
   const b2 = bac({ fenetres: [pharmacie] });
   await b2.evenement("notificationclick", { notification: { tag: "apercu", data: { url: `${ORIGINE}/?menu=promo_2`, categorie: "offres" }, close() {} } });
@@ -148,6 +174,10 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   await evenement("notificationclick", { notification: notif("https://evil.fr/") });
   await evenement("notificationclick", { notification: { data: null, close() {} } });
   eq("aucune fenêtre → openWindow (lien étranger ou absent → accueil)", t.ouvertes, [`${ORIGINE}/`, `${ORIGINE}/`]);
+  // test de l'admin sans fenêtre : l'admin (/admin), jamais l'accueil des pharmacies ; test d'une pharmacie : son lien
+  await evenement("notificationclick", { notification: { tag: "test-admin", data: { url: `${ORIGINE}/`, categorie: "test" }, close() {} } });
+  await evenement("notificationclick", { notification: { tag: "test", data: { url: `${ORIGINE}/?notifications=1`, categorie: "test" }, close() {} } });
+  eq("aucune fenêtre : test de l'admin → /admin ; test d'une pharmacie → son lien", t.ouvertes.slice(2), [`${ORIGINE}/admin`, `${ORIGINE}/?notifications=1`]);
 }
 
 // ── pushsubscriptionchange ──

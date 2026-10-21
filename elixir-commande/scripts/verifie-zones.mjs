@@ -248,6 +248,8 @@ const LOTS = {
   // Péremption courte, règle panier (21/10/2026, docs/peremption.md) : −50 % affiché par défaut, ligne « Pér. » à part au prix
   // de la page, commande à part, contrôle et suivi des écarts (ECARTS_AUTORISES, attente « peremptionPanier » ; _relais.js)
   peremptionPanier: { nom: "péremption courte, règle panier", repere: "scripts/test-peremption-panier.mjs" },
+  // appli « Elixir Admin » à l'adresse /admin (21/10/2026, docs/notifications.md § 10) : retour à l'admin dans l'appli
+  appliAdmin: { nom: "appli « Elixir Admin » (adresse /admin)", repere: "src/adresse-admin.js" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -292,6 +294,9 @@ const FICHIERS_AUTORISES = {
 // Notifications de l'appli installable (branche appli-notifications, docs/notifications.md) : fonctions NOUVELLES
 // (_push.js, push-abonnement.js, push-admin.js, push-envoi-background.js, push-menage.js) ; seule fonction existante
 // modifiée : _restock.js (crochet « Retour en stock » après l'e-mail, § 9.1), déjà admise ci-dessus avec les alertes retour.
+// Messages unitaires et collectifs (branche notifications-messages, 21/10/2026, docs/notifications.md § 4 à 6) : fonctions
+// NOUVELLES _push-messages.js (admise par _push-*), push-evenement.js (API signée de l'outil entrepôt) et
+// push-programmes.js (messages programmés, planifiée) ; seules fonctions existantes modifiées : celles des notifications.
 // Péremption courte, V1 « Odoo facture la remise » (docs/peremption-odoo.md) : peremption.js (page des pharmacies, admin,
 // chaîne de nuit), peremption-cron.js (filet horaire) et _peremption.js (logique, seule porte d'écriture Odoo, par
 // _odoo-rpc.js) ; aucune fonction existante modifiée (_accueil-outils.js et _accueil-donnees.js : admis d'office ;
@@ -299,7 +304,7 @@ const FICHIERS_AUTORISES = {
 // (21/10/2026) : _relais.js modifié (empreinte « :per », FICHIERS_AUTORISES) ; peremption.js, _peremption.js et
 // _accueil-outils.js complétés (remise affichée, écarts) ; restock-alert.js inchangé (sa lecture publique des remises sert
 // de repli à la page).
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage)|peremption(-cron)?|_peremption)\.js$/;
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -329,6 +334,9 @@ const CLES_AUTORISEES = {
     'sessionStorage.getItem(CLE_BROUILLON': 1, "sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon": 1, "sessionStorage.removeItem(CLE_BROUILLON": 1 },
   // src/components/ShortExpiry.jsx : la page des pharmacies ne lit plus le jeton admin (adminAuthHeaders retiré)
   peremptionOdoo: { 'localStorage.getItem("admin_token"': -1 },
+  // src/adresse-admin.js, clé appli_admin = "1" : posée par l'appli « Elixir Admin » ouverte sur l'admin (fenêtre d'appli
+  // seulement), relue par les pages ouvertes ensuite dans l'appli sur une autre adresse (retour à l'admin toujours proposé)
+  appliAdmin: { 'localStorage.setItem("appli_admin", "1"': 1, 'localStorage.getItem("appli_admin"': 1 },
 };
 
 // ── lecture ──

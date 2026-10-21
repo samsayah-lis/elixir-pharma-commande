@@ -2,7 +2,7 @@
 // GET (sans jeton)                → { disponible, cle_publique, ouverture }  (Cache-Control: private, max-age=60)
 //   disponible : clés VAPID et clé serveur en place ET tables créées ; sinon { disponible: false } et le site n'affiche rien.
 // POST { action, … } — jeton pharmacie (Authorization: Bearer, appelAuthentifie du site), sauf « oublier » et « renouveler » :
-//   statut     { endpoint? }        → { disponible, raison, cle_publique, plafond_offres_7j, categories_disponibles,
+//   statut     { endpoint? }        → { disponible, raison, cle_publique, plafond_offres_7j, plafond_infos_7j, categories_disponibles,
 //                                       appareil, autre_identite, appareils: [{ id, appareil, plateforme, installe,
 //                                       categories, created_at, last_success_at, en_echec, actuel }] }
 //   abonner    { abonnement, categories?, appareil: { libelle, plateforme, installe }, remplacer? } → { success, appareil }
@@ -27,7 +27,7 @@ import {
   configPush, creerStockPush, validerAbonnement, envoyerAAppareils, charge, appareilPublic, libelleNet, plateformeNette,
   memeSecret, creerLimiteur, estApercu, json, jetonDe, TTL, URGENCE, MAX_APPAREILS,
 } from "./_push.js";
-import { CATEGORIES_DEFAUT, categoriesAffichees, filtrerCategories, raisonOuverture, PLAFOND_DEFAUT, cipPropre } from "../../src/notifications/regles.js";
+import { CATEGORIES_DEFAUT, categoriesAffichees, filtrerCategories, raisonOuverture, PLAFOND_DEFAUT, PLAFOND_INFOS_DEFAUT, cipPropre } from "../../src/notifications/regles.js";
 
 const ACTIONS = new Set(["statut", "abonner", "categories", "test", "retirer", "oublier", "renouveler"]);
 // [requêtes, fenêtre en s] par IP (une officine partage souvent une IP entre plusieurs postes)
@@ -37,8 +37,8 @@ const DOUZE_HEURES = 12 * 3600e3;
 
 // Hôte d'aperçu (fonctions branchées sur la production) : rien n'est lu, écrit ni envoyé
 function apercu(cors, action) {
-  if (action === "statut") return json(cors, 200, { disponible: true, raison: null, cle_publique: null, plafond_offres_7j: PLAFOND_DEFAUT,
-    categories_disponibles: categoriesAffichees(PLAFOND_DEFAUT), appareil: null, autre_identite: false, appareils: [], apercu: true });
+  if (action === "statut") return json(cors, 200, { disponible: true, raison: null, cle_publique: null, plafond_offres_7j: PLAFOND_DEFAUT, plafond_infos_7j: PLAFOND_INFOS_DEFAUT,
+    categories_disponibles: categoriesAffichees(PLAFOND_DEFAUT, PLAFOND_INFOS_DEFAUT), appareil: null, autre_identite: false, appareils: [], apercu: true });
   if (action === "oublier") return json(cors, 200, { success: true, role: null, apercu: true });
   return json(cors, 200, { success: true, apercu: true });
 }
@@ -145,7 +145,8 @@ export function creerHandler(deps = {}) {
           if (actuelle && !(Date.parse(actuelle.last_seen_at || "") > maintenant().getTime() - DOUZE_HEURES))
             await stock.abonnements.modifier(actuelle.id, { last_seen_at: iso() }).catch(() => {});
           return json(cors, 200, { disponible: !raison, raison, cle_publique: conf.cle_publique, plafond_offres_7j: reglages.plafond_offres_7j,
-            categories_disponibles: categoriesAffichees(reglages.plafond_offres_7j), appareil: actuelle ? appareilPublic(actuelle) : null,
+            plafond_infos_7j: reglages.plafond_infos_7j, categories_disponibles: categoriesAffichees(reglages.plafond_offres_7j, reglages.plafond_infos_7j),
+            appareil: actuelle ? appareilPublic(actuelle) : null,
             autre_identite: autre, appareils: lignes.map((l) => appareilPublic(l, endpoint)) });
         }
         case "abonner": {

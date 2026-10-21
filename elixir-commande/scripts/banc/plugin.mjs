@@ -41,7 +41,9 @@ import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, n
 import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
 import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
 import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
-import { categoriesAffichees, filtrerCategories, verifierAnnonce, verifierReglages, fusionnerReglages, CATEGORIES_DEFAUT } from "../../src/notifications/regles.js";
+import { categoriesAffichees, filtrerCategories, verifierReglages, fusionnerReglages, CATEGORIES_DEFAUT, verifierMessage, verifierProgrammation, estTransactionnel,
+  categorieDuType, TYPES_MESSAGE } from "../../src/notifications/regles.js";
+import { verifierModele } from "../../src/notifications/modeles.js";
 import { lirePeremption, evaluerOutil, oublierMemo } from "../../netlify/functions/_accueil-outils.js";
 import { mondePeremption, repondrePeremption, cataloguePeremption } from "./peremption-banc.mjs";
 
@@ -341,6 +343,8 @@ const JOUR_MS = 86400e3;
 const ilYa = (j) => new Date(Date.now() - j * JOUR_MS).toISOString();
 const pushBanc = {
   reglages: fusionnerReglages({ ouverture: "toutes", pilote_cips: [], plafond_offres_7j: 2 }),
+  envois: {},      // CIP → envois des messages composés sur le banc (historique « Par pharmacie »)
+  modeles: [],     // modèles enregistrés sur le banc
   appareils: null,   // id → appareil (créés au premier appel : la pharmacie du banc peut venir de dev-fixtures/pharmacie.json)
   admin: new Map(),
   annonces: [],
@@ -353,10 +357,10 @@ function appareilsBanc() {
   const a = (id, appareil, plateforme, installe, categories, jours, extra = {}) => [id, { id, endpoint: `https://fcm.googleapis.com/fcm/send/${id}`, cip, appareil, plateforme,
     installe, categories, created_at: ilYa(jours), last_success_at: ilYa(1), failures: 0, ...extra }];
   pushBanc.appareils = new Map([
-    a("banc-comptoir", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "offres"], 12),
+    a("banc-comptoir", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "infos", "offres"], 12),
     a("banc-titulaire", "iPhone · application", "ios", true, ["stock", "offres"], 30, { failures: 4, last_success_at: ilYa(9) }),
     // scénario « abonne » de la page (?banc_push=abonne) : cet appareil est déjà connu du banc
-    a("banc-abonne", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "offres"], 3),
+    a("banc-abonne", "Ordinateur · Chrome", "ordinateur", false, ["stock", "commandes", "infos", "offres"], 3),
   ]);
   return pushBanc.appareils;
 }
@@ -372,8 +376,8 @@ function reponsePushBanc(b) {
       const actuel = b.endpoint ? parEndpoint(b.endpoint) : null;
       // l'appareil « abonne » n'apparaît que s'il est celui de la page (sinon : deux appareils d'exemple)
       const visibles = [...liste.values()].filter(d => d.id !== "banc-abonne" || (actuel && actuel.id === "banc-abonne"));
-      return ok({ disponible: true, raison: null, cle_publique: "BANC-FICTIVE", plafond_offres_7j: pushBanc.reglages.plafond_offres_7j,
-        categories_disponibles: categoriesAffichees(pushBanc.reglages.plafond_offres_7j), appareil: actuel ? publicBanc(actuel) : null, autre_identite: false,
+      return ok({ disponible: true, raison: null, cle_publique: "BANC-FICTIVE", plafond_offres_7j: pushBanc.reglages.plafond_offres_7j, plafond_infos_7j: pushBanc.reglages.plafond_infos_7j,
+        categories_disponibles: categoriesAffichees(pushBanc.reglages.plafond_offres_7j, pushBanc.reglages.plafond_infos_7j), appareil: actuel ? publicBanc(actuel) : null, autre_identite: false,
         appareils: visibles.map(d => publicBanc(d, b.endpoint || null)) });
     }
     case "abonner": {
@@ -402,28 +406,117 @@ function reponsePushBanc(b) {
   }
 }
 // Statistiques d'exemple de l'admin : pharmacies fictives (aucune donnée réelle) + appareils du banc
+// [nom, CIP, plateformes des appareils, alertes, ville, adresses de compte (e-mail de secours, fictives)] ; sans appareil :
+// joignables par e-mail de secours seulement (message unitaire)
 const PHARMACIES_EXEMPLE = [
-  ["PHARMACIE DES ARCADES", "2000001", ["android"], ["stock", "commandes", "offres"]], ["PHARMACIE DU MARCHÉ", "2000002", ["ios", "ordinateur"], ["stock", "offres"]],
-  ["PHARMACIE DE LA GARE", "2000003", ["ios"], ["stock", "commandes", "offres"]], ["GRANDE PHARMACIE CENTRALE", "2000004", ["android", "android", "ordinateur"], ["stock", "commandes"]],
-  ["PHARMACIE DU PARC", "2000005", ["ordinateur"], ["offres"]], ["PHARMACIE SAINT-LOUIS", "2000006", ["ios"], ["stock", "commandes", "offres"]],
+  ["PHARMACIE DES ARCADES", "2000001", ["android"], ["stock", "commandes", "infos", "offres"], "Versailles", 2], ["PHARMACIE DU MARCHÉ", "2000002", ["ios", "ordinateur"], ["stock", "offres"], "Le Chesnay", 1],
+  ["PHARMACIE DE LA GARE", "2000003", ["ios"], ["stock", "commandes", "infos", "offres"], "Saint-Cyr-l'École", 1], ["GRANDE PHARMACIE CENTRALE", "2000004", ["android", "android", "ordinateur"], ["stock", "commandes"], "Paris", 3],
+  ["PHARMACIE DU PARC", "2000005", ["ordinateur"], ["offres"], "Viroflay", 1], ["PHARMACIE SAINT-LOUIS", "2000006", ["ios"], ["stock", "commandes", "infos", "offres"], "Versailles", 2],
+  ["PHARMACIE DES TILLEULS", "2000007", [], [], "Rambouillet", 2], ["PHARMACIE DU CENTRE", "2000008", [], [], "Plaisir", 0],
 ];
+const ilYaH = (h) => new Date(Date.now() - h * 3600e3).toISOString();
+const adressesExemple = (cip, n) => Array.from({ length: n }, (_, i) => `${["co", "ti", "ad"][i]}…@…fr`);
+// pharmacie d'exemple (ou du banc) → forme « chercher » de push-admin (joignabilité, adresses masquées)
+function joignabiliteBanc(cip) {
+  const banc = pharmacieBanc();
+  if (cip === banc.cip) {
+    const ap = [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne");
+    return { cip, nom: banc.name, ville: "Banc d'essai", appareils: ap.length, plateformes: [...new Set(ap.map(d => d.plateforme))], categories: [...new Set(ap.flatMap(d => d.categories))],
+      derniere_visite: ilYaH(5), derniere_notification: ilYa(1), en_echec: ap.filter(d => d.failures >= 3).length, adresses: 1, adresses_masquees: ["ba…@…fr"], raison: null };
+  }
+  const p = PHARMACIES_EXEMPLE.find(x => x[1] === cip);
+  if (!p) return null;
+  const [nom, , plat, cats, ville, n] = p;
+  const retiree = pushBanc.retirees.has(cip);
+  const raison = pushBanc.reglages.ouverture === "toutes" ? null : pushBanc.reglages.ouverture === "pilote" ? (pushBanc.reglages.pilote_cips.includes(cip) ? null : "hors_pilote") : "fermee";
+  return { cip, nom, ville, appareils: retiree ? 0 : plat.length, plateformes: retiree ? [] : [...new Set(plat)], categories: retiree ? [] : cats,
+    derniere_visite: plat.length && !retiree ? ilYaH(6 + Number(cip.slice(-1)) * 9) : null, derniere_notification: plat.length && !retiree ? ilYa(Number(cip.slice(-1))) : null,
+    en_echec: 0, adresses: n, adresses_masquees: adressesExemple(cip, n), raison };
+}
+const cipsExemple = () => [...PHARMACIES_EXEMPLE.map(p => p[1]), pharmacieBanc().cip];
 function etatAdminBanc(endpoint) {
-  const pharmacies = PHARMACIES_EXEMPLE.map(([nom, cip, plateformes, categories]) => ({ cip, nom, appareils: plateformes.length, plateformes: [...new Set(plateformes)], categories, en_echec: 0 }));
+  const pharmacies = PHARMACIES_EXEMPLE.filter(p => p[2].length).map(([nom, cip, plateformes, categories]) => ({ cip, nom, appareils: plateformes.length, plateformes: [...new Set(plateformes)], categories, en_echec: 0 }));
   const banc = [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne");
   if (banc.length) pharmacies.push({ cip: pharmacieBanc().cip, nom: pharmacieBanc().name, appareils: banc.length, plateformes: [...new Set(banc.map(d => d.plateforme))],
     categories: [...new Set(banc.flatMap(d => d.categories))], en_echec: banc.filter(d => d.failures >= 3).length });
   const plateformes = { ios: 0, android: 0, ordinateur: 0, autre: 0 };
   for (const p of PHARMACIES_EXEMPLE) for (const x of p[2]) plateformes[x]++;
   for (const d of banc) plateformes[d.plateforme] = (plateformes[d.plateforme] || 0) + 1;
-  const parCat = { stock: 0, commandes: 0, offres: 0 };
+  const parCat = { stock: 0, commandes: 0, infos: 0, offres: 0 };
   for (const p of pharmacies) for (const c of p.categories) parCat[c]++;
   pharmacies.sort((a, b) => a.nom.localeCompare(b.nom, "fr"));
   return { disponible: true, service: { vapid_publique: true, vapid_privee: true, vapid_paire: true, sujet: true, sujet_defaut: false, cle_serveur: true, cron_secret: true,
-    tables: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: "BANC-FICTIVE", reglages: pushBanc.reglages,
+    tables: true, tables_messages: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: "BANC-FICTIVE", reglages: pushBanc.reglages,
     stats: { pharmacies: pharmacies.length, appareils: Object.values(plateformes).reduce((a, b) => a + b, 0), par_categorie: parCat, par_plateforme: plateformes,
       installes: 3, en_echec: banc.filter(d => d.failures >= 3).length, vus_30j: 9 },
     pharmacies: pharmacies.filter(p => !pushBanc.retirees.has(p.cip)), mes_appareils: [...pushBanc.admin.values()].map(d => publicBanc(d, endpoint || null)),
     hotes_refuses: [], appareil_inconnu: endpoint ? ![...pushBanc.admin.values(), ...appareilsBanc().values()].some(d => d.endpoint === endpoint) : null };
+}
+// messages d'exemple de l'historique (types, e-mail de secours, programmation)
+const MESSAGES_EXEMPLE = () => [
+  { id: "banc-ex-5", type: "communication", categorie: "infos", titre: "Horaires du 11 novembre", corps: "Le 11 novembre, les commandes reçues avant 10 h partiront le jour même.",
+    url: "/", audience: "toutes", cips: null, nb_cips: 0, admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 3, nb_plafonnees: 1, nb_pharmacies: 2, nb_appareils: 2,
+    nb_reussis: 2, nb_echecs: 0, nb_retires: 0, programme_pour: ilYaH(20), en_file_le: ilYaH(20), started_at: ilYaH(20), created_at: ilYa(2), finished_at: ilYaH(20) },
+  { id: "banc-ex-4", type: "reclamation", categorie: "commandes", titre: "Réclamation traitée", corps: "Votre réclamation EN-601-2026-118 est traitée. Une question : 01 86 04 39 95.",
+    url: "/?commandes=1", audience: "une", cips: ["2000007"], nb_cips: 1, destinataire_nom: "PHARMACIE DES TILLEULS", repli_email: true, email_statut: "envoye", nb_emails: 2,
+    admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 0, nb_plafonnees: 0, nb_pharmacies: 0, nb_appareils: 0, nb_reussis: 0, nb_echecs: 0, nb_retires: 0,
+    created_at: ilYaH(26), finished_at: ilYaH(26) },
+  { id: "banc-ex-3", type: "communication", categorie: "infos", titre: "Fermeture exceptionnelle", corps: "Elixir Pharma sera fermé le 1er novembre. Les commandes reçues ce jour-là partiront le 2 novembre.",
+    url: "/", audience: "toutes", cips: null, nb_cips: 0, admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 3, nb_plafonnees: 0, nb_pharmacies: 3, nb_appareils: 3,
+    nb_reussis: 3, nb_echecs: 0, nb_retires: 0, created_at: ilYa(2), finished_at: ilYa(2) },
+  { id: "banc-ex-2", type: "promotion", categorie: "offres", titre: "Vaseline : précommande ouverte", corps: "13 références à prix net, livraison début novembre.", url: "/", audience: "toutes", cips: null, nb_cips: 0,
+    admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 6, nb_plafonnees: 0, nb_pharmacies: 6, nb_appareils: 9, nb_reussis: 8, nb_echecs: 1, nb_retires: 0,
+    created_at: ilYa(3), finished_at: ilYa(3) },
+  { id: "banc-ex-1", type: "promotion", categorie: "offres", titre: "Culottes menstruelles remboursées", corps: "20 références Claripharm, remboursées sur prescription.", url: "/?outil=saisie", audience: "liste", cips: ["2000001", "2000003"], nb_cips: 2,
+    admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 2, nb_plafonnees: 0, nb_pharmacies: 2, nb_appareils: 2, nb_reussis: 2, nb_echecs: 0, nb_retires: 0,
+    created_at: ilYa(9), finished_at: ilYa(9) }];
+// envois d'exemple d'une pharmacie (historique « Par pharmacie », bloc de la fiche)
+function envoisExemple(cip) {
+  const banc = pharmacieBanc().cip;
+  if (cip === "2000001" || cip === banc) return [
+    { id: 9003, categorie: "commandes", type: "commande", titre: "Commande expédiée", source: "entrepot", nb_appareils: 1, nb_reussis: 1, email: null, created_at: ilYaH(20) },
+    { id: 9002, categorie: "infos", type: "communication", titre: "Fermeture exceptionnelle", source: "message", message: true, nb_appareils: 1, nb_reussis: 1, email: null, created_at: ilYa(2) },
+    { id: 9001, categorie: "stock", type: null, titre: "De retour en stock", source: "stock", nb_appareils: 1, nb_reussis: 1, email: null, created_at: ilYa(4) },
+    { id: 9000, categorie: "offres", type: "promotion", titre: "Culottes menstruelles remboursées", source: "message", message: true, nb_appareils: 1, nb_reussis: 1, email: null, created_at: ilYa(9) }];
+  if (cip === "2000007") return [{ id: 9010, categorie: "commandes", type: "reclamation", titre: "Réclamation traitée", source: "message", message: true, nb_appareils: 0, nb_reussis: 0, email: "envoye", created_at: ilYaH(26) }];
+  return [];
+}
+// matin 8 h à venir (heure de Paris), pour l'exemple d'un événement différé
+const prochain8h = () => { const d = new Date(); d.setUTCHours(6, 0, 0, 0); if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString(); };
+const EVENEMENTS_EXEMPLE = () => [
+  { cle: "entrepot-S04530-reliquat", pharmacy_cip: "2000006", type: "commande", statut: "reliquat", reference: "S04530", titre: "Reliquat sur votre commande", recu_le: ilYaH(1),
+    traite_le: null, resultat: "differe", nb_appareils: null, nb_reussis: null, a_envoyer_le: prochain8h() },
+  { cle: "entrepot-EN-601-2026-131-recue", pharmacy_cip: "2000003", type: "reclamation", statut: "recue", reference: "EN-601-2026-131", titre: "Réclamation reçue", recu_le: ilYaH(3),
+    traite_le: ilYaH(3), resultat: "envoye", nb_appareils: 1, nb_reussis: 1 },
+  { cle: "entrepot-S04512-expediee", pharmacy_cip: "2000001", type: "commande", statut: "expediee", reference: "S04512", titre: "Commande expédiée", recu_le: ilYaH(20),
+    traite_le: ilYaH(20), resultat: "envoye", nb_appareils: 1, nb_reussis: 1 },
+  { cle: "entrepot-TK-2026-77-resolu", pharmacy_cip: "2000008", type: "ticket", statut: "resolu", reference: "TK-2026-77", titre: "Demande traitée", recu_le: ilYa(2),
+    traite_le: ilYa(2), resultat: "aucun_appareil", nb_appareils: 0, nb_reussis: 0 }];
+// estimation d'un message sur les pharmacies d'exemple (même calcul que destinataires de _push.js, sans plafond réel)
+function estimationBanc(b) {
+  const type = TYPES_MESSAGE[b.type] ? b.type : "promotion";
+  const categorie = categorieDuType(type);
+  const audience = ["une", "liste", "toutes"].includes(b.audience) ? b.audience : "toutes";
+  const cips = audience === "toutes" ? cipsExemple() : (Array.isArray(b.cips) ? b.cips.map(String) : []);
+  const fiches = cips.map(joignabiliteBanc).filter(Boolean);
+  const fermee = pushBanc.reglages.ouverture === "fermee";
+  const recoit = fiches.filter(p => !p.raison && p.categories.includes(categorie));
+  const plafond = categorie === "offres" ? { max: pushBanc.reglages.plafond_offres_7j, fenetre: "7 jours" } : categorie === "infos" ? { max: pushBanc.reglages.plafond_infos_7j, fenetre: "7 jours" }
+    : { max: pushBanc.reglages.plafond_commandes_jour, fenetre: "24 heures" };
+  // exemple : la PHARMACIE DU MARCHÉ a déjà reçu ses offres de la semaine
+  const plafonnees = categorie === "offres" ? recoit.filter(p => p.cip === "2000002").length : 0;
+  const out = { categorie, visees: fermee ? 0 : recoit.length, plafonnees: fermee ? 0 : plafonnees, recevront: fermee ? 0 : recoit.length - plafonnees,
+    appareils: fermee ? 0 : recoit.filter(p => p.cip !== "2000002" || categorie !== "offres").reduce((n, p) => n + p.appareils, 0), fermee, plafond, plafond_offres_7j: pushBanc.reglages.plafond_offres_7j,
+    sans_appareil: fiches.filter(p => !p.appareils).length, alerte_coupee: fiches.filter(p => p.appareils && !p.raison && !p.categories.includes(categorie)).length,
+    hors_ouverture: fermee ? 0 : fiches.filter(p => p.raison === "hors_pilote").length };
+  // e-mail de secours : même règle que le serveur (jamais pour une Promotion ; Communication : alerte coupée → non)
+  if (audience === "une" && fiches[0]) {
+    const p = fiches[0];
+    const telephone = !fermee && !p.raison && p.categories.includes(categorie) && p.plateformes.some(x => x === "ios" || x === "android");
+    const raison = type === "promotion" ? "type" : categorie === "infos" && p.appareils && !p.categories.includes("infos") ? "alerte_coupee" : !p.adresses ? "aucune_adresse" : null;
+    out.email = { adresses: p.adresses, masquees: p.adresses_masquees, permis: !raison, raison, telephone };
+  }
+  return out;
 }
 function reponsePushAdminBanc(b) {
   const ok = (corps, statut = 200) => ({ statut, corps, source: "fictif (notifications du banc)" });
@@ -440,32 +533,72 @@ function reponsePushAdminBanc(b) {
     }
     case "retirer_admin": { for (const [id, d] of pushBanc.admin) if (id === b.id || d.endpoint === b.endpoint) pushBanc.admin.delete(id); return ok({ success: true }); }
     case "test": return ok(pushBanc.admin.size ? { envoyes: pushBanc.admin.size, echecs: 0, retires: 0 } : { envoyes: 0, echecs: 0, retires: 0, aucun: true });
-    case "apercu": { const v = verifierAnnonce({ ...(b.annonce || {}), audience: "toutes" }); if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
+    case "apercu": {
+      const m = b.message || { ...(b.annonce || {}), type: "promotion" };
+      const v = verifierMessage({ ...m, audience: estTransactionnel(m.type) ? "une" : "toutes", cips: ["0000000"], repli_email: false, programme_pour: null });
+      if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
       return ok(pushBanc.admin.size ? { envoyes: pushBanc.admin.size, echecs: 0, retires: 0 } : { envoyes: 0, echecs: 0, retires: 0, aucun: true }); }
-    case "estimer": {
-      const n = b.audience === "liste" ? (Array.isArray(b.cips) ? b.cips.length : 0) : 5;
-      return ok({ visees: n, plafonnees: n > 1 ? 1 : 0, recevront: Math.max(0, n - (n > 1 ? 1 : 0)), appareils: Math.max(0, n - (n > 1 ? 1 : 0)) + 1, fermee: pushBanc.reglages.ouverture === "fermee",
-        plafond_offres_7j: pushBanc.reglages.plafond_offres_7j });
+    case "estimer": return ok(estimationBanc(b));
+    case "chercher": {
+      if (Array.isArray(b.cips)) return ok({ pharmacies: b.cips.map(String).map(joignabiliteBanc).filter(Boolean) });
+      const t = String(b.q || "").trim().toLowerCase();
+      if (t.length < 2) return ok({ pharmacies: [] });
+      return ok({ pharmacies: cipsExemple().map(joignabiliteBanc).filter(p => p && `${p.nom} ${p.cip} ${p.ville}`.toLowerCase().includes(t)).slice(0, 20) });
     }
     case "envoyer": {
-      const v = verifierAnnonce(b.annonce || {});
+      const v = verifierMessage(b.message || { ...(b.annonce || {}), type: "promotion" });
       if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
       const deja = pushBanc.annonces.find(a => a.idem === b.idem);
       if (deja) return ok({ annonce: deja, deja: true });
-      if (pushBanc.reglages.ouverture === "fermee") return ok({ error: "fermee" }, 409);
-      const a = { id: `banc-${Date.now()}`, idem: b.idem, ...v.annonce, nb_cips: v.annonce.cips?.length || 0, admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", erreur: null,
-        nb_visees: 5, nb_plafonnees: 1, nb_pharmacies: 4, nb_appareils: 5, nb_reussis: 5, nb_echecs: 0, nb_retires: 0, created_at: new Date().toISOString(), finished_at: new Date().toISOString() };
+      const m = v.message;
+      const prog = m.programme_pour ? verifierProgrammation(m.programme_pour) : null;
+      if (prog && !prog.ok) return ok({ erreurs: prog.erreurs }, 400);
+      if (!prog && pushBanc.reglages.ouverture === "fermee" && !(m.audience === "une" && m.repli_email)) return ok({ error: "fermee" }, 409);
+      const e = estimationBanc({ type: m.type, audience: m.audience, cips: m.cips });
+      const une = m.audience === "une" ? joignabiliteBanc(m.cips[0]) : null;
+      const email = m.repli_email ? (e.email?.telephone ? "non_requis" : e.email?.raison === "alerte_coupee" ? "alerte_coupee" : une?.adresses ? "envoye" : "aucune_adresse") : null;
+      const maintenant = new Date().toISOString();
+      const a = { id: `banc-${Date.now()}`, idem: b.idem, ...m, nb_cips: m.cips?.length || 0, destinataire_nom: une?.nom || null, admin_email: "pharmacien@elixirpharma.fr", source: "admin",
+        ...(prog ? { statut: "programmee", programme_pour: prog.iso, created_at: maintenant }
+          : { statut: "envoyee", erreur: null, nb_visees: e.visees, nb_plafonnees: e.plafonnees, nb_pharmacies: e.recevront, nb_appareils: e.appareils, nb_reussis: e.appareils,
+            nb_echecs: 0, nb_retires: 0, email_statut: email, nb_emails: email === "envoye" ? une.adresses : email ? 0 : null, created_at: maintenant, finished_at: maintenant }) };
       pushBanc.annonces.unshift(a);
-      return ok({ annonce: a }, 202);
+      if (!prog) for (const cip of (m.cips || [])) (pushBanc.envois[cip] ||= []).unshift({ id: Date.now() + Math.random(), categorie: m.categorie, type: m.type, titre: m.titre, source: "message", message: true,
+        nb_appareils: joignabiliteBanc(cip)?.categories.includes(m.categorie) ? joignabiliteBanc(cip).appareils : 0, nb_reussis: joignabiliteBanc(cip)?.categories.includes(m.categorie) ? joignabiliteBanc(cip).appareils : 0,
+        email: m.audience === "une" && email !== "non_requis" ? email : null, created_at: maintenant });
+      return prog ? ok({ annonce: a, programmee: true }) : ok({ annonce: a }, 202);
+    }
+    case "message": { const a = pushBanc.annonces.find(x => x.id === b.id); return a ? ok({ annonce: a }) : ok({ error: "inconnu" }, 404); }
+    case "annuler": {
+      const a = pushBanc.annonces.find(x => x.id === b.id && ["programmee", "en_file"].includes(x.statut));
+      if (!a) return ok({ error: "statut" }, 409);
+      Object.assign(a, { statut: "annulee", annule_at: new Date().toISOString(), annule_par: "pharmacien@elixirpharma.fr" });
+      return ok({ annonce: a });
     }
     case "relancer": return ok({ error: "statut" }, 409);
-    case "historique": return ok({ annonces: [...pushBanc.annonces,
-      { id: "banc-ex-2", titre: "Vaseline : précommande ouverte", corps: "13 références à prix net, livraison début novembre.", url: "/?menu=promo_1792060000000", audience: "toutes", cips: null, nb_cips: 0,
-        admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 6, nb_plafonnees: 0, nb_pharmacies: 6, nb_appareils: 9, nb_reussis: 8, nb_echecs: 1, nb_retires: 0,
-        created_at: ilYa(3), finished_at: ilYa(3) },
-      { id: "banc-ex-1", titre: "Culottes menstruelles remboursées", corps: "20 références Claripharm, remboursées sur prescription.", url: "/?outil=saisie", audience: "liste", cips: ["2000001", "2000003"], nb_cips: 2,
-        admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 2, nb_plafonnees: 0, nb_pharmacies: 2, nb_appareils: 2, nb_reussis: 2, nb_echecs: 0, nb_retires: 0,
-        created_at: ilYa(9), finished_at: ilYa(9) }] });
+    case "historique": {
+      if (b.cip) {
+        const p = joignabiliteBanc(String(b.cip));
+        return ok({ cip: String(b.cip), nom: p?.nom || null, envois: [...(pushBanc.envois[b.cip] || []), ...envoisExemple(String(b.cip))],
+          appareils: p ? { appareils: p.appareils, plateformes: p.plateformes, categories: p.categories, derniere_visite: p.derniere_visite, derniere_notification: p.derniere_notification, en_echec: p.en_echec }
+            : { appareils: 0, plateformes: [], categories: [] }, adresses: p?.adresses || 0 });
+      }
+      const prog = pushBanc.annonces.filter(a => a.statut === "programmee").sort((x, y) => x.programme_pour.localeCompare(y.programme_pour));
+      return ok({ annonces: [...prog, ...pushBanc.annonces.filter(a => a.statut !== "programmee"), ...MESSAGES_EXEMPLE()] });
+    }
+    case "evenements": return ok({ evenements: EVENEMENTS_EXEMPLE().map(e => ({ ...e, pharmacie_nom: joignabiliteBanc(e.pharmacy_cip)?.nom || null })) });
+    case "modeles": return ok({ modeles: pushBanc.modeles });
+    case "modele_enregistrer": {
+      const v = verifierModele(b.modele || {});
+      if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
+      const meme = pushBanc.modeles.find(m => m.nom.toLowerCase() === v.modele.nom.toLowerCase());
+      if (meme && b.remplacer !== true) return ok({ error: "doublon" }, 409);
+      if (meme) { Object.assign(meme, v.modele, { updated_at: new Date().toISOString() }); return ok({ modele: meme, remplace: true }); }
+      const m = { id: `banc-modele-${++pushBanc.n}`, ...v.modele, admin_email: "pharmacien@elixirpharma.fr", created_at: new Date().toISOString() };
+      pushBanc.modeles.push(m); pushBanc.modeles.sort((x, y) => x.nom.localeCompare(y.nom, "fr"));
+      return ok({ modele: m });
+    }
+    case "modele_supprimer": { pushBanc.modeles = pushBanc.modeles.filter(m => m.id !== b.id); return ok({ success: true }); }
     case "pharmacie": {
       const banc = b.cip === pharmacieBanc().cip ? [...appareilsBanc().values()].filter(d => d.id !== "banc-abonne").map(d => publicBanc(d)) : [];
       return ok({ appareils: banc, raison: null, disponible: true });
