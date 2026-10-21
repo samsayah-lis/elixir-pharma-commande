@@ -16,7 +16,7 @@ import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharm
 // commande à part si le même produit est sur une autre ligne ; panier enregistré remis à l'offre actuelle de la page (controleLignes)
 import { COULEUR_PEREMPTION, estPeremption, idSpecial, ajouterPeremption, champsPeremption, mentionCommande, mentionMail,
   notePeremption, separerPeremption, partiraAPart, baisseParCip, remiseLigne, controleLignes, appliquerControle, messageControle,
-  detailControle } from "./peremption-panier.js";
+  detailControle, restePeremption } from "./peremption-panier.js";
 // Renouvellement des jetons (un seul échange à la fois, partagé avec l'Assistant Elixir) : src/jetons.js
 import { renouvelerUneFois, renouvelleAdmin } from "./jetons.js";
 import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
@@ -1225,8 +1225,8 @@ export default function App() {
   useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip, actingFor]);   // autre pharmacie / déconnexion
   useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
   const quotaCheck = useMemo(() => quotaOver(quota, cartItems), [quota, cartItems]);
-  const justifCheck = useMemo(() => justifIssues(cartItems, justifProducts, justifInfo), [cartItems, justifProducts, justifInfo]);
-  const cartTotalsByCip = useMemo(() => qtyByCip(cartItems), [cartItems]);
+  const justifCheck = useMemo(() => justifIssues(cartItems.filter(i => !estPeremption(i)), justifProducts, justifInfo), [cartItems, justifProducts, justifInfo]);
+  const cartTotalsByCip = useMemo(() => qtyByCip(cartItems.filter(i => !estPeremption(i))), [cartItems]);
 
   // ── Panier : invalidation si la STRUCTURE du catalogue a changé ──────────
   // Le panier est indexé par position (catKey-idx). Si l'admin ajoute / retire /
@@ -1348,10 +1348,18 @@ export default function App() {
   };
 
   // ouvrirPanier : Péremption courte ouvre le panier, comme avant ; Saisie et accueil ne l'ouvrent pas. Ligne péremption
-  // (règle panier du 21/10/2026) : à part, à son prix, sans la règle de colis du menu (le prix carton ne la concerne pas) ;
-  // justificatif et contingentement comme toute ligne
+  // (règle panier du 21/10/2026) : à part, à son prix, sans la règle de colis du menu (le prix carton ne la concerne pas),
+  // au plus le nombre de boîtes à date courte (plafond : revue du 21/10/2026) ; justificatif et contingentement comme toute
+  // ligne. Un ajout péremption périme la lecture gardée de la page : le contrôle suivant relit l'offre du moment.
   const ajouterDepuisSaisie = (saisie, { ouvrirPanier = false } = {}) => {
     let item = saisie;
+    let plafonne = null;
+    if (estPeremption(item)) {
+      pagePeremption.current = null;
+      const reste = restePeremption(specialItems, item);
+      if (reste != null && reste <= 0) { flash(`⚠ ${item.name} : ${item.plafond} boîte${item.plafond > 1 ? "s" : ""} à date courte au plus à ce prix, déjà au panier`, 6000); return; }
+      if (reste != null && item.qty > reste) { plafonne = item.plafond; item = { ...item, qty: reste }; }
+    }
     const regle = item.supplier_code || estPeremption(item) ? null : regleSaisie(item.cip);
     if (regle) {
       const q = arrondiSaisie(item.qty, regle);
@@ -1360,8 +1368,10 @@ export default function App() {
     }
     addItemToCart(item, { ouvrirPanier });
     if (regle && item.qty !== saisie.qty) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · arrondi au colis de ${regle.multiple}`);
+    if (plafonne != null) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · ${plafonne} boîte${plafonne > 1 ? "s" : ""} à date courte au plus à ce prix`, 6000);
     const apres = [...cartItems, { cip: item.cip, qty: item.qty }];   // panier avec cet ajout (même CIP additionné)
-    if (needsJustif(item, justifProducts, qtyByCip(apres))) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · justificatif à joindre dans le panier`);
+    // justificatif : jamais pour une ligne péremption (stock court d'Elixir), compté hors lignes péremption
+    if (!estPeremption(item) && needsJustif(item, justifProducts, qtyByCip([...cartItems.filter(i => !estPeremption(i)), { cip: item.cip, qty: item.qty }]))) flash(`✓ ${item.qty}× ${item.name} ajouté au panier · justificatif à joindre dans le panier`);
     loadQuota().then(q => {
       const o = quotaOver(q, apres).over.find(x => x.cip === item.cip);
       if (o) flash(`⚠ Contingentement dépassé : ${o.name || item.name} (${o.qty} au panier, reste ${o.remaining} pour cette période)`, 6000);
@@ -1373,11 +1383,14 @@ export default function App() {
   // panier, au changement de pharmacie (saisie Elixir) et au retour sur l'onglet, la page est relue (peremption?action=page,
   // lecture publique partagée 5 min ; repli : odoo-catalog?expiry_months=4 et expiry_discounts) et controleLignes
   // (src/peremption-panier.js) remet chaque ligne péremption à l'offre ACTUELLE de la page (prix, remise, règle Odoo, date),
-  // ou au prix habituel si le produit a quitté la page (la ligne est alors rajoutée comme un ajout ordinaire : ligne du menu
-  // s'il y en a une) ; une ligne d'un panier de l'ancienne page (−50 % sans mention, avant le 20/10) devient une ligne
-  // péremption. Prix habituel d'un produit sorti de la page et absent des listes de la page : peremption?action=prix.
-  // En échec de lecture, rien ne change et le contrôle suivant relit. Hors des zones protégées : setSpecialItems et
-  // addItemToCart, comme un ajout.
+  // ou au prix habituel si le produit a quitté la page (la ligne est alors rajoutée comme un ajout de la Saisie : ligne du
+  // menu s'il y en a une, avec sa règle de colis, de palier ou de minimum — arrondie, ou retirée sous le minimum) ; quantité
+  // au plus le plafond (boîtes à date courte), l'excédent repart de même au prix habituel ; une ligne du lot 0 (mention sans
+  // remise) redevient une ligne ordinaire ; une ligne d'un panier de l'ancienne page (−50 % sans mention, avant le 20/10)
+  // devient une ligne péremption. Prix habituel d'un produit sorti de la page et absent des listes de la page :
+  // peremption?action=prix. En échec de lecture, rien ne change et le contrôle suivant relit. frais : sans la lecture gardée
+  // (juste avant l'envoi). → false, ou { change, message } si le panier a changé. Hors des zones protégées : setSpecialItems et addItemToCart, comme
+  // un ajout.
   const [prixRemontes, setPrixRemontes] = useState({});   // identité de ligne (idSpecial) → changement (encart de la ligne)
   const pagePeremption = useRef(null);                     // { t, promesse } : lecture de la page partagée
   const panierCourant = useRef(specialItems);              // lignes hors catalogue du dernier rendu (contrôle : panier inchangé ?)
@@ -1396,11 +1409,17 @@ export default function App() {
     }
     return lecture;
   };
-  const controlerPrixPanier = async (lignes) => {
-    if (!lignes.some(s => s?.cip && !s.supplier_code)) return;
+  // rayon du premier menu qui contient le CIP (même recherche qu'addItemToCart) : la ligne rajoutée y prend le prix du menu
+  const rayonDe = (cip) => {
+    for (const [k, c] of Object.entries(CATALOG_WITH_ADMIN)) if ((c.products || []).some(x => x.cip === cip)) return c.label || SECTION_META[k]?.label || k;
+    return null;
+  };
+  const controlerPrixPanier = async (lignes, { frais = false } = {}) => {
+    if (!lignes.some(s => s?.cip && !s.supplier_code)) return false;
+    if (frais) pagePeremption.current = null;
     const lecture = lirePagePeremption();
     const page = await lecture.promesse;
-    if (!page) { if (pagePeremption.current === lecture) pagePeremption.current = null; return; }
+    if (!page) { if (pagePeremption.current === lecture) pagePeremption.current = null; return false; }
     let { changes, inconnus } = controleLignes(lignes, page);
     // produits sortis de la page, absents des listes de la page : prix habituel demandé au serveur (lecture publique)
     if (inconnus.length && page.v1) {
@@ -1408,13 +1427,22 @@ export default function App() {
       if (Array.isArray(hors?.produits)) ({ changes } = controleLignes(lignes, { ...page, horsPage: [...page.horsPage, ...hors.produits] }));
     }
     // panier changé pendant la lecture (ajout, quantité) : rien n'est appliqué, le contrôle suivant reprend sur le panier à jour
-    if (!changes.length || panierCourant.current !== lignes) return;
-    setSpecialItems(appliquerControle(lignes, changes).lignes);
-    // lignes sorties de la page : rajoutées comme un ajout ordinaire (ligne du menu, ou ligne hors catalogue du CIP)
-    for (const c of changes.filter(x => x.type === "sortie")) addItemToCart({ cip: c.cip, name: c.name, qty: c.qty, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers }, { ouvrirPanier: false });
-    setPrixRemontes(prev => ({ ...prev, ...Object.fromEntries(changes.filter(c => c.type === "sortie" || c.prixChange).map(c => [c.type === "sortie" ? c.cip : `per:${c.cip}`, c])) }));
+    if (!changes.length || panierCourant.current !== lignes) return false;
+    const { lignes: gardees, aRajouter } = appliquerControle(lignes, changes);
+    setSpecialItems(gardees);
+    // lignes sorties de la page, du lot 0, excédent au-delà du plafond : rajoutées comme un ajout de la Saisie (règle de colis,
+    // de palier ou de minimum du menu : arrondi, ou ligne retirée si l'arrondi tombe à 0), ligne du menu s'il y en a une
+    for (const r of aRajouter) {
+      const regle = r.cip ? regleSaisie(r.cip) : null;
+      const qte = regle ? arrondiSaisie(r.qty, regle) : r.qty;
+      r.change.rajout = { menu: rayonDe(r.cip), qte, regle: regle ? { multiple: regle.multiple, rayon: regle.rayon } : null };
+      if (qte > 0) addItemToCart({ cip: r.cip, name: r.name, qty: qte, pn: r.pn, pv: r.pv, tiers: r.tiers }, { ouvrirPanier: false });
+    }
+    setPrixRemontes(prev => ({ ...prev, ...Object.fromEntries(changes.filter(c => c.type === "sortie" || c.type === "lot0" || c.prixChange || c.excedent > 0)
+      .map(c => [c.type === "sortie" || c.type === "lot0" ? c.cip : `per:${c.cip}`, c])) }));
     const m = messageControle(changes);
     if (m) flash(`⚠ ${m}`, 9000);
+    return { change: true, message: m };
   };
   useEffect(() => { controlerPrixPanier(specialItems); }, [cartOpen, actingFor]);   // eslint-disable-line react-hooks/exhaustive-deps
   // aussi au retour sur l'onglet (offre changée pendant que la page dormait ; lecture gardée 5 min)
@@ -1795,7 +1823,7 @@ export default function App() {
   };
   const sendOrder = async () => {
     // Lignes « sur justificatif labo » : attestation / ordonnance / quantité maximale
-    const jIssues = justifIssues(cartItems, justifProducts, justifInfo);
+    const jIssues = justifIssues(cartItems.filter(i => !estPeremption(i)), justifProducts, justifInfo);
     if (jIssues.length) { flash(`⚠ ${jIssues[0].name} : ${jIssues[0].msg}`); return false; }
     setSendStatus("sending");
     // Session valide AVANT tout envoi (e-mail, enregistrement, PharmaML) : jeton pharmacie renouvelé si besoin, sinon
@@ -1804,7 +1832,7 @@ export default function App() {
     // Stock d'Elixir du moment : il décide quelles lignes passent par le labo (justificatif)
     const jp = (await loadJustifProducts({ fresh: true })) || justifProducts;
     if (jp !== justifProducts) setJustifProducts(jp);
-    const jIssues2 = justifIssues(cartItems, jp, justifInfo);
+    const jIssues2 = justifIssues(cartItems.filter(i => !estPeremption(i)), jp, justifInfo);
     if (jIssues2.length) { setSendStatus(null); setCartOpen(true); flash(`⚠ ${jIssues2[0].name} : ${jIssues2[0].msg} (stock mis à jour)`); return false; }
     // Articles à plusieurs références (même code fournisseur, ex. fauteuils livrés sous un nouveau CIP) :
     // le pharmacien a UNE ligne ; la commande est répartie par CIP, la plus ancienne référence d'abord
@@ -1820,8 +1848,8 @@ export default function App() {
     }
 
     const date = new Date().toLocaleDateString("fr-FR", { day: "2-digit", month: "long", year: "numeric" });
-    const totalsSend = qtyByCip(sendItems);
-    const isJustif = (i) => needsJustif(i, jp, totalsSend);
+    const totalsSend = qtyByCip(sendItems.filter(i => !estPeremption(i)));
+    const isJustif = (i) => !estPeremption(i) && needsJustif(i, jp, totalsSend);
     const lignesMail = (arr) => arr.map(i =>
       `• ${i.name}${i.group ? ` (CIP ${i.cip})` : ""}${isJustif(i) ? " — SUR JUSTIFICATIF LABO (" + jp[i.cip].labNom + ")" : ""}${mentionMail(i, perSepare.includes(i) ? { numero: saveSepare?.id, de: saveNormal?.id } : null)}\n  Qté : ${i.qty}  |  PU : ${i.pn.toFixed(2).replace(".", ",")} €  |  Total : ${i.total.toFixed(2).replace(".", ",")} €`
     ).join("\n\n");
@@ -1869,7 +1897,7 @@ export default function App() {
     const toItems = (arr) => arr.map(i => ({ cip: i.cip || null, name: i.name, qty: i.qty, pn: i.pn, total: i.total, ...(i.group ? { group: i.group } : {}), ...mentionCommande(i) }));
     const csvOf = (arr) => arr.map(i => `${String(i.cip || cipLookup[i.name?.trim().toLowerCase()] || "—").replace(/;/g, "")};${i.qty}`).join("\n");
     const enregistrer = async (o) => {   // → { ok: true, id } | { ok: false, status, error }
-      const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items]);
+      const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items.map(({ separeDe, ...l }) => l)]);   // eslint-disable-line no-unused-vars
       idsEnvoi.current[cle] ??= o.id;
       for (let essai = 0; essai < 2; essai++) {
         const corps = { ...o, id: idsEnvoi.current[cle] };
@@ -2021,7 +2049,7 @@ export default function App() {
           const i = k.lastIndexOf("-"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];
           return p && keepJustif?.has(p.cip);
         })));
-        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));
+        setSpecialItems(prev => prev.filter(x => (!estPeremption(x) && keepJustif?.has(x.cip)) || (estPeremption(x) && keepSepare?.has(x.cip))));
         setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif?.has(c))));
       } else {
         setQuantities({});
@@ -2031,6 +2059,28 @@ export default function App() {
       }
     }, 3000);
     return true;
+  };
+
+  // « Envoyer la commande » (revue du 21/10/2026) : panier avec une ligne péremption → page relue sans la lecture gardée, juste
+  // avant l'envoi (remise passée à 0, produit sorti de la page, plafond changé depuis la dernière lecture) ; si le contrôle
+  // change le panier, rien ne part : message, la pharmacie revoit son panier et renvoie. Page illisible : envoi comme avant.
+  // handleSend et sendOrder (zone protégée) inchangés.
+  const controleEnvoi = useRef(false);
+  const envoyerCommande = async () => {
+    if (sendingRef.current || controleEnvoi.current) return;
+    if (specialItems.some(estPeremption)) {
+      controleEnvoi.current = true;
+      let r = false;
+      try { r = await controlerPrixPanier(specialItems, { frais: true }); }
+      catch { r = false; }
+      finally { controleEnvoi.current = false; }
+      if (r?.change) {
+        setCartOpen(true);
+        flash(`⚠ ${r.message ? `${r.message} · ` : ""}Panier mis à jour d'après la page Péremption courte : vérifiez-le, puis renvoyez la commande`, 10000);
+        return;
+      }
+    }
+    handleSend();
   };
 
   // ── ONBOARDING SCREEN ──────────────────────────────────────────────
@@ -3586,8 +3636,9 @@ export default function App() {
                       {estPeremption(item) && (
                         <div className="ex-panier-peremption" style={{ ...encart("warn"), marginTop: 0, marginBottom: 10, ...ligneEncart }}>
                           <Icone nom="horloge" taille={14} style={iconeEncart} />
-                          <span><strong>{notePeremption(item.peremption)}</strong>{item.remise >= 1 ? <> · <strong>{fmtPct(item.remise)}</strong></> : null} · péremption courte
-                            {item.facture_odoo ? " · remise sur facture" : item.remise >= 1 && item.pv > item.basePn ? ` · prix de base ${fmt(item.pv)}` : item.remise >= 1 ? "" : ", au prix habituel"}
+                          <span><strong>{notePeremption(item.peremption)}</strong>{item.remise >= 1 ? <> · <strong>{fmtPct(item.remise)}</strong></> : null}
+                            {item.facture_odoo ? " · remise sur facture" : item.remise >= 1 && item.pv > item.basePn ? ` · prix de base ${fmt(item.pv)}` : item.remise >= 1 ? "" : " · au prix habituel"}
+                            {item.plafond != null && <><br />{item.plafond} boîte{item.plafond > 1 ? "s" : ""} à date courte au plus à ce prix{item.qty >= item.plafond ? " (atteint)" : ""}</>}
                             {partiraAPart(item, cartItems) && <><br />Ce produit est aussi sur une autre ligne du panier : cette ligne partira dans une commande séparée.</>}
                           </span>
                         </div>
@@ -3613,8 +3664,10 @@ export default function App() {
                           <button className="ex-qte-moins" onClick={() => setItemQty(item, item.qty - item.step)} aria-label={`Diminuer la quantité de ${item.name}${suffixe}`}
                             style={pasPanier}><Icone nom="moins" taille={14} epaisseur={2.4} /></button>
                           <span className="num" style={{ fontWeight: 700, fontSize: 14, minWidth: 28, textAlign: "center", color: T.ink }}>{item.qty}</span>
-                          <button className="ex-qte-plus" onClick={() => setItemQty(item, item.qty + item.step)} aria-label={`Augmenter la quantité de ${item.name}${suffixe}`}
-                            style={pasPanier}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
+                          {/* ligne péremption : au plus son plafond (boîtes à date courte) */}
+                          <button className="ex-qte-plus" disabled={item.plafond != null && item.qty >= item.plafond}
+                            onClick={() => setItemQty(item, item.plafond != null ? Math.min(item.qty + item.step, item.plafond) : item.qty + item.step)} aria-label={`Augmenter la quantité de ${item.name}${suffixe}`}
+                            style={{ ...pasPanier, ...(item.plafond != null && item.qty >= item.plafond ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}><Icone nom="plus" taille={14} epaisseur={2.4} /></button>
                           <span className="num" style={{ fontSize: 12, color: T.inkMute, marginLeft: 4, whiteSpace: "nowrap" }}>× {fmt(item.pn)}</span>
                           {item.step > 1 && <span className="num" style={{ fontSize: 11, color: T.inkMute, whiteSpace: "nowrap" }}>· par {item.step}</span>}
                         </div>
@@ -3653,12 +3706,13 @@ export default function App() {
                         );
                       })()}
                       {/* Sur justificatif labo : attestation, renouvellement, ordonnance anonymisée */}
-                      {needsJustif(item, justifProducts, cartTotalsByCip) && cartItems.findIndex(j => j.cip === item.cip) === n && (
+                      {/* ligne péremption (stock court d'Elixir) : jamais sur justificatif ; bloc sur la première autre ligne du CIP */}
+                      {!estPeremption(item) && needsJustif(item, justifProducts, cartTotalsByCip) && cartItems.findIndex(j => j.cip === item.cip && !estPeremption(j)) === n && (
                         <JustifCartBlock rule={justifProducts[item.cip]} info={justifInfo[item.cip]} onChange={(patch) => updateJustif(item.cip, patch)}
                           auth={actingFor ? { token: localStorage.getItem("admin_token"), odooId: actingFor.odoo_id } : { getToken: freshPharmacyToken }} />
                       )}
                       {/* Avertissement rupture */}
-                      {item.cip && !needsJustif(item, justifProducts, cartTotalsByCip) && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
+                      {item.cip && !(!estPeremption(item) && needsJustif(item, justifProducts, cartTotalsByCip)) && (stockData[item.cip]?.dispo === 0 || stockData[item.cip]?.dispo === false) && (
                         <div style={{ ...encart("danger"), ...ligneEncart }}>
                           <Icone nom="alerte" taille={14} style={iconeEncart} />
                           <span><strong>Rupture de stock</strong> — ce produit peut ne pas être disponible à la livraison</span>
@@ -3738,10 +3792,11 @@ export default function App() {
                     );
                   })()}
                   {/* Envoi : pastille or + encre (5,82:1, au lieu de blanc sur bleu à 2,77:1) ; succès ok + blanc (7,68:1),
-                      erreur danger + blanc ; bloqué (contingentement, justificatif) : sable. onClick et disabled inchangés */}
+                      erreur danger + blanc ; bloqué (contingentement, justificatif) : sable. disabled inchangé ; onClick :
+                      contrôle des lignes péremption juste avant l'envoi (envoyerCommande), puis handleSend */}
                   <button
                     className="ex-btn-or"
-                    onClick={handleSend}
+                    onClick={envoyerCommande}
                     disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || justifCheck.length > 0}
                     style={{
                       ...ui.btn("or", "l"), width: "100%", gap: 10,

@@ -3,7 +3,7 @@ import { T, R, ui, tone, fmtEur, fmtPct } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
-import { offreAffichee, offrePeremption, datePeremption } from "../peremption-panier.js";
+import { offreAffichee, offrePeremption, datePeremption, plafondCourt } from "../peremption-panier.js";
 import { TierBadge } from "../tiers.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
@@ -14,7 +14,8 @@ import { TierBadge } from "../tiers.jsx";
 // habituel (Saisie, liste n° 5) : sinon le prix habituel, sans remise. Offre calculée par offreAffichee
 // (src/peremption-panier.js), la même que le serveur (carte de l'accueil, admin) et que le contrôle du panier.
 // L'ajout va au panier sur une ligne À PART, au prix de la page, avec « Pér. <date> · −X % » (offrePeremption) : jamais
-// la ligne d'un menu ou de la Saisie du même CIP. Sans prix : pas d'ajout.
+// la ligne d'un menu ou de la Saisie du même CIP. Sans prix : pas d'ajout. Quantité au plus le nombre de boîtes à date
+// courte (plafondCourt : le prix de la page ne vaut que pour elles ; revue du 21/10/2026).
 // Lecture : peremption?action=page (remise_admin par produit, produits « fantômes » retirés) ; en échec, repli sur
 // odoo-catalog?expiry_months=4 et les remises de restock-alert?action=expiry_discounts (lecture publique).
 // L'onglet « Péremptions » de l'admin est src/components/PeremptionsAdmin.jsx (chargé à la demande par AdminPanel).
@@ -84,7 +85,8 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
   const prixAffiche = (p) => offreAffichee(p, remises);
 
   const handleAdd = (p) => {
-    const qty = parseInt(quantities[p.cip]) || 0;
+    const plafond = plafondCourt(p);
+    const qty = Math.min(parseInt(quantities[p.cip]) || 0, plafond ?? Infinity);
     if (qty <= 0 || !(prixAffiche(p).pn > 0)) return;   // sans prix : pas d'ajout (l'envoi planterait sur un prix vide)
     // ligne « Péremption courte » à part au panier : prix et remise de la page, date du lot (src/peremption-panier.js)
     onAddToCart?.(offrePeremption(p, qty, remises));
@@ -96,7 +98,6 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
   const aDroite = ["Prix HT"];
   const offres = products.map(p => prixAffiche(p));
   const nbRemises = offres.filter(o => o.remise >= 1).length;
-  const nbFactures = offres.filter(o => o.facture_odoo).length;
 
   return (
     <div>
@@ -113,9 +114,9 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
       <div role="note" className="ex-peremption-encart" style={{ ...encart("info"), marginBottom: 16 }}>
         <Icone nom="horloge" taille={16} style={{ flexShrink: 0, marginTop: 1 }} />
         {nbRemises > 0 || loading
-          ? <span>La remise péremption est déjà déduite du prix affiché. Chaque produit ajouté garde ce prix et la date de son lot sur une
-            ligne à part de votre panier. La date est celle du lot le plus court en stock ; les lots sont détaillés sur chaque ligne.
-            {nbFactures > 0 ? " «\u00a0Remise sur facture\u00a0»\u00a0: la remise figure aussi sur votre facture." : ""}</span>
+          ? <span>La remise péremption est déjà déduite du prix affiché : c'est le prix de votre commande. Chaque produit ajouté va sur une
+            ligne à part de votre panier, au prix de la page du moment, avec la date de son lot (le plus court en stock ; les lots sont
+            détaillés sur chaque ligne), pour les boîtes à date courte seulement.</span>
           : <span>Prix habituels, comme dans le reste du catalogue : aucune remise péremption pour l'instant. La date est celle du lot le
             plus court en stock ; les lots sont détaillés sur chaque ligne.</span>}
       </div>
@@ -177,6 +178,8 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
                 const sansPrix = !(prix.pn > 0);
                 const remise = prix.remise >= 1 ? prix.remise : null;
                 const qty = quantities[p.cip] || 0;
+                const plafond = plafondCourt(p);   // boîtes à date courte (null : inconnu)
+                const auPlafond = plafond != null && qty >= plafond;
 
                 return (
                   <tr key={p.cip} className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
@@ -231,12 +234,13 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
                         <button className="ex-qte-moins" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, (parseInt(prev[p.cip]) || 0) - 1) }))}
                           aria-label={`Diminuer la quantité de ${p.name}`} style={pas}><Icone nom="moins" taille={12} epaisseur={2.6} /></button>
                         <input type="number" min="0" value={quantities[p.cip] || ""}
-                          onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: parseInt(e.target.value) || 0 }))}
+                          onChange={e => setQuantities(prev => ({ ...prev, [p.cip]: Math.min(parseInt(e.target.value) || 0, plafond ?? Infinity) }))}
                           placeholder="0" aria-label={`Quantité ${p.name}`} className="ex-qte-champ"
                           style={{ ...ui.qtyInput(qty > 0), width: 44 }} />
-                        <button className="ex-qte-plus" onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: (parseInt(prev[p.cip]) || 0) + 1 }))}
-                          aria-label={`Augmenter la quantité de ${p.name}`} style={pas}><Icone nom="plus" taille={12} epaisseur={2.6} /></button>
+                        <button className="ex-qte-plus" disabled={auPlafond} onClick={() => setQuantities(prev => ({ ...prev, [p.cip]: Math.min((parseInt(prev[p.cip]) || 0) + 1, plafond ?? Infinity) }))}
+                          aria-label={`Augmenter la quantité de ${p.name}`} style={{ ...pas, ...(auPlafond ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}><Icone nom="plus" taille={12} epaisseur={2.6} /></button>
                       </div>
+                      {auPlafond && <div style={{ fontSize: 11, color: T.inkMute, marginTop: 3 }}>{plafond} au plus à ce prix</div>}
                       {qty > 0 && (sansPrix ? (
                         <button className="ex-peremption-ajouter" disabled title="Prix à confirmer : contactez Elixir"
                           style={{ ...ui.btn("primaire", "s"), height: 26, padding: "0 12px", fontSize: 12, marginTop: 6, opacity: 0.5, cursor: "not-allowed" }}>

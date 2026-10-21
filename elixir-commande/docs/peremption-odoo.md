@@ -12,8 +12,10 @@ travail manuel côté admin n'est pas fait, on rectifiera les écarts depuis l'a
 −50 % par défaut (−20 % dès 500 €, ou la remise affichée choisie par l'admin) même sans règle Odoo, et le panier garde ce
 prix ; Odoo facture alors le tarif de la liste du client et l'écart se rectifie depuis le Contrôle des écarts. La V1 sert à
 faire **facturer** par Odoo, produit par produit, la remise affichée : une règle facturée l'emporte sur la remise affichée
-(la page dit « remise sur facture ») et ne laisse aucun écart. « Appliquer dans Odoo » est prérempli avec la remise
-affichée.
+(la page dit « remise sur facture ») et ne laisse aucun écart. « Appliquer dans Odoo » est prérempli avec la remise qui
+fait facturer le prix de la page : la remise affichée (réglage « % du prix habituel (liste 5) » : 1 − prix de la page / prix
+habituel). Retirer une règle ramène la page à la remise affichée, pas au prix habituel (case « revenir aussi au prix
+habituel » cochée par défaut, § 1.2).
 
 **État à la livraison : simulation.** Aucune écriture dans Odoo tant que les **deux verrous** ne sont pas ouverts :
 
@@ -44,18 +46,27 @@ dernier jour, elle serait cachée aussitôt, voire déjà expirée dans Odoo.
 
 ### 1.2 L'ordre des opérations (le site n'affiche jamais un prix plus bas que la facture)
 
+Règle du 21/10/2026 (`docs/peremption.md`) : « annoncer » ci-dessous veut dire annoncer la remise **facturée** (« remise sur
+facture »). Un produit sans règle facturée n'est pas pour autant au prix habituel sur la page Péremption courte : il y a la
+remise affichée (colonne Page : −50 % par défaut, −20 % dès 500 €, ou celle de l'admin, 0 % = prix habituel), non facturée
+par Odoo (écarts à rectifier). Le prix du site (catalogue, liste n° 5) suit, lui, l'ordre ci-dessous.
+
 - **Poser** : réserver (table) → créer dans Odoo → relire chaque règle → contrôler le prix facturé sur les 6 listes (rapport
-  des listes d'Odoo) → mettre à jour le prix du site → seulement alors, la page annonce la remise. Si une seule liste
-  échoue, le site garde le prix habituel (toujours supérieur ou égal à ce que facture chaque liste) et la page n'annonce
-  rien.
-- **Retirer** : la page cesse d'annoncer et le site reprend le prix habituel (étape A, immédiate) → attente du délai
-  (2 h) et de l'import des commandes en cours → le prix habituel est relu sur le site → suppression dans Odoo, une règle
-  à la fois, après contrôle qu'elle n'a pas été changée à la main (étape B) → prix du site repris d'Odoo et relu.
+  des listes d'Odoo) → mettre à jour le prix du site → seulement alors, la page annonce la remise facturée. Si une seule
+  liste échoue, le site garde le prix habituel (toujours supérieur ou égal à ce que facture chaque liste) et la page garde
+  la remise affichée.
+- **Retirer** : la remise facturée n'est plus annoncée, la page revient aussitôt à la remise affichée, non facturée, et le
+  site reprend le prix habituel (étape A, immédiate) → attente du délai (2 h) et de l'import des commandes en cours → le prix
+  habituel est relu sur le site → suppression dans Odoo, une règle à la fois, après contrôle qu'elle n'a pas été changée à
+  la main (étape B) → prix du site repris d'Odoo et relu. La fenêtre « Retirer » propose, cochée par défaut, « Revenir aussi
+  au prix habituel sur la page » (remise affichée à 0 %, posée avant le retrait) ; sinon la page passe à −50 % non facturé.
 - **Hausse de la remise** (prix plus bas) : écrite tout de suite dans Odoo (Odoo facture moins que le site entre-temps).
-- **Baisse de la remise** (prix plus haut) : traitée comme un retrait partiel. La page cesse aussitôt d'annoncer la remise
-  et le site reprend le prix habituel ; l'écriture dans Odoo attend le délai (2 h) et l'import des commandes en cours, puis
-  la nouvelle remise est contrôlée et réannoncée. État « Baisse en attente » dans l'admin.
-- Entre deux étapes, l'écart ne joue qu'**en faveur** de la pharmacie.
+- **Baisse de la remise** (prix plus haut) : traitée comme un retrait partiel. La remise facturée n'est plus annoncée (la page
+  affiche la remise affichée en attendant) et le site reprend le prix habituel ; l'écriture dans Odoo attend le délai (2 h)
+  et l'import des commandes en cours, puis la nouvelle remise est contrôlée et réannoncée. État « Baisse en attente » dans
+  l'admin.
+- Entre deux étapes, l'écart entre le site et la facture ne joue qu'**en faveur** de la pharmacie (la remise affichée, non
+  facturée, se rectifie depuis le Contrôle des écarts).
 - **Piste d'audit** : chaque écriture Odoo laisse une ligne « demandé » au journal AVANT l'appel, puis une ligne
   « fait », « échec » ou « incertain ». Si le journal est en panne, rien n'est écrit dans Odoo.
 - **Coupure** (délai, réseau) : une écriture dont la réponse se perd est relue au passage suivant ; une création perdue
@@ -127,9 +138,11 @@ sans rien faire. Le filet ne complète pas une décision d'un passage de l'admin
 Dans cet ordre :
 
 1. **« Retirer toutes les règles du site »** (bouton rouge, saisir RETIRER), avec la variable Netlify encore présente et
-   le mode « Actif » ou « Créations suspendues ». La page cesse aussitôt d'annoncer toute remise et le site reprend les
-   prix habituels ; les règles sont ensuite supprimées dans Odoo produit par produit (page ouverte) ou par le filet
-   (dans le quart d'heure, si la page est fermée). C'est le **seul** moyen de faire cesser la facturation par Odoo.
+   le mode « Actif » ou « Créations suspendues ». La page cesse aussitôt d'annoncer les remises facturées et revient à la
+   remise affichée de chaque produit (−50 % par défaut, non facturée) — case « mettre aussi à 0 % la remise affichée de ces
+   produits » cochée par défaut pour revenir au prix habituel — et le site reprend les prix habituels ; les règles sont
+   ensuite supprimées dans Odoo produit par produit (page ouverte) ou par le filet (dans le quart d'heure, si la page est
+   fermée). C'est le **seul** moyen de faire cesser la facturation par Odoo.
 2. Vérifier dans le journal complet que les lignes « Suppression dans Odoo » sont « fait » et que le compteur « Facturés
    par Odoo » est à 0.
 3. Seulement ensuite, si on veut tout arrêter : mode « Simulation », ou retirer la variable Netlify **puis redéployer**
@@ -292,7 +305,7 @@ mention) et les autres écarts (liste ≠ 5, prix changé) ; « Exporter (CSV) �
 
 | Alerte | Que faire |
 |---|---|
-| Échec de création | Lire le message (liste refusée, prix différent…). « Réessayer » ; si ça persiste, « Retirer ». Le site garde le prix habituel. |
+| Échec de création | Lire le message (liste refusée, prix différent…). « Réessayer » ; si ça persiste, « Retirer ». Le site garde le prix habituel ; la page Péremption garde la remise affichée, non facturée. |
 | Règle modifiée dans Odoo | Quelqu'un a changé la règle à la main. Remettre la valeur d'origine dans Odoo (puis « Réessayer ») ou la supprimer à la main (puis « Retirer »). Le site n'y touche plus d'ici là. |
 | Règle datée inconnue | Une règle avec une date de début existe sur une liste couverte sans venir du site. Rien à faire si Elixir date ses propres règles. |
 | Règles du site retrouvées sous une décision close | Rien : la décision est rouverte et ses règles supprimées tout de suite. Si l'alerte dit qu'une autre décision est ouverte : « Retirer » le produit, puis vérifier dans Odoo. |
@@ -300,10 +313,10 @@ mention) et les autres écarts (liste ≠ 5, prix changé) ; « Exporter (CSV) �
 | Liste de prix en usage non couverte | Des commandes PharmaML portent une autre liste. L'ajouter dans les réglages si ses clients doivent profiter des remises. |
 | Lot long reçu | La remise est retirée (réglage « retrait »). Pour la garder sur toutes les boîtes : attendre la suppression (heure donnée dans l'alerte) ou cliquer « Supprimer tout de suite », puis réappliquer avec « Forcer ». |
 | Disjoncteur des retraits | Vérifier le stock dans Odoo. Si les sorties sont réelles : « Réconcilier maintenant » le lendemain, ou « Retirer » produit par produit. |
-| Odoo injoignable pendant un passage | Rien dans l'immédiat : la page cesse d'annoncer les remises arrivées à leur date ; les suppressions reprennent au retour d'Odoo. Si ça dure, vérifier la clé et Odoo. |
+| Odoo injoignable pendant un passage | Rien dans l'immédiat : les remises facturées arrivées à leur date ne sont plus annoncées (la page reprend la remise affichée) ; les suppressions reprennent au retour d'Odoo. Si ça dure, vérifier la clé et Odoo. |
 | Suppression dans Odoo en échec / Retrait bloqué depuis plus de 24 h | Odoo continue de facturer la remise. Onglet Péremptions → « Droits Odoo » → Contrôler ; au besoin, supprimer les règles à la main dans Odoo. |
 | Passage « filet » en échec | Lire l'erreur du bandeau rouge ; les retraits automatiques ne se font pas tant qu'elle dure. |
-| Retrait (ou baisse) après 24 h d'attente / avec commandes en cours | Vérifier à leur import les commandes listées : elles sont facturées au prix habituel (ou à la nouvelle remise). |
+| Retrait (ou baisse) après 24 h d'attente / avec commandes en cours | Vérifier à leur import les commandes listées : elles sont facturées au prix habituel (ou à la nouvelle remise) ; leurs lignes « Pér. » apparaissent dans le Contrôle des écarts (« règle Odoo absente à l'import »). |
 | Plusieurs règles pour une réservation | Vérifier dans Odoo et supprimer le doublon à la main. |
 
 ## 5. Réglages (propositions en attendant les réponses de Zineb, modifiables sans code)

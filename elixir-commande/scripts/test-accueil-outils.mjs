@@ -435,6 +435,10 @@ const OUTILS_LUS = { plan: { saisie: COMPTES, fauteuils: CORRESPONDANCE }, faute
   eq("badge « Petits prix » : gardé avec une remise ; retiré sans aucune remise affichée ; autre badge : gardé",
     [avecBadge("Petits prix"), avecBadge("  petits PRIX ", { ...pub.items[0].chiffres, jusqua: null, des: null }), avecBadge("Nouveau", { ...pub.items[0].chiffres, jusqua: null, des: null }), avecBadge("Petits prix", { ...pub.items[0].chiffres, jusqua: 20, des: 3.1 })], ["Petits prix", "", "Nouveau", "Petits prix"]);
   eq("badge par défaut d'une nouvelle mise en avant Péremption", C.OUTILS.peremption.badge, "Petits prix");
+  // revue du 21/10/2026 : sans remise affichée, le titre ne promet plus de « petits prix » (un titre saisi par Zineb est gardé)
+  const titreSans = (titre) => C.construireMisesEnAvant({ items: [{ ...pub.items[0], titre, chiffres: { ...pub.items[0].chiffres, jusqua: null, des: null } }] }, ctxPage()).vitrine[0];
+  eq("sans remise affichée : titre « Lots à date courte, en stock », texte lu sans « petits prix » ; titre de Zineb gardé",
+    [esp(titreSans(undefined).titre), /petits prix/i.test(C.resumeOutilLu(titreSans(undefined))), esp(titreSans("Mon titre").titre)], ["Lots à date courte, en stock", false, "Mon titre"]);
   eq("sans remise affichée : accroche au prix habituel, sans remise annoncée", [esp(C.OUTILS.peremption.accroche({ nb: 3 })), /remise|petits prix|−|%/i.test(C.OUTILS.peremption.accroche({ nb: 3 }))],
     ["Produits en stock à péremption entre J+30 et 4 mois, à leur prix habituel, avec la date de chaque lot.", false]);
   eq("teintes : outil (justificatif : sarcelle, violet écarté)", [per.couleur, fau.couleur, jus.couleur, jus.source, sai.couleur], ["#ea580c", "#3b82f6", "#3c7782", "rayon", "#2d9cbc"]);

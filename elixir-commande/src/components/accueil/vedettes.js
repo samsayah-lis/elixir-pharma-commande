@@ -218,7 +218,8 @@ function entreeOutil(v, ctx) {
   const cartes = cartesOutil(cle, ch, { illisibles: ctx.illisibles });
   const e = commun(v, `o:${cle}`, couleurDe(v, { accent: accentOutil(cle, ctx.catalogue) }), photo || cartes.find(c => c.url)?.url);
   const long = chiffresTexte(cle, ch), court = chiffresTexte(cle, ch, { court: true });
-  const titre = v.titre || def.titre;
+  // Péremption sans remise affichée (toutes à 0 % ou économie sous le seuil) : titre sans « petits prix » (revue du 21/10/2026)
+  const titre = v.titre || (cle === "peremption" && !(ch?.jusqua >= 1) ? "Lots à date courte, en stock" : def.titre);
   // Péremption : « Petits prix » (badge par défaut, rétabli le 21/10/2026) ne s'affiche que si la page affiche une remise
   // (jusqua) — sinon la carte promettrait une remise qui n'existe pas
   const badge = cle === "peremption" && !(ch?.jusqua >= 1) && /^\s*petits\s+prix\s*$/i.test(e.badge) ? "" : e.badge;

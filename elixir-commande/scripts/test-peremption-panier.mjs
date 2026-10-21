@@ -184,7 +184,7 @@ eq("commande : mention, date, remise et facturation par Odoo", [M.mentionCommand
 
 // ── 1 bis. Page Péremption courte : objet envoyé au panier par handleAdd (ShortExpiry.jsx) ──
 eq("page : objet ajouté (−50 %, prix de base, date du lot sans l'heure, mention, remise, non facturée par Odoo)", PER_HEC,
-  { cip: HEC, name: "HEC POM NACU T/25G", qty: 2, pn: 5.16, pv: 10.32, discount: 50, tiers: null, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise: 50, facture_odoo: false });
+  { cip: HEC, name: "HEC POM NACU T/25G", qty: 2, pn: 5.16, pv: 10.32, discount: 50, tiers: null, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise: 50, facture_odoo: false, plafond: null });
 eq("page : remise de l'admin (repli : expiry_discounts)", [ajoutPage({ ...PAGE_HEC, remise_admin: undefined }, 1, { [HEC]: 30 }).pn, ajoutPage({ ...PAGE_HEC, remise_admin: 30 }, 1).remise], [7.22, 30]);
 eq("page : −20 % à partir de 500 €", [ajoutPage({ ...PAGE_HEC, list_price: 600, discounted_price: 573 }, 1).pn, ajoutPage({ ...PAGE_HEC, list_price: 600, discounted_price: 573 }, 1).discount], [480, 20]);
 eq("page : quantité 0, ou produit sans prix → rien d'ajouté", [ajoutPage(PAGE_HEC, 0), ajoutPage({ ...PAGE_HEC, list_price: null, discounted_price: null }, 2)], [null, null]);
@@ -292,7 +292,7 @@ if (SHORT_AVANT) {
   // ajout depuis la page par ajouterDepuisSaisie : sans la règle de colis du menu (ligne à part, à son prix), panier ouvert
   const STRAT = COLIS;
   const a = application(APP);
-  Object.assign(a.ctx, { SECTION_META: {}, justifProducts: {}, needsJustif: M.needsJustif, qtyByCip: M.qtyByCip, loadQuota: async () => null, quotaOver: () => ({ over: [] }) });
+  Object.assign(a.ctx, { SECTION_META: {}, justifProducts: {}, needsJustif: M.needsJustif, qtyByCip: M.qtyByCip, loadQuota: async () => null, quotaOver: () => ({ over: [] }), pagePeremption: { current: null } });
   for (const nom of ["regleSaisie", "arrondiSaisie", "ajouterDepuisSaisie"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
   a.ctx.ajouterDepuisSaisie(ajoutPage({ cip: STRAT, name: "Produit au colis", list_price: 3, discounted_price: 2, discount_pct: 33, earliest_expiry: "2026-12-31" }, 2), { ouvrirPanier: true });
   eq("page → produit au colis de 6 : 2 boîtes à part au prix de la page (pas d'arrondi au colis), panier ouvert", [a.S.quantities, a.S.specialItems.map(s => [s.cip, s.qty, s.pn]), a.S.cartOpen],
@@ -373,15 +373,17 @@ async function copie(src, etat) {
 // relais : doublure de submit-order avec l'anti-doublon d'envoiAuto (même pharmacie, même empreinte, autre commande →
 // « double », pas d'envoi) ; relais partagé entre deux envois pour rejouer un vrai double envoi
 const nouveauRelais = (sig = empreinte) => ({ sig, vues: new Map() });
-async function envoyer(src, etat, { refuse = () => false, relais = nouveauRelais() } = {}) {
-  const { S, ctx } = application(src, etat);
-  const appels = [], journal = [], enregistrees = new Map();
+// ids : numéros des envois (idsEnvoi) partagés entre deux envois ; serveur : commandes enregistrées partagées ; perdre(corps, n) :
+// order-save enregistre puis la réponse se perd (coupure) ; justif : { produits, info } (produits sur justificatif labo)
+async function envoyer(src, etat, { refuse = () => false, relais = nouveauRelais(), ids = { current: {} }, serveur = new Map(), perdre = () => false, justif = null } = {}) {
+  const { S, ctx } = application(src, { ...etat, ...(justif?.info ? { justifInfo: justif.info } : {}) });
+  const appels = [], journal = [], enregistrees = serveur;
   let n = 0;
   Object.assign(ctx, {
-    justifProducts: {}, setJustifProducts: () => {}, actingFor: null, pharmacyName: "PHARMACIE DU BANC", pharmacyEmail: "banc@exemple.fr", pharmacyCip: "1234567",
+    justifProducts: justif?.produits || {}, setJustifProducts: () => {}, actingFor: null, pharmacyName: "PHARMACIE DU BANC", pharmacyEmail: "banc@exemple.fr", pharmacyCip: "1234567",
     isClient: true, DEFAULT_RECIPIENT: "pharmacien@elixirpharma.fr", MESSAGE_ENVOI_BLOQUE: { reconnexion: "r", admin: "a", fiche: "f", erreur: "e" },
-    idsEnvoi: { current: {} }, setSendStatus: (v) => { S.statut.push(v); journal.push(`statut:${v}`); }, setEnvoiBloque: () => {},
-    sessionPourEnvoi: async () => true, loadJustifProducts: async () => ({}), loadQuota: async () => null,
+    idsEnvoi: ids, setSendStatus: (v) => { S.statut.push(v); journal.push(`statut:${v}`); }, setEnvoiBloque: () => {},
+    sessionPourEnvoi: async () => true, loadJustifProducts: async () => (justif?.produits || {}), loadQuota: async () => null,
     loadGroups: async () => null, codeOfCip: () => ({}), allocate: () => ({ lines: [], missing: 0 }),
     delai: () => ({}), freshPharmacyToken: async () => "jeton", submitJustif: async () => {},
     localStorage: { getItem: () => null },
@@ -391,7 +393,13 @@ async function envoyer(src, etat, { refuse = () => false, relais = nouveauRelais
       const corps = JSON.parse(o.body), fn = url.split("/").pop();
       appels.push({ fn, corps }); journal.push(fn);
       if (fn === "order-save" && refuse(corps, ++n)) return { ok: false, status: 500, json: async () => ({ success: false, error: "panne" }) };
+      if (fn === "order-save" && enregistrees.has(String(corps.id))) {   // order-save : même numéro → { deja } si même commande (CIP, quantités), 409 sinon
+        const lignes = (its) => JSON.stringify(its.map(i => [String(i.cip ?? ""), Number(i.qty) || 0]));
+        return lignes(enregistrees.get(String(corps.id))) === lignes(corps.items) ? { ok: true, status: 200, json: async () => ({ success: true, id: corps.id, deja: true }) }
+          : { ok: false, status: 409, json: async () => ({ success: false, error: "numero" }) };
+      }
       if (fn === "order-save") enregistrees.set(String(corps.id), corps.items);
+      if (fn === "order-save" && perdre(corps, n)) throw new Error("réponse perdue (délai)");
       return { ok: true, status: 200, json: async () => ({ success: true, id: corps.id }) };
     },
     fetch: async (url, o) => {
@@ -484,6 +492,37 @@ const etatRelais = (r) => [...r.relais.vues.values()];
   eq("à part refusée : ligne péremption gardée au panier, menu vidé", [r.S.quantities, r.S.specialItems.map(s => [s.cip, s.qty, s.peremption])], [{}, [[HEC, 2, "2026-12-31"]]]);
   vrai("à part refusée : message", r.S.flashes.some(m => m.startsWith("⚠ Ligne(s) péremption courte NON enregistrée(s) (panne)")));
 }
+{
+  // revue du 21/10/2026 : commande à part enregistrée mais réponse perdue (délai, coupure) → ligne gardée au panier ; renvoyée
+  // seule, elle reprend le numéro de la commande à part (clé sans separeDe) : order-save répond { deja }, un seul relais
+  const ids = { current: {} }, serveur = new Map(), relais = nouveauRelais();
+  const r1 = await envoyer(APP, { quantities: { "otc-0": 3 }, specialItems: M.ajouterPeremption([], PER_HEC) }, { ids, serveur, relais, perdre: (c, n) => n === 2 });
+  const aPart1 = r1.appels.filter(a => a.fn === "order-save")[1].corps;
+  eq("réponse perdue : commande à part enregistrée par le serveur, ligne gardée au panier, relais de la commande normale seule",
+    [serveur.has(String(aPart1.id)), r1.S.specialItems.map(x => [x.cip, x.qty]), r1.appels.filter(a => a.fn === "submit-order").length], [true, [[HEC, 2]], 1]);
+  const r2 = await envoyer(APP, { specialItems: r1.S.specialItems }, { ids, serveur, relais });
+  const save2 = r2.appels.find(a => a.fn === "order-save").corps;
+  eq("nouvel envoi : même numéro que la commande à part perdue → reconnue ({ deja }), aucune nouvelle commande", [String(save2.id), serveur.size], [String(aPart1.id), 2]);
+  eq("nouvel envoi : la commande à part relayée une seule fois en tout", [...relais.vues.values()].filter(v => v === String(aPart1.id)).length, 1);
+  if (PROD) {
+    // avant : clé avec separeDe → nouveau numéro, deuxième commande enregistrée
+    const cle = (items) => JSON.stringify([null, "banc@exemple.fr", "catalogue", items]);
+    vrai("avant (clé avec separeDe) : les deux envois n'avaient pas la même clé", cle(aPart1.items) !== cle(save2.items));
+  }
+}
+{
+  // revue du 21/10/2026 : produit sur justificatif labo (dispo 3) au menu ET en péremption : la ligne péremption (stock court
+  // d'Elixir) n'est jamais « sur justificatif » ; le justificatif se compte hors ligne péremption
+  const justif = { produits: { [HEC]: { dispo: 3, labNom: "Labo", ordonnance: "non" } }, info: { [HEC]: { attestation: true } } };
+  const r = await envoyer(APP, { quantities: { "otc-0": 3 }, specialItems: M.ajouterPeremption([], PER_HEC) }, { justif });
+  eq("justificatif : menu 3 (≤ dispo) en commande normale, péremption 2 à part, aucune commande justificatif",
+    r.appels.filter(a => a.fn === "order-save").map(a => [a.corps.source, a.corps.items.map(i => [i.qty, i.pn])]), [["catalogue", [[3, 9.76]]], ["catalogue", [[2, 5.16]]]]);
+  const r2 = await envoyer(APP, { quantities: { "otc-0": 4 }, specialItems: M.ajouterPeremption([], PER_HEC) }, { justif });
+  eq("justificatif : menu 4 (> dispo) sur justificatif, péremption 2 en commande normale (jamais au labo)",
+    r2.appels.filter(a => a.fn === "order-save").map(a => [a.corps.source, a.corps.items.map(i => [i.qty, i.pn, i.peremption ?? null])]),
+    [["catalogue", [[2, 5.16, "2026-12-31"]]], ["justificatif", [[4, 9.76, null]]]]);
+  vrai("justificatif : e-mail sans « SUR JUSTIFICATIF » sur la ligne péremption", !/PÉREMPTION COURTE[^\n]*\n[^\n]*SUR JUSTIFICATIF|SUR JUSTIFICATIF LABO \(Labo\) — PÉREMPTION/.test(r2.appels.find(a => a.fn === "send-email").corps.template_params.order_lines));
+}
 if (PROD) {
   // panier sans péremption : envois identiques à la production (numéros et dates masqués)
   const masque = (appels) => JSON.parse(JSON.stringify(appels.map(({ keepalive, ...a }) => a), (k, v) => ["id", "date", "orderId", "order_date"].includes(k) ? "‹masqué›" : v));   // eslint-disable-line no-unused-vars
@@ -497,8 +536,8 @@ if (PROD) {
 // ── 6. Panier enregistré : contrôle des lignes péremption (controlerPrixPanier d'App.jsx, vrai code) ──
 // page : { produits, retirees, masques } de peremption?action=page ; prix : réponse de peremption?action=prix ; v1 = false :
 // fonction absente → repli odoo-catalog + expiry_discounts ; pendant : modification du panier pendant la lecture
-async function controle(etat, { produits = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI], retirees = [], masques = [], prix = [], echec = false, v1 = true, remises = [], pendant = null, cache = { current: null } } = {}) {
-  const a = application(APP, etat);
+async function controle(etat, { produits = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI], retirees = [], masques = [], prix = [], echec = false, v1 = true, remises = [], pendant = null, cache = { current: null }, frais = false, catalogue = CATALOGUE } = {}) {
+  const a = application(APP, { ...etat, catalogue });
   const urls = [];
   Object.assign(a.ctx, { pagePeremption: cache, panierCourant: { get current() { return a.S.specialItems; } }, prixRemontes: {}, setPrixRemontes: (f) => { a.ctx.prixRemontes = f(a.ctx.prixRemontes); },
     fetch: async (url) => { urls.push(url);
@@ -508,9 +547,12 @@ async function controle(etat, { produits = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI], re
       if (url === "/.netlify/functions/odoo-catalog?expiry_months=4") return echec ? { ok: false, json: async () => ({}) } : { ok: true, json: async () => ({ products: produits.map(({ remise_admin, ...p }) => p) }) };   // eslint-disable-line no-unused-vars
       if (url === "/.netlify/functions/restock-alert?action=expiry_discounts") return { ok: true, json: async () => remises };
       throw new Error(url); } });
+  a.ctx.SECTION_META = {};
+  for (const nom of ["regleSaisie", "arrondiSaisie", "rayonDe"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
   a.ctx.lirePagePeremption = charge(expr(bloc(APP, /^  const lirePagePeremption = \(\) => \{$/)), a.ctx);
-  await charge(expr(bloc(APP, /^  const controlerPrixPanier = async \(lignes\) => \{$/)), a.ctx)(a.S.specialItems);
-  return { ...a, urls };
+  a.ctx.controlerPrixPanier = charge(expr(bloc(APP, /^  const controlerPrixPanier = async \(lignes, \{ frais = false \} = \{\}\) => \{$/)), a.ctx);
+  const retour = await a.ctx.controlerPrixPanier(a.S.specialItems, { frais });
+  return { ...a, urls, retour };
 }
 {
   // offre changée par l'admin (−50 % → −30 %) : ligne remise au prix actuel de la page, à la hausse
@@ -535,7 +577,7 @@ async function controle(etat, { produits = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI], re
   const s1 = await controle({ quantities: { "otc-0": 1 }, specialItems: M.ajouterPeremption([], PER_HEC) }, { produits: [PAGE_EUPHY], masques: [MASQUE] });
   eq("sortie (produit « fantôme ») : la ligne péremption disparaît, ses boîtes vont sur la ligne du menu au prix du menu", [s1.S.specialItems, s1.S.quantities, s1.ctx.cartItems.map(i => [i.key, i.qty, i.pn])],
     [[], { "otc-0": 3 }, [["otc-0", 3, 9.76]]]);
-  eq("sortie : message « plus en péremption courte »", s1.S.flashes.at(-1), "⚠ Plus en péremption courte, ligne remise au prix habituel (HEC POM NACU T/25G : 9,76 €)");
+  eq("sortie : message « plus en péremption courte », prix réellement pris (ligne du menu)", s1.S.flashes.at(-1), "⚠ Plus en péremption courte, ligne remise au prix habituel (HEC POM NACU T/25G : ligne du menu « Centrale OTC », à son prix)");
   // produit hors menu, absent de toutes les listes de la page : prix habituel demandé au serveur (peremption?action=prix)
   const EUPHY_HAB = { cip: EUPHY, name: PAGE_EUPHY.name, list_price: 12.31, discounted_price: 9.85, discount_pct: 20, price_tiers: null };
   const s2 = await controle({ specialItems: M.ajouterPeremption([], PER_EUPHY) }, { produits: [PAGE_HEC], prix: [EUPHY_HAB] });
@@ -550,15 +592,112 @@ async function controle(etat, { produits = [PAGE_HEC, PAGE_EUPHY, PAGE_ZADI], re
   const ancien = [{ cip: ZADI, name: PAGE_ZADI.name, qty: 2, pn: 1.92, pv: 3.83, tiers: null }];
   const a1 = await controle({ specialItems: ancien });
   eq("ancienne page : Zaditen 1,92 € (3,83 × 0,5) devenu ligne péremption au prix de la page", a1.S.specialItems.map(s => [s.cip, s.qty, s.pn, s.remise, s.peremption]), [[ZADI, 2, 1.92, 50, "2026-12-31"]]);
-  const lot0 = [{ cip: EUPHY, name: PAGE_EUPHY.name, qty: 2, pn: 9.85, pv: 12.31, tiers: null, peremption: "2027-01-31" }];
+  // ligne du lot 0 : en production (b1dbd3e), un ajout de la Saisie et un ajout de la page du même CIP allaient sur la même
+  // ligne : 10 boîtes dont 8 de la Saisie. Jamais passée d'office au prix de la page (revue du 21/10/2026)
+  const lot0 = [{ cip: EUPHY, name: PAGE_EUPHY.name, qty: 10, pn: 9.85, pv: 12.31, tiers: null, peremption: "2027-01-31" }];
   const a2 = await controle({ specialItems: lot0 });
-  eq("ligne du lot 0 (au prix habituel) → prix de la page (6,16 €, −50 %)", a2.S.specialItems.map(s => [s.pn, s.remise, s.peremption]), [[6.16, 50, "2027-01-31"]]);
+  eq("ligne du lot 0 (mention sans remise) → ligne ordinaire au prix habituel (9,85 €), 10 boîtes, plus de mention", a2.S.specialItems.map(s => [s.cip, s.qty, s.pn, s.remise ?? null, s.peremption ?? null]), [[EUPHY, 10, 9.85, null, null]]);
+  eq("ligne du lot 0 : message (ajoutez-la depuis la page pour le prix péremption)", a2.S.flashes.at(-1),
+    "⚠ Ligne « Pér. » d'avant le 21/10 remise au prix habituel (EUPHYTOSE NUIT MYRTILLE GOMME 30 : 9,85 €) : pour le prix péremption, ajoutez-la depuis la page Péremption courte");
   const v1 = [{ cip: ZADI, name: PAGE_ZADI.name, qty: 1, pn: 3.29, pv: 3.83, tiers: null, peremption: "2026-12-31", peremption_remise: 12 }];
   const a3 = await controle({ specialItems: v1 });
   eq("ligne V1 dont la règle Odoo a pris fin → offre actuelle (−50 %), plus facturée par Odoo, champ V1 retiré", a3.S.specialItems.map(s => [s.pn, s.remise, s.facture_odoo, "peremption_remise" in s]), [[1.92, 50, false, false]]);
   const saisie = [{ cip: EUPHY, name: PAGE_EUPHY.name, qty: 3, pn: 9.85, pv: 12.31, tiers: null }, { cip: ZADI, name: "Multi-CIP", qty: 1, pn: 1.92, supplier_code: "Z1" }];
   const a4 = await controle({ specialItems: saisie });
   eq("ligne de la Saisie et article multi-CIP : jamais touchés", [a4.S.specialItems, a4.S.flashes.length], [saisie, 0]);
+}
+{
+  // revue du 21/10/2026 : produit au colis (Stratège, colis de 6) qui quitte la page : rajouté par la règle de la Saisie
+  const MASQUE_COLIS = { cip: COLIS, name: "Produit au colis", list_price: 3, discounted_price: 2.5, discount_pct: 16.7, price_tiers: null };
+  const perColis = (q) => M.ajouterPeremption([], ajoutPage({ cip: COLIS, name: "Produit au colis", list_price: 3, discounted_price: 2.5, discount_pct: 16.7, earliest_expiry: "2026-12-31" }, q));
+  const c1 = await controle({ specialItems: perColis(2) }, { produits: [PAGE_HEC], masques: [MASQUE_COLIS] });
+  eq("colis : 2 boîtes sorties de la page → sous le colis de 6 : ligne retirée (jamais 2 boîtes au prix carton)", [c1.S.quantities, c1.S.specialItems], [{}, []]);
+  eq("colis : message « se commande par 6 »", c1.S.flashes.at(-1), "⚠ Plus en péremption courte, ligne remise au prix habituel (Produit au colis : se commande par 6 dans « Sélection Stratège », ligne retirée)");
+  const c2 = await controle({ specialItems: perColis(8) }, { produits: [PAGE_HEC], masques: [MASQUE_COLIS] });
+  eq("colis : 8 boîtes → arrondi au colis (6) sur la ligne du menu", [c2.S.quantities, c2.S.specialItems, c2.S.flashes.at(-1)],
+    [{ "stratege-0": 6 }, [], "⚠ Plus en péremption courte, ligne remise au prix habituel (Produit au colis : ligne du menu « Sélection Stratège », à son prix (arrondi au colis de 6 : 6))"]);
+  if (PROD) {
+    const ancien = application(PROD, { specialItems: perColis(2) });
+    vrai("colis : la règle de la Saisie, celle de la production (regleSaisie)", bloc(PROD, /^  const regleSaisie = /) === bloc(APP, /^  const regleSaisie = /) && !!ancien);
+  }
+  // campagne (palier de 4) : même règle que son tableau, prix de la campagne
+  const CAMP = { camp: { label: "Campagne Zaditen", accent: "#111", products: [{ cip: ZADI, name: "ZADITEN 1 mg/5 ml", pn: 3.6, pv: 3.83 }] } };
+  const MASQUE_ZADI = { cip: ZADI, name: PAGE_ZADI.name, list_price: 3.83, discounted_price: 3.6, discount_pct: 6, price_tiers: null };
+  const avecCampagne = async (q) => {
+    const a = application(APP, { specialItems: M.ajouterPeremption([], ajoutPage(PAGE_ZADI, q)), catalogue: CAMP });
+    Object.assign(a.ctx, { getCampaign: (k) => (k === "camp" ? { palier_remise: 33 } : null), buildGroupes: () => [{}], campGetGroupe: () => ({ step: 4, min_qty: 4, multiple: 4 }),
+      SECTION_META: {}, pagePeremption: { current: null }, panierCourant: { get current() { return a.S.specialItems; } }, prixRemontes: {}, setPrixRemontes: () => {},
+      fetch: async (url) => (url.includes("action=page") ? { ok: true, json: async () => ({ produits: [PAGE_HEC], masques: [MASQUE_ZADI], retirees: [] }) } : { ok: false, json: async () => ({}) }) });
+    a.ctx.getStepMin = charge(expr(bloc(APP, /^  const getStepMin = /)), a.ctx);
+    for (const nom of ["regleSaisie", "arrondiSaisie", "rayonDe", "lirePagePeremption", "controlerPrixPanier"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
+    await a.ctx.controlerPrixPanier(a.S.specialItems);
+    return a;
+  };
+  const k1 = await avecCampagne(5);
+  eq("campagne (palier de 4) : 5 boîtes sorties de la page → 4 sur la ligne de la campagne, à son prix", [k1.S.quantities, k1.S.specialItems, k1.ctx.cartItems.map(i => [i.key, i.qty, i.pn])], [{ "camp-0": 4 }, [], [["camp-0", 4, 2.57]]]);
+  vrai("campagne : message « ligne du menu « Campagne Zaditen », à son prix »", /Campagne Zaditen », à son prix \(arrondi au colis de 4 : 4\)/.test(k1.S.flashes.at(-1)));
+}
+{
+  // revue du 21/10/2026 : plafond = boîtes à date courte (court_qte des faits frais ; sinon lots de la page dans la fenêtre)
+  const AUJ = Date.parse("2026-10-21T10:00:00Z");
+  eq("plafond : court_qte du serveur ; lots de la fenêtre ; lot long exclu ; rien de connu → sans plafond ; règle Odoo avec lot long forcé → sans plafond",
+    [M.plafondCourt({ ...PAGE_HEC, court_qte: 3 }, AUJ), M.plafondCourt({ ...PAGE_HEC, lots: [{ lot_name: "A", qty: 2, expiry: "2026-12-31" }, { lot_name: "B", qty: 4, expiry: "2027-02-28" }, { lot_name: "C", qty: 50, expiry: "2028-06-30" }] }, AUJ),
+      M.plafondCourt(PAGE_HEC, AUJ), M.plafondCourt({ ...PAGE_ZADI, court_qte: 3, facturee: true, remise_pct: 12, discounted_price: 3.37, discount_pct: 12, force_lot_long: true }, AUJ), M.finFenetre(AUJ)],
+    [3, 6, null, null, "2027-02-28"]);
+  const P3 = { ...PAGE_HEC, court_qte: 3 };
+  const a = application(APP);
+  Object.assign(a.ctx, { SECTION_META: {}, justifProducts: {}, needsJustif: M.needsJustif, qtyByCip: M.qtyByCip, loadQuota: async () => null, quotaOver: () => ({ over: [] }), pagePeremption: { current: null } });
+  for (const nom of ["regleSaisie", "arrondiSaisie", "ajouterDepuisSaisie"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
+  eq("page : quantité ramenée au plafond (5 saisies → 3 envoyées au panier)", [ajoutPage(P3, 5).qty, ajoutPage(P3, 5).plafond], [3, 3]);
+  a.ctx.ajouterDepuisSaisie(M.offrePeremption(P3, 5), { ouvrirPanier: true });
+  eq("plafond (App) : 5 demandées, 3 boîtes courtes → 3 au prix de la page, message", [a.S.specialItems.map(x => [x.qty, x.pn, x.plafond]), a.S.flashes.at(-1)],
+    [[[3, 5.16, 3]], "✓ 3× HEC POM NACU T/25G ajouté au panier · 3 boîtes à date courte au plus à ce prix"]);
+  a.ctx.ajouterDepuisSaisie(ajoutPage(P3, 1), { ouvrirPanier: true });
+  eq("plafond atteint : rien ajouté, message", [a.S.specialItems.map(x => x.qty), a.S.flashes.at(-1)], [[3], "⚠ HEC POM NACU T/25G : 3 boîtes à date courte au plus à ce prix, déjà au panier"]);
+  const l = ligne(a.ctx, `special-per-${HEC}`);
+  eq("panier : plafond sur la ligne (le « + » s'arrête à 3)", [l.plafond, APP.includes("disabled={item.plafond != null && item.qty >= item.plafond}")], [3, true]);
+  // panier enregistré : plafond baissé (2 boîtes courtes) → ligne à 2, l'excédent repart au prix habituel (ligne du menu)
+  const c = await controle({ specialItems: a.S.specialItems }, { produits: [{ ...PAGE_HEC, court_qte: 2 }] });
+  eq("plafond baissé : ligne péremption à 2, 1 boîte sur la ligne du menu au prix du menu", c.ctx.cartItems.map(i => [i.key, i.qty, i.pn]), [["otc-0", 1, 9.76], [`special-per-${HEC}`, 2, 5.16]]);
+  eq("plafond baissé : message", c.S.flashes.at(-1), "⚠ Péremption courte : boîtes à date courte au plus à ce prix (HEC POM NACU T/25G : 2) ; le reste repart au prix habituel (HEC POM NACU T/25G : ligne du menu « Centrale OTC », à son prix)");
+}
+{
+  // revue du 21/10/2026 : lecture gardée 5 min périmée par un ajout depuis la page (remise passée à 0 entre-temps)
+  const PAGE50 = { produits: [PAGE_HEC], horsPage: [], remises: null, v1: true };
+  const cache = { current: { t: Date.now(), promesse: Promise.resolve(PAGE50) } };
+  const a = application(APP);
+  const urls = [];
+  Object.assign(a.ctx, { SECTION_META: {}, justifProducts: {}, needsJustif: M.needsJustif, qtyByCip: M.qtyByCip, loadQuota: async () => null, quotaOver: () => ({ over: [] }), pagePeremption: cache,
+    panierCourant: { get current() { return a.S.specialItems; } }, prixRemontes: {}, setPrixRemontes: () => {},
+    fetch: async (url) => { urls.push(url); return { ok: true, json: async () => ({ produits: [{ ...PAGE_HEC, remise_admin: 0 }], retirees: [], masques: [] }) }; } });
+  for (const nom of ["regleSaisie", "arrondiSaisie", "rayonDe", "ajouterDepuisSaisie", "lirePagePeremption", "controlerPrixPanier"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
+  a.ctx.ajouterDepuisSaisie(ajoutPage({ ...PAGE_HEC, remise_admin: 0 }, 1), { ouvrirPanier: true });
+  await a.ctx.controlerPrixPanier(a.S.specialItems);
+  eq("lecture gardée périmée par l'ajout : page relue, ligne à 0 % gardée (9,76 €), aucun message contradictoire", [urls, a.S.specialItems.map(x => [x.pn, x.remise])],
+    [["/.netlify/functions/peremption?action=page"], [[9.76, 0]]]);
+}
+{
+  // revue du 21/10/2026 : contrôle sans lecture gardée juste avant l'envoi ; panier changé → rien ne part
+  const prepare = (lignes, pageProduits) => {
+    const a = application(APP, { specialItems: lignes });
+    let envois = 0;
+    Object.assign(a.ctx, { SECTION_META: {}, sendingRef: { current: false }, controleEnvoi: { current: false }, handleSend: () => { envois++; },
+      pagePeremption: { current: { t: Date.now(), promesse: Promise.resolve({ produits: [PAGE_HEC], horsPage: [], remises: null, v1: true }) } },
+      panierCourant: { get current() { return a.S.specialItems; } }, prixRemontes: {}, setPrixRemontes: () => {},
+      fetch: async () => ({ ok: true, json: async () => ({ produits: pageProduits, retirees: [], masques: [] }) }) });
+    for (const nom of ["regleSaisie", "arrondiSaisie", "rayonDe", "lirePagePeremption", "controlerPrixPanier", "envoyerCommande"]) a.ctx[nom] = charge(expr(bloc(APP, new RegExp(`^  const ${nom} = `))), a.ctx);
+    return { a, envois: () => envois };
+  };
+  const x = prepare(M.ajouterPeremption([], PER_HEC), [{ ...PAGE_HEC, remise_admin: 0 }]);
+  await x.a.ctx.envoyerCommande();
+  eq("avant l'envoi : remise passée à 0 → ligne remise à 9,76 €, rien ne part, panier ouvert, message", [x.envois(), x.a.S.specialItems.map(l => l.pn), x.a.S.cartOpen, /renvoyez la commande$/.test(x.a.S.flashes.at(-1))], [0, [9.76], true, true]);
+  const y = prepare(M.ajouterPeremption([], PER_HEC), [PAGE_HEC]);
+  await y.a.ctx.envoyerCommande();
+  eq("avant l'envoi : offre inchangée → envoi", [y.envois(), y.a.S.flashes.length], [1, 0]);
+  const z = prepare([{ cip: EUPHY, name: "Saisie", qty: 1, pn: 9.85 }], [PAGE_HEC]);
+  await z.a.ctx.envoyerCommande();
+  eq("avant l'envoi : panier sans ligne péremption → envoi direct, aucune lecture", z.envois(), 1);
+  vrai("bouton « Envoyer la commande » : envoyerCommande", /onClick=\{envoyerCommande\}/.test(APP));
 }
 {
   // panier changé pendant la lecture : rien n'est appliqué (le contrôle suivant reprend) ; page illisible : rien ne change
@@ -603,7 +742,7 @@ vrai("page : prix et ajout par l'offre de la page (offreAffichee, offrePeremptio
   && SHORT.includes("onAddToCart?.(offrePeremption(p, qty, remises));") && /<s style=\{\{[^}]*\}\}>\{fmt\(prix\.base\)\}<\/s>/.test(SHORT) && SHORT.includes("{fmtPct(remise)}"));
 vrai("page : lecture de la page, repli catalogue + remises de l'admin (lecture publique) ; ni jeton ni stockage", /peremption\?action=page/.test(SHORT) && /restock-alert\?action=expiry_discounts/.test(SHORT) && !/localStorage|admin_token/.test(SHORT));
 vrai("panier : mention, remise, explication de la commande à part ; justificatif une seule fois par CIP", APP.includes("<strong>{notePeremption(item.peremption)}</strong>{item.remise >= 1 ? <> · <strong>{fmtPct(item.remise)}</strong></> : null}")
-  && APP.includes("partiraAPart(item, cartItems)") && APP.includes("cartItems.findIndex(j => j.cip === item.cip) === n"));
+  && APP.includes("partiraAPart(item, cartItems)") && APP.includes("cartItems.findIndex(j => j.cip === item.cip && !estPeremption(j)) === n"));
 vrai("panier : lecteurs d'écran, ligne péremption distinguée (supprimer, diminuer, augmenter)", APP.includes('const suffixe = estPeremption(item) ? " (péremption courte)" : "";')
   && ["aria-label={`Supprimer ${item.name}${suffixe} du panier`}", "aria-label={`Diminuer la quantité de ${item.name}${suffixe}`}", "aria-label={`Augmenter la quantité de ${item.name}${suffixe}`}"].every(x => APP.includes(x)));
 vrai("accueil : quantités sans la ligne péremption", APP.includes("qteAuPanier={qteAccueil}"));

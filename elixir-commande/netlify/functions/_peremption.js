@@ -28,7 +28,7 @@ import { FAUTEUILS, CLE_OUTILS } from "./_accueil-outils.js";
 import { CONFIG_DEFAUT as LJ_DEFAUT } from "./_lab-justif.js";
 // Offre de la page Péremption courte (règle du 21/10/2026 : −50 % par défaut, remise affichée de l'admin, règle Odoo facturée)
 // et lignes de commande « Pér. » : même code que la page des pharmacies et que le panier (src/peremption-panier.js, pur)
-import { offreAffichee, remiseAdmin, estPeremption, remiseLigne, SEUIL_CHER } from "../../src/peremption-panier.js";
+import { offreAffichee, remiseAdmin, remiseDefaut, estPeremption, remiseLigne, SEUIL_CHER } from "../../src/peremption-panier.js";
 
 // ── Constantes ──
 export const LISTE_SITE = 5;            // liste affichée par le site (odoo_catalog.discounted_price)
@@ -389,23 +389,22 @@ export function estAffichee(d, regles, cat, listes, t = Date.now()) {
   return attendu != null && site != null && Math.abs(site - attendu) < 0.01;
 }
 
-// ── Écarts (règle panier) : une ligne de commande du site contre sa ligne de vente Odoo (pur, testé) ──
-// it : ligne enregistrée par le site (pn = prix du panier ; peremption, remise, facture_odoo, separeDe) ; l : ligne Odoo
-// (product_uom_qty, price_unit, discount, price_subtotal). → null (pas d'écart) ou { type, qte, net, ecart, coherent, … } :
-//  • « peremption » : ligne prise au prix de la page (« Pér. », remise ≥ 1) qu'aucune règle Odoo ne facture : à rectifier ;
+// ── Écarts (règle panier) : lignes du site contre les lignes de vente Odoo (pur, testé) ──
+// ecartLigne (une ligne du site contre une ligne Odoo, ou un groupe additionné) : it = ligne enregistrée par le site (pn = prix
+// du panier ; peremption, remise, facture_odoo, separeDe) ; l = { product_uom_qty, price_unit, discount, price_subtotal }.
+// → null (pas d'écart) ou { type, qte, net, ecart, coherent, … } :
+//  • « peremption » : ligne prise au prix de la page (« Pér. », remise ≥ 1) facturée plus cher (règle Odoo absente à l'import
+//                     d'une ligne « facturée par Odoo » comprise : regle_absente) ;
 //  • « probable »   : ancienne page (avant le 20/10/2026), sans mention : PU du panier = prix de base × 0,5 (× 0,8 dès 500 €) ;
 //  • « autre »      : client d'une autre liste que la 5, prix changé entre le panier et l'import, ligne du lot 0 (mention sans
 //                     remise, au prix habituel).
-// Une ligne facturée par une règle Odoo (facture_odoo, V1) n'a jamais d'écart. Quantité : celle de la ligne du site, au plus
-// celle d'Odoo (Odoo additionne sur une ligne les boîtes de commandes regroupées ; il reçoit la quantité servie).
-// coherent : le prix de la ligne vaut le PU d'Odoo (prix de base) × (1 − remise) à 2 centimes près ; sinon « à vérifier »
-// (prix de base changé depuis, ou ligne à contrôler avant de rembourser).
+// Une ligne réellement facturée par une règle Odoo (net ≤ prix du panier) n'a jamais d'écart. coherent : le prix de la ligne vaut
+// au moins le PU d'Odoo (prix de base) × (1 − remise) à 2 centimes près (le serveur contrôle aussi l'offre : lignesEcarts).
 export function ecartLigne(it, l) {
   const qteOdoo = Number(l?.product_uom_qty);
   if (!it || !(qteOdoo > 0)) return null;
   const { remise, facture_odoo } = remiseLigne(it);
   const per = estPeremption(it);
-  if (per && facture_odoo) return null;
   const pn = num(it.pn);
   const net = round2(Number(l.price_subtotal) / qteOdoo);
   if (pn == null || !(net > pn + 0.005)) return null;
@@ -416,8 +415,58 @@ export function ecartLigne(it, l) {
   const qte = Math.min(qteSite > 0 ? qteSite : qteOdoo, qteOdoo);
   const attendu = type === "peremption" && pu > 0 ? round2(pu * (1 - remise / 100)) : null;
   return { type, qte, qte_commandee: qteSite, qte_odoo: qteOdoo, pn, net, pu, remise_odoo: num(l.discount), remise: per ? remise : null,
-    ecart: round2((net - pn) * qte), coherent: attendu == null || pn >= attendu - 0.02 };
+    ecart: round2((net - pn) * qte), coherent: attendu == null || pn >= attendu - 0.02, ...(type === "peremption" && facture_odoo ? { regle_absente: true } : {}) };
 }
+// Une ligne de vente Odoo → ce qui est réellement facturé (revue du 21/10/2026) : factures postées moins avoirs postés, plus les
+// boîtes livrées (ou commandées, rien de livré) pas encore facturées, au net de la ligne. mouvements : id de account.move.line →
+// { type: out_invoice | out_refund, etat, quantite, montant, numero }. → { boites, montant, puNet, avoirs, facturee }
+export function factureLigne(l, mouvements = new Map()) {
+  const qte = Number(l?.product_uom_qty) || 0;
+  const puNet = qte > 0 ? (Number(l.price_subtotal) || 0) / qte : 0;
+  const mv = (Array.isArray(l?.invoice_lines) ? l.invoice_lines : []).map(id => mouvements.get(Number(id))).filter(m => m && m.etat === "posted");
+  const fact = mv.filter(m => m.type === "out_invoice"), avoirs = mv.filter(m => m.type === "out_refund");
+  const qInv = fact.reduce((s, m) => s + (Number(m.quantite) || 0), 0);
+  const livre = Number(l?.qty_delivered) > 0 ? Math.min(qte, Number(l.qty_delivered)) : qte;
+  const reste = Math.max(0, livre - qInv);
+  const montant = fact.reduce((s, m) => s + (Number(m.montant) || 0), 0) - avoirs.reduce((s, m) => s + (Number(m.montant) || 0), 0) + reste * puNet;
+  return { boites: qInv + reste, montant: round2(montant), puNet: round2(puNet), avoirs: avoirs.map(m => ({ numero: m.numero, montant: round2(Number(m.montant) || 0) })), facturee: fact.length > 0 };
+}
+// Groupe (commande Odoo × produit) : le connecteur additionne sur une ligne les boîtes d'un même produit de commandes du site
+// regroupées (ligne du menu et ligne « Pér. » partie à part), l'admin peut scinder ou corriger la ligne. odoo : factureLigne de
+// TOUTES les lignes du groupe ; site : [{ qty, pn, per }] de toutes les lignes du site qui y aboutissent. Les lignes hors « Pér. »
+// sont servies d'abord, à leur prix ; le reste des boîtes et du montant revient aux lignes « Pér. » ; écart = reste du montant −
+// boîtes « Pér. » × prix de la page, au plus boîtes × (PU net maximal du groupe − prix de la page). → { boites, montant, puMax,
+// serviReduit (moins de boîtes dans Odoo que sur le site), lignes: [{ qte, ecart, net }] (une par ligne « Pér. », dans l'ordre) }
+export function repartirGroupe(odoo, site) {
+  const Q = odoo.reduce((s, l) => s + (l.boites || 0), 0), M = odoo.reduce((s, l) => s + (l.montant || 0), 0);
+  const puMax = odoo.reduce((m, l) => (l.boites > 0 ? Math.max(m, l.puNet || 0) : m), 0);
+  const autres = site.filter(x => !x.per), pers = site.filter(x => x.per);
+  const qte = (x) => Math.max(0, Number(x.qty) || 0);
+  const resteQ = Q - autres.reduce((s, x) => s + qte(x), 0);
+  const resteM = M - autres.reduce((s, x) => s + qte(x) * (num(x.pn) ?? puMax), 0);
+  let dispo = Math.max(0, resteQ);
+  const q = pers.map(x => { const v = Math.min(qte(x), dispo); dispo -= v; return v; });
+  const attendu = pers.reduce((s, x, i) => s + q[i] * (num(x.pn) || 0), 0);
+  const caps = pers.map((x, i) => q[i] * Math.max(0, puMax - (num(x.pn) || 0)));
+  const capTot = caps.reduce((s, c) => s + c, 0);
+  const total = round2(Math.min(Math.max(0, resteM - attendu), capTot));
+  let reparti = 0;
+  const ecarts = caps.map((c, i) => { if (i === caps.length - 1) return round2(total - reparti); const e = capTot > 0 ? round2(total * c / capTot) : 0; reparti = round2(reparti + e); return e; });
+  return { boites: Q, montant: round2(M), puMax: round2(puMax), serviReduit: Q < site.reduce((s, x) => s + qte(x), 0),
+    lignes: pers.map((x, i) => ({ qte: q[i], ecart: Math.max(0, ecarts[i] || 0), net: q[i] > 0 ? round2((num(x.pn) || 0) + Math.max(0, ecarts[i] || 0) / q[i]) : null })) };
+}
+// minuit à Paris du jour « AAAA-MM-JJ » (changement d'heure compris) → ISO UTC ; jour valide
+function decalageParisMin(date) {
+  const m = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Paris", timeZoneName: "longOffset" }).format(date).match(/GMT([+-])(\d{2}):(\d{2})/);
+  return m ? (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 60 + Number(m[3])) : 0;
+}
+export function minuitParisIso(jour) {
+  const approx = Date.parse(`${jour}T00:00:00Z`);
+  let t = approx - decalageParisMin(new Date(approx)) * 60000;
+  t = approx - decalageParisMin(new Date(t)) * 60000;
+  return new Date(t).toISOString();
+}
+export const jourValide = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || "")) && new Date(`${s}T12:00:00Z`).toISOString().slice(0, 10) === s;
 const CLE_ECART = /^\d{6,16}:\d{7,14}(:\d{1,3})?$/;
 export const cleEcartValide = (c) => CLE_ECART.test(String(c || ""));
 
@@ -1081,8 +1130,8 @@ export function creerPeremption(deps = {}) {
     const essais = (d.essais || 0) + 1;
     const statut = essais >= ESSAIS_MAX ? "erreur" : "partielle";
     if (!(await majDecision(d, { statut, prix_attendu: attendus, essais, erreur: problemes.join(" ; ").slice(0, 300) }, { siStatut: statutLu }))) return apresConcurrence(d, ctx);
-    await journalSur({ passage_id: passageId, acteur, mode, action: "decision", cip: d.cip, apres: { statut }, resultat: "echec", message: `${statut === "erreur" ? "erreur" : "partielle"} : ${problemes.join(" ; ")} (la page n'annonce pas la remise ; prix habituel sur le site)` });
-    if (statut === "erreur") await alerter({ cle: `erreur:${d.id}`, sujet: `Échec de création : ${d.nom || d.cip}`, texte: `La remise de ${d.remise_pct} % sur ${d.nom || d.cip} (CIP ${d.cip}) n'a pas pu être posée dans Odoo après ${essais} essais : ${problemes.join(" ; ")}. La page ne l'annonce pas et le site garde le prix habituel. Dans l'admin : « Réessayer » ou « Retirer ».`, cip: d.cip, reglages: R, acteur, passageId });
+    await journalSur({ passage_id: passageId, acteur, mode, action: "decision", cip: d.cip, apres: { statut }, resultat: "echec", message: `${statut === "erreur" ? "erreur" : "partielle"} : ${problemes.join(" ; ")} (remise non facturée : le site garde le prix habituel, la page Péremption affiche la remise de la colonne Page)` });
+    if (statut === "erreur") await alerter({ cle: `erreur:${d.id}`, sujet: `Échec de création : ${d.nom || d.cip}`, texte: `La remise de ${d.remise_pct} % sur ${d.nom || d.cip} (CIP ${d.cip}) n'a pas pu être posée dans Odoo après ${essais} essais : ${problemes.join(" ; ")}. Elle n'est pas facturée : le site garde le prix habituel et la page Péremption affiche la remise de la colonne Page (−50 % par défaut), non facturée (écarts à rectifier). Dans l'admin : « Réessayer » ou « Retirer ».`, cip: d.cip, reglages: R, acteur, passageId });
     return { statut, problemes };
   }
 
@@ -1125,7 +1174,7 @@ export function creerPeremption(deps = {}) {
       const ok = await majDecision(d, { statut: "voulue", modification: { ...m, baisse: true, demandee_at: avant?.baisse ? avant.demandee_at : m.demandee_at } }, { siStatut: d.statut });
       if (!ok) return apresConcurrence(d, ctx);
       await journalSur({ passage_id: passageId, acteur, mode, action: "cacher", cip: d.cip, avant: { remise_pct: ancienne }, apres: { remise_pct: nouvelle }, resultat: "ok",
-        message: `baisse ${ancienne} % → ${nouvelle} % : la page cesse d'annoncer la remise et le site reprend le prix habituel ; écriture dans Odoo après ${R.delai_retrait_min} min et l'import des commandes en cours` });
+        message: `baisse ${ancienne} % → ${nouvelle} % : la remise facturée n'est plus annoncée, la page reprend la remise affichée (colonne Page) ; écriture dans Odoo après ${R.delai_retrait_min} min et l'import des commandes en cours` });
       await prixSiteSansNous(d, idsDe(regles), ctx);
       return { statut: "voulue", baisse: true };
     }
@@ -1484,7 +1533,7 @@ export function creerPeremption(deps = {}) {
         const r = await cacher(d, item.raison, ctx, { immediat: !!item.immediat, admin: !!item.admin });
         if (item.raison === "lot_long_recu" && r.statut === "retrait_demande") {
           const vers = heureParis(Date.parse(d.cachee_at || iso()) + R.delai_retrait_min * 60e3);
-          await alerter({ cle: `long:${d.id}`, sujet: `Lot long reçu : ${d.nom || d.cip}`, texte: `Un lot long est arrivé pour ${d.nom || d.cip} (CIP ${d.cip}) : ${item.hors} boîte(s) hors lot court. La remise de ${d.remise_pct} % est retirée : la page cesse aussitôt de l'annoncer, la règle est supprimée dans Odoo vers ${vers} (ou une fois les commandes en cours importées). Pour garder la remise sur toutes les boîtes : attendre la suppression, ou cliquer « Supprimer tout de suite » dans l'admin, puis réappliquer avec « Forcer ».`, cip: d.cip, reglages: R, acteur: ctx.acteur, passageId: ctx.passageId });
+          await alerter({ cle: `long:${d.id}`, sujet: `Lot long reçu : ${d.nom || d.cip}`, texte: `Un lot long est arrivé pour ${d.nom || d.cip} (CIP ${d.cip}) : ${item.hors} boîte(s) hors lot court. La remise de ${d.remise_pct} % est retirée : la page reprend aussitôt la remise de la colonne Page (−50 % par défaut, non facturée : écarts à rectifier ; 0 % dans la colonne Page pour le prix habituel), la règle est supprimée dans Odoo vers ${vers} (ou une fois les commandes en cours importées). Pour garder la remise sur toutes les boîtes : attendre la suppression, ou cliquer « Supprimer tout de suite » dans l'admin, puis réappliquer avec « Forcer ».`, cip: d.cip, reglages: R, acteur: ctx.acteur, passageId: ctx.passageId });
         }
         if (item.immediat && r.statut === "retrait_demande") return { item, ...(await retirerRegles(d, ctx, { force: true })) };
         return { item, ...r };
@@ -1614,7 +1663,7 @@ export function creerPeremption(deps = {}) {
       try { lu = await lireFaits(cips, { prix: etendue !== "filet", ventes: etendue === "nuit", listes: R.listes }); }
       catch (e) {
         lu = { faits: {}, absents: cips, douteux: true, raison: `lecture d'Odoo en échec : ${court(e)}` };
-        await alerter({ cle: `odoo:${jourUTC(t0)}`, sujet: "Odoo injoignable pendant un passage", texte: `${lu.raison}. Seuls les retraits par la date passent (la page cesse d'annoncer les remises qui arrivent à leur date de fin) ; les suppressions dans Odoo reprendront au retour d'Odoo.`, reglages: R, acteur, passageId: p.id });
+        await alerter({ cle: `odoo:${jourUTC(t0)}`, sujet: "Odoo injoignable pendant un passage", texte: `${lu.raison}. Seuls les retraits par la date passent (les remises facturées arrivées à leur date de fin ne sont plus annoncées ; la page reprend la remise de la colonne Page) ; les suppressions dans Odoo reprendront au retour d'Odoo.`, reglages: R, acteur, passageId: p.id });
       }
       await enregistrerFaits(lu.faits).catch(e => console.error("[peremption] faits :", court(e)));
       const regles = await reglesDe(visees.map(d => d.id));
@@ -1653,7 +1702,7 @@ export function creerPeremption(deps = {}) {
     } finally { await rendreVerrou(appel); }
   }
   // texte du plan : « 3 actions : 2 remises retirées de la page, 1 suppression dans Odoo »
-  const LIBELLES_PLAN = { cacher: ["remise retirée de la page", "remises retirées de la page"], retirer: ["suppression dans Odoo", "suppressions dans Odoo"],
+  const LIBELLES_PLAN = { cacher: ["remise facturée retirée (la page reprend la remise affichée)", "remises facturées retirées (la page reprend la remise affichée)"], retirer: ["suppression dans Odoo", "suppressions dans Odoo"],
     completer: ["création à compléter", "créations à compléter"], creer: ["création", "créations"], baisser: ["baisse de remise", "baisses de remise"],
     fin: ["date de fin à mettre à jour", "dates de fin à mettre à jour"], reverifier: ["contrôle du prix facturé", "contrôles du prix facturé"], alerte_long: ["alerte lot long", "alertes lot long"] };
   function textePlan(elements) {
@@ -2080,54 +2129,227 @@ export function creerPeremption(deps = {}) {
     return out;
   }
 
-  // ── Contrôle des écarts (règle panier, 21/10/2026 ; § 16.1 de la conception pour les factures passées) ──
-  // Lecture seule d'Odoo. Par pages de commandes du site (id = horodatage en ms ; du/au : jours UTC). Pour chaque ligne du site,
-  // sa ligne de vente Odoo : référence PharmaML de la commande (pml_order_ref = n° de la commande, ou synced_ref de la ligne),
-  // et pour une ligne péremption partie à part (separeDe) celle de l'autre commande (le connecteur additionne les boîtes d'un
-  // même produit sur une ligne). ecartLigne classe et chiffre. Suivi de la rectification (statut, référence d'avoir, qui,
-  // quand) : peremption_ecarts (sql/peremption-ecarts.sql), clé « <n° commande du site>:<CIP> ». Table absente : suivi
-  // « non_installe », les écarts restent lisibles.
-  // types : null = tous ; sinon liste des types gardés (le résumé ne lit qu'Odoo pour les commandes qui ont une ligne « Pér. »).
-  async function lignesEcarts({ depuis, jusqua = null, offset = 0, page = 150, types = null }) {
-    const t0 = Date.parse(`${depuis}T00:00:00Z`);
-    const t1 = jusqua ? Date.parse(`${jusqua}T00:00:00Z`) + 864e5 : null;
-    if (!Number.isFinite(t0) || (jusqua && !Number.isFinite(t1))) return { erreur: "date invalide" };
-    const cmds = (await sb(`elixir_orders?id=gte.${t0}${t1 ? `&id=lt.${t1}` : ""}&select=id,date,items,pharmacy_name,pharmacy_cip,source&order=id.asc&limit=${page}&offset=${offset}`)) || [];
-    const seulPer = Array.isArray(types) && types.length === 1 && types[0] === "peremption";
-    const aLire = [];   // { o, it, k, refs }
-    for (const o of cmds) {
-      const its = Array.isArray(o.items) ? o.items : lireJson(o.items, []) || [];
+  // ── Contrôle des écarts (règle panier, 21/10/2026 ; § 16.1 de la conception ; revue du 21/10/2026) ──
+  // Lecture seule d'Odoo et de Supabase. Commandes du site par leur date (posée par le serveur), jours à l'heure de Paris.
+  //  1. lignes de vente Odoo citant la référence PharmaML des commandes (n° de la commande, synced_ref du relais ; sinon
+  //     « <n°>P… ») et de la commande visée par separeDe (chargée même hors de la page) → commandes Odoo concernées ;
+  //  2. TOUTES les lignes non annulées de ces commandes (lignes scindées ou ajoutées à la main, sans référence, comprises),
+  //     regroupées par (commande Odoo, produit), avec ce qui est réellement facturé (factures postées − avoirs : factureLigne) ;
+  //  3. chaque ligne du site rattachée à son groupe (ses références ; ligne « Pér. » à part sans commande Odoo à elle : celle de
+  //     separeDe), commandes du site citées par le groupe chargées aussi ; repartirGroupe sert d'abord les lignes hors « Pér. » ;
+  //  4. offre contrôlée côté serveur (une ligne enregistrée vient du navigateur) : remise au plus celle de la page ce jour-là
+  //     (remise affichée de l'admin à la date de la commande, journal compris ; sinon −50 %, −20 % dès 500 € ; règle Odoo
+  //     facturée) ; prix au moins prix de base × (1 − remise) ; produit sur la page ce jour-là (lot court en stock dans la
+  //     fenêtre) ; boîtes servies au moins celles du site. Sinon « à vérifier » : visible, hors des totaux ;
+  //  5. lignes « Pér. » non retrouvées dans Odoo : renvoyées à part (non_retrouvees, motif), comptées dans la tuile.
+  // Suivi (statut, référence, qui, quand) : peremption_ecarts (sql/peremption-ecarts.sql), clé « <n° commande>:<CIP>[:rang] ».
+  const COLS_CMD = "id,date,items,pharmacy_name,pharmacy_cip,source";
+  const REF_SITE = /^(\d{6,16})(P\d{1,2})?$/;
+  const itemsDe = (o) => (Array.isArray(o?.items) ? o.items : lireJson(o?.items, []) || []);
+  const eligiblePer = (it) => !!it?.cip && estPeremption(it) && remiseLigne(it).remise >= 1;
+  const nomOdoo = (l) => String(Array.isArray(l?.product_id) ? l.product_id[1] : "").replace(/^\[[^\]]*\]\s*/, "") || null;
+  async function calculerEcarts(cmds, { seulPer = false, t = maintenant() } = {}) {
+    const examinees = seulPer ? cmds.filter(o => itemsDe(o).some(eligiblePer)) : cmds;
+    const parId = new Map(cmds.map(o => [String(o.id), o]));
+    const charger = async (ids) => {
+      const manque = [...new Set(ids.map(String))].filter(id => /^\d{6,16}$/.test(id) && !parId.has(id));
+      for (let i = 0; i < manque.length; i += 100) for (const o of (await sb(`elixir_orders?id=in.(${manque.slice(i, i + 100).join(",")})&select=${COLS_CMD}`)) || []) parId.set(String(o.id), o);
+    };
+    if (!examinees.length) return { sortie: [], non_retrouvees: [] };
+    await charger(examinees.flatMap(o => itemsDe(o).filter(it => eligiblePer(it) && it.separeDe).map(it => it.separeDe)));
+    const refsCommande = (o) => [...new Set([String(o.id), ...itemsDe(o).map(it => it?.synced_ref).filter(Boolean).map(String)])];
+    const depart = [...new Set([...examinees, ...examinees.flatMap(o => itemsDe(o).filter(it => eligiblePer(it) && it.separeDe).map(it => parId.get(String(it.separeDe))).filter(Boolean))])];
+    // 1. lignes citant les références → commandes Odoo ; sans résultat pour une commande : références « <n°>P… » du relais
+    const CH_REF = ["pml_order_ref", "order_id"];
+    const parRef = new Map();   // référence PharmaML → Set(id de commande Odoo)
+    const noter = (ls) => { for (const l of ls) { if (!l.pml_order_ref) continue; const k = String(l.pml_order_ref); if (!parRef.has(k)) parRef.set(k, new Set()); parRef.get(k).add(many2one(l.order_id)); } };
+    const refs0 = [...new Set(depart.flatMap(refsCommande))];
+    if (refs0.length) noter(await lireTout("sale.order.line", [["pml_order_ref", "in", refs0], ["state", "!=", "cancel"]], CH_REF));
+    const sansRef = depart.filter(o => !refsCommande(o).some(r => parRef.has(r))).map(o => String(o.id));
+    for (let i = 0; i < sansRef.length; i += 40) {
+      const feuilles = sansRef.slice(i, i + 40).map(id => ["pml_order_ref", "=like", `${id}P%`]);
+      noter(await lireTout("sale.order.line", [...Array(feuilles.length - 1).fill("|"), ...feuilles, ["state", "!=", "cancel"]], CH_REF));
+    }
+    const commandesOdoo = [...new Set([...parRef.values()].flatMap(x => [...x]))].filter(Boolean);
+    // 2. toutes les lignes de ces commandes Odoo (non annulées, lignes de produit)
+    const CH = ["order_id", "product_id", "pml_order_ref", "product_uom_qty", "price_unit", "discount", "price_subtotal", "qty_delivered", "qty_invoiced", "invoice_lines", "invoice_status"];
+    const lignesO = [];
+    for (let i = 0; i < commandesOdoo.length; i += 200) lignesO.push(...await lireTout("sale.order.line", [["order_id", "in", commandesOdoo.slice(i, i + 200)], ["display_type", "=", false], ["state", "!=", "cancel"]], CH));
+    noter(lignesO);
+    // commandes du site citées par ces lignes (autres paniers regroupés par le connecteur) : chargées
+    await charger(lignesO.map(l => (String(l.pml_order_ref || "").match(REF_SITE) || [])[1]).filter(Boolean));
+    // CIP d'une ligne Odoo : par le produit (odoo_catalog : CIP → odoo_pid), sinon le code du libellé « [CIP] »
+    const cipsSite = [...new Set([...parId.values()].flatMap(o => itemsDe(o).map(it => it?.cip).filter(Boolean).map(String)))];
+    const cat = await catalogueDe(cipsSite).catch(() => []);
+    const catParCip = new Map(cat.map(c => [String(c.cip), c]));
+    const cipParPid = new Map(cat.filter(c => c.odoo_pid).map(c => [Number(c.odoo_pid), String(c.cip)]));
+    const cipDe = (l) => cipParPid.get(many2one(l.product_id)) || (String(Array.isArray(l.product_id) ? l.product_id[1] : "").match(/^\[(\d+)\]/) || [])[1] || null;
+    // factures et avoirs des lignes (account.move.line, puis account.move : type, état, numéro)
+    const idsMv = [...new Set(lignesO.flatMap(l => (Array.isArray(l.invoice_lines) ? l.invoice_lines : [])).map(Number).filter(Boolean))];
+    const mvl = [];
+    for (let i = 0; i < idsMv.length; i += 400) mvl.push(...((await lire("account.move.line", "read", [idsMv.slice(i, i + 400), ["move_id", "quantity", "price_subtotal", "parent_state"]])) || []));
+    const idsPieces = [...new Set(mvl.map(m => many2one(m.move_id)).filter(Boolean))];
+    const pieces = new Map();
+    for (let i = 0; i < idsPieces.length; i += 400) for (const m of (await lire("account.move", "read", [idsPieces.slice(i, i + 400), ["name", "move_type", "state"]])) || []) pieces.set(m.id, m);
+    const mouvements = new Map(mvl.map(m => { const pc = pieces.get(many2one(m.move_id)); return [m.id, { type: pc?.move_type, etat: m.parent_state || pc?.state, quantite: num(m.quantity) || 0, montant: num(m.price_subtotal) || 0, numero: pc?.name || null }]; }));
+    // groupes (commande Odoo × CIP)
+    const groupes = new Map();
+    for (const l of lignesO) {
+      const cip = cipDe(l);
+      if (!cip) continue;
+      const k = `${many2one(l.order_id)}|${cip}`;
+      if (!groupes.has(k)) groupes.set(k, { cle: k, commande_odoo: many2one(l.order_id), odoo: Array.isArray(l.order_id) ? l.order_id[1] : null, cip, lignes: [], site: [], nom: nomOdoo(l) });
+      groupes.get(k).lignes.push(l);
+    }
+    // 3. lignes du site → groupe
+    const commandesDe = (refs) => [...new Set(refs.flatMap(r => [...(parRef.get(r) || [])]))];
+    const refsP = new Map();   // n° de commande du site → références « <n°>P… » vues dans Odoo
+    for (const r of parRef.keys()) { const m = String(r).match(/^(\d{6,16})P\d{1,2}$/); if (m) { if (!refsP.has(m[1])) refsP.set(m[1], []); refsP.get(m[1]).push(r); } }
+    const avecP = (id) => refsP.get(String(id)) || [];
+    const sortie = [], nonRetrouvees = [];
+    const examineesIds = new Set(examinees.map(o => String(o.id)));
+    const rattache = [];   // { o, it, k, n, g, viaSepare }
+    for (const o of parId.values()) {
       const vus = new Map();
-      its.forEach((it, k) => {
+      itemsDe(o).forEach((it, k) => {
         if (!it?.cip) return;
-        // rang du CIP dans la commande (clé « :2 » d'un CIP répété) : compté sur toutes les lignes, filtre ou non
         const n = (vus.get(String(it.cip)) || 0) + 1; vus.set(String(it.cip), n);
-        if (seulPer && !(estPeremption(it) && remiseLigne(it).remise >= 1 && !remiseLigne(it).facture_odoo)) return;
-        const refs = [String(o.id), it.synced_ref ? String(it.synced_ref) : null, estPeremption(it) && it.separeDe ? String(it.separeDe) : null].filter(Boolean);
-        aLire.push({ o, it, k, n, refs });
+        const refs = [it.synced_ref ? String(it.synced_ref) : null, String(o.id), ...avecP(o.id)].filter(Boolean);
+        let cmdsOdoo = commandesDe(refs), viaSepare = false;
+        if (!cmdsOdoo.length && eligiblePer(it) && it.separeDe && parId.has(String(it.separeDe))) {
+          const a = parId.get(String(it.separeDe));
+          cmdsOdoo = commandesDe([...refsCommande(a), ...avecP(a.id)]); viaSepare = true;
+        }
+        const g = cmdsOdoo.map(c => groupes.get(`${c}|${it.cip}`)).find(Boolean);
+        if (g) { g.site.push({ o, it, k, n, viaSepare }); return; }
+        if (!eligiblePer(it) || !examineesIds.has(String(o.id))) return;
+        const age = t - (Date.parse(o.date || "") || Number(o.id) || t);
+        nonRetrouvees.push({ cle: `${o.id}:${it.cip}${n > 1 ? `:${n}` : ""}`, commande: String(o.id), date: o.date || null, pharmacie: o.pharmacy_name || null, pharmacy_cip: o.pharmacy_cip || null,
+          cip: String(it.cip), qte: Number(it.qty) || 0, pn: num(it.pn), remise: remiseLigne(it).remise, separe_de: it.separeDe || null, ancien: age > 24 * 3600e3,
+          motif: cmdsOdoo.length ? "sans_produit" : age > 48 * 3600e3 ? "introuvable" : "pas_encore", odoo: cmdsOdoo.length ? [...groupes.values()].find(x => x.commande_odoo === cmdsOdoo[0])?.odoo || null : null });
       });
     }
-    const refsOdoo = [...new Set(aLire.flatMap(x => x.refs))];
-    const lignesOdoo = refsOdoo.length ? await lireTout("sale.order.line", [["pml_order_ref", "in", refsOdoo], ["state", "!=", "cancel"]],
-      ["pml_order_ref", "product_id", "product_uom_qty", "price_unit", "discount", "price_subtotal", "order_id", "invoice_status"]) : [];
-    const parRefCip = new Map();
-    for (const l of lignesOdoo) {
-      const cip = (String(Array.isArray(l.product_id) ? l.product_id[1] : "").match(/^\[(\d+)\]/) || [])[1];
-      if (!cip) continue;
-      const k = `${l.pml_order_ref}|${cip}`;
-      if (!parRefCip.has(k)) parRefCip.set(k, []);
-      parRefCip.get(k).push(l);
+    // 4. calcul par groupe ; lignes « Pér. » des commandes examinées
+    for (const g of groupes.values()) {
+      if (!g.site.length) continue;
+      const fl = g.lignes.map(l => factureLigne(l, mouvements));
+      const statuts = [...new Set(g.lignes.map(l => l.invoice_status).filter(Boolean))];
+      const facturation = statuts.length === 1 ? statuts[0] : statuts.includes("to invoice") ? "to invoice" : statuts[0] || null;
+      const avoirs = fl.flatMap(x => x.avoirs);
+      const commun = { odoo: g.odoo, odoo_id: g.commande_odoo, ref_odoo: [...new Set(g.lignes.map(l => l.pml_order_ref).filter(Boolean).map(String))].join(", ") || null, facturation,
+        ...(avoirs.length ? { avoirs } : {}), lignes_odoo: g.lignes.length };
+      const pers = g.site.filter(x => eligiblePer(x.it));
+      const cle = (x) => `${x.o.id}:${x.it.cip}${x.n > 1 ? `:${x.n}` : ""}`;
+      const base = (x) => ({ cle: cle(x), commande: String(x.o.id), date: x.o.date || null, pharmacie: x.o.pharmacy_name || null, pharmacy_cip: x.o.pharmacy_cip || null,
+        cip: String(x.it.cip), nom: g.nom || null, peremption: estPeremption(x.it) ? x.it.peremption : null, separe_de: x.it.separeDe || null, ...commun });
+      if (pers.length) {
+        const r = repartirGroupe(fl, g.site.map(x => ({ qty: x.it.qty, pn: x.it.pn, per: eligiblePer(x.it) })));
+        pers.forEach((x, i) => {
+          if (!examineesIds.has(String(x.o.id))) return;
+          const v = r.lignes[i];
+          const { remise, facture_odoo } = remiseLigne(x.it);
+          const propre = commandesDe([String(x.o.id), ...avecP(x.o.id), x.it.synced_ref ? String(x.it.synced_ref) : null].filter(Boolean)).length > 0;
+          if (!(v.qte > 0)) {
+            const age = t - (Date.parse(x.o.date || "") || Number(x.o.id) || t);
+            nonRetrouvees.push({ ...base(x), qte: Number(x.it.qty) || 0, pn: num(x.it.pn), remise, ancien: age > 24 * 3600e3,
+              motif: x.viaSepare && !propre ? (age > 48 * 3600e3 ? "a_part_introuvable" : "attente_import") : "non_servie" });
+            return;
+          }
+          if (!(v.ecart >= 0.01)) return;
+          sortie.push({ ...base(x), type: "peremption", qte: v.qte, qte_commandee: Number(x.it.qty) || 0, qte_odoo: r.boites, pn: num(x.it.pn), net: v.net, pu: round2(Math.max(...g.lignes.map(l => num(l.price_unit) || 0))),
+            remise, ecart: v.ecart, coherent: true, service_reduit: r.serviReduit, ...(facture_odoo ? { regle_absente: true } : {}), _it: x.it, _o: x.o });
+        });
+        continue;
+      }
+      // groupe sans ligne « Pér. » : ancienne page (probable) et autres écarts, sur le groupe additionné
+      if (seulPer) continue;
+      const somme = { product_uom_qty: fl.reduce((s0, x) => s0 + x.boites, 0), price_unit: Math.max(...g.lignes.map(l => num(l.price_unit) || 0)), discount: num(g.lignes[0]?.discount),
+        price_subtotal: fl.reduce((s0, x) => s0 + x.montant, 0) };
+      for (const x of g.site) {
+        if (!examineesIds.has(String(x.o.id))) continue;
+        const e = ecartLigne(x.it, somme);
+        if (e) sortie.push({ ...base(x), ...e, qte_odoo: somme.product_uom_qty, _it: x.it, _o: x.o });
+      }
     }
-    const sortie = [];
-    for (const { o, it, n, refs } of aLire) {
-      const l = refs.map(r => parRefCip.get(`${r}|${it.cip}`)?.[0]).find(Boolean);
-      const e = l ? ecartLigne(it, l) : null;
-      if (!e || (Array.isArray(types) && !types.includes(e.type))) continue;
-      sortie.push({ cle: `${o.id}:${it.cip}${n > 1 ? `:${n}` : ""}`, ...e, commande: String(o.id), date: o.date || null, pharmacie: o.pharmacy_name || null,
-        pharmacy_cip: o.pharmacy_cip || null, odoo: Array.isArray(l.order_id) ? l.order_id[1] : null, commande_odoo: many2one(l.order_id), cip: String(it.cip), nom: it.name || null,
-        peremption: estPeremption(it) ? it.peremption : null, separe_de: it.separeDe || null, ref_odoo: String(l.pml_order_ref), facturation: l.invoice_status || null });
+    // 5. offre contrôlée côté serveur pour les lignes « Pér. » (et pistes des lignes non retrouvées)
+    await verifierOffres(sortie.filter(x => x.type === "peremption"), { catParCip, t });
+    // ordre des commandes (date, n°) puis des lignes dans la commande
+    const rang = (x) => itemsDe(x._o).indexOf(x._it);
+    sortie.sort((a, b) => (Date.parse(a._o.date || "") || 0) - (Date.parse(b._o.date || "") || 0) || Number(a.commande) - Number(b.commande) || rang(a) - rang(b));
+    for (const x of sortie) { delete x._it; delete x._o; }
+    for (const x of nonRetrouvees) {
+      // piste : commande Odoo d'une autre commande du site de la même pharmacie, à moins de 24 h, qui a ce produit
+      if (x.odoo) continue;
+      const tx = Date.parse(x.date || "") || Number(x.commande);
+      const p = [...groupes.values()].find(g => g.cip === x.cip && g.site.some(s0 => s0.o.pharmacy_cip && s0.o.pharmacy_cip === x.pharmacy_cip && Math.abs((Date.parse(s0.o.date || "") || Number(s0.o.id)) - tx) < 24 * 3600e3));
+      if (p) x.piste = p.odoo;
     }
-    return { cmds: cmds.length, page, sortie };
+    return { sortie, non_retrouvees: nonRetrouvees };
+  }
+  // Offre de la page le jour de la commande, recalculée côté serveur (une ligne enregistrée vient du navigateur) → coherent,
+  // a_verifier (motifs). Remise maximale : règle Odoo facturée (décision V1 facturée avant la commande), sinon remise affichée de
+  // l'admin à la date de la commande (journal « remise_affichee » ; sinon expiry_discounts actuel), sinon −50 % (−20 % dès 500 €).
+  async function verifierOffres(lignes, { catParCip, t }) {
+    if (!lignes.length) return;
+    const cips = [...new Set(lignes.map(x => x.cip))];
+    const [journalR, actuelles, faits, decisions] = await Promise.all([
+      sb(`peremption_journal?action=eq.remise_affichee&cip=in.${enc(liste(cips))}&select=at,cip,avant,apres&order=at.asc&limit=2000`).catch(() => []),
+      lireRemisesAdmin().catch(() => ({})),
+      sb(`peremption_faits?cip=in.${enc(liste(cips))}&select=cip,court_fin,odoo_pid`).catch(() => []),
+      sb(`peremption_decisions?cip=in.${enc(liste(cips))}&select=cip,remise_pct,facturee_at,simulee&limit=2000`).catch(() => []),
+    ]);
+    const faitsParCip = new Map((faits || []).map(f => [String(f.cip), f]));
+    const remiseAdminA = (cip, tc) => {
+      const js = (journalR || []).filter(j => String(j.cip) === cip);
+      const avant = js.filter(j => Date.parse(j.at) <= tc).at(-1);
+      if (avant) return remiseAdmin(lireJson(avant.apres, {})?.remise_affichee);
+      const apres = js.find(j => Date.parse(j.at) > tc);
+      if (apres) return remiseAdmin(lireJson(apres.avant, {})?.remise_affichee);
+      return actuelles?.[cip] ?? null;
+    };
+    const dansFenetre = (d, f) => { const j = String(d || "").slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(j) && j >= f.min && j <= f.max; };
+    let lotsOdoo = null;   // pid → [dates] (stock.lot), lus seulement si la page n'est pas prouvée par Supabase
+    for (const x of lignes) {
+      const tc = Date.parse(x._o?.date || "") || Number(x.commande) || t;
+      const c = catParCip.get(x.cip);
+      const f = faitsParCip.get(x.cip);
+      const baseP = num(c?.list_price) || x.pu || 0;
+      const v1 = (decisions || []).filter(d => String(d.cip) === x.cip && !d.simulee && d.facturee_at && Date.parse(d.facturee_at) <= tc).reduce((m, d) => Math.max(m, Number(d.remise_pct) || 0), 0);
+      const adm = remiseAdminA(x.cip, tc);
+      const rPage = adm != null ? adm : remiseDefaut(baseP);
+      const rMax = Math.max(rPage, x.regle_absente || remiseLigne(x._it).facture_odoo ? v1 : 0);
+      const fen = fenetre(tc);
+      let lots = [];
+      try { lots = Array.isArray(c?.lots) ? c.lots : lireJson(c?.lots, []) || []; } catch { lots = []; }
+      let surPage = [f?.court_fin, c?.earliest_expiry, ...lots.map(l => l?.expiry)].some(d => dansFenetre(d, fen));
+      if (!surPage) {
+        const pid = Number(c?.odoo_pid || f?.odoo_pid) || 0;
+        if (pid) {
+          if (!lotsOdoo) {
+            lotsOdoo = new Map();
+            const pids = [...new Set(lignes.map(y => Number(catParCip.get(y.cip)?.odoo_pid || faitsParCip.get(y.cip)?.odoo_pid) || 0).filter(Boolean))];
+            for (const l of (await lire("stock.lot", "search_read", [[["product_id", "in", pids], ["expiration_date", "!=", false]]], { fields: ["product_id", "expiration_date"], limit: 2000 }).catch(() => [])) || []) {
+              const p = many2one(l.product_id); if (!lotsOdoo.has(p)) lotsOdoo.set(p, []); lotsOdoo.get(p).push(l.expiration_date);
+            }
+          }
+          surPage = (lotsOdoo.get(pid) || []).some(d => dansFenetre(d, fen));
+        }
+      }
+      const offreOk = x.remise != null && x.remise <= rMax + 0.01 && x.pn >= round2(baseP * (1 - rMax / 100)) - 0.02;
+      const motifs = [...(offreOk ? [] : [`remise ou prix au-delà de l'offre de la page ce jour-là (au plus −${rMax} %, ${eur(round2(baseP * (1 - rMax / 100)))})`]),
+        ...(surPage ? [] : ["produit sans lot court en stock ce jour-là (pas sur la page)"]), ...(x.service_reduit ? ["boîtes servies moins nombreuses que celles commandées : lesquelles ?"] : [])];
+      x.coherent = !motifs.length;
+      x.remise_max = rMax;
+      if (motifs.length) x.a_verifier = motifs;
+    }
+  }
+  async function lignesEcarts({ depuis, jusqua = null, offset = 0, page = 150, types = null }) {
+    if (!jourValide(depuis) || (jusqua && !jourValide(jusqua))) return { erreur: "date invalide" };
+    const d0 = minuitParisIso(depuis), d1 = jusqua ? minuitParisIso(ajouterJours(jusqua, 1)) : null;
+    const cmds = (await sb(`elixir_orders?date=gte.${enc(d0)}${d1 ? `&date=lt.${enc(d1)}` : ""}&select=${COLS_CMD}&order=date.asc,id.asc&limit=${page}&offset=${offset}`)) || [];
+    const seulPer = Array.isArray(types) && types.length === 1 && types[0] === "peremption";
+    const r = await calculerEcarts(cmds, { seulPer });
+    return { cmds: cmds.length, page, sortie: r.sortie.filter(x => !Array.isArray(types) || types.includes(x.type)), non_retrouvees: r.non_retrouvees };
   }
   // statut de rectification des lignes (peremption_ecarts) → { parCle, suivi: "ok" | "non_installe" }
   async function statutsEcarts(cles) {
@@ -2140,73 +2362,117 @@ export function creerPeremption(deps = {}) {
       return { parCle, suivi: "ok" };
     } catch (e) { if (tableAbsente(e)) return { parCle, suivi: "non_installe" }; throw e; }
   }
-  async function ecarts({ depuis = DEBUT_REGLE_PANIER, jusqua = null, offset = 0, page = 150, types = null } = {}) {
+  // statut, référence, qui et quand d'une ligne ; complément : ligne rectifiée dont l'écart a grossi depuis (quantité ou prix
+  // changé dans Odoo) → la différence est de nouveau à rectifier
+  const appliquerStatut = (x, st) => {
+    const statut = st?.statut === "rectifie" ? "rectifie" : "a_rectifier";
+    const complement = statut === "rectifie" && num(st?.ecart) != null && x.ecart > num(st.ecart) + 0.01 ? round2(x.ecart - num(st.ecart)) : 0;
+    return Object.assign(x, { statut, reference: statut === "rectifie" ? st?.reference || null : null, reference_precedente: statut === "a_rectifier" ? st?.reference || null : null,
+      par: st?.par || null, le: st?.le || null, ecart_rectifie: statut === "rectifie" ? num(st?.ecart) : null, complement });
+  };
+  // montant encore à rectifier d'une ligne (à rectifier : son écart ; rectifiée : son complément)
+  const resteARectifier = (x) => (x.statut === "rectifie" ? x.complement || 0 : x.ecart);
+  const comptee = (x) => x.type === "peremption" && x.coherent !== false;
+  async function ecarts({ depuis = DEBUT_REGLE_PANIER, jusqua = null, offset = 0, page = 100, types = null } = {}) {
     const r = await lignesEcarts({ depuis, jusqua, offset, page, types });
     if (r.erreur) return r;
     const sortie = r.sortie;
     // liste de prix de chaque commande Odoo (lecture seule)
-    const ids = [...new Set(sortie.map(x => x.commande_odoo).filter(Boolean))];
+    const ids = [...new Set(sortie.map(x => x.odoo_id).filter(Boolean))];
     const listes = new Map();
     for (let i = 0; i < ids.length; i += 200) for (const so of (await lire("sale.order", "read", [ids.slice(i, i + 200), ["pricelist_id"]]).catch(() => [])) || []) listes.set(so.id, so.pricelist_id);
-    for (const x of sortie) { const pl = listes.get(x.commande_odoo); x.liste = many2one(pl); x.liste_nom = Array.isArray(pl) ? pl[1] : null; delete x.commande_odoo; }
+    for (const x of sortie) { const pl = listes.get(x.odoo_id); x.liste = many2one(pl); x.liste_nom = Array.isArray(pl) ? pl[1] : null; }
     const { parCle, suivi } = await statutsEcarts(sortie.map(x => x.cle));
-    for (const x of sortie) { const st = parCle.get(x.cle); Object.assign(x, { statut: st?.statut || "a_rectifier", reference: st?.reference || null, par: st?.par || null, le: st?.le || null }); }
+    for (const x of sortie) appliquerStatut(x, parCle.get(x.cle));
     const somme = (xs) => round2(xs.reduce((s, x) => s + x.ecart, 0));
-    // compatibilité (export d'avant) : page_peremption = ligne de la page, marquée ou probable
-    for (const x of sortie) x.page_peremption = x.type !== "autre";
-    return { depuis, jusqua, offset, suivant: r.cmds === r.page ? offset + r.page : null, commandes: r.cmds, lignes: sortie, suivi,
-      total_ecart: somme(sortie), total_peremption: somme(sortie.filter(x => x.type === "peremption")), total_probable: somme(sortie.filter(x => x.type === "probable")),
-      total_autres: somme(sortie.filter(x => x.type === "autre")) };
+    for (const x of sortie) x.page_peremption = x.type !== "autre";   // compatibilité (export d'avant)
+    return { depuis, jusqua, offset, suivant: r.cmds === r.page ? offset + r.page : null, commandes: r.cmds, lignes: sortie, non_retrouvees: r.non_retrouvees, suivi,
+      total_ecart: somme(sortie), total_peremption: somme(sortie.filter(comptee)), total_a_verifier: somme(sortie.filter(x => x.type === "peremption" && x.coherent === false)),
+      total_probable: somme(sortie.filter(x => x.type === "probable")), total_autres: somme(sortie.filter(x => x.type === "autre")) };
   }
-  // Résumé du bandeau de l'admin : lignes « Pér. » à rectifier depuis la règle panier (21/10/2026), par pharmacie. Seules les
-  // commandes qui ont une ligne « Pér. » non facturée par Odoo sont lues dans Odoo. Gardé 10 min (frais : relu).
+  // Résumé du bandeau de l'admin : lignes « Pér. » à rectifier depuis la règle panier (21/10/2026), par pharmacie (CIP), lignes
+  // « à vérifier » et non retrouvées dans Odoo à part. Gardé 10 min (frais : relu). Budget : une page de plus seulement si elle
+  // tient dans le temps restant (durée de la page précédente).
   let resumeEcarts = null;
   async function ecartsResume({ depuis = DEBUT_REGLE_PANIER, frais = false, budgetMs = 7000 } = {}) {
     const t = maintenant();
     if (!frais && resumeEcarts && resumeEcarts.depuis === depuis && t - resumeEcarts.t < RESUME_ECARTS_MS) return resumeEcarts.valeur;
     const debut = Date.now();
-    const lignes = [];
-    let offset = 0, complet = true;
+    const lignes = [], nonRetrouvees = [];
+    let offset = 0, complet = true, derniere = 0;
     for (;;) {
-      const r = await lignesEcarts({ depuis, offset, page: 500, types: ["peremption"] });
+      const t0 = Date.now();
+      const r = await lignesEcarts({ depuis, offset, page: 300, types: ["peremption"] });
       if (r.erreur) return r;
-      lignes.push(...r.sortie);
+      lignes.push(...r.sortie); nonRetrouvees.push(...r.non_retrouvees);
+      derniere = Date.now() - t0;
       if (r.cmds < r.page) break;
       offset += r.page;
-      if (Date.now() - debut > budgetMs) { complet = false; break; }
+      // une page de plus seulement si elle tient avant le budget, lecture des statuts comprise (réserve d'une seconde)
+      if (Date.now() - debut + derniere + 1000 > budgetMs) { complet = false; break; }
     }
     const { parCle, suivi } = await statutsEcarts(lignes.map(x => x.cle));
-    const somme = (xs) => round2(xs.reduce((s, x) => s + x.ecart, 0));
-    const aRectifier = lignes.filter(x => (parCle.get(x.cle)?.statut || "a_rectifier") === "a_rectifier");
-    const rectifiees = lignes.filter(x => parCle.get(x.cle)?.statut === "rectifie");
+    for (const x of lignes) appliquerStatut(x, parCle.get(x.cle));
+    const somme = (xs, f = (x) => x.ecart) => round2(xs.reduce((s, x) => s + f(x), 0));
+    const aRectifier = lignes.filter(x => comptee(x) && resteARectifier(x) > 0);
+    const rectifiees = lignes.filter(x => comptee(x) && x.statut === "rectifie");
+    const aVerifier = lignes.filter(x => x.type === "peremption" && x.coherent === false && x.statut !== "rectifie");
     const parPharmacie = new Map();
-    for (const x of aRectifier) { const k = x.pharmacie || "?"; const v = parPharmacie.get(k) || { pharmacie: k, lignes: 0, montant: 0 }; v.lignes++; v.montant = round2(v.montant + x.ecart); parPharmacie.set(k, v); }
+    for (const x of aRectifier) {
+      const k = x.pharmacy_cip || x.pharmacie || "?";
+      const v = parPharmacie.get(k) || { pharmacie: x.pharmacie || "?", pharmacy_cip: x.pharmacy_cip || null, lignes: 0, montant: 0 };
+      v.lignes++; v.montant = round2(v.montant + resteARectifier(x)); parPharmacie.set(k, v);
+    }
+    const anciennes = nonRetrouvees.filter(x => x.ancien);
     const valeur = { depuis, complet, suivi, maj: iso(t),
-      a_rectifier: { montant: somme(aRectifier), lignes: aRectifier.length, pharmacies: parPharmacie.size },
-      rectifie: { montant: somme(rectifiees), lignes: rectifiees.length },
+      a_rectifier: { montant: somme(aRectifier, resteARectifier), lignes: aRectifier.length, pharmacies: parPharmacie.size },
+      rectifie: { montant: somme(rectifiees, x => num(x.ecart_rectifie) ?? x.ecart), lignes: rectifiees.length },
+      a_verifier: { montant: somme(aVerifier), lignes: aVerifier.length },
+      non_retrouvees: { lignes: anciennes.length, recentes: nonRetrouvees.length - anciennes.length },
       pharmacies: [...parPharmacie.values()].sort((a, b) => b.montant - a.montant).slice(0, 20) };
     resumeEcarts = { t, depuis, valeur };
     return valeur;
   }
   // Statut d'une ou plusieurs lignes : « rectifie » (référence libre : n° d'avoir, correction de la commande Odoo…) ou
-  // « a_rectifier » (annuler) ; qui et quand gardés, montants de la ligne au moment du changement ; journal (ajout seul).
+  // « a_rectifier » (« Remettre à rectifier » : la référence est gardée) ; qui et quand gardés ; journal (ajout seul). Les
+  // lignes sont RECALCULÉES côté serveur (commandes relues, Odoo relu) : montants enregistrés ceux du serveur ; « rectifie »
+  // refusé pour une clé sans écart actuel.
   async function changerStatutEcarts({ lignes, statut, reference = null, acteur }) {
     if (!STATUTS_ECART.includes(statut)) return { erreur: `statut : ${STATUTS_ECART.join(" ou ")}` };
     const ref = reference == null ? null : String(reference).replace(/\s+/g, " ").trim().slice(0, 120) || null;
-    const lus = (Array.isArray(lignes) ? lignes : []).slice(0, 200).filter(l => cleEcartValide(l?.cle));
-    if (!lus.length) return { erreur: "lignes : au moins une clé valide (« <n° commande>:<CIP> »)" };
+    const cles = [...new Set((Array.isArray(lignes) ? lignes : []).slice(0, 200).map(l => (typeof l === "string" ? l : l?.cle)).filter(cleEcartValide).map(String))];
+    if (!cles.length) return { erreur: "lignes : au moins une clé valide (« <n° commande>:<CIP> »)" };
     const t = iso();
-    const nb = (v) => { const n = num(v); return n == null ? null : round2(n); };
-    const rows = lus.map(l => ({ cle: String(l.cle), commande: String(l.cle).split(":")[0], cip: String(l.cle).split(":")[1], pharmacie: l.pharmacie ? String(l.pharmacie).slice(0, 200) : null,
-      commande_odoo: l.odoo ? String(l.odoo).slice(0, 40) : null, nom: l.nom ? String(l.nom).slice(0, 200) : null, qte: nb(l.qte), prix_page: nb(l.pn), prix_facture: nb(l.net),
-      ecart: nb(l.ecart), statut, reference: ref, par: String(acteur || "admin").slice(0, 120), le: t, updated_at: t }));
-    try { await sb("peremption_ecarts?on_conflict=cle", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows }); }
+    const ids = [...new Set(cles.map(c => c.split(":")[0]))];
+    const cmds = [];
+    for (let i = 0; i < ids.length; i += 100) cmds.push(...((await sb(`elixir_orders?id=in.(${ids.slice(i, i + 100).join(",")})&select=${COLS_CMD}`)) || []));
+    const actuelles = new Map((await calculerEcarts(cmds)).sortie.map(x => [x.cle, x]));
+    if (statut === "rectifie") {
+      const sans = cles.filter(c => !(actuelles.get(c)?.ecart > 0));
+      if (sans.length) return { erreur: `aucun écart actuel pour ${sans.slice(0, 5).join(", ")}${sans.length > 5 ? ` et ${sans.length - 5} autre(s)` : ""} (relancer le contrôle)` };
+      const rows = cles.map(c => { const x = actuelles.get(c); return { cle: c, commande: c.split(":")[0], cip: c.split(":")[1], pharmacie: x.pharmacie ? String(x.pharmacie).slice(0, 200) : null,
+        commande_odoo: x.odoo ? String(x.odoo).slice(0, 40) : null, nom: x.nom ? String(x.nom).slice(0, 200) : null, qte: x.qte, prix_page: x.pn, prix_facture: x.net, ecart: x.ecart,
+        statut, reference: ref, par: String(acteur || "admin").slice(0, 120), le: t, updated_at: t }; });
+      try { await sb("peremption_ecarts?on_conflict=cle", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal", body: rows }); }
+      catch (e) { if (tableAbsente(e)) return { erreur: "non_installe", message: "table peremption_ecarts absente : exécuter sql/peremption-ecarts.sql dans Supabase" }; throw e; }
+      const total = round2(rows.reduce((s, r) => s + (r.ecart || 0), 0));
+      await journalSur({ acteur: acteur || "admin", mode: "site", action: "ecart", cip: rows.length === 1 ? rows[0].cip : null, apres: { cles, statut, reference: ref, total },
+        resultat: "ok", message: `${rows.length} ligne(s) d'écart rectifiée(s) (${eur(total)})${ref ? ` · réf. ${ref}` : ""}` });
+      resumeEcarts = null;
+      return { ok: true, lignes: rows.length, statut, reference: ref, par: rows[0].par, le: t, total, montants: Object.fromEntries(rows.map(r => [r.cle, r.ecart])) };
+    }
+    // remettre à rectifier : lignes déjà suivies seulement ; référence gardée (n° d'avoir), qui et quand du changement
+    let suivies;
+    try { suivies = (await sb(`peremption_ecarts?cle=in.${enc(liste(cles))}&select=cle,reference,ecart`)) || []; }
     catch (e) { if (tableAbsente(e)) return { erreur: "non_installe", message: "table peremption_ecarts absente : exécuter sql/peremption-ecarts.sql dans Supabase" }; throw e; }
-    const total = round2(rows.reduce((s, r) => s + (r.ecart || 0), 0));
-    await journalSur({ acteur: acteur || "admin", mode: "site", action: "ecart", cip: rows.length === 1 ? rows[0].cip : null, apres: { cles: rows.map(r => r.cle), statut, reference: ref, total },
-      resultat: "ok", message: `${rows.length} ligne(s) d'écart ${statut === "rectifie" ? "rectifiée(s)" : "remise(s) à rectifier"} (${eur(total)})${ref ? ` · réf. ${ref}` : ""}` });
+    if (!suivies.length) return { erreur: "aucune de ces lignes n'est marquée rectifiée" };
+    await sb(`peremption_ecarts?cle=in.${enc(liste(suivies.map(r => r.cle)))}`, { method: "PATCH", prefer: "return=minimal", body: { statut, par: String(acteur || "admin").slice(0, 120), le: t, updated_at: t } });
+    const total = round2(suivies.reduce((s, r) => s + (num(r.ecart) || 0), 0));
+    await journalSur({ acteur: acteur || "admin", mode: "site", action: "ecart", cip: suivies.length === 1 ? String(suivies[0].cle).split(":")[1] : null,
+      apres: { cles: suivies.map(r => r.cle), statut, references_gardees: suivies.map(r => r.reference).filter(Boolean), total }, resultat: "ok",
+      message: `${suivies.length} ligne(s) d'écart remise(s) à rectifier (${eur(total)})${suivies.some(r => r.reference) ? ` · réf. gardée(s) : ${[...new Set(suivies.map(r => r.reference).filter(Boolean))].join(", ")}` : ""}` });
     resumeEcarts = null;
-    return { ok: true, lignes: rows.length, statut, reference: ref, par: rows[0].par, le: t, total };
+    return { ok: true, lignes: suivies.length, statut, reference: null, par: String(acteur || "admin").slice(0, 120), le: t, total };
   }
 
   // ── Remise affichée par l'admin (expiry_discounts : 0 à 90 %, 0 = aucune ; null = défaut 50 %, 20 % dès 500 €) ──
@@ -2338,8 +2604,9 @@ export function creerPeremption(deps = {}) {
       const att = d ? num(lireJson(d.prix_attendu, {})?.[LISTE_SITE]) : null;
       const qte = f ? (f.court_qte || 0) + (d?.force_lot_long ? (f.long_qte || 0) + (f.autre_qte || 0) : 0) : 0;
       const cout = num(f?.cout);
-      // offre de la page (règle du 21/10/2026) : remise affichée (défaut, admin) ou règle Odoo facturée ; produit hors de la page : null
-      const surPage = cat.some(x => x.cip === cip);
+      // offre de la page (règle du 21/10/2026) : remise affichée (défaut, admin) ou règle Odoo facturée ; produit hors de la page
+      // (hors de la fenêtre, ou « fantôme » : faits frais sans boîte courte, retiré de la page des pharmacies) : null
+      const surPage = cat.some(x => x.cip === cip) && !(frais && !(f.court_qte >= 1));
       const remiseAdm = remisesAdmin[cip] ?? null;
       const o = c && surPage ? offreAffichee({ ...c, remise_admin: remiseAdm, facturee: affichee, remise_pct: d?.remise_pct, prix_base: num(c.list_price),
         prix_barre: d && lireJson(d.apercu, {})?.base === "prix_liste5" ? num(lireJson(d.prix_habituel, {})?.[LISTE_SITE]) : num(c.list_price) }) : null;

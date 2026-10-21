@@ -60,12 +60,22 @@ export function prixVise(f, remise, base = "prix_base", habituel = null) {
   if (base === "prix_liste5") return l5 > 0 ? r2(l5 * (1 - remise / 100)) : null;
   return lp > 0 ? r2(lp * (1 - remise / 100)) : null;
 }
+// « Appliquer dans Odoo » prérempli : la remise qui fait facturer par Odoo le prix que la page annonce. Base « % du prix de
+// base » : la remise affichée ; base « % du prix habituel (liste 5) » : 1 − prix de la page / prix habituel (1 à 90 %)
+export function remiseRegleDepuisPage(p, R0) {
+  const a = p?.affichage;
+  if (!(a?.remise >= 1)) return null;
+  if (R0?.base_remise !== "prix_liste5") return a.remise;
+  const h = habituelDe(p);
+  if (!(h > 0) || !(a.pn > 0)) return a.remise;
+  return Math.min(90, Math.max(1, Math.round(100 * (1 - a.pn / h))));
+}
 // Économie pour la pharmacie par rapport à son prix habituel (liste 5), en % (arrondi au dixième)
 export const economie = (prix, habituel) => (prix > 0 && habituel > 0 ? Math.round((1 - prix / habituel) * 1000) / 10 : null);
 
 export const ETATS = {
-  facture: ["Facturé par Odoo", "ok"], en_cours: ["En cours", "info"], simule: ["Simulé", "neutral"], a_remiser: ["À remiser", "warn"],
-  non_facture: ["Non facturé", "neutral"], exclu: ["Non remisable", "neutral"], court_epuise: ["Court épuisé", "neutral"], sortie_date: ["Sortie par la date", "neutral"],
+  facture: ["Facturé par Odoo", "ok"], en_cours: ["En cours", "info"], simule: ["Simulé", "neutral"], a_remiser: ["Règle Odoo proposée", "warn"],
+  non_facture: ["Sans règle Odoo", "neutral"], exclu: ["Règle Odoo exclue", "neutral"], court_epuise: ["Court épuisé", "neutral"], sortie_date: ["Sortie par la date", "neutral"],
   faits_absents: ["Faits à lire", "neutral"], retrait: ["Retrait en attente", "warn"], partiel: ["Partiel", "danger"], erreur: ["Erreur", "danger"], modifie_odoo: ["Modifié dans Odoo", "danger"],
   facture_site: ["Facturé, page à mettre à jour", "info"], baisse: ["Baisse en attente", "warn"],
 };
@@ -76,7 +86,7 @@ const RAISONS = { remise_retiree: "remise retirée", sortie_date: "sortie par la
   tout_retirer: "« Tout retirer »", refus: "refusée", fin_simulation: "fin de la simulation", regle_supprimee_odoo: "règle supprimée dans Odoo", regle_orpheline: "règle retrouvée sous une décision close" };
 
 // ── Journal lisible (libellés, résultats, détail en phrases ; le JSON reste dans « détail technique ») ──
-export const ACTIONS_JOURNAL = { creer: "Création de la règle", controler: "Contrôle du prix facturé", prix_site: "Prix du site", cacher: "Remise retirée de la page",
+export const ACTIONS_JOURNAL = { creer: "Création de la règle", controler: "Contrôle du prix facturé", prix_site: "Prix du site", cacher: "Remise facturée retirée (la page reprend la remise affichée)",
   retirer: "Suppression dans Odoo", adopter: "Règle retrouvée après coupure", plan: "Plan du passage", decision: "Décision", modifier: "Modification de la règle",
   relire: "Relecture de la règle", refus: "Refusé", alerte: "Alerte", resume: "Résumé de la nuit", mode: "Changement de mode", reglages: "Réglages", droits: "Droits Odoo",
   verrou: "Passage déjà en cours", essai_t1: "Essai T1 (dates)", completer: "Création à compléter", baisser: "Baisse de la remise", reverifier: "Contrôle du prix facturé", fin: "Date de fin",
@@ -96,32 +106,46 @@ export function detailJournal(l) {
 export const FACTURATION = { invoiced: "facturée", "to invoice": "à facturer", no: "rien à facturer", upselling: "à facturer (supplément)" };
 export const TYPES_ECART = { peremption: "page Péremption (« Pér. »)", probable: "ancienne page (probable)", autre: "autre écart" };
 export const STATUTS_ECART = { a_rectifier: "à rectifier", rectifie: "rectifié" };
-const csvCellule = (v) => { const s = v == null ? "" : String(v); return /[;"\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+export const MOTIFS_NON_RETROUVEE = { pas_encore: "commande pas encore dans Odoo", introuvable: "commande introuvable dans Odoo (plus de 48 h)", sans_produit: "commande Odoo sans ce produit",
+  attente_import: "commande à part pas encore importée", a_part_introuvable: "commande à part introuvable dans Odoo (plus de 48 h)", non_servie: "boîtes servies : celles des autres lignes seulement (service réduit)" };
+// Cellule CSV : une cellule qui commence par = + - @ (ou une tabulation, un retour) est préfixée d'une apostrophe (le tableur ne
+// l'exécute pas comme une formule) ; « ; », « " » et les retours à la ligne entre guillemets
+export const csvCellule = (v) => { let s = v == null ? "" : String(v); if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`; return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
 export function csvEcarts(lignes) {
   const tete = ["Date", "Pharmacie", "Réf. site", "Commande Odoo", "Liste", "CIP", "Produit", "Qté", "Prix page", "Facturé (net Odoo)", "Écart", "Type", "Pér.", "Remise page",
-    "À vérifier", "Facturation", "Statut", "Référence", "Par", "Le"];
+    "À vérifier", "Facturation", "Statut", "Référence", "Par", "Le", "CIP pharmacie", "Complément à rectifier", "Avoirs détectés", "Règle Odoo absente"];
   const num = (n) => (n == null ? "" : String(n).replace(".", ","));
   return [tete, ...(lignes || []).map(l => [dateFr(l.date), l.pharmacie, l.commande, l.odoo, l.liste_nom || l.liste, l.cip, l.nom, l.qte, num(l.pn), num(l.net), num(l.ecart),
     TYPES_ECART[l.type] || (l.page_peremption ? "page péremption probable" : "autre écart"), l.peremption ? dateFr(l.peremption) : "", l.remise != null ? `${num(l.remise)} %` : "",
-    l.coherent === false ? "oui" : "", FACTURATION[l.facturation] || l.facturation || "", STATUTS_ECART[l.statut] || l.statut || "", l.reference || "", l.par || "", l.le ? heureFr(l.le) : ""])]
+    l.coherent === false ? (l.a_verifier?.length ? `oui : ${l.a_verifier.join(" ; ")}` : "oui") : "", FACTURATION[l.facturation] || l.facturation || "", STATUTS_ECART[l.statut] || l.statut || "", l.reference || "", l.par || "", l.le ? heureFr(l.le) : "",
+    l.pharmacy_cip || "", l.complement > 0 ? num(l.complement) : "", (l.avoirs || []).map(a => `${a.numero} (${num(a.montant)} €)`).join(", "), l.regle_absente ? "oui" : ""])]
     .map(r => r.map(csvCellule).join(";")).join("\r\n");
 }
-// Totaux : à rectifier et rectifié, par pharmacie (montant décroissant) et en tout
+// Totaux : lignes « Pér. » cohérentes seulement (« à vérifier » et autres types à part), par pharmacie (CIP ; deux pharmacies du
+// même nom restent deux) et en tout. À rectifier : écart des lignes « à rectifier » et complément des lignes rectifiées dont
+// l'écart a grossi. cles : lignes que « Tout marquer rectifié… » peut marquer (« Pér. », cohérentes, à rectifier).
 export function totauxEcarts(lignes) {
   const r2l = (n) => Math.round(n * 100) / 100;
   const parPh = new Map();
-  const tout = { a_rectifier: { montant: 0, lignes: 0 }, rectifie: { montant: 0, lignes: 0 } };
+  const zero = () => ({ montant: 0, lignes: 0 });
+  const tout = { a_rectifier: zero(), rectifie: zero(), a_verifier: zero(), autres: zero() };
+  const ajoute = (o, m) => { o.montant = r2l(o.montant + (m || 0)); o.lignes++; };
   for (const l of lignes || []) {
-    const k = l.pharmacie || "?", st = l.statut === "rectifie" ? "rectifie" : "a_rectifier";
-    const v = parPh.get(k) || { pharmacie: k, a_rectifier: { montant: 0, lignes: 0 }, rectifie: { montant: 0, lignes: 0 }, cles: [] };
-    v[st].montant = r2l(v[st].montant + (l.ecart || 0)); v[st].lignes++;
-    if (st === "a_rectifier") v.cles.push(l.cle);
-    tout[st].montant = r2l(tout[st].montant + (l.ecart || 0)); tout[st].lignes++;
+    if (l.type !== "peremption") { ajoute(tout.autres, l.ecart); continue; }
+    if (l.coherent === false) { if (l.statut !== "rectifie") ajoute(tout.a_verifier, l.ecart); continue; }
+    const k = l.pharmacy_cip || l.pharmacie || "?";
+    const v = parPh.get(k) || { cle: k, pharmacie: l.pharmacie || "?", pharmacy_cip: l.pharmacy_cip || null, a_rectifier: zero(), rectifie: zero(), cles: [] };
+    if (l.statut === "rectifie") { ajoute(v.rectifie, l.ecart_rectifie ?? l.ecart); ajoute(tout.rectifie, l.ecart_rectifie ?? l.ecart); }
+    const reste = l.statut === "rectifie" ? l.complement || 0 : l.ecart;
+    if (reste > 0) { ajoute(v.a_rectifier, reste); ajoute(tout.a_rectifier, reste); if (l.statut !== "rectifie") v.cles.push(l.cle); }
     parPh.set(k, v);
   }
   const pharmacies = [...parPh.values()].sort((a, b) => b.a_rectifier.montant - a.a_rectifier.montant || b.rectifie.montant - a.rectifie.montant);
   return { ...tout, pharmacies, nbPharmaciesARectifier: pharmacies.filter(p => p.a_rectifier.lignes > 0).length };
 }
+// Ce que demande une ligne : commande Odoo pas encore facturée → corriger la commande (la ligne disparaît au contrôle suivant) ;
+// facturée → avoir (référence obligatoire)
+export const actionEcart = (l) => (l?.facturation === "invoiced" || (l?.avoirs || []).length ? "avoir" : "corriger");
 
 // Message de fin d'une application : noms, règles vérifiées, refus et raisons
 export function texteFinLot(r, nomDe = (c) => c) {
@@ -258,12 +282,22 @@ export default function PeremptionsAdmin({ adminFetch }) {
     });
   };
   const lireRetrait = useCallback(async (cips) => appel(`${API}?action=retrait_apercu${cips ? `&cips=${cips.join(",")}` : ""}`).catch(e => ({ erreur: e.message })), [appel]);
-  const ouvrirRetrait = async (cips, nom, toutDeSuite = false) => { setRetrait({ cips, nom, toutDeSuite, lecture: null }); const lecture = await lireRetrait(cips); setRetrait(x => (x ? { ...x, lecture } : x)); };
-  const ouvrirToutRetirer = async () => { setToutRetirer({ saisie: "", lecture: null }); const lecture = await lireRetrait(null); setToutRetirer(x => (x ? { ...x, lecture } : x)); };
+  // aussiPage (coché par défaut) : sans règle Odoo, la page reviendrait à la remise affichée (−50 % par défaut), qu'Odoo ne
+  // facture pas ; cochée, la remise affichée de ces produits passe aussi à 0 % (prix habituel sur la page)
+  const ouvrirRetrait = async (cips, nom, toutDeSuite = false) => { setRetrait({ cips, nom, toutDeSuite, aussiPage: true, lecture: null }); const lecture = await lireRetrait(cips); setRetrait(x => (x ? { ...x, lecture } : x)); };
+  const ouvrirToutRetirer = async () => { setToutRetirer({ saisie: "", aussiPage: true, lecture: null }); const lecture = await lireRetrait(null); setToutRetirer(x => (x ? { ...x, lecture } : x)); };
+  const remisesAZero = async (cips) => {
+    for (const cip of cips) await poste({ action: "remise_affichee", cip, remise_pct: 0, nom: nomDe(cip) });
+  };
   const retirer = async () => {
     const r0 = retrait; setRetrait(null);
     if (r0.cips.length > 1) setSelection(new Set());
-    await action("Retirer", async () => { const r = await poste({ action: "retirer", cips: r0.cips, tout_de_suite: !!r0.toutDeSuite }); return suivre(r, "Retrait"); });
+    await action("Retirer", async () => {
+      // remise affichée à 0 d'abord : tant que la règle est facturée, la page montre la règle (la remise affichée n'y joue pas)
+      if (r0.aussiPage) await remisesAZero(r0.cips);
+      const r = await poste({ action: "retirer", cips: r0.cips, tout_de_suite: !!r0.toutDeSuite });
+      return suivre(r, "Retrait");
+    });
   };
   const reessayer = (cip) => action("Réessayer", async () => { const r = await poste({ action: "reessayer", cip }); return r.erreur ? r : suivre(r, "Réessai"); });
   // remise affichée sur la page (expiry_discounts ; aucune écriture Odoo) : 0 à 90 %, null = défaut
@@ -272,8 +306,14 @@ export default function PeremptionsAdmin({ adminFetch }) {
     return r.erreur ? r : {};
   });
   const confirmerToutRetirer = async () => {
-    const c = toutRetirer?.saisie; setToutRetirer(null);
-    await action("Retirer toutes les règles du site", async () => { const r = await poste({ action: "tout_retirer", confirmation: c }); return suivre(r, "Suppressions dans Odoo"); });
+    const c = toutRetirer?.saisie, aussiPage = !!toutRetirer?.aussiPage; setToutRetirer(null);
+    // produits qui ont une décision ouverte (ceux dont la règle est retirée)
+    const cips = (etat?.produits || []).filter(p => p.decision && !["retiree"].includes(p.decision.statut)).map(p => p.cip);
+    await action("Retirer toutes les règles du site", async () => {
+      if (aussiPage) await remisesAZero(cips);
+      const r = await poste({ action: "tout_retirer", confirmation: c });
+      return suivre(r, "Suppressions dans Odoo");
+    });
   };
   const voirJournal = async (cip) => {
     if (journal?.cip === cip) { setJournal(null); return; }
@@ -358,6 +398,9 @@ export default function PeremptionsAdmin({ adminFetch }) {
             <div className="ex-ecarts-resume" style={{ fontWeight: 800 }}>{!resume ? "Lecture…" : resume.erreur ? "Indisponible" : resume.a_rectifier.lignes
               ? `${fmt(resume.a_rectifier.montant)} à rectifier pour ${resume.a_rectifier.pharmacies} pharmacie${resume.a_rectifier.pharmacies > 1 ? "s" : ""}` : "Aucun écart à rectifier"}</div>
             <div style={{ fontSize: 11, marginTop: 4 }}>{resume?.erreur ? resume.erreur : resume ? `${resume.a_rectifier.lignes} ligne(s) « Pér. » depuis le ${dateFr(resume.depuis)}${resume.rectifie?.lignes ? ` · rectifié : ${fmt(resume.rectifie.montant)}` : ""}${resume.complet === false ? " · lecture partielle" : ""}${resume.suivi === "non_installe" ? " · suivi non installé (sql/peremption-ecarts.sql)" : ""} · ${heureFr(resume.maj)}` : ""}</div>
+            {resume && !resume.erreur && (resume.a_verifier?.lignes > 0 || resume.non_retrouvees?.lignes > 0) && <div className="ex-ecarts-a-verifier" style={{ fontSize: 11, marginTop: 4, fontWeight: 700 }}>
+              {[resume.a_verifier?.lignes > 0 ? `${resume.a_verifier.lignes} ligne(s) à vérifier (${fmt(resume.a_verifier.montant)}, hors total)` : "",
+                resume.non_retrouvees?.lignes > 0 ? `${resume.non_retrouvees.lignes} ligne(s) non retrouvée(s) dans Odoo` : ""].filter(Boolean).join(" · ")}</div>}
             <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
               <button onClick={() => setPanneau("ecarts")} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Voir les écarts</button>
               <button onClick={() => { setResume(null); chargerResume(true); }} style={{ ...ui.btn("lien"), fontSize: 11, color: T.inkMute }}>Relire</button>
@@ -400,8 +443,10 @@ export default function PeremptionsAdmin({ adminFetch }) {
         <Compteur libelle="Produits sur la page" valeur={c.visibles ?? c.page} detail={c.masques ? `${c.masques} sans boîte courte masqué${c.masques > 1 ? "s" : ""}` : undefined} />
         <Compteur libelle="Remisés sur la page (remise affichée)" valeur={c.remises_affichees ?? "–"} ton="warn" detail="−50 % par défaut, −20 % dès 500 €" />
         <Compteur libelle="Facturés par Odoo" valeur={c.facturees} ton="ok" onClick={() => setFiltre(f => ({ ...f, etat: f.etat === "facture" ? "" : "facture" }))} actif={filtre.etat === "facture"} />
-        <Compteur libelle="Non facturés" valeur={c.non_facturees} detail={`dont ${c.a_remiser} à remiser`} />
-        <Compteur libelle="À remiser (proposés)" valeur={c.a_remiser} ton="warn" onClick={() => setFiltre(f => ({ ...f, etat: f.etat === "a_remiser" ? "" : "a_remiser" }))} actif={filtre.etat === "a_remiser"} />
+        <Compteur libelle="Non facturés par Odoo" valeur={c.non_facturees} detail={`dont ${c.a_remiser} règle${c.a_remiser > 1 ? "s" : ""} Odoo proposée${c.a_remiser > 1 ? "s" : ""}`}
+          titre="Sans règle Odoo : la page affiche quand même la remise de la colonne Page (écarts à rectifier)" />
+        <Compteur libelle="Règle Odoo proposée" valeur={c.a_remiser} ton="warn" onClick={() => setFiltre(f => ({ ...f, etat: f.etat === "a_remiser" ? "" : "a_remiser" }))} actif={filtre.etat === "a_remiser"}
+          titre="Produits que la proposition ferait facturer par Odoo ; la page affiche quand même la remise de la colonne Page" />
         <Compteur libelle="En cours" valeur={c.en_cours ?? 0} ton={c.en_cours ? "info" : undefined} />
         <Compteur libelle="En retrait" valeur={c.en_retrait} onClick={() => setFiltre(f => ({ ...f, etat: f.etat === "retrait" ? "" : "retrait" }))} actif={filtre.etat === "retrait"} />
         <Compteur libelle="En erreur" valeur={c.en_erreur} ton={c.en_erreur ? "danger" : undefined} />
@@ -433,8 +478,9 @@ export default function PeremptionsAdmin({ adminFetch }) {
             <th style={th}><input type="checkbox" aria-label="Tout sélectionner (produits sans décision)" title="Produits sans décision ouverte seulement (une modification se fait produit par produit)"
               checked={selectionnables.length > 0 && selectionnables.every(p => selection.has(p.cip))}
               onChange={e => setSelection(e.target.checked ? new Set(selectionnables.slice(0, R0.plafond_produits_par_lot).map(p => p.cip)) : new Set())} /></th>
-            {["Produit (CIP)", "Lot court · fin de page", "Court / long / autre", "Prix de base · habituel L5 · coût", "Page : remise affichée · facturée par Odoo ?", surPrixHabituel ? "Règle Odoo : remise % (sur prix habituel L5)" : "Règle Odoo : remise % (sur prix de base, comme la facture)", "Prix péremption L5 · économie · marge", "Ventes 30 j (LGO)", "État", "Action"].map(h =>
-              <th key={h} style={{ ...th, textAlign: h.startsWith("Prix") ? "right" : "left", whiteSpace: "normal" }}>{h}</th>)}
+            {[["Produit (CIP)"], ["Lot court · fin de page"], ["Court / long / autre"], ["Prix de base · habituel L5 · coût"], ["Page : remise affichée", "Remise de la page des pharmacies (−50 % par défaut, −20 % dès 500 €) et ce qu'Odoo facture"],
+              ["Règle Odoo %", surPrixHabituel ? "sur le prix habituel liste 5" : "sur le prix de base, comme la facture"], ["Prix péremption L5 · économie · marge"], ["Ventes 30 j (LGO)"], ["État", "État de la règle Odoo (la page affiche la colonne Page)"], ["Action"]].map(([h, titre]) =>
+              <th key={h} title={titre} style={{ ...th, textAlign: h.startsWith("Prix") ? "right" : "left", whiteSpace: "normal", ...(h === "Action" ? colleDroite : {}) }}>{h}</th>)}
           </tr></thead>
           <tbody>
             {produits.map(p => <Ligne key={p.cip} p={p} R0={R0} v={v} occupe={!!occupe} selection={selection} setSelection={setSelection} remise={remises[p.cip]}
@@ -458,10 +504,13 @@ export default function PeremptionsAdmin({ adminFetch }) {
         onForcer={(cip, n) => ouvrirApercu(apercu.cips, apercu.remise, { force: { ...apercu.force, [cip]: n }, sousCout: apercu.sousCout, lot: apercu.lot })} />}
       {retrait && (
         <Fenetre titre={`Retirer la remise : ${retrait.nom}`} onFermer={() => setRetrait(null)}>
-          <p style={{ fontSize: 13, color: T.inkSoft, margin: "0 0 10px" }}>La page cesse aussitôt d'annoncer la remise et le site reprend le prix habituel. La règle est supprimée dans
-            Odoo au premier passage après {R0.delai_retrait_min} min (passage toutes les heures à h:25), ou plus tard si des commandes en cours d'import contiennent ce produit.</p>
+          <p style={{ fontSize: 13, color: T.inkSoft, margin: "0 0 10px" }}>La règle Odoo est retirée : la page revient aussitôt à la remise affichée (colonne Page : −50 % par défaut,
+            −20 % dès 500 €), qu'Odoo ne facture pas (écarts à rectifier). La règle est supprimée dans Odoo au premier passage après {R0.delai_retrait_min} min (passage
+            toutes les heures à h:25), ou plus tard si des commandes en cours d'import contiennent ce produit.</p>
           {!v.retrait && <VerrousFermes />}
           <LectureRetrait lecture={retrait.lecture} />
+          <label style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start", marginTop: 10, fontWeight: 600 }}><input type="checkbox" checked={!!retrait.aussiPage} onChange={e => setRetrait(x => ({ ...x, aussiPage: e.target.checked }))} />
+            <span>Revenir aussi au prix habituel sur la page (remise affichée à 0 %{retrait.cips.length > 1 ? `, ${retrait.cips.length} produits` : ""}) : sinon la page affiche la remise par défaut, non facturée.</span></label>
           <label style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start", marginTop: 10 }}><input type="checkbox" checked={!!retrait.toutDeSuite} onChange={e => setRetrait(x => ({ ...x, toutDeSuite: e.target.checked }))} />
             <span>Tout de suite : supprimer dans Odoo sans attendre. Les commandes du site ci-dessus, pas encore importées, seront facturées au prix habituel (l'équipe reçoit la liste).</span></label>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
@@ -475,10 +524,12 @@ export default function PeremptionsAdmin({ adminFetch }) {
           {!toutRetirer.lecture ? <p style={{ fontSize: 13, color: T.inkMute }}>Lecture des décisions et des commandes en cours…</p> : toutRetirer.lecture.erreur ? <div style={encart("danger")}><Icone nom="alerte" taille={14} /><span>{toutRetirer.lecture.erreur}</span></div> : (
             <p style={{ fontSize: 13, color: T.inkSoft, margin: "0 0 10px" }}><strong>{toutRetirer.lecture.decisions}</strong> décision(s) ouverte(s) ({Object.entries(toutRetirer.lecture.par_statut || {}).map(([k, n]) => `${n} ${STATUTS_DECISION[k] || k}`).join(", ") || "aucune"}),
               <strong> {toutRetirer.lecture.regles}</strong> règle(s) dans Odoo sur {toutRetirer.lecture.produits_avec_regles} produit(s){toutRetirer.lecture.reservees ? ` (+ ${toutRetirer.lecture.reservees} réservée(s) sans identifiant)` : ""}.
-              La page n'annonce plus aucune remise dès la confirmation ; puis les règles posées par le site (et seulement elles) sont supprimées dans Odoo, sans délai ni attente des commandes, produit par produit (si cette page se ferme, le filet termine dans le quart d'heure).</p>
+              Dès la confirmation, la page revient à la remise affichée de chaque produit (colonne Page : −50 % par défaut, −20 % dès 500 €), qu'Odoo ne facture pas (écarts à rectifier) ; puis les règles posées par le site (et seulement elles) sont supprimées dans Odoo, sans délai ni attente des commandes, produit par produit (si cette page se ferme, le filet termine dans le quart d'heure).</p>
           )}
           {!v.retrait && <VerrousFermes />}
           <LectureRetrait lecture={toutRetirer.lecture} />
+          <label style={{ fontSize: 13, display: "flex", gap: 8, alignItems: "flex-start", marginTop: 10, fontWeight: 600 }}><input type="checkbox" checked={!!toutRetirer.aussiPage} onChange={e => setToutRetirer(x => ({ ...x, aussiPage: e.target.checked }))} />
+            <span>Mettre aussi à 0 % la remise affichée de ces produits (prix habituel sur la page) ; les autres produits de la page gardent leur remise affichée.</span></label>
           <label style={{ ...ui.label, marginTop: 10 }}>Saisir RETIRER pour confirmer</label>
           <input value={toutRetirer.saisie} onChange={e => setToutRetirer(x => ({ ...x, saisie: e.target.value }))} aria-label="Confirmation RETIRER" style={{ ...ui.input, width: 220 }} />
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 14 }}>
@@ -496,8 +547,8 @@ const STATUTS_DECISION = { voulue: "en cours", partielle: "partielle(s)", factur
 const ETATS_COMMANDE = { a_envoyer: "à envoyer", prise: "en cours d'envoi", incertaine: "envoi à vérifier", import_en_attente: "envoyée, pas encore importée", commande_non_envoyee: "pas encore envoyée" };
 
 function VerrousFermes() {
-  return <div role="alert" style={{ ...encart("danger"), marginBottom: 10 }}><Icone nom="alerte" taille={16} /><span><strong>Verrous fermés</strong> (mode Simulation ou variable Netlify absente) : la page cesse
-    d'annoncer, mais les règles RESTENT dans Odoo et continuent d'être facturées. Rouvrir la variable (puis redéployer) avant de retirer, ou supprimer les règles à la main dans Odoo.</span></div>;
+  return <div role="alert" style={{ ...encart("danger"), marginBottom: 10 }}><Icone nom="alerte" taille={16} /><span><strong>Verrous fermés</strong> (mode Simulation ou variable Netlify absente) : la page revient
+    à la remise affichée, mais les règles RESTENT dans Odoo et continuent d'être facturées. Rouvrir la variable (puis redéployer) avant de retirer, ou supprimer les règles à la main dans Odoo.</span></div>;
 }
 function LectureRetrait({ lecture }) {
   if (!lecture || lecture.erreur) return null;
@@ -526,7 +577,7 @@ function Ligne({ p, R0, v, occupe, selection, setSelection, remise, setRemise, o
   const f = p.faits, d = p.decision;
   // remise de la règle Odoo : celle de la décision ; sans décision, préremplie avec la remise affichée par la page (« Appliquer
   // dans Odoo » fait alors facturer par Odoo le prix que la page annonce)
-  const saisie = remise ?? (d ? String(d.modification?.baisse ? d.modification.remise : d.remise_pct) : p.affichage?.remise >= 1 && p.affichage.source !== "odoo" ? String(p.affichage.remise) : "");
+  const saisie = remise ?? (d ? String(d.modification?.baisse ? d.modification.remise : d.remise_pct) : p.affichage?.remise >= 1 && p.affichage.source !== "odoo" ? String(remiseRegleDepuisPage(p, R0)) : "");
   const r = remiseSaisie(saisie);
   const habituel = habituelDe(p);
   const base = d?.apercu?.base || R0.base_remise;
@@ -554,7 +605,7 @@ function Ligne({ p, R0, v, occupe, selection, setSelection, remise, setRemise, o
           <div style={{ color: T.inkMute, fontSize: 11 }}>{f?.lu_at ? `lu ${heureFr(f.lu_at)}` : "faits à lire"}</div></td>
         <td style={tdD}><div>{fmt(f?.list_price ?? p.catalogue?.list_price)}</div><div style={{ fontWeight: 700 }} title={d ? "prix habituel figé à la décision" : undefined}>{fmt(habituel)}</div>
           <div style={{ color: T.inkMute }}>{cout != null ? `coût ${fmt(cout)}` : <span title="standard_price non renseigné dans Odoo">coût ?</span>}</div></td>
-        <td style={{ ...td, minWidth: 150 }}><RemiseAffichee p={p} occupe={occupe} onEnregistrer={onRemiseAffichee} /></td>
+        <td style={{ ...td, minWidth: 140 }}><RemiseAffichee p={p} occupe={occupe} onEnregistrer={onRemiseAffichee} /></td>
         <td style={td}><input value={saisie} onChange={e => setRemise(e.target.value)} inputMode="numeric" aria-label={`Remise de la règle Odoo ${p.nom}`} placeholder="%"
           style={{ ...ui.input, width: 56, minHeight: 28, padding: "3px 6px", fontSize: 12, borderColor: saisie && r == null ? T.danger : undefined }} /></td>
         <td style={tdD}><div style={{ fontWeight: 700 }}>{fmt(prixPer)}</div>
@@ -564,7 +615,7 @@ function Ligne({ p, R0, v, occupe, selection, setSelection, remise, setRemise, o
         <td style={td}>{f?.ventes_30j ? `${(f.ventes_30j.lgo || 0) + (f.ventes_30j.site || 0) + (f.ventes_30j.autre || 0)} (${f.ventes_30j.lgo || 0})` : "–"}</td>
         <td style={td}><span style={{ ...ui.badge(ton), background: ton === "warn" && p.etat === "a_remiser" ? "#fff7ed" : t.bg }}>{libelle}</span>
           {d && <div style={{ color: T.inkMute, fontSize: 11, marginTop: 3, maxWidth: 200 }}>{texteDecision(d, R0)}</div>}</td>
-        <td style={{ ...td, minWidth: 120 }}>
+        <td style={{ ...td, minWidth: 120, ...colleDroite, background: coche ? T.surface2 : T.surface }}>
           <div style={{ display: "flex", gap: 4, flexDirection: "column", alignItems: "flex-start" }}>
             {(!d || modifiable) && !(f?.exclusions || []).length && r > 0 && (!d || r !== Number(d.modification?.baisse ? d.modification.remise : d.remise_pct)) && (
               suspendu ? <button disabled title="Mode « Créations suspendues » : ni création ni hausse de remise" style={{ ...ui.btn("ligne", "s"), height: 28, fontSize: 11, opacity: 0.6 }}>Créations suspendues</button>
@@ -584,7 +635,7 @@ function Ligne({ p, R0, v, occupe, selection, setSelection, remise, setRemise, o
 function RemiseAffichee({ p, occupe, onEnregistrer }) {
   const [saisie, setSaisie] = useState(null);   // null : pas de saisie en cours
   const a = p.affichage;
-  if (!a) return <span style={{ color: T.inkMute, fontSize: 11 }}>hors de la page</span>;
+  if (!a || p.masque) return <span style={{ color: T.inkMute, fontSize: 11 }}>{p.masque ? "hors de la page (aucune boîte courte)" : "hors de la page"}</span>;
   const val = saisie ?? (p.remise_admin != null ? String(p.remise_admin) : "");
   const r = val.trim() === "" ? null : remiseSaisie(val);
   const change = saisie != null && (val.trim() === "" ? p.remise_admin != null : r != null && r !== p.remise_admin);
@@ -602,6 +653,7 @@ function RemiseAffichee({ p, occupe, onEnregistrer }) {
           {p.remise_admin != null && saisie == null && <button disabled={occupe} onClick={() => onEnregistrer(null)} title="Revenir à la remise par défaut" style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Défaut</button>}
         </div>
       )}
+      {a.source !== "odoo" && <div style={{ fontSize: 11, color: T.inkMute }}>0 = aucune remise · vide = défaut (−50 %, −20 % dès 500 €)</div>}
     </div>
   );
 }
@@ -616,7 +668,7 @@ export function texteDecision(d, R0) {
   }
   if (d.statut === "voulue" && d.modification?.baisse) {
     const fin = Date.parse(d.modification.demandee_at || "") + R0.delai_retrait_min * 60e3;
-    return `baisse ${d.remise_pct} % → ${d.modification.remise} % : page sans remise, prix habituel ; écrite dans Odoo au premier passage après ${heureFr(new Date(fin).toISOString())} (ou une fois les commandes importées)`;
+    return `baisse ${d.remise_pct} % → ${d.modification.remise} % : en attendant, la page affiche la remise de la colonne Page ; écrite dans Odoo au premier passage après ${heureFr(new Date(fin).toISOString())} (ou une fois les commandes importées)`;
   }
   return [`${d.remise_pct} %`, regles.length ? `${verifiees.length}/${R0.listes.length} règles vérifiées` : "", d.erreur || ""].filter(Boolean).join(" · ");
 }
@@ -813,10 +865,12 @@ function Reglages({ R0, occupe, onEnregistrer }) {
 }
 
 // ── Contrôle des écarts (rectification) : lignes du site prises au prix de la page, facturées plus cher par Odoo ──
-// Lecture seule d'Odoo (peremption?action=ecarts, par pages de commandes). Statut de chaque ligne (« à rectifier » par défaut,
-// « rectifié » avec une référence libre : n° d'avoir, correction de la commande Odoo…), qui et quand : peremption_ecarts.
-// Totaux par pharmacie et en tout, filtre de période et de statut, export CSV. Lignes « probables » de l'ancienne page (avant
-// le 20/10/2026, sans mention) et autres écarts (liste ≠ 5, prix changé) : sur demande.
+// Lecture seule d'Odoo (peremption?action=ecarts, par pages de commandes). Le serveur regroupe par commande Odoo et produit
+// (ligne additionnée, scindée ou corrigée à la main), lit les factures et les avoirs, recalcule l'offre de la page du jour
+// (« à vérifier » sinon : hors des totaux) et renvoie à part les lignes « Pér. » non retrouvées dans Odoo. Statut de chaque
+// ligne (« à rectifier » par défaut, « rectifié » avec une référence libre — obligatoire pour une ligne facturée : n° d'avoir),
+// qui et quand : peremption_ecarts, montants recalculés par le serveur. Totaux par pharmacie (CIP) et en tout, période, CSV.
+// Lignes « probables » de l'ancienne page (avant le 20/10/2026, sans mention) et autres écarts : sur demande, totaux à part.
 function Ecarts({ appel, poste, onStatut }) {
   const [du, setDu] = useState(DEBUT_REGLE_PANIER);
   const [au, setAu] = useState("");
@@ -824,10 +878,10 @@ function Ecarts({ appel, poste, onStatut }) {
   const [statut, setStatut] = useState("a_rectifier");
   const [res, setRes] = useState(null);
   const [cours, setCours] = useState(null);
-  const [saisie, setSaisie] = useState(null);   // { cles, libelle, reference } : marquage « rectifié » en cours
+  const [saisie, setSaisie] = useState(null);   // { cles, libelle, reference, obligatoire } : marquage « rectifié » en cours
   const [envoi, setEnvoi] = useState(null);
   const lancer = useCallback(async () => {
-    const lignes = []; let offset = 0, commandes = 0, garde = 0, suivi = "ok";
+    const lignes = [], nonRetrouvees = []; let offset = 0, commandes = 0, garde = 0, suivi = "ok";
     const types = ["peremption", ...(avec.probable ? ["probable"] : []), ...(avec.autre ? ["autre"] : [])].join(",");
     setRes(null); setSaisie(null);
     try {
@@ -835,36 +889,47 @@ function Ecarts({ appel, poste, onStatut }) {
         setCours(`${commandes} commandes relues…`);
         const r = await appel(`${API}?action=ecarts&depuis=${du}${au ? `&jusqua=${au}` : ""}&types=${types}&offset=${offset}`);
         if (r.erreur) throw new Error(r.erreur);
-        lignes.push(...r.lignes); commandes += r.commandes; offset = r.suivant; suivi = r.suivi || suivi;
+        lignes.push(...r.lignes); nonRetrouvees.push(...(r.non_retrouvees || [])); commandes += r.commandes; offset = r.suivant; suivi = r.suivi || suivi;
       }
-      setRes({ lignes, commandes, suivi });
-    } catch (e) { setRes({ erreur: e.message, lignes, commandes, suivi }); }
+      setRes({ lignes, nonRetrouvees, commandes, suivi });
+    } catch (e) { setRes({ erreur: e.message, lignes, nonRetrouvees, commandes, suivi }); }
     finally { setCours(null); }
   }, [appel, du, au, avec]);
   useEffect(() => { lancer(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   const marquer = async (cles, st, reference = null) => {
     const lignes = (res?.lignes || []).filter(l => cles.includes(l.cle));
     if (!lignes.length) return;
-    setEnvoi(`${st === "rectifie" ? "Marquage" : "Annulation"} : ${lignes.length} ligne(s)…`);
+    setEnvoi(`${st === "rectifie" ? "Marquage" : "Remise à rectifier"} : ${lignes.length} ligne(s)…`);
     try {
-      const r = await poste({ action: "ecart_statut", statut: st, reference, lignes: lignes.map(({ cle, pharmacie, odoo, nom, qte, pn, net, ecart }) => ({ cle, pharmacie, odoo, nom, qte, pn, net, ecart })) });
-      setRes(x => ({ ...x, lignes: x.lignes.map(l => (cles.includes(l.cle) ? { ...l, statut: r.statut, reference: r.reference, par: r.par, le: r.le } : l)) }));
+      // le serveur recalcule chaque ligne (commandes et Odoo relus) : montants enregistrés les siens
+      const r = await poste({ action: "ecart_statut", statut: st, reference, lignes: lignes.map(l => ({ cle: l.cle })) });
+      setRes(x => ({ ...x, lignes: x.lignes.map(l => (!cles.includes(l.cle) ? l : st === "rectifie"
+        ? { ...l, statut: "rectifie", reference: r.reference, par: r.par, le: r.le, ecart_rectifie: r.montants?.[l.cle] ?? l.ecart, complement: 0, reference_precedente: null }
+        : { ...l, statut: "a_rectifier", reference_precedente: l.reference || l.reference_precedente || null, reference: null, par: r.par, le: r.le, complement: 0 })) }));
       setSaisie(null); setEnvoi(null); onStatut?.();
     } catch (e) { setEnvoi(`Échec : ${e.message}`); }
   };
   const tot = useMemo(() => totauxEcarts(res?.lignes), [res]);
-  const vues = (res?.lignes || []).filter(l => statut === "tous" || (l.statut || "a_rectifier") === statut);
+  const vues = (res?.lignes || []).filter(l => statut === "tous" || (statut === "a_verifier" ? l.type === "peremption" && l.coherent === false
+    : statut === "a_rectifier" ? (l.statut || "a_rectifier") === "a_rectifier" || l.complement > 0 : (l.statut || "a_rectifier") === statut));
   const exporter = () => {
-    const blob = new Blob(["\ufeff" + csvEcarts(res.lignes)], { type: "text/csv;charset=utf-8" });
+    const blob = new Blob(["﻿" + csvEcarts(res.lignes)], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `ecarts-peremption-${du}${au ? `-au-${au}` : ""}.csv`; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
-  const ouvrirSaisie = (cles, libelle) => setSaisie({ cles, libelle, reference: "" });
+  const ouvrirSaisie = (cles, libelle) => {
+    const ls = (res?.lignes || []).filter(l => cles.includes(l.cle));
+    const avoir = ls.find(l => (l.avoirs || []).length)?.avoirs?.[0]?.numero || "";
+    setSaisie({ cles, libelle, reference: avoir, obligatoire: ls.some(l => actionEcart(l) === "avoir") });
+  };
+  const lienOdoo = (l) => (l.odoo_id ? <a href={`${ODOO_WEB}/web#model=sale.order&id=${l.odoo_id}&view_type=form&cids=2`} target="_blank" rel="noreferrer" style={{ color: T.teal }}>{l.odoo}</a> : l.odoo);
   return (
     <div className="ex-ecarts" style={{ ...ui.card, marginTop: 10 }}>
       <div style={{ fontSize: 12, color: T.inkMute, marginBottom: 10 }}>Lignes des commandes du site prises au prix de la page Péremption courte (« Pér. », remise affichée)
-        et facturées plus cher par Odoo, qui facture le tarif de la liste du client tant que la ligne n'est pas corrigée à la main. Écart = (net facturé − prix
-        de la page) × boîtes. Une ligne facturée par une règle Odoo (« Appliquer dans Odoo ») n'a jamais d'écart. Corriger la commande dans Odoo avant
-        facture, ou faire un avoir, puis « Marquer rectifié » avec la référence. « À vérifier » : prix de la ligne plus bas que le prix de base d'Odoo × (1 − remise).</div>
+        et facturées plus cher par Odoo, qui facture le tarif de la liste du client tant que la ligne n'est pas corrigée à la main. Le contrôle regroupe par commande
+        Odoo et produit (lignes additionnées par le connecteur, scindées ou corrigées à la main) et lit les factures et les avoirs. Écart = facturé − (boîtes « Pér. » ×
+        prix de la page), les autres lignes du même produit servies d'abord à leur prix. « À facturer » : corriger la commande dans Odoo, la ligne disparaît au contrôle
+        suivant ; « facturée » : faire un avoir, puis « Marquer rectifié » avec son numéro. « À vérifier » (hors des totaux) : offre ou page non prouvées ce jour-là, ou
+        moins de boîtes servies que commandées.</div>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
         <label style={{ fontSize: 12 }}>Du <input type="date" value={du} onChange={e => setDu(e.target.value)} aria-label="Du" style={{ ...ui.input, width: 150, minHeight: 32, padding: "4px 8px", display: "inline-block" }} /></label>
         <label style={{ fontSize: 12 }}>au <input type="date" value={au} onChange={e => setAu(e.target.value)} aria-label="Au" style={{ ...ui.input, width: 150, minHeight: 32, padding: "4px 8px", display: "inline-block" }} /></label>
@@ -879,26 +944,30 @@ function Ecarts({ appel, poste, onStatut }) {
           {res.erreur && <div style={encart("danger")}><Icone nom="alerte" taille={14} /><span>{res.erreur}</span></div>}
           {res.suivi === "non_installe" && <div style={encart("warn")}><Icone nom="alerte" taille={14} /><span>Suivi des rectifications non installé : exécuter <code>sql/peremption-ecarts.sql</code> dans Supabase. Les écarts restent lisibles.</span></div>}
           <div className="ex-ecarts-totaux" style={{ fontSize: 13 }}><strong>{fmt(tot.a_rectifier.montant)}</strong> à rectifier pour <strong>{tot.nbPharmaciesARectifier}</strong> pharmacie{tot.nbPharmaciesARectifier > 1 ? "s" : ""} ({tot.a_rectifier.lignes} ligne{tot.a_rectifier.lignes > 1 ? "s" : ""})
-            · rectifié : {fmt(tot.rectifie.montant)} ({tot.rectifie.lignes} ligne{tot.rectifie.lignes > 1 ? "s" : ""}) · {res.commandes} commandes relues du {dateFr(du)}{au ? ` au ${dateFr(au)}` : " à aujourd'hui"}</div>
+            · rectifié : {fmt(tot.rectifie.montant)} ({tot.rectifie.lignes} ligne{tot.rectifie.lignes > 1 ? "s" : ""}) · {res.commandes} commandes relues du {dateFr(du)}{au ? ` au ${dateFr(au)}` : " à aujourd'hui"}
+            {tot.a_verifier.lignes > 0 && <> · <span style={{ color: T.danger, fontWeight: 700 }}>à vérifier (hors total) : {fmt(tot.a_verifier.montant)} ({tot.a_verifier.lignes})</span></>}
+            {tot.autres.lignes > 0 && <> · autres types (hors total) : {fmt(tot.autres.montant)} ({tot.autres.lignes})</>}
+            {res.nonRetrouvees?.length > 0 && <> · <span style={{ color: T.warn, fontWeight: 700 }}>{res.nonRetrouvees.length} ligne{res.nonRetrouvees.length > 1 ? "s" : ""} « Pér. » non retrouvée{res.nonRetrouvees.length > 1 ? "s" : ""} dans Odoo</span></>}</div>
           {envoi && <div role="status" style={encart(/^Échec/.test(envoi) ? "danger" : "info")}><Icone nom="horloge" taille={14} /><span>{envoi}</span></div>}
           {saisie && (
             <div role="dialog" aria-label="Marquer rectifié" style={{ ...encart("info"), flexWrap: "wrap", alignItems: "center" }}>
-              <span>Marquer rectifié : <strong>{saisie.libelle}</strong> · référence (n° d'avoir, correction de la commande Odoo…)</span>
+              <span>Marquer rectifié : <strong>{saisie.libelle}</strong> · référence {saisie.obligatoire ? "(obligatoire : ligne facturée, n° d'avoir)" : "(n° d'avoir, correction de la commande Odoo…)"}</span>
               <input value={saisie.reference} autoFocus onChange={e => setSaisie(x => ({ ...x, reference: e.target.value }))} aria-label="Référence de la rectification" maxLength={120}
                 style={{ ...ui.input, width: 220, minHeight: 30, padding: "4px 8px", fontSize: 12 }} />
-              <button onClick={() => marquer(saisie.cles, "rectifie", saisie.reference)} style={{ ...ui.btn("primaire", "s"), height: 30, fontSize: 12 }}>Valider</button>
-              <button onClick={() => setSaisie(null)} style={{ ...ui.btn("lien"), fontSize: 12, color: T.inkMute }}>Annuler</button>
+              <button disabled={saisie.obligatoire && !saisie.reference.trim()} onClick={() => marquer(saisie.cles, "rectifie", saisie.reference)}
+                style={{ ...ui.btn("primaire", "s"), height: 30, fontSize: 12, opacity: saisie.obligatoire && !saisie.reference.trim() ? 0.5 : 1 }}>Valider</button>
+              <button onClick={() => setSaisie(null)} style={{ ...ui.btn("lien"), fontSize: 12, color: T.inkMute }}>Fermer</button>
             </div>
           )}
           {tot.pharmacies.length > 0 && (
             <div style={{ overflowX: "auto" }}>
               <table className="ex-ecarts-pharmacies" style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                <thead><tr>{["Pharmacie", "À rectifier", "Lignes", "Rectifié", ""].map(h => <th key={h} style={{ ...th, padding: "4px 6px", fontSize: 10 }}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Pharmacie (CIP)", "À rectifier", "Lignes", "Rectifié", ""].map(h => <th key={h} style={{ ...th, padding: "4px 6px", fontSize: 10 }}>{h}</th>)}</tr></thead>
                 <tbody>{tot.pharmacies.map(ph => (
-                  <tr key={ph.pharmacie} style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
-                    <td style={tdJ}>{ph.pharmacie}</td><td style={{ ...tdJ, fontWeight: 700 }}>{fmt(ph.a_rectifier.montant)}</td><td style={tdJ}>{ph.a_rectifier.lignes}</td>
+                  <tr key={ph.cle} style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
+                    <td style={tdJ}>{ph.pharmacie}{ph.pharmacy_cip ? <span style={{ color: T.inkMute, fontFamily: T.mono }}> · {ph.pharmacy_cip}</span> : null}</td><td style={{ ...tdJ, fontWeight: 700 }}>{fmt(ph.a_rectifier.montant)}</td><td style={tdJ}>{ph.a_rectifier.lignes}</td>
                     <td style={tdJ}>{ph.rectifie.lignes ? `${fmt(ph.rectifie.montant)} (${ph.rectifie.lignes})` : "–"}</td>
-                    <td style={tdJ}>{ph.cles.length > 0 && res.suivi !== "non_installe" && <button onClick={() => ouvrirSaisie(ph.cles, `${ph.pharmacie}, ${ph.cles.length} ligne(s), ${fmt(ph.a_rectifier.montant)}`)} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Tout marquer rectifié…</button>}</td>
+                    <td style={tdJ}>{ph.cles.length > 0 && res.suivi !== "non_installe" && <button onClick={() => ouvrirSaisie(ph.cles, `${ph.pharmacie}${ph.pharmacy_cip ? ` (${ph.pharmacy_cip})` : ""}, ${ph.cles.length} ligne(s) « Pér. »`)} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Tout marquer rectifié…</button>}</td>
                   </tr>))}
                   <tr><td style={{ ...tdJ, fontWeight: 800 }}>Total</td><td style={{ ...tdJ, fontWeight: 800 }}>{fmt(tot.a_rectifier.montant)}</td><td style={tdJ}>{tot.a_rectifier.lignes}</td><td style={tdJ}>{fmt(tot.rectifie.montant)} ({tot.rectifie.lignes})</td><td /></tr>
                 </tbody>
@@ -907,30 +976,51 @@ function Ecarts({ appel, poste, onStatut }) {
           )}
           <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 12 }}>
             <span>Lignes :</span>
-            {[["a_rectifier", "à rectifier"], ["rectifie", "rectifiées"], ["tous", "toutes"]].map(([k, l]) => (
+            {[["a_rectifier", "à rectifier"], ["rectifie", "rectifiées"], ["a_verifier", "à vérifier"], ["tous", "toutes"]].map(([k, l]) => (
               <label key={k} style={{ display: "inline-flex", gap: 4, alignItems: "center" }}><input type="radio" name="statut-ecart" checked={statut === k} onChange={() => setStatut(k)} />{l}</label>))}
           </div>
           {vues.length > 0 ? (
             <div style={{ maxHeight: 420, overflow: "auto" }}>
               <table className="ex-ecarts-lignes" style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                <thead><tr>{["Date", "Pharmacie", "Réf. site", "Odoo", "Produit", "Qté", "Prix page", "Facturé", "Écart", "Pér. · remise", "Facturation", "Statut", ""].map((h, i) => <th key={i} style={{ ...th, padding: "4px 6px", fontSize: 10 }}>{h}</th>)}</tr></thead>
+                <thead><tr>{["Date", "Pharmacie", "Réf. site", "Odoo", "Produit", "Qté", "Prix page", "Facturé", "Écart", "Pér. · remise", "Statut"].map((h, i) => <th key={i} style={{ ...th, padding: "4px 6px", fontSize: 10 }}>{h}</th>)}</tr></thead>
                 <tbody>{vues.map(l => (
-                  <tr key={l.cle} style={{ borderBottom: `1px solid ${T.lineSoft}`, background: l.type === "peremption" ? undefined : T.surface2 }}>
-                    <td style={tdJ}>{dateFr(l.date)}</td><td style={tdJ}>{l.pharmacie}</td><td style={tdJ}>{l.commande}{l.separe_de ? <div style={{ color: T.inkMute }}>à part de {l.separe_de}</div> : null}</td>
-                    <td style={tdJ}>{l.odoo}{l.liste ? <div style={{ color: T.inkMute }}>liste n° {l.liste}</div> : null}</td><td style={tdJ}>{l.nom || l.cip}</td>
+                  <tr key={l.cle} style={{ borderBottom: `1px solid ${T.lineSoft}`, background: l.type === "peremption" && l.coherent !== false ? undefined : T.surface2 }}>
+                    <td style={tdJ}>{dateFr(l.date)}</td><td style={tdJ}>{l.pharmacie}{l.pharmacy_cip ? <div style={{ color: T.inkMute, fontFamily: T.mono }}>{l.pharmacy_cip}</div> : null}</td>
+                    <td style={tdJ}>{l.commande}{l.separe_de ? <div style={{ color: T.inkMute }}>à part de {l.separe_de}</div> : null}</td>
+                    <td style={tdJ}>{lienOdoo(l)}{l.liste ? <div style={{ color: T.inkMute }}>liste n° {l.liste}</div> : null}<div style={{ color: T.inkMute }}>{FACTURATION[l.facturation] || l.facturation || ""}</div></td>
+                    <td style={tdJ}>{l.nom || l.cip}</td>
                     <td style={tdJ}>{l.qte}{l.qte_odoo > l.qte ? <div style={{ color: T.inkMute }}>sur {l.qte_odoo} dans Odoo</div> : null}</td><td style={tdJ}>{fmt(l.pn)}</td><td style={tdJ}>{fmt(l.net)}</td>
-                    <td style={{ ...tdJ, fontWeight: 700 }}>{fmt(l.ecart)}</td>
-                    <td style={tdJ}>{l.type === "peremption" ? `${dateFr(l.peremption)}${l.remise != null ? ` · −${pctBrut(l.remise)} %` : ""}` : TYPES_ECART[l.type]}{l.coherent === false && <div style={{ color: T.danger, fontWeight: 700 }}>à vérifier</div>}</td>
-                    <td style={tdJ}>{FACTURATION[l.facturation] || l.facturation}</td>
-                    <td style={tdJ}><span style={{ ...ui.badge(l.statut === "rectifie" ? "ok" : "warn"), fontSize: 10 }}>{STATUTS_ECART[l.statut] || "à rectifier"}</span>
-                      {l.statut === "rectifie" && <div style={{ color: T.inkMute }}>{l.reference ? `réf. ${l.reference} · ` : ""}{l.par} · {heureFr(l.le)}</div>}</td>
-                    <td style={tdJ}>{res.suivi !== "non_installe" && (l.statut === "rectifie"
-                      ? <button onClick={() => marquer([l.cle], "a_rectifier")} style={{ ...ui.btn("lien"), fontSize: 11, color: T.inkMute }}>Annuler</button>
-                      : <button onClick={() => ouvrirSaisie([l.cle], `${l.nom || l.cip}, ${fmt(l.ecart)}`)} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Marquer rectifié…</button>)}</td>
+                    <td style={{ ...tdJ, fontWeight: 700, minWidth: 120 }}>{fmt(l.ecart)}
+                      {l.type === "peremption" && l.coherent !== false && (l.statut !== "rectifie" || l.complement > 0) && <div style={{ color: T.inkMute, fontWeight: 400 }}>{actionEcart(l) === "avoir" ? "avoir à faire" : "à corriger dans Odoo avant facture"}</div>}
+                      {(l.avoirs || []).length > 0 && <div style={{ color: T.ok, fontWeight: 400 }}>avoir {l.avoirs.map(a => `${a.numero} (${fmt(a.montant)})`).join(", ")} détecté, déduit</div>}</td>
+                    <td style={tdJ}>{l.type === "peremption" ? `${dateFr(l.peremption)}${l.remise != null ? ` · −${pctBrut(l.remise)} %` : ""}` : TYPES_ECART[l.type]}
+                      {l.regle_absente && <div style={{ color: T.warn, fontWeight: 700 }}>règle Odoo absente à l'import</div>}
+                      {l.coherent === false && <div style={{ color: T.danger, fontWeight: 700 }} title={(l.a_verifier || []).join(" ; ")}>à vérifier{l.a_verifier?.length ? ` : ${l.a_verifier.join(" ; ")}` : ""}</div>}</td>
+                    <td style={tdJ}><span style={{ ...ui.badge(l.statut === "rectifie" && !(l.complement > 0) ? "ok" : "warn"), fontSize: 10 }}>{STATUTS_ECART[l.statut] || "à rectifier"}</span>
+                      {l.statut === "rectifie" && <div style={{ color: T.inkMute }}>{l.reference ? `réf. ${l.reference} · ` : ""}{l.par} · {heureFr(l.le)}</div>}
+                      {l.complement > 0 && <div style={{ color: T.danger, fontWeight: 700 }}>complément à rectifier : {fmt(l.complement)}</div>}
+                      {l.statut !== "rectifie" && l.reference_precedente && <div style={{ color: T.inkMute }}>ancienne réf. {l.reference_precedente}</div>}
+                      {res.suivi !== "non_installe" && <div style={{ marginTop: 2 }}>{l.statut === "rectifie" && !(l.complement > 0)
+                        ? <button onClick={() => marquer([l.cle], "a_rectifier")} style={{ ...ui.btn("lien"), fontSize: 11, color: T.inkMute }}>Remettre à rectifier</button>
+                        : <button onClick={() => ouvrirSaisie([l.cle], `${l.nom || l.cip}, ${fmt(l.complement > 0 ? l.complement : l.ecart)}${l.complement > 0 ? " de complément" : ""}`)} style={{ ...ui.btn("lien"), fontSize: 11, color: T.teal }}>Marquer rectifié…</button>}</div>}</td>
                   </tr>))}</tbody>
               </table>
             </div>
-          ) : !cours && <div style={{ fontSize: 12, color: T.inkMute }}>Aucune ligne {statut === "a_rectifier" ? "à rectifier" : statut === "rectifie" ? "rectifiée" : ""} sur cette période.</div>}
+          ) : !cours && <div style={{ fontSize: 12, color: T.inkMute }}>Aucune ligne {statut === "a_rectifier" ? "à rectifier" : statut === "rectifie" ? "rectifiée" : statut === "a_verifier" ? "à vérifier" : ""} sur cette période.</div>}
+          {res.nonRetrouvees?.length > 0 && (
+            <details className="ex-ecarts-non-retrouvees" open={res.nonRetrouvees.some(x => x.ancien)}>
+              <summary style={{ cursor: "pointer", fontSize: 12, fontWeight: 700, color: T.warn }}>Lignes « Pér. » non retrouvées dans Odoo ({res.nonRetrouvees.length}) : à vérifier à la main, hors des totaux</summary>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, marginTop: 6 }}>
+                <thead><tr>{["Date", "Pharmacie", "Réf. site", "Produit (CIP)", "Qté", "Prix page", "Motif"].map(h => <th key={h} style={{ ...th, padding: "4px 6px", fontSize: 10 }}>{h}</th>)}</tr></thead>
+                <tbody>{res.nonRetrouvees.map(x => (
+                  <tr key={x.cle} style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
+                    <td style={tdJ}>{dateFr(x.date)}</td><td style={tdJ}>{x.pharmacie}{x.pharmacy_cip ? ` · ${x.pharmacy_cip}` : ""}</td><td style={tdJ}>{x.commande}{x.separe_de ? <div style={{ color: T.inkMute }}>à part de {x.separe_de}</div> : null}</td>
+                    <td style={tdJ}>{x.nom || x.cip}</td><td style={tdJ}>{x.qte}</td><td style={tdJ}>{fmt(x.pn)}</td>
+                    <td style={tdJ}>{MOTIFS_NON_RETROUVEE[x.motif] || x.motif}{x.odoo ? ` (${x.odoo})` : ""}{x.piste ? <div style={{ color: T.inkMute }}>piste : commande Odoo {x.piste} de la même pharmacie</div> : null}</td>
+                  </tr>))}</tbody>
+              </table>
+            </details>
+          )}
         </div>
       )}
     </div>
@@ -962,16 +1052,18 @@ function Tuile({ titre, ton = "neutral", children }) {
     </div>
   );
 }
-function Compteur({ libelle, valeur, detail, ton, onClick, actif }) {
+function Compteur({ libelle, valeur, detail, ton, onClick, actif, titre }) {
   const t = ton ? tone(ton) : null;
   const corps = <><div style={{ fontSize: 20, fontWeight: 800, color: t ? t.fg : T.ink }}>{valeur}</div><div style={{ fontSize: 11, color: T.inkSoft, marginTop: 2 }}>{libelle}</div>
     {detail && <div style={{ fontSize: 11, color: T.inkMute }}>{detail}</div>}</>;
   const style = { ...ui.card, padding: "10px 12px", textAlign: "left", boxShadow: actif ? `inset 0 0 0 2px ${T.teal}` : T.shadow1, fontFamily: "inherit" };
-  return onClick ? <button onClick={onClick} aria-pressed={!!actif} style={{ ...style, cursor: "pointer" }}>{corps}</button> : <div style={style}>{corps}</div>;
+  return onClick ? <button onClick={onClick} aria-pressed={!!actif} title={titre} style={{ ...style, cursor: "pointer" }}>{corps}</button> : <div title={titre} style={style}>{corps}</div>;
 }
 const th = { ...ui.th, padding: "8px 8px", fontSize: 10 };
 const td = { padding: "8px 8px", verticalAlign: "top", fontSize: 12 };
 const tdD = { ...td, textAlign: "right", whiteSpace: "nowrap" };
 const tdJ = { padding: "4px 6px", verticalAlign: "top" };
 const btnL = { ...ui.btn("ligne", "s"), background: undefined, boxShadow: `inset 0 0 0 1.5px ${T.lineField}`, fontSize: 12 };
+// colonne collée au bord droit du tableau (boutons Appliquer, Retirer, Journal toujours visibles)
+const colleDroite = { position: "sticky", right: 0, zIndex: 1, boxShadow: `-1px 0 0 ${T.lineSoft}` };
 const encart = (ton) => { const t = tone(ton); return { display: "flex", alignItems: "flex-start", gap: 8, padding: "8px 12px", borderRadius: R.s, fontSize: 13, lineHeight: 1.5, background: t.bg, color: t.fg, border: `1px solid ${t.border}` }; };

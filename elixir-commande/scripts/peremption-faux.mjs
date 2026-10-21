@@ -10,6 +10,9 @@
 // Contrôles : interdireEcritures (la simulation ne doit faire AUCUN create/write/unlink : toute tentative lève et est
 // comptée), refuserListes (Odoo refuse la création sur ces listes), perdreReponse (la création aboutit mais la réponse se
 // perd : coupure entre create et l'enregistrement), modifierALaMain / supprimerALaMain.
+// Ventes (contrôle des écarts, revue du 21/10/2026) : une commande Odoo par nom (order_id partagé), lignes sans référence
+// PharmaML, lignes annulées, quantités livrées et facturées, lignes de facture et d'avoir (account.move.line, account.move :
+// facturer, avoir), produit dont le code interne n'est pas le CIP (code), lots relus par produit (stock.lot.search_read).
 //
 // Faux Supabase : sous-ensemble de PostgREST (select, eq, neq, gt, gte, lt, lte, like, in, is, not.is, or, order, limit,
 // offset ; POST avec on_conflict et merge-duplicates ; PATCH ; return=representation) ; index uniques partiels de
@@ -73,11 +76,11 @@ export function fauxOdoo(donnees = {}, { maintenant = () => Date.now() } = {}) {
     let lot = false;
     if (q.lot !== false && (q.exp || q.lot)) {
       const id = ++idLot;
-      lots.set(id, { id, name: q.lot || `L${id}`, expiration_date: q.exp ? `${q.exp} 22:59:59` : false });
+      lots.set(id, { id, name: q.lot || `L${id}`, expiration_date: q.exp ? `${q.exp} 22:59:59` : false, product_id: [q.pid, "?"] });
       lot = [id, q.lot || `L${id}`];
     }
     const p = produits.get(q.pid);
-    quants.push({ id: idQuant++, product_id: [q.pid, `[${p?.cip}] ${p?.nom}`], lot_id: lot, location_id: [q.loc || LOC_STOCK, "WH/Stock"], quantity: q.qte, reserved_quantity: q.reserve || 0, company_id: [2, "Elixir"] });
+    quants.push({ id: idQuant++, product_id: [q.pid, `[${p?.code ?? p?.cip}] ${p?.nom}`], lot_id: lot, location_id: [q.loc || LOC_STOCK, "WH/Stock"], quantity: q.qte, reserved_quantity: q.reserve || 0, company_id: [2, "Elixir"] });
   };
   (donnees.quants || []).forEach(ajouterQuant);
   const NOMS = { 2: "Liste de prix EUR", 4: "Export", 5: "Liste de prix EUR 2", 15: "Expepharma", 1110: "CA >50k mensuel", 1112: "Cluster 78", 1114: "VIP", 25: "Liste de prix EUR par défaut" };
@@ -97,10 +100,33 @@ export function fauxOdoo(donnees = {}, { maintenant = () => Date.now() } = {}) {
   for (const r of donnees.regles || []) nouvelleRegle({ pricelist_id: r.liste, applied_on: r.pid ? "0_product_variant" : "1_product", product_tmpl_id: r.tmpl || produits.get(r.pid)?.tmpl,
     product_id: r.pid || false, compute_price: r.fixe != null ? "fixed" : "percentage", fixed_price: r.fixe ?? 0, percent_price: r.pct ?? 0, min_quantity: r.mq ?? 0,
     date_start: r.ds || false, date_end: r.de || false });
-  const ventes = (donnees.ventes || []).map((v, i) => { const p = produits.get(v.pid); return { id: 70000 + i, product_id: [v.pid, `[${p?.cip}] ${p?.nom}`], product_uom_qty: v.qte,
-    pml_order_ref: v.ref || false, date_order: v.date || versOdoo(maintenant() - 5 * 864e5), state: v.state || "sale", company_id: [2, "Elixir"],
-    price_unit: v.pu ?? p?.list_price ?? 0, discount: v.remise ?? 0, price_subtotal: round2((v.pu ?? p?.list_price ?? 0) * (1 - (v.remise ?? 0) / 100) * v.qte),
-    order_id: [80000 + i, v.commande || `S${300000 + i}`], invoice_status: v.facturation || "invoiced", _liste: v.liste || 5 }; });
+  // commande Odoo par nom : même nom → même order_id (lignes d'une même commande)
+  const idsCommandes = new Map();
+  const idCommande = (nom) => { if (!idsCommandes.has(nom)) idsCommandes.set(nom, 80000 + idsCommandes.size); return idsCommandes.get(nom); };
+  const libelle = (p) => `[${p?.code ?? p?.cip}] ${p?.nom}`;
+  const ligneVente = (v, id, nomDefaut, statutDefaut) => { const p = produits.get(v.pid); const nom = v.commande || nomDefaut; const pu = v.pu ?? p?.list_price ?? 0;
+    return { id, product_id: [v.pid, libelle(p)], product_uom_qty: v.qte, pml_order_ref: v.ref || false, date_order: v.date || versOdoo(maintenant() - 5 * 864e5), state: v.state || "sale",
+      company_id: [2, "Elixir"], price_unit: pu, discount: v.remise ?? 0, price_subtotal: round2(pu * (1 - (v.remise ?? 0) / 100) * v.qte), order_id: [idCommande(nom), nom],
+      invoice_status: v.facturation || statutDefaut, qty_delivered: v.livre ?? 0, qty_invoiced: 0, invoice_lines: [], display_type: false, _liste: v.liste || 5 }; };
+  const ventes = (donnees.ventes || []).map((v, i) => ligneVente(v, 70000 + i, `S${300000 + i}`, "invoiced"));
+  // factures et avoirs : account.move (name, move_type, state) et account.move.line (move_id, quantity, price_subtotal, parent_state)
+  const pieces = new Map(), lignesPiece = new Map();
+  let idPiece = 95000, idLignePiece = 96000;
+  const piece = (type, numero, lignes, etat = "posted") => {
+    const id = ++idPiece;
+    pieces.set(id, { id, name: numero || `${type === "out_refund" ? "RINV" : "INV"}/2026/${id}`, move_type: type, state: etat });
+    for (const { vente, qte, prix } of lignes) {
+      const v = ventes.find(x => x.id === vente);
+      if (!v) throw new Error(`faux Odoo : ligne de vente ${vente} inconnue`);
+      const lid = ++idLignePiece;
+      const pu = prix ?? round2(v.price_subtotal / v.product_uom_qty);
+      lignesPiece.set(lid, { id: lid, move_id: [id, pieces.get(id).name], quantity: qte, price_subtotal: round2(pu * qte), parent_state: etat, product_id: v.product_id });
+      v.invoice_lines.push(lid);
+      if (etat === "posted") v.qty_invoiced = round2(v.qty_invoiced + (type === "out_refund" ? -qte : qte));
+      v.invoice_status = v.qty_invoiced >= v.product_uom_qty ? "invoiced" : "to invoice";
+    }
+    return pieces.get(id).name;
+  };
 
   // prix facturé : MIN du prix sans les règles ajoutées et des règles applicables (quantité, dates)
   function prixFacture(pid, liste, qte = 1, t = maintenant()) {
@@ -140,7 +166,7 @@ export function fauxOdoo(donnees = {}, { maintenant = () => Date.now() } = {}) {
   const etat = { appels: [], ecritures: [], ecrituresRefusees: 0, interdireEcritures: false, refuserListes: new Set(), perdreReponse: 0, couperAvant: 0, mails: [], panne: null };
   const lecture = (fields, r) => (fields?.length ? Object.fromEntries([["id", r.id], ...fields.map(f => [f, r[f] ?? false])]) : { ...r });
   const champProduit = (r, f) => f === "default_code" ? r.default_code : r[f];
-  const recProduit = (p) => ({ id: p.id, default_code: p.cip, barcode: p.cip, name: `[${p.cip}] ${p.nom}`, product_tmpl_id: [p.tmpl, `[${p.cip}] ${p.nom}`], list_price: p.list_price,
+  const recProduit = (p) => ({ id: p.id, default_code: p.code ?? p.cip, barcode: p.cip, name: `[${p.code ?? p.cip}] ${p.nom}`, product_tmpl_id: [p.tmpl, `[${p.code ?? p.cip}] ${p.nom}`], list_price: p.list_price,
     standard_price: p.cout ?? 0, product_variant_count: p.variantes || 1, active: true, categ_id: [p.categ || 1, "All"] });
   const pagine = (rows, kw) => rows.slice(kw.offset || 0, kw.limit ? (kw.offset || 0) + kw.limit : undefined);
 
@@ -164,6 +190,9 @@ export function fauxOdoo(donnees = {}, { maintenant = () => Date.now() } = {}) {
         return pagine(rows, kw).map(r => lecture(kw.fields, r));
       }
       case "stock.lot.read": return args[0].map(id => lots.get(id)).filter(Boolean).map(l => lecture(args[1], l));
+      case "stock.lot.search_read": return pagine([...lots.values()].filter(l => evalDomaine(l, args[0], (r, f) => r[f])), kw).map(r => lecture(kw.fields, r));
+      case "account.move.line.read": return args[0].map(id => lignesPiece.get(Number(id))).filter(Boolean).map(r => lecture(args[1], r));
+      case "account.move.read": return args[0].map(id => pieces.get(Number(id))).filter(Boolean).map(r => lecture(args[1], r));
       case "report.product.report_pricelist.get_html": { const d = args[0]; return html(d.active_ids, d.pricelist_id); }
       case "sale.order.line.search_read": {
         const rows = ventes.filter(v => evalDomaine(v, args[0], (r, f) => f === "order_id.date_order" ? r.date_order : r[f]));
@@ -208,9 +237,14 @@ export function fauxOdoo(donnees = {}, { maintenant = () => Date.now() } = {}) {
     modifierALaMain: (id, champs) => Object.assign(items.get(id), champs),
     supprimerALaMain: (id) => items.delete(id),
     ajouterRegleALaMain: (v) => nouvelleRegle(v),
-    ajouterVente: (v) => { const p = produits.get(v.pid); ventes.push({ id: 70000 + ventes.length, product_id: [v.pid, `[${p?.cip}] ${p?.nom}`], product_uom_qty: v.qte, pml_order_ref: v.ref || false,
-      date_order: v.date || versOdoo(maintenant()), state: "sale", company_id: [2, "Elixir"], price_unit: v.pu ?? p?.list_price, discount: v.remise ?? 0,
-      price_subtotal: round2((v.pu ?? p?.list_price) * (1 - (v.remise ?? 0) / 100) * v.qte), order_id: [80000 + ventes.length, v.commande || "S1"], invoice_status: "to invoice", _liste: v.liste || 5 }); },
+    // ligne de vente : { pid, qte, ref (null : sans référence, ligne ajoutée à la main), pu, remise, commande (nom : même nom →
+    // même commande), liste, livre (qty_delivered), state ("cancel" : annulée) } → id de la ligne
+    ajouterVente: (v) => { const l = ligneVente({ date: versOdoo(maintenant()), ...v }, 70000 + ventes.length, "S1", "to invoice"); ventes.push(l); return l.id; },
+    // ligne de vente modifiée à la main dans Odoo (quantité, prix, annulation : state "cancel") ; sous-total recalculé
+    modifierVente: (id, champs) => { const v = ventes.find(x => x.id === id); Object.assign(v, champs); v.price_subtotal = round2(v.price_unit * (1 - (v.discount || 0) / 100) * v.product_uom_qty); return v; },
+    // facture (out_invoice) ou avoir (out_refund) postés : lignes [{ vente: id, qte, prix? (net unitaire ; défaut : celui de la ligne) }]
+    facturer: (lignes, numero = null, etat = "posted") => piece("out_invoice", numero, lignes, etat),
+    avoir: (lignes, numero = null, etat = "posted") => piece("out_refund", numero, lignes, etat),
   };
 }
 

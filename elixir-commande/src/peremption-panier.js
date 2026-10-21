@@ -13,7 +13,10 @@
 //  • Odoo facture le tarif de la liste du client tant que la ligne n'est pas corrigée à la main : le Contrôle des écarts de
 //    l'onglet Péremptions (peremption?action=ecarts) liste chaque ligne prise au prix de la page et facturée plus cher.
 //  • Panier enregistré : une ligne péremption est remise au prix ACTUEL de la page (produit encore sur la page), ou au prix
-//    habituel si le produit a quitté la page, avec un message (controleLignes, controlerPrixPanier d'App.jsx).
+//    habituel si le produit a quitté la page (rajoutée par la règle de la Saisie : colis, palier, minimum), avec un message
+//    (controleLignes, controlerPrixPanier d'App.jsx) ; aussi juste avant l'envoi, sans lecture gardée.
+//  • Plafond (revue du 21/10/2026) : le prix de la page ne vaut que pour les boîtes à date courte (plafondCourt).
+//  • Ligne du lot 0 (mention sans remise) : redevient une ligne ordinaire au prix habituel, jamais passée au prix de la page.
 // Parties pures (sans React), importées aussi par netlify/functions/_peremption.js et _accueil-outils.js (même offre partout).
 // Tests : scripts/test-peremption-panier.mjs, test-peremption-mention.mjs, test-peremption-odoo.mjs, test-accueil-outils.mjs.
 
@@ -92,13 +95,33 @@ export function remiseLigne(x) {
   return { remise: r != null && r >= 0 ? r : null, facture_odoo: x?.facture_odoo === true };
 }
 
+// Fin de la fenêtre de la page (odoo-catalog expiry_months=4, en UTC comme Netlify) : dernier jour du 4e mois qui suit
+export const finFenetre = (t = Date.now()) => { const d = new Date(t); return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 5, 0)).toISOString().slice(0, 10); };
+// Plafond d'une ligne péremption (revue du 21/10/2026) : le prix de la page ne vaut que pour les boîtes à date courte.
+// court_qte des faits frais du serveur (stock libre des lots qui périment d'ici la fin de la fenêtre) ; sinon somme des lots
+// de la page qui périment d'ici la fin de la fenêtre ; règle Odoo facturée avec lot long forcé (toutes les boîtes au même
+// prix, la page le dit) ou rien de connu : null (pas de plafond)
+export function plafondCourt(p, t = Date.now()) {
+  if (remiseFacturee(p) != null && p?.force_lot_long) return null;
+  const c = num(p?.court_qte);
+  if (c != null) return Math.max(0, Math.floor(c));
+  let lots = p?.lots;
+  if (typeof lots === "string") { try { lots = JSON.parse(lots); } catch { lots = null; } }
+  if (!Array.isArray(lots) || !lots.length) return null;
+  const max = finFenetre(t);
+  const n = lots.filter(l => /^\d{4}-\d{2}-\d{2}/.test(String(l?.expiry || "")) && String(l.expiry).slice(0, 10) <= max)
+    .reduce((s, l) => s + Math.max(0, Math.floor(num(l.qty) || 0)), 0);
+  return n >= 1 ? n : null;
+}
+const plafondDe = (x) => (Number.isInteger(x?.plafond) && x.plafond >= 0 ? x.plafond : null);
+
 // Objet ajouté au panier par la page (ShortExpiry, handleAdd) : prix et remise de l'offre, prix de base, date du lot le plus
-// court (« date inconnue » si Odoo n'en donne pas : la ligne reste une ligne péremption)
+// court (« date inconnue » si Odoo n'en donne pas : la ligne reste une ligne péremption), plafond (boîtes à date courte)
 export function offrePeremption(p, qty, remises = null) {
   const o = offreAffichee(p, remises);
   const peremption = jourPeremption(p?.earliest_expiry);
   return { cip: p.cip, name: p.name, qty, pn: o.pn, pv: o.base ?? num(p?.list_price), discount: o.remise, tiers: o.tiers,
-    note: notePeremption(peremption), peremption, remise: o.remise, facture_odoo: o.facture_odoo };
+    note: notePeremption(peremption), peremption, remise: o.remise, facture_odoo: o.facture_odoo, plafond: plafondCourt(p) };
 }
 
 // Identité d'une ligne hors catalogue (specialItems) : CIP, ou nom ; ligne péremption : la sienne, distincte d'une ligne de
@@ -106,23 +129,34 @@ export function offrePeremption(p, qty, remises = null) {
 export const idSpecial = (s) => (estPeremption(s) ? `per:${s.cip || s.name}` : (s.cip || s.name));
 
 // Ajout depuis la page : le produit a déjà sa ligne péremption → quantité ajoutée, au prix, à la remise et à la date de l'offre
-// du moment (une ligne, un prix) ; sinon nouvelle ligne. Jamais fondue dans une autre ligne du même CIP.
+// du moment (une ligne, un prix) ; sinon nouvelle ligne. Jamais fondue dans une autre ligne du même CIP. Quantité de la ligne
+// au plus le plafond (boîtes à date courte) ; rien à ajouter : panier inchangé (App prévient : ajouterDepuisSaisie).
 export function ajouterPeremption(prev, item) {
   const { remise, facture_odoo } = remiseLigne(item);
+  const plafond = plafondDe(item);
   const offre = { cip: item.cip || null, name: item.name, pn: item.pn ?? null, pv: item.pv ?? null, tiers: Array.isArray(item.tiers) && item.tiers.length ? item.tiers : null,
-    peremption: jourPeremption(item.peremption), remise: remise ?? 0, facture_odoo };
+    peremption: jourPeremption(item.peremption), remise: remise ?? 0, facture_odoo, plafond };
   const id = idSpecial(offre);
   const qty = parseInt(item.qty) || 0;
+  const borne = (q) => (plafond != null ? Math.min(q, plafond) : q);
   const i = prev.findIndex(s => idSpecial(s) === id);
-  if (i < 0) return [...prev, { ...offre, qty }];
-  return prev.map((s, k) => { if (k !== i) return s; const { peremption_remise, ...reste } = s; return { ...reste, ...offre, qty: (parseInt(s.qty) || 0) + qty }; });   // eslint-disable-line no-unused-vars
+  if (i < 0) return borne(qty) > 0 ? [...prev, { ...offre, qty: borne(qty) }] : prev;
+  return prev.map((s, k) => { if (k !== i) return s; const { peremption_remise, ...reste } = s; return { ...reste, ...offre, qty: borne((parseInt(s.qty) || 0) + qty) }; });   // eslint-disable-line no-unused-vars
+}
+// Boîtes encore possibles au prix de la page pour ce produit (plafond moins la ligne péremption déjà au panier) ; null : sans plafond
+export function restePeremption(prev, item) {
+  const plafond = plafondDe(item);
+  if (plafond == null) return null;
+  const id = idSpecial({ cip: item.cip || null, name: item.name, peremption: jourPeremption(item.peremption) });
+  const deja = (prev || []).filter(s => estPeremption(s) && idSpecial(s) === id).reduce((t, s) => t + (parseInt(s.qty) || 0), 0);
+  return Math.max(0, plafond - deja);
 }
 
 // Champs ajoutés à une ligne péremption du panier calculé (cartItems) ; aucune autre ligne ne change
 export const champsPeremption = (s) => {
   if (!estPeremption(s)) return {};
   const { remise, facture_odoo } = remiseLigne(s);
-  return { peremption: s.peremption, note: notePeremption(s.peremption), remise, facture_odoo, pv: s.pv ?? null };
+  return { peremption: s.peremption, note: notePeremption(s.peremption), remise, facture_odoo, pv: s.pv ?? null, plafond: plafondDe(s) };
 };
 
 // Champs ajoutés à une ligne de commande enregistrée (toItems) : order-save garde les lignes telles quelles, le relais n'en
@@ -203,39 +237,59 @@ export function baisseParCip(lignes, n) {
 
 // ── Panier enregistré : contrôle des lignes péremption (controlerPrixPanier d'App.jsx, hors zones protégées) ──
 // Le panier (localStorage) garde le prix du moment de l'ajout. Au chargement, à l'ouverture et à la fermeture du panier, au
-// changement de pharmacie et au retour sur l'onglet, la page est relue :
+// changement de pharmacie, au retour sur l'onglet et juste avant l'envoi (sans lecture gardée), la page est relue :
 //  • « page »     : ligne péremption dont le produit est encore sur la page → prix, remise, facturation et date de l'offre
 //                   ACTUELLE (à la hausse comme à la baisse : remise changée par l'admin, règle Odoo posée ou retirée) ;
+//                   quantité ramenée au plafond (boîtes à date courte), l'excédent repart au prix habituel (aRajouter) ;
 //  • « sortie »   : produit qui a quitté la page (date, lot court épuisé ou en quarantaine) → la ligne redevient une ligne
-//                   ordinaire au prix habituel (App la rajoute par addItemToCart : ligne du menu s'il y en a une) ;
+//                   ordinaire au prix habituel (App la rajoute comme un ajout de la Saisie : ligne du menu s'il y en a une,
+//                   avec sa règle de colis, de palier ou de minimum) ;
+//  • « lot0 »     : ligne du lot 0 (20/10/2026 : mention « Pér. » sans remise, au prix habituel, qui a pu recevoir des boîtes
+//                   de la Saisie) → ligne ordinaire au prix habituel, jamais passée d'office au prix de la page ;
 //  • « ancienne » : ligne ordinaire d'un panier de l'ancienne page (avant le 20/10/2026 : prix de base × 0,5, ou × 0,8 dès
 //                   500 €, sans mention) dont le produit est sur la page → ligne péremption à l'offre actuelle.
 // Article multi-CIP (supplier_code) et ligne sans CIP : jamais touchés. Une ligne péremption dont le produit est introuvable
 // (ni sur la page, ni dans horsPage) est rendue dans « inconnus » (App demande son prix habituel, puis recontrôle).
 // produits : produits de la page ; horsPage : prix habituel de produits absents de la page (masques, retirees, prix).
-export function controleLignes(lignes, { produits = [], horsPage = [], remises = null } = {}) {
+const estLot0 = (s) => estPeremption(s) && num(s?.remise) == null && !(Number(s?.peremption_remise) >= 1);
+export function controleLignes(lignes, { produits = [], horsPage = [], remises = null } = {}, t = Date.now()) {
   const page = new Map(), hors = new Map();
   for (const p of Array.isArray(produits) ? produits : []) if (p?.cip && !page.has(p.cip)) page.set(p.cip, p);
   for (const p of Array.isArray(horsPage) ? horsPage : []) if (p?.cip && !hors.has(p.cip)) hors.set(p.cip, p);
   const changes = [], inconnus = [];
+  // prix habituel d'un produit (page, sinon horsPage) : null si inconnu
+  const habituelDe = (cip) => { const x = page.get(cip) || hors.get(cip); const h = x ? prixPage(x) : null; return h?.pn > 0 ? h : null; };
   for (const s of Array.isArray(lignes) ? lignes : []) {
     if (!s?.cip || s.supplier_code) continue;
     const avant = { pn: num(s.pn), ...remiseLigne(s), peremption: s.peremption ?? null };
     const p = page.get(s.cip);
+    const qte = parseInt(s.qty) || 0;
+    if (estLot0(s)) {
+      const hab = habituelDe(s.cip) || (avant.pn > 0 ? { pn: avant.pn, pv: num(s.pv), tiers: s.tiers ?? null } : null);
+      if (hab) changes.push({ type: "lot0", cip: s.cip, name: s.name || p?.name || s.cip, qty: qte, avant, apres: { pn: hab.pn, pv: hab.pv, tiers: hab.tiers } });
+      else inconnus.push(s.cip);
+      continue;
+    }
     if (estPeremption(s)) {
       if (p) {
         const o = offreAffichee(p, remises);
         if (!(o.pn > 0)) continue;
         const date = jourPeremption(p.earliest_expiry);
+        const plafond = plafondCourt(p, t);
+        const garde = plafond != null ? Math.min(qte, plafond) : qte;
+        const excedent = qte - garde;
         const memePrix = avant.pn != null && Math.abs(avant.pn - o.pn) < ECART_PRIX;
-        if (memePrix && avant.remise === o.remise && avant.facture_odoo === o.facture_odoo && s.peremption === date && !("peremption_remise" in s)) continue;
-        changes.push({ type: "page", cip: s.cip, name: s.name || p.name || s.cip, qty: s.qty, avant,
-          apres: { pn: o.pn, pv: o.base ?? num(p.list_price), tiers: o.tiers, remise: o.remise, facture_odoo: o.facture_odoo, peremption: date }, prixChange: !memePrix });
+        if (memePrix && avant.remise === o.remise && avant.facture_odoo === o.facture_odoo && s.peremption === date && !("peremption_remise" in s)
+          && plafondDe(s) === plafond && !excedent) continue;
+        const hab = excedent > 0 ? prixPage(p) : null;
+        changes.push({ type: "page", cip: s.cip, name: s.name || p.name || s.cip, qty: garde, avant,
+          apres: { pn: o.pn, pv: o.base ?? num(p.list_price), tiers: o.tiers, remise: o.remise, facture_odoo: o.facture_odoo, peremption: date, plafond },
+          prixChange: !memePrix, excedent, ...(hab?.pn > 0 ? { habituel: { pn: hab.pn, pv: hab.pv, tiers: hab.tiers } } : {}) });
         continue;
       }
       const h = hors.get(s.cip);
       const hab = h ? prixPage(h) : null;
-      if (hab?.pn > 0) changes.push({ type: "sortie", cip: s.cip, name: s.name || h.name || s.cip, qty: s.qty, avant, apres: { pn: hab.pn, pv: hab.pv, tiers: hab.tiers } });
+      if (hab?.pn > 0) changes.push({ type: "sortie", cip: s.cip, name: s.name || h.name || s.cip, qty: qte, avant, apres: { pn: hab.pn, pv: hab.pv, tiers: hab.tiers } });
       else inconnus.push(s.cip);
       continue;
     }
@@ -245,13 +299,18 @@ export function controleLignes(lignes, { produits = [], horsPage = [], remises =
     if (!ancienne) continue;
     const o = offreAffichee(p, remises);
     if (!(o.pn > 0)) continue;
-    changes.push({ type: "ancienne", cip: s.cip, name: s.name || p.name || s.cip, qty: s.qty, avant,
-      apres: { pn: o.pn, pv: o.base ?? base, tiers: o.tiers, remise: o.remise, facture_odoo: o.facture_odoo, peremption: jourPeremption(p.earliest_expiry) }, prixChange: Math.abs(avant.pn - o.pn) >= ECART_PRIX });
+    const plafond = plafondCourt(p, t);
+    const garde = plafond != null ? Math.min(qte, plafond) : qte;
+    const hab = prixPage(p);
+    changes.push({ type: "ancienne", cip: s.cip, name: s.name || p.name || s.cip, qty: garde, avant,
+      apres: { pn: o.pn, pv: o.base ?? base, tiers: o.tiers, remise: o.remise, facture_odoo: o.facture_odoo, peremption: jourPeremption(p.earliest_expiry), plafond },
+      prixChange: Math.abs(avant.pn - o.pn) >= ECART_PRIX, excedent: qte - garde, ...(qte > garde && hab?.pn > 0 ? { habituel: { pn: hab.pn, pv: hab.pv, tiers: hab.tiers } } : {}) });
   }
   return { changes, inconnus: [...new Set(inconnus)] };
 }
 // Lignes du panier après le contrôle → { lignes, aRajouter } (même tableau si rien ne change : pas de rendu inutile).
-// aRajouter : lignes « sortie », à remettre au panier comme un ajout ordinaire (App : addItemToCart, sans ouvrir le panier).
+// aRajouter : { cip, name, qty, pn, pv, tiers, change } à remettre au panier comme un ajout de la Saisie (App : règle de colis,
+// puis addItemToCart, sans ouvrir le panier) : lignes « sortie » et « lot0 », excédent d'une ligne au-delà du plafond.
 export function appliquerControle(lignes, changes) {
   if (!changes?.length) return { lignes, aRajouter: [] };
   const parCle = new Map(changes.map(c => [`${c.type === "ancienne" ? "" : "per:"}${c.cip}`, c]));
@@ -260,33 +319,52 @@ export function appliquerControle(lignes, changes) {
   for (const s of lignes) {
     const c = s && !s.supplier_code && s.cip ? parCle.get(estPeremption(s) ? `per:${s.cip}` : s.cip) : null;
     if (!c) { out.push(s); continue; }
-    if (c.type === "sortie") { aRajouter.push({ cip: s.cip, name: s.name, qty: s.qty, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers }); continue; }
+    if (c.type === "sortie" || c.type === "lot0") { aRajouter.push({ cip: s.cip, name: s.name, qty: parseInt(s.qty) || 0, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers, change: c }); continue; }
     const { peremption_remise, ...reste } = s;   // eslint-disable-line no-unused-vars
-    out.push({ ...reste, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers, peremption: c.apres.peremption, remise: c.apres.remise, facture_odoo: c.apres.facture_odoo });
+    if (c.excedent > 0 && c.habituel) aRajouter.push({ cip: s.cip, name: s.name, qty: c.excedent, pn: c.habituel.pn, pv: c.habituel.pv, tiers: c.habituel.tiers, change: c });
+    if (c.qty > 0) out.push({ ...reste, qty: c.qty, pn: c.apres.pn, pv: c.apres.pv, tiers: c.apres.tiers, peremption: c.apres.peremption, remise: c.apres.remise,
+      facture_odoo: c.apres.facture_odoo, plafond: c.apres.plafond ?? null });
   }
-  // « ancienne » devenue ligne péremption alors qu'une ligne péremption du même CIP existait : une seule ligne, quantités additionnées
+  // « ancienne » devenue ligne péremption alors qu'une ligne péremption du même CIP existait : une seule ligne, quantités
+  // additionnées (au plus le plafond)
   const vues = new Map();
   out = out.reduce((acc, s) => {
     if (!estPeremption(s)) { acc.push(s); return acc; }
     const id = idSpecial(s);
     if (!vues.has(id)) { vues.set(id, acc.length); acc.push(s); return acc; }
     const k = vues.get(id);
-    acc[k] = { ...acc[k], qty: (parseInt(acc[k].qty) || 0) + (parseInt(s.qty) || 0) };
+    const q = (parseInt(acc[k].qty) || 0) + (parseInt(s.qty) || 0);
+    acc[k] = { ...acc[k], qty: plafondDe(acc[k]) != null ? Math.min(q, plafondDe(acc[k])) : q };
     return acc;
   }, []);
   return { lignes: out, aRajouter };
 }
 const nomCourt = (n) => { const t = String(n ?? "").trim(); return t.length > 32 ? `${t.slice(0, 31).trimEnd()}…` : t; };
 const liste2 = (cs, f) => cs.slice(0, 2).map(f).join(", ") + (cs.length > 2 ? ` et ${cs.length - 2} autre${cs.length > 3 ? "s" : ""}` : "");
-// Message affiché après le contrôle (flash d'App.jsx) ; vide si aucun prix ne change (date seule mise à jour)
+// Ce que devient une ligne rajoutée (sortie, lot 0, excédent) : App annote le changement (rajout) après la règle de la Saisie :
+// { menu: rayon du menu qui l'a reçue (à son prix : menu ou campagne) | null, qte: boîtes rajoutées, regle: { multiple, rayon } | null }
+const devenir = (c) => {
+  const r = c.rajout;
+  if (r?.regle && !(r.qte > 0)) return `${nomCourt(c.name)} : se commande par ${r.regle.multiple} dans « ${r.regle.rayon} », ligne retirée`;
+  const ou = r?.menu ? `ligne du menu « ${r.menu} », à son prix` : euros(c.type === "page" || c.type === "ancienne" ? c.habituel?.pn : c.apres.pn);
+  return `${nomCourt(c.name)} : ${ou}${r?.regle && r.qte !== (c.type === "page" || c.type === "ancienne" ? c.excedent : c.qty) ? ` (arrondi au colis de ${r.regle.multiple} : ${r.qte})` : ""}`;
+};
+// Message affiché après le contrôle (flash d'App.jsx) ; vide si aucun prix ni aucune quantité ne change (date seule mise à jour)
 export function messageControle(changes) {
-  const page = (changes || []).filter(c => c.type !== "sortie" && c.prixChange), sortie = (changes || []).filter(c => c.type === "sortie");
+  const cs = changes || [];
+  const page = cs.filter(c => (c.type === "page" || c.type === "ancienne") && c.prixChange), sortie = cs.filter(c => c.type === "sortie"), lot0 = cs.filter(c => c.type === "lot0");
+  const plafond = cs.filter(c => (c.type === "page" || c.type === "ancienne") && c.excedent > 0);
   const offre = (c) => `${nomCourt(c.name)} : ${euros(c.apres.pn)}${c.apres.remise >= 1 ? `, ${pctTexte(c.apres.remise)}` : ", prix habituel"}`;
   return [page.length ? `Péremption courte : prix de la page mis à jour (${liste2(page, offre)})` : "",
-    sortie.length ? `Plus en péremption courte, ligne remise au prix habituel (${liste2(sortie, c => `${nomCourt(c.name)} : ${euros(c.apres.pn)}`)})` : ""].filter(Boolean).join(" · ");
+    plafond.length ? `Péremption courte : boîtes à date courte au plus à ce prix (${liste2(plafond, c => `${nomCourt(c.name)} : ${c.apres.plafond}`)}) ; le reste repart au prix habituel (${liste2(plafond, devenir)})` : "",
+    sortie.length ? `Plus en péremption courte, ligne remise au prix habituel (${liste2(sortie, devenir)})` : "",
+    lot0.length ? `Ligne « Pér. » d'avant le 21/10 remise au prix habituel (${liste2(lot0, devenir)}) : pour le prix péremption, ajoutez-la depuis la page Péremption courte` : ""]
+    .filter(Boolean).join(" · ");
 }
 // Encart de la ligne du panier mise à jour (texte après « Prix mis à jour : »)
 export const detailControle = (c) => `${euros(c.apres.pn)} au lieu de ${c.avant?.pn != null ? euros(c.avant.pn) : "—"}`
-  + (c.type === "sortie" ? " : le produit n'est plus en péremption courte (prix habituel)"
+  + (c.type === "sortie" ? ` : le produit n'est plus en péremption courte (${c.rajout?.menu ? `prix du menu « ${c.rajout.menu} »` : "prix habituel"})`
+    : c.type === "lot0" ? " : ligne « Pér. » d'avant le 21/10, au prix habituel (pour le prix péremption, ajoutez-la depuis la page)"
     : c.type === "ancienne" ? ` : prix de la page Péremption courte${c.apres.remise >= 1 ? ` (${pctTexte(c.apres.remise)})` : ""}`
-    : c.apres.facture_odoo ? ` : remise ${pctTexte(c.apres.remise)} facturée par Odoo` : c.apres.remise >= 1 ? ` : prix actuel de la page (${pctTexte(c.apres.remise)})` : " : prix habituel (plus de remise péremption)");
+    : c.apres.facture_odoo ? ` : remise ${pctTexte(c.apres.remise)} facturée par Odoo` : c.apres.remise >= 1 ? ` : prix actuel de la page (${pctTexte(c.apres.remise)})` : " : prix habituel (plus de remise péremption)")
+  + (c.excedent > 0 ? ` ; ${c.apres.plafond} boîte${c.apres.plafond > 1 ? "s" : ""} au plus à ce prix (lot court)` : "");

@@ -25,7 +25,7 @@ const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
   stdin: { contents: 'export * from "./src/peremption-panier.js"; export { applyTiers } from "./src/tiers.jsx";'
     + ' export { qtyByCip, needsJustif, justifIssues, rxFrais } from "./src/lab-justif-client.js";'
-    + ' export { remiseSaisie, prixVise, ETATS, habituelDe, economie, detailJournal, csvEcarts, totauxEcarts, texteFinLot, texteDecision, FACTURATION, TYPES_ECART, STATUTS_ECART, ACTIONS_JOURNAL, RESULTATS_JOURNAL, MODES_JOURNAL, DEBUT_REGLE_PANIER } from "./src/components/PeremptionsAdmin.jsx";', resolveDir: RACINE, loader: "js" },
+    + ' export { remiseSaisie, prixVise, ETATS, habituelDe, economie, detailJournal, csvEcarts, csvCellule, totauxEcarts, actionEcart, remiseRegleDepuisPage, texteFinLot, texteDecision, FACTURATION, TYPES_ECART, STATUTS_ECART, ACTIONS_JOURNAL, RESULTATS_JOURNAL, MODES_JOURNAL, DEBUT_REGLE_PANIER } from "./src/components/PeremptionsAdmin.jsx";', resolveDir: RACINE, loader: "js" },
   bundle: true, format: "esm", platform: "neutral", write: false,
   loader: { ".jsx": "jsx", ".js": "jsx" }, jsx: "automatic", logLevel: "silent",
   // React vide (les composants ne sont pas rendus ici) ; JSX automatique (src/icons.jsx n'importe pas React)
@@ -124,7 +124,7 @@ eq("remise par défaut : 50 %, 20 % dès 500 € de prix de base", [M.remiseDefa
 {
   const hec = ajoutPage(PAGE_HEC, 2);
   eq("page : objet ajouté (−50 % du prix de base, date, mention, remise, non facturée par Odoo)", hec,
-    { cip: HEC, name: "HEC POM NACU T/25G", qty: 2, pn: 5.16, pv: 10.32, discount: 50, tiers: null, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise: 50, facture_odoo: false });
+    { cip: HEC, name: "HEC POM NACU T/25G", qty: 2, pn: 5.16, pv: 10.32, discount: 50, tiers: null, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise: 50, facture_odoo: false, plafond: null });
   for (const [p, rem] of [[PAGE_HEC, {}], [PAGE_EUPHY, {}], [PAGE_ZADI, {}], [PAGE_CHER, {}], [PAGE_SANS_REMISE, {}], [{ ...PAGE_HEC, remise_admin: undefined }, { [HEC]: 30 }]]) {
     const avant = ajoutAvant(p, 3, rem);
     if (!avant) break;
@@ -136,7 +136,7 @@ eq("remise par défaut : 50 %, 20 % dès 500 € de prix de base", [M.remiseDefa
   eq("page : quantité 0, rien d'ajouté ; produit sans prix, rien d'ajouté", [ajoutPage(PAGE_HEC, 0), ajoutPage({ ...PAGE_SANS_REMISE, list_price: null }, 2)], [null, null]);
   // remise de l'admin à 0 : prix de la Saisie (liste n° 5), paliers compris
   for (const p of [PAGE_HEC, PAGE_ZADI, PAGE_CHER, PAGE_SANS_REMISE]) {
-    const { note, peremption, remise, facture_odoo, discount, ...page } = ajoutPage({ ...p, remise_admin: 0 }, 3);   // eslint-disable-line no-unused-vars
+    const { note, peremption, remise, facture_odoo, discount, plafond, ...page } = ajoutPage({ ...p, remise_admin: 0 }, 3);   // eslint-disable-line no-unused-vars
     const { discount: d2, ...saisie } = ajoutSaisie(p, 3);   // eslint-disable-line no-unused-vars
     eq(`remise de l'admin à 0 (${p.name}) : prix, prix de base et paliers de la Saisie de commande`, page, saisie);
   }
@@ -150,7 +150,9 @@ eq("remise par défaut : 50 %, 20 % dès 500 € de prix de base", [M.remiseDefa
   eq("V1 : produit plus facturé → offre par défaut (−50 %)", [ajoutPage({ ...ZIN, facturee: false, discounted_price: 3.51, discount_pct: 6.1 }, 1).pn, ajoutPage({ ...ZIN, facturee: false, discounted_price: 3.51 }, 1).facture_odoo], [1.87, false]);
   vrai("page : « remise sur facture » pour une règle Odoo ; « Péremption courte · lot au … » sans remise ; « Ajouter » désactivé sans prix",
     SHORT.includes("remise sur facture") && SHORT.includes("Péremption courte · lot au") && /sansPrix \? \(\s*<button className="ex-peremption-ajouter" disabled/.test(SHORT));
-  vrai("page : encart « la remise péremption est déjà déduite du prix affiché » (ligne à part au panier)", SHORT.includes("La remise péremption est déjà déduite du prix affiché") && SHORT.includes("ligne à part de votre panier") && SHORT.includes("Remise sur facture"));
+  vrai("page : encart « la remise péremption est déjà déduite du prix affiché : c'est le prix de votre commande » (ligne à part, prix de la page du moment, boîtes à date courte)",
+    SHORT.includes("La remise péremption est déjà déduite du prix affiché : c'est le prix de votre commande") && SHORT.includes("ligne à part de votre panier, au prix de la page du moment")
+    && SHORT.includes("pour les boîtes à date courte seulement") && !SHORT.includes("figure aussi sur votre facture") && !SHORT.includes("garde ce prix"));
   vrai("page : lit peremption?action=page ; repli odoo-catalog et remises de l'admin (lecture publique) ; ni jeton admin ni prix du menu",
     /fetch\("\/\.netlify\/functions\/peremption\?action=page"\)/.test(SHORT) && /odoo-catalog\?expiry_months=4/.test(SHORT) && /restock-alert\?action=expiry_discounts/.test(SHORT)
     && !/admin_token|set_expiry_discount|prixPanier|prixDuMenu/.test(SHORT));
@@ -230,12 +232,27 @@ async function envoyer(etat) {
     { cle: "1792600000002:3400930470312", type: "peremption", date: "2026-10-21T16:26:40Z", pharmacie: "Pharmacie; d'essai", commande: "1792600000002", odoo: "S400001", liste: 5, cip: "3400930470312", nom: "HEC", qte: 2, pn: 5.16, net: 9.76, ecart: 9.2, peremption: "2026-12-31", remise: 50, coherent: false, facturation: "invoiced", statut: "rectifie", reference: "AV-118", par: "zineb@elixir.test", le: "2026-10-22T08:00:00Z" },
     { cle: "1792800000000:3400933121549", type: "probable", date: "2026-10-24T00:00:00Z", pharmacie: "Pharmacie Trois", commande: "1792800000000", odoo: "S400003", liste: 15, cip: "3400933121549", nom: "ZINNAT", qte: 4, pn: 1.87, net: 3.51, ecart: 6.56, peremption: null, remise: null, facturation: "to invoice", statut: "a_rectifier" }];
   const csv = M.csvEcarts(lignes).split("\r\n");
-  eq("admin : export CSV des écarts (20 colonnes, « ; », décimales à virgule, type, statut, référence, qui, quand)", [csv[0].split(";").length, csv[1], csv[2].split(";").slice(12)],
-    [20, '21/10/2026;"Pharmacie; d\'essai";1792600000000;S400001;5;3400932448951;ZADITEN;2;1,92;3,6;3,36;page Péremption (« Pér. »);31/12/2026;50 %;;à facturer;à rectifier;;;',
-      ["page Péremption (« Pér. »)", "31/12/2026", "50 %", "oui", "facturée", "rectifié", "AV-118", "zineb@elixir.test", "22/10 10:00"]]);
+  eq("admin : export CSV des écarts (24 colonnes, « ; », décimales à virgule, type, statut, référence, qui, quand, CIP de la pharmacie, complément, avoirs, règle absente)", [csv[0].split(";").length, csv[1], csv[2].split(";").slice(12, 20)],
+    [24, '21/10/2026;"Pharmacie; d\'essai";1792600000000;S400001;5;3400932448951;ZADITEN;2;1,92;3,6;3,36;page Péremption (« Pér. »);31/12/2026;50 %;;à facturer;à rectifier;;;;;;;',
+      ["page Péremption (« Pér. »)", "31/12/2026", "50 %", "oui", "facturée", "rectifié", "AV-118", "zineb@elixir.test"]]);
+  // revue du 21/10/2026 : injection de formule (nom venu du navigateur), retours chariot
+  eq("admin : CSV protégé contre les formules (= + - @, tabulation, retour) ; retour chariot entre guillemets",
+    ['=HYPERLINK("http://x";"HEC")', "+1", "-2", "@SUM(A1)", "\tx", "a\rb", "Zaditen"].map(M.csvCellule), ['"\'=HYPERLINK(""http://x"";""HEC"")"', "'+1", "'-2", "'@SUM(A1)", "'\tx", '"a\rb"', "Zaditen"]);
   const tot = M.totauxEcarts(lignes);
-  eq("admin : totaux des écarts (à rectifier / rectifié, par pharmacie, montant décroissant)", [tot.a_rectifier, tot.rectifie, tot.nbPharmaciesARectifier, tot.pharmacies.map(p => [p.pharmacie, p.a_rectifier.montant, p.rectifie.montant, p.cles.length])],
-    [{ montant: 9.92, lignes: 2 }, { montant: 9.2, lignes: 1 }, 2, [["Pharmacie Trois", 6.56, 0, 1], ["Pharmacie; d'essai", 3.36, 9.2, 1]]]);
+  eq("admin : totaux (lignes « Pér. » cohérentes seulement ; « à vérifier » et autres types à part)", [tot.a_rectifier, tot.rectifie, tot.a_verifier, tot.autres, tot.nbPharmaciesARectifier, tot.pharmacies.map(p => [p.pharmacie, p.a_rectifier.montant, p.rectifie.montant, p.cles.length])],
+    [{ montant: 3.36, lignes: 1 }, { montant: 0, lignes: 0 }, { montant: 0, lignes: 0 }, { montant: 6.56, lignes: 1 }, 1, [["Pharmacie; d'essai", 3.36, 0, 1]]]);
+  // pharmacies homonymes (CIP différents) : deux pharmacies ; complément d'une ligne rectifiée ; ligne à vérifier hors total
+  const homonymes = [{ cle: "1:1", type: "peremption", pharmacie: "PHARMACIE CENTRALE", pharmacy_cip: "2222222", ecart: 9.2, coherent: true, statut: "a_rectifier" },
+    { cle: "2:1", type: "peremption", pharmacie: "PHARMACIE CENTRALE", pharmacy_cip: "3333333", ecart: 4.6, coherent: true, statut: "rectifie", ecart_rectifie: 3, complement: 1.6 },
+    { cle: "3:1", type: "peremption", pharmacie: "PHARMACIE CENTRALE", pharmacy_cip: "3333333", ecart: 400, coherent: false, statut: "a_rectifier" }];
+  const t2 = M.totauxEcarts(homonymes);
+  eq("admin : homonymes par CIP, complément compté, « Tout marquer » sans la ligne rectifiée ni la ligne à vérifier",
+    [t2.nbPharmaciesARectifier, t2.pharmacies.map(p => [p.pharmacy_cip, p.a_rectifier.montant, p.rectifie.montant, p.cles]), t2.a_rectifier.montant, t2.a_verifier],
+    [2, [["2222222", 9.2, 0, ["1:1"]], ["3333333", 1.6, 3, []]], 10.8, { montant: 400, lignes: 1 }]);
+  eq("admin : action d'une ligne (à facturer → corriger la commande ; facturée ou avoir → avoir)", [M.actionEcart({ facturation: "to invoice" }), M.actionEcart({ facturation: "invoiced" }), M.actionEcart({ facturation: "to invoice", avoirs: [{}] })], ["corriger", "avoir", "avoir"]);
+  eq("admin : « Appliquer dans Odoo » prérempli : remise affichée ; base « % du prix habituel » → le % qui donne le prix de la page",
+    [M.remiseRegleDepuisPage({ affichage: { remise: 50, pn: 5.16, source: "defaut" } }, { base_remise: "prix_base" }), M.remiseRegleDepuisPage({ affichage: { remise: 50, pn: 5.16, source: "defaut" }, faits: { prix_listes: { 5: 9.76 } } }, { base_remise: "prix_liste5" }),
+      M.remiseRegleDepuisPage({ affichage: { remise: 0, pn: 9.76, source: "habituel" } }, {})], [50, 47, null]);
   eq("admin : libellés des types et statuts", [M.TYPES_ECART.peremption, M.STATUTS_ECART.rectifie, M.FACTURATION["to invoice"]], ["page Péremption (« Pér. »)", "rectifié", "à facturer"]);
   eq("admin : message de fin de lot avec les noms", M.texteFinLot({ resultats: [{ item: { cip: "1" }, statut: "facturee" }], refus: [{ cip: "3", raisons: [{ texte: "lot long" }] }] }, (c) => ({ 1: "Zinnat", 3: "Surgam" }[c])),
     "Zinnat : facturé par Odoo · refusé : Surgam (lot long)");
@@ -243,7 +260,10 @@ async function envoyer(etat) {
   vrai("admin : tout passe par peremption.js et adminFetch (remise affichée : POST remise_affichee ; écarts : ecarts, ecarts_resume, ecart_statut) ; aucun stockage",
     /const API = "\/\.netlify\/functions\/peremption"/.test(PER_ADMIN) && PER_ADMIN.includes('action: "remise_affichee"') && PER_ADMIN.includes('action: "ecart_statut"')
     && PER_ADMIN.includes("?action=ecarts_resume") && PER_ADMIN.includes("?action=ecarts&depuis=") && !/localStorage|restock-alert/.test(PER_ADMIN));
-  vrai("admin : « Appliquer dans Odoo » prérempli avec la remise affichée (sans décision)", PER_ADMIN.includes('p.affichage?.remise >= 1 && p.affichage.source !== "odoo" ? String(p.affichage.remise) : ""'));
+  vrai("admin : « Appliquer dans Odoo » prérempli avec la remise affichée (sans décision)", PER_ADMIN.includes('p.affichage?.remise >= 1 && p.affichage.source !== "odoo" ? String(remiseRegleDepuisPage(p, R0)) : ""'));
+  vrai("admin : retirer une règle Odoo dit que la page revient à la remise affichée, avec « revenir aussi au prix habituel » (0 %) coché par défaut",
+    PER_ADMIN.includes("la page revient aussitôt à la remise affichée") && PER_ADMIN.includes("aussiPage: true") && PER_ADMIN.includes('action: "remise_affichee", cip, remise_pct: 0')
+    && !PER_ADMIN.includes("La page cesse aussitôt d'annoncer") && !PER_ADMIN.includes("page sans remise, prix habituel"));
   vrai("onglet admin hors du bundle des pharmacies : chargé à la demande par AdminPanel (lui-même chargé à la demande)",
     /React\.lazy\(\(\) => import\("\.\/components\/PeremptionsAdmin\.jsx"\)\)/.test(ADMIN) && /<PeremptionsAdmin adminFetch=\{adminFetch\} \/>/.test(ADMIN)
     && !/import[^\n]*PeremptionsAdmin/.test(SHORT) && !/import[^\n]*PeremptionsAdmin/.test(APP) && /React\.lazy\(\(\) => import\("\.\/AdminPanel"\)/.test(APP));

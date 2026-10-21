@@ -203,6 +203,28 @@ const ECARTS_AUTORISES = [
   { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026)", attente: "peremptionPanier", motif: "fin d'envoi : lignes à part refusées gardées au panier, comme les lignes « justificatif »",
     avant: "      if (keepJustif) {\n        // garder seulement les lignes « justificatif » non enregistrées (la commande normale est partie)\n        setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {\n          const i = k.lastIndexOf(\"-\"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];\n          return p && keepJustif.has(p.cip);\n        })));\n        setSpecialItems(prev => prev.filter(x => keepJustif.has(x.cip)));\n        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif.has(c))));",
     apres: "      if (keepJustif || keepSepare) {\n        // garder seulement les lignes non enregistrées, « justificatif » ou péremption à part (la commande normale est partie)\n        setQuantities(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => {\n          const i = k.lastIndexOf(\"-\"); const p = CATALOG_WITH_ADMIN[k.slice(0, i)]?.products?.[Number(k.slice(i + 1))];\n          return p && keepJustif?.has(p.cip);\n        })));\n        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));\n        setJustifInfo(prev => Object.fromEntries(Object.entries(prev).filter(([c]) => keepJustif?.has(c))));" },
+  // Revue du 21/10/2026 (correctifs) : ligne péremption jamais classée « sur justificatif » (stock court d'Elixir, jamais
+  // commandée au labo), justificatif compté hors lignes péremption ; numéro d'une commande stable même quand la commande à
+  // part perdue repart seule (clé sans separeDe : order-save reconnaît la commande, pas de doublon) ; fin d'envoi : une ligne
+  // péremption n'est gardée que si SA commande à part a été refusée.
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "justificatif : lignes péremption hors du contrôle et des totaux par CIP (stock court d'Elixir, jamais commandé au labo)",
+    avant: "  const justifCheck = useMemo(() => justifIssues(cartItems, justifProducts, justifInfo), [cartItems, justifProducts, justifInfo]);\n  const cartTotalsByCip = useMemo(() => qtyByCip(cartItems), [cartItems]);",
+    apres: "  const justifCheck = useMemo(() => justifIssues(cartItems.filter(i => !estPeremption(i)), justifProducts, justifInfo), [cartItems, justifProducts, justifInfo]);\n  const cartTotalsByCip = useMemo(() => qtyByCip(cartItems.filter(i => !estPeremption(i))), [cartItems]);" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "justificatif : contrôle avant l'envoi sans les lignes péremption",
+    avant: "    const jIssues = justifIssues(cartItems, justifProducts, justifInfo);",
+    apres: "    const jIssues = justifIssues(cartItems.filter(i => !estPeremption(i)), justifProducts, justifInfo);" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "justificatif : contrôle au stock du moment sans les lignes péremption",
+    avant: "    const jIssues2 = justifIssues(cartItems, jp, justifInfo);",
+    apres: "    const jIssues2 = justifIssues(cartItems.filter(i => !estPeremption(i)), jp, justifInfo);" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "ligne péremption jamais « sur justificatif » (sinon : deux lignes du même CIP dans la commande justificatif, ligne −50 % commandée au labo) ; totaux par CIP hors lignes péremption",
+    avant: "    const totalsSend = qtyByCip(sendItems);\n    const isJustif = (i) => needsJustif(i, jp, totalsSend);",
+    apres: "    const totalsSend = qtyByCip(sendItems.filter(i => !estPeremption(i)));\n    const isJustif = (i) => !estPeremption(i) && needsJustif(i, jp, totalsSend);" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "numéro stable : clé sans separeDe (commande à part enregistrée sans réponse puis renvoyée seule : même numéro, order-save répond { deja }, un seul relais)",
+    avant: "      const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items]);",
+    apres: "      const cle = JSON.stringify([actingFor?.odoo_id ?? null, pharmacyEmail, o.source, o.items.map(({ separeDe, ...l }) => l)]);   // eslint-disable-line no-unused-vars" },
+  { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "fin d'envoi : ligne péremption gardée seulement si sa commande à part a été refusée (plus jamais au titre du justificatif)",
+    avant: "        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));",
+    apres: "        setSpecialItems(prev => prev.filter(x => (!estPeremption(x) && keepJustif?.has(x.cip)) || (estPeremption(x) && keepSepare?.has(x.cip))));" },
 ];
 // Lots en attente de fusion dans la référence : leurs écarts ne valent que si la référence ne les contient pas encore,
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme

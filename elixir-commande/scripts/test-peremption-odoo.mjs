@@ -954,7 +954,9 @@ eq("verrous : déploiement « deploy-preview » avec la variable → aucune écr
   const odoo = (qte, pu, remise) => ({ product_uom_qty: qte, price_unit: pu, discount: remise, price_subtotal: Math.round(pu * (1 - remise / 100) * qte * 100) / 100 });
   const e1 = M.ecartLigne(per, odoo(2, 10.32, 5.43));
   eq("écart : ligne « Pér. » à −50 % (5,16 €) facturée 9,76 € → 9,20 € à rectifier, cohérente", [e1.type, e1.qte, e1.net, e1.ecart, e1.coherent, e1.remise], ["peremption", 2, 9.76, 9.2, true, 50]);
-  eq("écart : ligne facturée par une règle Odoo (V1, facture_odoo) → jamais d'écart", [M.ecartLigne({ ...per, facture_odoo: true }, odoo(2, 10.32, 50)), M.ecartLigne({ ...per, remise: undefined, peremption_remise: 12 }, odoo(2, 10.32, 5.43))], [null, null]);
+  eq("écart : ligne réellement facturée par une règle Odoo (V1, net ≤ prix du panier) → pas d'écart", M.ecartLigne({ ...per, facture_odoo: true }, odoo(2, 10.32, 50)), null);
+  const v1 = M.ecartLigne({ ...per, remise: undefined, peremption_remise: 12, pn: 9.08 }, odoo(2, 10.32, 5.43));
+  eq("écart : ligne « facturée par Odoo » au panier mais règle absente à l'import (retirée, finie) → écart signalé (règle absente)", [v1.type, v1.ecart, v1.regle_absente], ["peremption", 1.36, true]);
   eq("écart : prix corrigé à la main dans Odoo (travail manuel fait) → aucun écart", M.ecartLigne(per, odoo(2, 10.32, 50)), null);
   eq("écart : boîtes additionnées par le connecteur (menu 3 + péremption 2 sur une ligne de 5) → 2 boîtes seulement", [M.ecartLigne({ ...per, separeDe: "1" }, odoo(5, 10.32, 5.43)).qte, M.ecartLigne({ ...per, separeDe: "1" }, odoo(5, 10.32, 5.43)).ecart], [2, 9.2]);
   eq("écart : quantité servie plus petite → boîtes servies", M.ecartLigne(per, odoo(1, 10.32, 5.43)).qte, 1);
@@ -1064,6 +1066,143 @@ eq("verrous : déploiement « deploy-preview » avec la variable → aucune écr
   eq("HTTP : écarts filtrés par type (type inconnu ignoré)", eh.lignes.length, 3);
   const sh = await h({ httpMethod: "POST", headers: { authorization: "Bearer jeton-admin" }, queryStringParameters: {}, body: JSON.stringify({ action: "ecart_statut", statut: "rectifie", reference: "AV-9", lignes: [eh.lignes[2]] }) });
   eq("HTTP : statut (admin)", [sh.statusCode, JSON.parse(sh.body).par], [200, "z@e.test"]);
+}
+// ── 15 bis. Contrôle des écarts, revue du 21/10/2026 : regroupement par commande Odoo et produit, factures et avoirs, offre
+// recalculée côté serveur, lignes non retrouvées, période à l'heure de Paris, statuts (complément, référence gardée, recalcul) ──
+{
+  const L = (boites, montant, puNet) => ({ boites, montant, puNet });
+  const site = (menu, per, pnMenu = 9.76, pnPer = 5.16) => [...(menu ? [{ qty: menu, pn: pnMenu, per: false }] : []), { qty: per, pn: pnPer, per: true }];
+  const g = (o, s0) => M.repartirGroupe(o, s0).lignes[0];
+  eq("groupe : ligne de 5 (menu 3 + Pér. 2) non corrigée → 2 boîtes, 9,20 €", g([L(5, 48.8, 9.76)], site(3, 2)), { qte: 2, ecart: 9.2, net: 9.76 });
+  eq("groupe : même ligne corrigée comme le demande l'e-mail (39,60 €) → aucun écart", g([L(5, 39.6, 7.92)], site(3, 2)).ecart, 0);
+  eq("groupe : ligne scindée à la main (3 × 9,76 + 2 × 5,16) → aucun écart", g([L(3, 29.28, 9.76), L(2, 10.32, 5.16)], site(3, 2)).ecart, 0);
+  eq("groupe : commande à part pas encore importée (3 boîtes du menu seulement) → 0 boîte « Pér. », aucun écart", g([L(3, 29.28, 9.76)], site(3, 2)), { qte: 0, ecart: 0, net: null });
+  eq("groupe : Pér. 5, Odoo 3 à 9,76 puis 2 corrigées à 5,16 → 13,80 €", g([L(3, 29.28, 9.76), L(2, 10.32, 5.16)], site(0, 5)).ecart, 13.8);
+  eq("groupe : service réduit (2 servies sur 5) → boîtes du menu d'abord, aucune « Pér. », service réduit", [g([L(2, 19.52, 9.76)], site(3, 2)).qte, M.repartirGroupe([L(2, 19.52, 9.76)], site(3, 2)).serviReduit], [0, true]);
+  eq("groupe : autre panier inconnu additionné (8 boîtes) → plafonné aux boîtes « Pér. » × (PU − prix de la page)", g([L(8, 78.08, 9.76)], site(3, 2)).ecart, 9.2);
+  const mv = new Map([[1, { type: "out_invoice", etat: "posted", quantite: 2, montant: 19.52, numero: "INV/1" }], [2, { type: "out_refund", etat: "posted", quantite: 2, montant: 9.2, numero: "RINV/7" }],
+    [3, { type: "out_refund", etat: "draft", quantite: 1, montant: 4.6, numero: "RINV/8" }]]);
+  eq("facturé : factures postées − avoirs postés (brouillon ignoré), avoirs listés", M.factureLigne({ product_uom_qty: 2, price_subtotal: 19.52, invoice_lines: [1, 2, 3], qty_delivered: 2 }, mv),
+    { boites: 2, montant: 10.32, puNet: 9.76, avoirs: [{ numero: "RINV/7", montant: 9.2 }], facturee: true });
+  eq("facturé : rien de facturé, 3 livrées sur 5 → 3 boîtes au net de la ligne", M.factureLigne({ product_uom_qty: 5, price_subtotal: 48.8, invoice_lines: [], qty_delivered: 3 }), { boites: 3, montant: 29.28, puNet: 9.76, avoirs: [], facturee: false });
+  eq("période : minuit à Paris (heure d'été, d'hiver)", [M.minuitParisIso("2026-10-21"), M.minuitParisIso("2026-10-26"), M.jourValide("2026-02-30")], ["2026-10-20T22:00:00.000Z", "2026-10-25T23:00:00.000Z", false]);
+}
+{
+  const w = monde({ t: Date.parse("2026-10-23T08:00:00Z") });
+  const A = 1792600000000, B = A + 2;
+  const ligne = (cip, qty, pn, remise, extra = {}) => ({ cip, name: "nom du navigateur", qty, pn, total: pn * qty, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise, facture_odoo: false, ...extra });
+  const cmd = (id, nom, items, extra = {}) => ({ id, date: extra.date || new Date(id).toISOString(), pharmacy_name: nom, pharmacy_cip: extra.pcip || "1111111", source: "catalogue", items });
+  const menu = (cip, qty, pn) => ({ cip, name: "HEC", qty, pn, total: qty * pn });
+  // 1. commande à part pas encore importée : la commande A n'a que les 3 boîtes du menu
+  w.O.ajouterVente({ pid: P.HEC.id, qte: 3, ref: String(A), pu: 10.32, remise: 5.43, commande: "S500001" });
+  w.S.table("elixir_orders").push(cmd(A, "Pharmacie Une", [menu(P.HEC.cip, 3, 9.76)]), cmd(B, "Pharmacie Une", [ligne(P.HEC.cip, 2, 5.16, 50, { separeDe: String(A) })]));
+  const e1 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("à part pas encore importée : aucun écart (boîtes du menu jamais baissées), ligne « en attente d'import »", [e1.lignes.length, e1.non_retrouvees.map(x => [x.cle, x.motif])], [0, [[`${B}:${P.HEC.cip}`, "attente_import"]]]);
+  // la commande à part arrive dans la même commande Odoo (le connecteur : deuxième ligne du même produit, même réf.)
+  const v2 = w.O.ajouterVente({ pid: P.HEC.id, qte: 2, ref: String(A), pu: 10.32, remise: 5.43, commande: "S500001" });
+  const e2 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("importée (deux lignes Odoo de la même commande, même réf.) : 2 boîtes, 9,20 €, cohérente, à corriger avant facture", e2.lignes.map(l => [l.cle, l.qte, l.ecart, l.coherent, l.facturation, l.odoo, l.nom]),
+    [[`${B}:${P.HEC.cip}`, 2, 9.2, true, "to invoice", "S500001", "HEC POM NACU T/25G"]]);
+  // corrigée dans Odoo en scindant : la ligne de 2 annulée, une ligne ajoutée à la main sans référence (2 × 5,16 €)
+  w.O.modifierVente(v2, { state: "cancel" });
+  w.O.ajouterVente({ pid: P.HEC.id, qte: 2, ref: null, pu: 5.16, remise: 0, commande: "S500001" });
+  const e3 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("corrigée à la main (ligne annulée ignorée, ligne ajoutée sans référence lue) : la ligne disparaît d'elle-même", [e3.lignes.length, e3.non_retrouvees.length], [0, 0]);
+}
+{
+  // correction complète : remise sur la ligne additionnée (total 39,60 €) ; servie réduite ; règle absente ; offre forgée
+  const w = monde({ t: Date.parse("2026-10-23T08:00:00Z") });
+  const A = 1792600000000, B = A + 2, C = A + 10, D = A + 20, E = A + 30;
+  const ligne = (cip, qty, pn, remise, extra = {}) => ({ cip, name: "x", qty, pn, total: pn * qty, note: "Pér. 31/12/2026", peremption: "2026-12-31", remise, facture_odoo: false, ...extra });
+  const cmd = (id, nom, items, pcip = "1111111") => ({ id, date: new Date(id).toISOString(), pharmacy_name: nom, pharmacy_cip: pcip, source: "catalogue", items });
+  w.O.ajouterVente({ pid: P.HEC.id, qte: 5, ref: String(A), pu: 10.32, remise: 23.26, commande: "S600001" });
+  w.O.ajouterVente({ pid: P.ZADI.id, qte: 4, ref: String(C), pu: 3.83, remise: 6, commande: "S600002" });   // 4 servies sur 5 (menu 3 + Pér. 2)
+  w.O.ajouterVente({ pid: P.ZINNAT.id, qte: 2, ref: String(D), pu: 3.74, remise: 6.15, commande: "S600003" });
+  w.O.ajouterVente({ pid: P.TAKEDA.id, qte: 1, ref: String(E), pu: 5000, remise: 0, commande: "S600004" });
+  w.O.ajouterVente({ pid: P.SURB.id, qte: 10, ref: String(E), pu: 7.03, remise: 0, commande: "S600004" });
+  w.S.table("elixir_orders").push(cmd(A, "Pharmacie Une", [{ cip: P.HEC.cip, name: "HEC", qty: 3, pn: 9.76 }]), cmd(B, "Pharmacie Une", [ligne(P.HEC.cip, 2, 5.16, 50, { separeDe: String(A) })]),
+    cmd(C, "PHARMACIE CENTRALE", [{ cip: P.ZADI.cip, name: "Z", qty: 3, pn: 3.6 }, ligne(P.ZADI.cip, 2, 1.92, 50)], "2222222"),
+    cmd(D, "PHARMACIE CENTRALE", [ligne(P.ZINNAT.cip, 2, 1.87, 50, { facture_odoo: true, remise: 50 })], "3333333"),
+    cmd(E, "Pharmacie Forgée", [ligne(P.TAKEDA.cip, 1, 2500, 50), ligne(P.SURB.cip, 10, 0.7, 90)]));
+  const e = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  const par = (cip) => e.lignes.find(l => l.cip === cip);
+  eq("ligne additionnée corrigée par une remise (39,60 €) : aucun écart", par(P.HEC.cip), undefined);
+  eq("4 servies sur 5 (menu 3 + Pér. 2) : 1 boîte « Pér. », à vérifier (service réduit)", [par(P.ZADI.cip).qte, par(P.ZADI.cip).ecart, par(P.ZADI.cip).coherent, /servies/.test(par(P.ZADI.cip).a_verifier.join())], [1, 1.68, false, true]);
+  eq("« facturée par Odoo » au panier, règle absente à l'import : écart signalé (règle absente), cohérent (−50 % de la page)", [par(P.ZINNAT.cip).ecart, par(P.ZINNAT.cip).regle_absente, par(P.ZINNAT.cip).coherent], [3.28, true, true]);
+  eq("offre forgée (Ninlaro −50 % au lieu de −20 % ; Surbronc −90 %) : à vérifier, hors des totaux", [par(P.TAKEDA.cip).coherent, par(P.SURB.cip).coherent, /au plus −20 %/.test(par(P.TAKEDA.cip).a_verifier[0]), e.total_peremption],
+    [false, false, true, 3.28]);
+  const r = await w.X.ecartsResume({ depuis: "2026-10-21", frais: true });
+  eq("résumé : seules les lignes cohérentes ; pharmacies par CIP (deux « PHARMACIE CENTRALE » restent deux) ; à vérifier à part",
+    [r.a_rectifier, r.pharmacies.map(p => [p.pharmacie, p.pharmacy_cip, p.montant]), r.a_verifier.lignes], [{ montant: 3.28, lignes: 1, pharmacies: 1 }, [["PHARMACIE CENTRALE", "3333333", 3.28]], 3]);
+  // statuts recalculés côté serveur : montant du navigateur ignoré ; clé sans écart refusée
+  const st = await w.X.changerStatutEcarts({ lignes: [{ cle: `${D}:${P.ZINNAT.cip}`, ecart: 999, pharmacie: "=HYPERLINK()" }], statut: "rectifie", reference: "AV-1", acteur: "z" });
+  eq("rectifié : montants du serveur (3,28 €, pas 999), nom de la pharmacie du serveur", [st.total, w.S.table("peremption_ecarts").map(x => [x.ecart, x.pharmacie, x.nom])], [3.28, [[3.28, "PHARMACIE CENTRALE", "ZINNAT 125 mg B/8"]]]);
+  eq("rectifié : clé sans écart actuel refusée", (await w.X.changerStatutEcarts({ lignes: [{ cle: `${A}:${P.HEC.cip}` }], statut: "rectifie", acteur: "z" })).erreur != null, true);
+  // complément : l'écart a grossi depuis le marquage (montant enregistré plus petit)
+  w.S.table("peremption_ecarts")[0].ecart = 2;
+  const e2 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("rectifiée puis écart grossi : complément à rectifier (1,28 €), compté dans le résumé", [e2.lignes.find(l => l.cip === P.ZINNAT.cip).complement, (await w.X.ecartsResume({ depuis: "2026-10-21", frais: true })).a_rectifier.montant], [1.28, 1.28]);
+  // remettre à rectifier : la référence (n° d'avoir) est gardée
+  await w.X.changerStatutEcarts({ lignes: [`${D}:${P.ZINNAT.cip}`], statut: "a_rectifier", acteur: "z2" });
+  const e3 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("remise à rectifier : référence gardée (ancienne réf.), qui et quand du changement", [w.S.table("peremption_ecarts")[0].reference, e3.lignes.find(l => l.cip === P.ZINNAT.cip).reference_precedente, w.S.table("peremption_ecarts")[0].par],
+    ["AV-1", "AV-1", "z2"]);
+  eq("aucune écriture Odoo", w.O.etat.ecritures.length, 0);
+}
+{
+  // factures et avoirs : facturée → avoir à faire ; avoir posté → déduit, la ligne disparaît ; avoir partiel → reste
+  const w = monde({ t: Date.parse("2026-10-23T08:00:00Z") });
+  const B = 1792600000002;
+  const v = w.O.ajouterVente({ pid: P.HEC.id, qte: 2, ref: String(B), pu: 10.32, remise: 5.43, commande: "S700001", livre: 2 });
+  w.S.table("elixir_orders").push({ id: B, date: new Date(B).toISOString(), pharmacy_name: "P", pharmacy_cip: "1", source: "catalogue", items: [{ cip: P.HEC.cip, name: "HEC", qty: 2, pn: 5.16, peremption: "2026-12-31", remise: 50, facture_odoo: false }] });
+  w.O.facturer([{ vente: v, qte: 2 }], "INV/2026/00100");
+  const e1 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("facturée : 9,20 €, « facturée »", e1.lignes.map(l => [l.ecart, l.facturation]), [[9.2, "invoiced"]]);
+  w.O.avoir([{ vente: v, qte: 1, prix: 4.6 }], "RINV/2026/00042");
+  const e2 = await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+  eq("avoir partiel (1 × 4,60 €) détecté et déduit : reste 4,60 €, avoir listé", e2.lignes.map(l => [l.ecart, l.avoirs]), [[4.6, [{ numero: "RINV/2026/00042", montant: 4.6 }]]]);
+  w.O.avoir([{ vente: v, qte: 1, prix: 4.6 }], "RINV/2026/00043");
+  eq("avoir complet : plus d'écart", (await w.X.ecarts({ depuis: "2026-10-21", types: ["peremption"] })).lignes.length, 0);
+}
+{
+  // lignes non retrouvées, références « <n°>P2 », code interne ≠ CIP (produit relu par odoo_pid), période à l'heure de Paris
+  const T = Date.parse("2026-10-25T08:00:00Z");
+  const PR = { id: 501, cip: "3400930000001", code: "HEC-25G", nom: "PRODUIT AU CODE INTERNE", tmpl: 501, list_price: 10.32 };
+  const mini = () => {
+    const O = fauxOdoo({ produits: [PR], quants: [{ pid: 501, exp: "2026-12-31", qte: 10 }] }, { maintenant: () => T });
+    const S = fauxSupabase({ maintenant: () => T, tables: { odoo_catalog: [{ cip: PR.cip, name: PR.nom, list_price: 10.32, discounted_price: 9.76, discount_pct: 5.4, earliest_expiry: "2026-12-31", lots: [], odoo_pid: 501 }],
+      expiry_discounts: [], peremption_ecarts: [], elixir_orders: [] } });
+    return { O, S, X: M.creerPeremption({ odoo: O.odoo, fetch: S.fetch, url: S.url, cle: S.cleService, env: { SUPABASE_KEY: S.cleAnon }, maintenant: () => T }) };
+  };
+  const per = (qty, extra = {}) => ({ cip: PR.cip, name: "x", qty, pn: 5.16, peremption: "2026-12-31", remise: 50, facture_odoo: false, ...extra });
+  const A = 1792800000000, B = A + 2, C = A + 5000, D = A + 9000;
+  {
+    const { O, S, X } = mini();
+    O.ajouterVente({ pid: 501, qte: 5, ref: String(A), pu: 10.32, remise: 5.43, commande: "S800001" });   // A et C regroupées, réf. A seule citée
+    O.ajouterVente({ pid: 501, qte: 2, ref: String(B), pu: 10.32, remise: 5.43, commande: "S800003" });
+    O.ajouterVente({ pid: 501, qte: 2, ref: `${D}P2`, pu: 10.32, remise: 5.43, commande: "S800002" });     // relais : référence « <n°>P2 »
+    S.table("elixir_orders").push({ id: A, date: "2026-10-21T21:30:00.000Z", pharmacy_name: "Une", pharmacy_cip: "1", source: "catalogue", items: [{ cip: PR.cip, name: "x", qty: 3, pn: 9.76 }] },
+      { id: B, date: "2026-10-21T21:40:00.000Z", pharmacy_name: "Une", pharmacy_cip: "1", source: "catalogue", items: [per(2)] },
+      { id: C, date: "2026-10-21T22:30:00.000Z", pharmacy_name: "Une", pharmacy_cip: "1", source: "catalogue", items: [per(2)] },
+      { id: D, date: "2026-10-22T09:00:00.000Z", pharmacy_name: "Deux", pharmacy_cip: "2", source: "catalogue", items: [per(2)] });
+    const e = await X.ecarts({ depuis: "2026-10-21", types: ["peremption"] });
+    eq("code interne ≠ CIP (produit par odoo_pid) ; « <n°>P2 » retrouvée ; C (citée nulle part) non retrouvée, avec une piste", [e.lignes.map(l => [l.commande, l.ecart]), e.non_retrouvees.map(x => [x.commande, x.motif, x.ancien, /^S8000/.test(x.piste)])],
+      [[[String(B), 9.2], [String(D), 9.2]], [[String(C), "introuvable", true, true]]]);
+    eq("période à l'heure de Paris : le 21/10 s'arrête à minuit à Paris (C, passée à 00 h 30 le 22, n'en est pas)",
+      [(await X.ecarts({ depuis: "2026-10-21", jusqua: "2026-10-21", types: ["peremption"] })).lignes.map(l => l.commande), (await X.ecarts({ depuis: "2026-10-22", types: ["peremption"] })).non_retrouvees.map(x => x.commande)],
+      [[String(B)], [String(C)]]);
+    const r = await X.ecartsResume({ depuis: "2026-10-21", frais: true });
+    eq("tuile : lignes non retrouvées comptées (plus de 24 h)", [r.non_retrouvees, r.a_rectifier.montant], [{ lignes: 1, recentes: 0 }, 18.4]);
+  }
+  {
+    // commande visée par separeDe sur la page précédente : relue, ses boîtes du menu déduites (ligne additionnée corrigée : 39,60 €)
+    const { O, S, X } = mini();
+    O.ajouterVente({ pid: 501, qte: 5, ref: String(A), pu: 10.32, remise: 23.26, commande: "S900001" });
+    S.table("elixir_orders").push({ id: A, date: "2026-10-21T08:00:00.000Z", pharmacy_name: "Une", pharmacy_cip: "1", source: "catalogue", items: [{ cip: PR.cip, name: "x", qty: 3, pn: 9.76 }] },
+      { id: B, date: "2026-10-21T08:00:01.000Z", pharmacy_name: "Une", pharmacy_cip: "1", source: "catalogue", items: [per(2, { separeDe: String(A) })] });
+    const page2 = await X.lignesEcarts({ depuis: "2026-10-21", page: 1, offset: 1, types: ["peremption"] });
+    eq("commande visée par separeDe sur la page précédente : relue (avant : 5,52 € à tort)", [page2.cmds, page2.sortie.length, page2.non_retrouvees.length], [1, 0, 0]);
+  }
 }
 {
   // suivi non installé (sql/peremption-ecarts.sql pas exécuté) : écarts lisibles, statut refusé (503), résumé sans erreur
