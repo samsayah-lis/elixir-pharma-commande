@@ -255,6 +255,11 @@ page, la ligne du lot 0, le plafond, la lecture gardée périmée, le contrôle 
 `BANC_PEREMPTION_MODE=actif BANC_PEREMPTION_ECRITURE=1 BANC_PEREMPTION_ESSAI=1 BANC_PEREMPTION_ECARTS=1 npx vite`
 (commandes d'exemple de pharmacies fictives pour le Contrôle des écarts).
 
+Bundle des pharmacies (21/10/2026, `npm run build` puis `npm run zones`, avec l'appli « Elixir Admin » et les messages
+compris dans cette branche) : 918 679 octets pour un budget de 940 000 ; « aucun écart » contre `master`, `origin/master`
+(`--ref origin/master`) et `notifications-messages` (`--ref notifications-messages`). L'onglet Péremptions de l'admin est
+dans son propre chunk, chargé à la demande.
+
 Limites connues (revue du 21/10/2026 comprise) :
 
 - `order-save` (fichier protégé, inchangé) enregistre les lignes telles que le navigateur les envoie : le Contrôle des écarts
