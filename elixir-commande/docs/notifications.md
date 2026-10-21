@@ -7,7 +7,7 @@ Vos demandes :
 - 21/10/2026 : l'icône « Elixir Admin » de votre iPhone ouvrait la connexion des pharmacies. Corrigé par l'adresse `https://elixir-commande.expepharma.com/admin` (branche `appli-admin-ios`, comprise dans celle-ci : § 3 f et § 10).
 - 21/10/2026 : « prévoir l'envoi d'une notification unitaire ou collective : communication, promotion, traitement d'une reclamation, etc. ». C'est l'objet de cette branche (§ 3 à 7).
 
-**Rien de nouveau n'est en ligne tant que vous ne lancez pas les commandes de mise en ligne** (§ 3 : d'abord l'appli « Elixir Admin », puis les messages, § 3 c ; ou seulement la seconde, qui contient la première). Pour les messages, un script SQL se passe juste **avant** (§ 3 a), un petit second juste **après** (§ 3 d).
+**Rien de nouveau n'est en ligne tant que vous ne lancez pas les commandes de mise en ligne** (§ 3 : d'abord l'appli « Elixir Admin », puis les messages, § 3 c ; ou seulement la seconde, qui contient la première ; ou celle de la Péremption courte, qui contient les deux : `docs/peremption.md` § 3). Pour les messages, un script SQL se passe juste **avant** (§ 3 a), un petit second juste **après** (§ 3 d).
 
 ---
 
@@ -66,6 +66,8 @@ On ne peut pas promettre « tous les pharmaciens ». On peut promettre que **cha
 
 Deux mises en ligne, **dans cet ordre**, chacune par une seule commande dans l'application Terminal du Mac. Rien à fusionner : les deux branches partent de la version en ligne (`b1dbd3e`) et celle des messages contient déjà celle de l'appli « Elixir Admin ».
 
+**Péremption courte à −50 % (branche `peremption-affichage`, dossier `~/Downloads/elixir-perem50-wt`)** : elle contient ces deux branches et se met en ligne après elles. Sa commande unique (`docs/peremption.md` § 3) met en ligne les trois d'un coup, dans le même ordre ; les scripts SQL des messages (a avant, d après) se passent alors comme indiqué au `docs/peremption.md` § 3, et les étapes e à g restent à faire. Une fois cette commande passée, les commandes 1 et c ci-dessous sont refusées (« rejected ») sans rien changer : rien à faire.
+
 1. **L'appli « Elixir Admin » à l'adresse `/admin`** (branche `appli-admin-ios`) : ni script SQL ni réglage.
 
    ```
@@ -107,7 +109,7 @@ git -C ~/Downloads/elixir-notif-msg-wt push origin notifications-messages:master
 - Après la commande de l'appli « Elixir Admin » (1 ci-dessus), celle-ci ajoute seulement les messages. Lancée seule, elle met aussi en ligne l'appli « Elixir Admin ».
 - Ne supprimez pas les dossiers `~/Downloads/elixir-admin-ios-wt` et `~/Downloads/elixir-notif-msg-wt` avant.
 - Netlify déploie en 2 à 3 minutes (Deploys : « Published »).
-- Si Git répond « rejected » ou « non-fast-forward » (à la commande de l'étape c, ou à la commande 1 lancée avant elle) : une autre branche que ces deux-là a été mise en ligne entre-temps (par exemple la Péremption à −50 %). **Ne forcez rien** (ni `--force`, ni `git pull` que Git suggère) : demandez une intégration de la branche, puis relancez la même commande. La commande 1 lancée après celle de l'étape c est refusée normalement : rien à faire.
+- Si Git répond « rejected » ou « non-fast-forward » (à la commande de l'étape c, ou à la commande 1 lancée avant elle) : une autre branche que ces deux-là a été mise en ligne entre-temps. Si c'est la Péremption à −50 % (`peremption-affichage`, qui contient les deux) : rien à faire, elles sont déjà en ligne. Sinon, **ne forcez rien** (ni `--force`, ni `git pull` que Git suggère) : demandez une intégration de la branche, puis relancez la même commande. La commande 1 lancée après celle de l'étape c est refusée normalement : rien à faire.
 - La fonction planifiée `push-programmes` (messages programmés et événements différés de l'outil entrepôt, toutes les 5 minutes) démarre seule avec le déploiement.
 
 **d. Juste après la mise en ligne (Netlify : « Published »), le rattrapage d'« Informations Elixir »** :

@@ -189,16 +189,48 @@ Sans elle, les écarts restent lisibles, mais « Marquer rectifié » répond «
 
 ## 3. Mise en service
 
-1. **Supabase → SQL Editor** : coller `sql/peremption-ecarts.sql`, **Run** (rejouable). Contrôle :
+Trois lots prêts partent de la version en ligne `b1dbd3e`, chacun contenu dans le suivant, et se mettent en ligne **dans cet
+ordre**, en avance rapide (rien à fusionner) :
+
+- d'abord l'appli « Elixir Admin » à l'adresse `/admin` (branche `appli-admin-ios`, `docs/notifications.md` § 3 f) ;
+- puis les messages des notifications (branche `notifications-messages`, `docs/notifications.md` § 3 à 7) ;
+- enfin la Péremption courte à −50 % (cette branche, `peremption-affichage`), qui contient les deux autres.
+
+**Une seule commande met en ligne les trois, dans cet ordre** (application Terminal du Mac) :
+
+```
+git -C ~/Downloads/elixir-perem50-wt push origin peremption-affichage:master
+```
+
+Si les deux premiers sont déjà en ligne (commandes de `docs/notifications.md` § 3), la même commande ajoute seulement la
+Péremption courte. Ordre complet, scripts SQL compris (Supabase → SQL Editor → New query → Cmd+V → Run ; chaque `pbcopy`
+copie le script dans le presse-papiers, rien ne s'affiche) :
+
+1. **Avant, sans contrainte de délai : le suivi des écarts de la Péremption** (rejouable, compatible avec la version en
+   ligne) :
+   `pbcopy < ~/Downloads/elixir-perem50-wt/elixir-commande/sql/peremption-ecarts.sql`, puis Run. Contrôle :
    `select relname, relrowsecurity from pg_class where relname = 'peremption_ecarts';` → `true`. (`sql/peremption.sql`, la
    V1, est nécessaire au journal et à la tuile « Dernier passage », pas à la page ni aux écarts.)
-2. Variables Netlify : `SUPABASE_SERVICE_ROLE_KEY` doit exister (déjà utilisée) ; rien à ajouter.
-3. Mise en ligne en avance rapide de la branche `peremption-affichage` (faite sur la production `b1dbd3e`) :
-   `git -C ~/Downloads/elixir-perem50-wt push origin peremption-affichage:master`. Jamais `--force` ; si l'envoi est refusé,
-   `master` a bougé : refaire l'intégration.
-4. Après la mise en ligne : page Péremption courte (−50 %, prix barrés), un ajout depuis la page (ligne à part au panier),
-   carte de l'accueil (« jusqu'à −50 % »), onglet Péremptions (colonne « Page », tuile « Écarts à rectifier »).
-5. Les onglets ouverts avant la mise en ligne et non rechargés gardent la page du lot 0 (prix habituel) jusqu'au
+2. Variables Netlify : `SUPABASE_SERVICE_ROLE_KEY` doit exister (déjà utilisée) ; rien à ajouter. (`PUSH_EVENEMENT_SECRET`
+   seulement le jour où l'outil entrepôt est branché : `docs/notifications.md` § 3 b.)
+3. **Juste avant la commande : le script des messages** (seulement si les messages ne sont pas encore en ligne ; rejouable,
+   détail : `docs/notifications.md` § 3 a) :
+   `pbcopy < ~/Downloads/elixir-perem50-wt/elixir-commande/sql/push-messages.sql`, puis Run. **Enchaînez 3, 4 et 5 sans
+   pause.**
+4. **La commande ci-dessus.** Netlify déploie en 2 à 3 minutes (Deploys : « Published »). Ne supprimez pas le dossier
+   `~/Downloads/elixir-perem50-wt` avant. Jamais `--force`, ni le `git pull` que Git suggère : si Git répond « rejected »
+   ou « non-fast-forward », `master` a reçu autre chose que ces trois lots ; demander une intégration, puis relancer la même
+   commande. Une fois celle-ci passée, les commandes d'`appli-admin-ios` et de `notifications-messages`
+   (`docs/notifications.md` § 3) sont refusées normalement : rien à faire, elles sont déjà en ligne.
+5. **Juste après « Published » : le rattrapage des messages** (seulement si l'étape 3 vient d'être faite ; une seule fois,
+   relancé il ne fait rien, détail : `docs/notifications.md` § 3 d) :
+   `pbcopy < ~/Downloads/elixir-perem50-wt/elixir-commande/sql/push-messages-apres.sql`, puis Run. Rien à passer après
+   pour la Péremption.
+6. Après la mise en ligne : page Péremption courte (−50 %, prix barrés), un ajout depuis la page (ligne à part au panier),
+   carte de l'accueil (« jusqu'à −50 % »), onglet Péremptions (colonne « Page », tuile « Écarts à rectifier ») ; puis
+   `docs/notifications.md` § 3 e (📲 Notifications → « État du service »), f (appli « Elixir Admin » installée depuis
+   `https://elixir-commande.expepharma.com/admin`) et g (pharmacie pilote).
+7. Les onglets ouverts avant la mise en ligne et non rechargés gardent la page du lot 0 (prix habituel) jusqu'au
    rechargement ; leurs paniers passent à la règle panier au premier chargement.
 
 ## 4. Fichiers et tests
