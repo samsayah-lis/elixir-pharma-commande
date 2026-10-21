@@ -1,7 +1,8 @@
 -- ── Notifications de l'appli Elixir : messages unitaires et collectifs (types, modèles, programmation, e-mail de secours,
 -- API de l'outil entrepôt) ──────────────────────────────────────────────────────────────────────────────────────────────
 -- Documentation : docs/notifications.md (§ 3 et § 10). À exécuter par Zineb dans l'éditeur SQL de Supabase, APRÈS
--- sql/push-schema.sql et AVANT la mise en ligne de la branche notifications-messages.
+-- sql/push-schema.sql et juste AVANT la mise en ligne de la branche notifications-messages (puis, juste après la mise en
+-- ligne, sql/push-messages-apres.sql). Déjà passé dans une version précédente : le relancer, il complète sans rien défaire.
 -- Rejouable sans effet (IF NOT EXISTS, contraintes supprimées puis recréées à l'identique, migration des catégories notée
 -- dans push_migrations et faite une seule fois). Compatible avec le code déjà en ligne : il ne fait qu'ajouter.
 --
@@ -21,6 +22,7 @@ alter table push_envois add column if not exists source text;
 alter table push_envois add column if not exists email  text;
 alter table push_envois drop constraint if exists push_envois_titre_check;
 alter table push_envois add constraint push_envois_titre_check check (titre is null or char_length(titre) <= 80);
+-- « envoye » compte dans les plafonds de la pharmacie (comme une notification jointe) : l'e-mail de secours ne les contourne pas
 alter table push_envois drop constraint if exists push_envois_email_check;
 alter table push_envois add constraint push_envois_email_check check (email is null or email in ('envoye', 'echec', 'aucune_adresse'));
 create index if not exists push_envois_pharmacie on push_envois (pharmacy_cip, created_at desc);
@@ -58,6 +60,8 @@ alter table push_annonces add column if not exists destinataire_nom text;       
 alter table push_annonces add column if not exists email_statut     text;                             -- e-mail de secours : résultat
 alter table push_annonces add column if not exists nb_emails        int;                              -- adresses jointes par e-mail
 alter table push_annonces add column if not exists source           text not null default 'admin';
+alter table push_annonces add column if not exists en_file_le       timestamptz;                      -- passage en file (programmé : à l'heure prévue)
+alter table push_annonces add column if not exists idem_empreinte   text;                             -- empreinte du contenu (clé idem réutilisée : refusée)
 
 alter table push_annonces drop constraint if exists push_annonces_type_check;
 alter table push_annonces add constraint push_annonces_type_check check (type in ('promotion', 'communication', 'reclamation', 'commande'));
@@ -70,12 +74,19 @@ alter table push_annonces add constraint push_annonces_audience_check check (aud
 alter table push_annonces drop constraint if exists push_annonces_statut_check;
 alter table push_annonces add constraint push_annonces_statut_check
   check (statut in ('programmee', 'en_file', 'en_cours', 'envoyee', 'erreur', 'annulee'));
+-- e-mail de secours : « non_requis » (pharmacie jointe sur un téléphone), « plafond » (plafond atteint), « alerte_coupee »
+-- (Communication : alerte coupée par la pharmacie) — rien n'est parti dans ces trois cas
 alter table push_annonces drop constraint if exists push_annonces_email_statut_check;
 alter table push_annonces add constraint push_annonces_email_statut_check
-  check (email_statut is null or email_statut in ('envoye', 'echec', 'aucune_adresse', 'non_requis'));
--- « Réclamation / SAV » et « Commande » : une ou quelques pharmacies choisies, jamais toutes
+  check (email_statut is null or email_statut in ('envoye', 'echec', 'aucune_adresse', 'non_requis', 'plafond', 'alerte_coupee'));
+-- « Réclamation / SAV » et « Commande » : une ou quelques pharmacies choisies, jamais toutes ; « Réclamation / SAV » : une seule
 alter table push_annonces drop constraint if exists push_annonces_transactionnel_check;
 alter table push_annonces add constraint push_annonces_transactionnel_check check (categorie <> 'commandes' or audience <> 'toutes');
+alter table push_annonces drop constraint if exists push_annonces_reclamation_check;
+alter table push_annonces add constraint push_annonces_reclamation_check check (type <> 'reclamation' or audience = 'une');
+-- e-mail de secours jamais pour une Promotion (prospection par e-mail : aucun moyen d'opposition dans l'e-mail)
+alter table push_annonces drop constraint if exists push_annonces_repli_promotion_check;
+alter table push_annonces add constraint push_annonces_repli_promotion_check check (not (repli_email and type = 'promotion'));
 alter table push_annonces drop constraint if exists push_annonces_programme_check;
 alter table push_annonces add constraint push_annonces_programme_check check (statut <> 'programmee' or programme_pour is not null);
 
@@ -100,8 +111,10 @@ create table if not exists push_modeles (
 create unique index if not exists push_modeles_nom on push_modeles (lower(nom));
 
 -- ── 4. Événements de l'outil entrepôt (push-evenement.js) ; purgés après 90 jours (push-menage) ──
--- cle : en-tête Idempotency-Key (même clé = même réponse, rien n'est renvoyé) ; empreinte : pharmacie, type, référence et
--- statut (un même statut d'une même référence n'est notifié qu'une fois, même sous une autre clé).
+-- cle : en-tête Idempotency-Key (même clé = même réponse, rien n'est renvoyé) ; empreinte : pharmacie, type, référence,
+-- statut et tranche de 10 minutes (un double envoi de l'outil entrepôt sous une autre clé n'est notifié qu'une fois ; le même
+-- statut plus tard, si). resultat « differe » : reçu le soir, la nuit ou le dimanche, envoyé à a_envoyer_le (texte, lien et
+-- étiquette gardés : corps, url, etiquette) ; « envoi » : différé en cours d'envoi.
 create table if not exists push_evenements (
   cle           text primary key check (char_length(cle) between 8 and 128),
   empreinte     text not null unique check (char_length(empreinte) = 64),
@@ -117,6 +130,12 @@ create table if not exists push_evenements (
   nb_reussis    int
 );
 create index if not exists push_evenements_recu on push_evenements (recu_le desc);
+alter table push_evenements add column if not exists corps        text check (char_length(corps) <= 160);
+alter table push_evenements add column if not exists url          text check (char_length(url) <= 200);
+alter table push_evenements add column if not exists etiquette    text check (char_length(etiquette) <= 64);
+alter table push_evenements add column if not exists a_envoyer_le timestamptz;
+create index if not exists push_evenements_differes on push_evenements (a_envoyer_le) where resultat = 'differe';
+create index if not exists push_evenements_pharmacie on push_evenements (pharmacy_cip);
 
 -- ── RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated par précaution ──
 alter table push_modeles    enable row level security;

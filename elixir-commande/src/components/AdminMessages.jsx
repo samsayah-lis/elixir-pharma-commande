@@ -3,21 +3,24 @@ import { T, R, ui, tone } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import {
   LIMITES, TITRE_CONSEILLE, LIBELLES_OUTILS, OUTILS_LIEN, TYPES_MESSAGE, IDS_TYPES, lienValide, longueur, verifierMessage, champsACompleter,
-  contientMontant, estTransactionnel, categorieDuType, parisVersIso, isoVersParis, partiesParis, horsHeures, texteHeureParis, MAX_LISTE_TRANSACTIONNEL,
+  contientMontant, contientReference, estTransactionnel, categorieDuType, audiencesDuType, parisVersIso, isoVersParis, partiesParis, horsHeures,
+  texteHeureParis, prochainMatin, MAX_LISTE_TRANSACTIONNEL, PROGRAMME_MIN_MS, PROGRAMME_RETARD_MAX_MS,
 } from "../notifications/regles.js";
 import { MODELES_ELIXIR, NOM_MODELE_MAX } from "../notifications/modeles.js";
 
-// ── Admin : messages unitaires et collectifs de l'onglet « 📲 Notifications » (docs/notifications.md § 4 à 6) ──
+// ── Admin : messages unitaires et collectifs de l'onglet « 📲 Notifications » (docs/notifications.md § 4 à 7) ──
 // Demande de Zineb (21/10/2026) : « prévoir l'envoi d'une notification unitaire ou collective : communication, promotion,
 // traitement d'une réclamation, etc. »
-//  • Types : Promotion → « Offres et nouveautés » ; Communication → « Informations Elixir » ; Réclamation / SAV et Commande →
-//    « Mes commandes et réclamations » (une ou quelques pharmacies, jamais toutes, aucun montant).
+//  • Types : Promotion → « Offres et nouveautés » ; Communication → « Informations Elixir » ; Réclamation / SAV (une seule
+//    pharmacie) et Commande (une, ou quelques-unes sans référence propre) → « Mes commandes et réclamations » (aucun montant).
 //  • Destinataires : une pharmacie (recherche par nom, ville ou CIP : appareils, alertes acceptées, dernière activité),
-//    plusieurs, ou toutes les pharmacies abonnées (Promotion et Communication) ; estimation avant l'envoi.
-//  • E-mail de secours (message unitaire) : le serveur l'envoie aux adresses du COMPTE de la pharmacie si aucun appareil n'a
-//    été joint ; la page ne voit que des adresses masquées.
-//  • Modèles (Elixir et enregistrés), programmation (heure de Paris, annulable), historique global, par pharmacie et outil
-//    entrepôt. API : netlify/functions/push-admin.js (verifyAdmin).
+//    plusieurs, ou toutes les pharmacies abonnées (Promotion et Communication) ; estimation avant l'envoi, e-mail de secours
+//    compris (même règle que le serveur).
+//  • E-mail de secours (message unitaire, jamais pour une Promotion) : le serveur l'envoie aux adresses du COMPTE de la
+//    pharmacie si aucun de ses téléphones n'a été joint ; la page ne voit que des adresses masquées.
+//  • Modèles (Elixir et enregistrés, remplaçables), programmation (heure de Paris, annulable, « Annuler et modifier »),
+//    historique global, par pharmacie et outil entrepôt ; sur téléphone (600 px et moins), historiques en cartes et messages
+//    à venir en tête. API : netlify/functions/push-admin.js (verifyAdmin).
 // Chargé avec l'admin (chunk AdminPanel) : hors du bundle des pharmacies.
 
 const card = { ...ui.card, padding: "16px 20px" };
@@ -35,15 +38,38 @@ const STATUTS = { programmee: ["Programmé", "info"], en_file: ["En file", "warn
   annulee: ["Annulé", "neutral"] };
 const TONS_TYPE = { promotion: "promo", communication: "info", reclamation: "labo", commande: "labo" };
 const AIDES_TYPE = {
-  promotion: "Arrive dans «\u00a0Offres et nouveautés\u00a0» (plafonné par pharmacie sur 7 jours).",
-  communication: "Arrive dans «\u00a0Informations Elixir\u00a0»\u00a0: fermetures, changements de service, nouveautés du site (plafonné à part).",
-  reclamation: "Arrive dans «\u00a0Mes commandes et réclamations\u00a0»\u00a0: suivi d'une réclamation, d'un retour, d'un avoir. Une ou quelques pharmacies, jamais toutes\u00a0; aucun montant.",
-  commande: "Arrive dans «\u00a0Mes commandes et réclamations\u00a0»\u00a0: expédition, reliquat. Une ou quelques pharmacies, jamais toutes\u00a0; aucun montant.",
+  promotion: "Arrive dans « Offres et nouveautés » (plafonné par pharmacie sur 7 jours) : offres, nouveaux produits, nouveaux menus. Pas d'e-mail de secours.",
+  communication: "Arrive dans « Informations Elixir » : fermetures, horaires, changements de service et du site (plafonné à part). Jamais d'offre ni de nouveau produit.",
+  reclamation: "Arrive dans « Mes commandes et réclamations » : suivi d'une réclamation, d'un retour, d'un avoir. Une seule pharmacie à la fois ; aucun montant.",
+  commande: "Arrive dans « Mes commandes et réclamations » : expédition, reliquat. Une pharmacie, ou quelques-unes pour un message sans numéro propre à l'une d'elles ; aucun montant.",
 };
-const EMAILS = { envoye: ["e-mail envoyé", "ok"], echec: ["e-mail en échec", "danger"], aucune_adresse: ["aucune adresse de compte", "warn"], non_requis: ["e-mail non nécessaire", "neutral"] };
+// e-mail de secours : résultat noté par le serveur (« plafond », « alerte_coupee », « non_requis » : rien n'est parti)
+const EMAILS = { envoye: ["e-mail envoyé", "ok"], echec: ["e-mail en échec", "danger"], aucune_adresse: ["pas d'e-mail : aucune adresse de compte", "warn"],
+  non_requis: ["e-mail inutile : notification reçue", "neutral"], plafond: ["pas d'e-mail : plafond atteint", "warn"],
+  alerte_coupee: ["pas d'e-mail : alerte coupée par la pharmacie", "warn"] };
 const SOURCES = { message: "Message de l'admin", stock: "Retour en stock", entrepot: "Outil entrepôt", commandes: "Automatique", offres: "Automatique", infos: "Automatique" };
-const RESULTATS = { envoye: "envoyée", aucun_appareil: "aucun appareil", fermee: "ouverture fermée", hors_pilote: "hors pilote", plafond: "plafond de sécurité",
-  configuration: "service incomplet", schema: "tables absentes", erreur: "erreur", deja_envoye: "déjà envoyée", categorie: "catégorie inconnue" };
+const RESULTATS = { envoye: "envoyée", aucun_appareil: "aucun appareil joint", fermee: "ouverture fermée", hors_pilote: "hors pilote", plafond: "plafond de sécurité",
+  configuration: "service incomplet", schema: "tables absentes", erreur: "erreur", deja_envoye: "déjà envoyée", categorie: "catégorie inconnue", differe: "différée au matin (8 h)",
+  envoi: "envoi en cours", echec: "appareils en échec" };
+const TYPES_EVT = { reclamation: "Réclamation", ticket: "Demande", commande: "Commande" };
+const STATUTS_EVT = { recue: "reçue", recu: "reçue", en_cours: "en cours", acceptee: "acceptée", refusee: "réponse donnée", traitee: "traitée", resolu: "traitée",
+  avoir_emis: "avoir émis", cloturee: "clôturée", clos: "clôturée", expediee: "expédiée", reliquat: "reliquat", annulee: "annulée" };
+
+// téléphone (600 px et moins) : historiques en cartes, aperçus repliés
+function useEtroit() {
+  const requete = "(max-width: 600px)";
+  const lire = () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(requete).matches;
+  const [v, setV] = useState(lire);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return undefined;
+    const m = window.matchMedia(requete);
+    const f = () => setV(m.matches);
+    f();
+    if (m.addEventListener) { m.addEventListener("change", f); return () => m.removeEventListener("change", f); }
+    m.addListener(f); return () => m.removeListener(f);
+  }, []);
+  return v;
+}
 
 const Erreur = ({ texte }) => (texte ? <div role="alert" style={{ ...ui.encart("danger"), display: "flex", gap: 6, alignItems: "flex-start" }}><Icone nom="alerte" taille={14} style={{ marginTop: 2, flexShrink: 0 }} /><span>{texte}</span></div> : null);
 // options sur plusieurs lignes au besoin (téléphone) ; option désactivée : expliquée par son infobulle
@@ -58,6 +84,8 @@ const Bouton = ({ principal = false, children, style, ...reste }) => (
   <button type="button" className={principal ? "ex-btn-petrole" : "ex-btn-ligne"} style={{ ...ui.btn(principal ? "primaire" : "ligne", "m"), ...(principal ? {} : { background: undefined }), ...style }} {...reste}>{children}</button>
 );
 const inactif = { background: T.sand, color: T.inkSoft, cursor: "not-allowed" };
+// libellé long (nom de la pharmacie) : passe à la ligne, jamais plus large que la carte
+const largeLibre = { whiteSpace: "normal", height: "auto", minHeight: 38, maxWidth: "100%", textAlign: "center", lineHeight: 1.3 };
 const Section = ({ id, titre, droite, children }) => (
   <section style={card} aria-labelledby={id}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
@@ -78,6 +106,9 @@ const Compteur = ({ n, max, conseil }) => (
   </div>
 );
 const BadgeType = ({ type }) => <span style={ui.badge(TONS_TYPE[type] || "neutral")}>{TYPES_MESSAGE[type]?.libelle || "Promotion"}</span>;
+// carte d'une ligne d'historique (téléphone) : jamais de défilement horizontal
+const Carte = ({ children }) => <div style={{ border: `1px solid ${T.line}`, borderRadius: R.s, padding: "10px 12px", background: T.paper, display: "flex", flexDirection: "column", gap: 4, fontSize: 12.5, minWidth: 0, overflowWrap: "anywhere" }}>{children}</div>;
+const Cartes = ({ children }) => <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{children}</div>;
 
 // ── Liens ──
 const TYPES_LIEN = [["accueil", "Accueil"], ["commandes", "Mes commandes"], ["promo", "Menu promo"], ["menu", "Menu du catalogue"], ["outil", "Outil"], ["produit", "Produit (CIP)"]];
@@ -108,29 +139,46 @@ export function libelleLien(url, promos = [], sections = []) {
   if (!m) return String(url || "");
   if (m[1] === "menu") {
     const p = promos.find((x) => `promo_${x.id}` === m[2]);
-    if (p) return `Menu promo\u00a0: ${p.name}`;
+    if (p) return `Menu promo : ${p.name}`;
     const s = sections.find((x) => x.key === m[2]);
-    return s ? `Menu\u00a0: ${s.label}` : `Menu ${m[2]}`;
+    return s ? `Menu : ${s.label}` : `Menu ${m[2]}`;
   }
-  if (m[1] === "outil") return `Outil\u00a0: ${LIBELLES_OUTILS[m[2]] || m[2]}`;
+  if (m[1] === "outil") return `Outil : ${LIBELLES_OUTILS[m[2]] || m[2]}`;
   if (m[1] === "cip") return `Produit (CIP ${m[2]})`;
-  return "Panneau «\u00a0Notifications\u00a0»";
+  return "Panneau « Notifications »";
 }
 
 // heure de Paris : avant 8 h, après 20 h ou le dimanche, l'envoi (ou l'heure programmée) demande une confirmation de plus
-const motifHorsHeures = (t) => { const p = partiesParis(t); return p.jourSemaine === "dimanche" ? "un dimanche" : p.heure < 8 ? "avant 8\u00a0h" : "après 20\u00a0h"; };
-const demainMatin = () => { const p = partiesParis(Date.now() + 86400e3), d = (n) => String(n).padStart(2, "0"); return `${p.annee}-${d(p.mois)}-${d(p.jour)}T08:30`; };
+const motifHorsHeures = (t) => { const p = partiesParis(t); return p.jourSemaine === "dimanche" ? "un dimanche" : p.heure < 8 ? "avant 8 h" : "après 20 h"; };
+// date proposée : prochain jour hors dimanche, 8 h 30 (heure de Paris)
+const dateProposee = () => isoVersParis(prochainMatin(Date.now(), { heure: 8, minute: 30, demain: true }));
 
-// Brouillon gardé pour l'onglet (sessionStorage) : toucher l'aperçu sur le même appareil, ou recharger, ne perd rien
+// Brouillon gardé pour l'onglet (sessionStorage) : toucher l'aperçu sur le même appareil, ou recharger, ne perd rien ;
+// aussi écrit par « Écrire à cette pharmacie » (fiche de l'onglet 🏥 Pharmacies) avant d'ouvrir l'onglet 📲 Notifications
 const CLE_BROUILLON = "notif_brouillon_annonce";
 function lireBrouillon() {
   try { const b = JSON.parse(sessionStorage.getItem(CLE_BROUILLON) || "null"); return b && typeof b === "object" ? b : {}; } catch { return {}; }
+}
+function garderBrouillon(brouillon) {
+  try {
+    if (brouillon) sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon));
+    else sessionStorage.removeItem(CLE_BROUILLON);
+  } catch { /* stockage refusé : pas de brouillon */ }
+}
+// message de l'historique → brouillon du composeur (« Annuler et modifier »)
+function brouillonDe(a) {
+  const [typeLien, valeurLien] = lienVersChamps(a.url);
+  return { type: a.type || "promotion", titre: a.titre || "", corps: a.corps || "", typeLien, valeurLien, audience: a.audience || "toutes",
+    choix: (Array.isArray(a.cips) ? a.cips : []).map((cip) => ({ cip, nom: a.audience === "une" ? a.destinataire_nom || null : null, ville: null })),
+    repli: a.repli_email === true, quand: a.programme_pour ? "programmer" : "maintenant", date: a.programme_pour ? isoVersParis(a.programme_pour) : "" };
 }
 
 // ── Messages : composeur et historique ──
 export default function Messages({ etat, appeler, flash, promos = [], sections = [], masques = [], onEnvoye }) {
   const [historique, setHistorique] = useState(null);
   const [modeles, setModeles] = useState([]);
+  // « Annuler et modifier » : le composeur repart du message annulé (nouvelle clé : remonté avec ce brouillon)
+  const [reprise, setReprise] = useState(null);
   const chargerHistorique = useCallback(async () => {
     const r = await appeler("historique").catch(() => null);
     setHistorique(r?.ok ? r.corps.annonces || [] : []);
@@ -142,17 +190,23 @@ export default function Messages({ etat, appeler, flash, promos = [], sections =
   useEffect(() => { chargerHistorique(); chargerModeles(); }, [chargerHistorique, chargerModeles]);
   // stable : le suivi d'un envoi (Composeur) en dépend
   const apres = useCallback(async () => { await Promise.all([chargerHistorique(), onEnvoye?.()]); }, [chargerHistorique, onEnvoye]);
+  const modifier = useCallback((a) => {
+    setReprise({ cle: Date.now(), brouillon: brouillonDe(a) });
+    setTimeout(() => { try { document.getElementById("notif-message")?.scrollIntoView({ behavior: "smooth", block: "start" }); } catch { /* sans défilement */ } }, 50);
+  }, []);
   return (
     <>
-      <Composeur etat={etat} appeler={appeler} flash={flash} promos={promos} sections={sections} masques={masques} modeles={modeles} onModeles={chargerModeles} onEnvoye={apres} />
-      <Historiques annonces={historique} etat={etat} appeler={appeler} flash={flash} onChange={chargerHistorique} promos={promos} sections={sections} />
+      <Composeur key={reprise?.cle || 0} initial={reprise?.brouillon || null} etat={etat} appeler={appeler} flash={flash} promos={promos} sections={sections} masques={masques}
+        modeles={modeles} onModeles={chargerModeles} onEnvoye={apres} />
+      <Historiques annonces={historique} etat={etat} appeler={appeler} flash={flash} onChange={chargerHistorique} onModifier={modifier} promos={promos} sections={sections} />
     </>
   );
 }
 
 // ── Composeur ──
-function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, onModeles, onEnvoye }) {
-  const [b0] = useState(lireBrouillon);
+function Composeur({ initial, etat, appeler, flash, promos, sections, masques, modeles, onModeles, onEnvoye }) {
+  const etroit = useEtroit();
+  const [b0] = useState(() => initial || lireBrouillon());
   const texteDe = (v) => (typeof v === "string" ? v : "");
   const [type, setType] = useState(IDS_TYPES.includes(b0.type) ? b0.type : "promotion");
   const [titre, setTitre] = useState(texteDe(b0.titre));
@@ -164,36 +218,59 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
   const [choix, setChoix] = useState(Array.isArray(b0.choix) ? b0.choix.filter((p) => p && typeof p.cip === "string").slice(0, 500) : []);
   const [repli, setRepli] = useState(b0.repli === true);
   const [quand, setQuand] = useState(b0.quand === "programmer" ? "programmer" : "maintenant");
-  const [date, setDate] = useState(typeof b0.date === "string" && b0.date ? b0.date : demainMatin());
+  const [date, setDate] = useState(typeof b0.date === "string" && b0.date ? b0.date : dateProposee);
   const [modele, setModele] = useState("");
+  // titre et texte du dernier modèle appliqué : un texte écrit ou modifié à la main n'est jamais écrasé sans confirmation
+  const origine = useRef({ titre: "", corps: "" });
   useEffect(() => {
     const brouillon = { type, titre, corps, typeLien, valeurLien, audience, choix: choix.map(({ cip, nom, ville }) => ({ cip, nom, ville })), repli, quand, date };
-    try {
-      if (titre || corps) sessionStorage.setItem(CLE_BROUILLON, JSON.stringify(brouillon));
-      else sessionStorage.removeItem(CLE_BROUILLON);
-    } catch { /* stockage refusé : pas de brouillon */ }
+    garderBrouillon(titre || corps || choix.length ? brouillon : null);
   }, [type, titre, corps, typeLien, valeurLien, audience, choix, repli, quand, date]);
   const transactionnel = estTransactionnel(type);
   const categorie = categorieDuType(type);
-  // Réclamation / SAV et Commande : jamais « toutes » ; au plus 20 pharmacies
-  useEffect(() => { if (transactionnel && audience === "toutes") setAudience("une"); }, [transactionnel, audience]);
-  useEffect(() => { if (audience === "une" && choix.length > 1) setChoix((l) => l.slice(0, 1)); }, [audience, choix.length]);
+  const permises = audiencesDuType(type);
+  // passage à « une » : le choix précédent est vidé (jamais une pharmacie héritée d'une liste ou d'un ancien brouillon)
+  const changerAudience = (a) => {
+    if (a === "une" && audience !== "une") setChoix([]);
+    setAudience(a);
+  };
+  // Réclamation / SAV : une seule pharmacie ; Commande : une ou quelques-unes ; jamais « toutes »
+  useEffect(() => {
+    if (!audiencesDuType(type).includes(audience)) { setChoix([]); setAudience("une"); }
+  }, [type, audience]);
+  useEffect(() => { if (audience === "une" && choix.length > 1) setChoix([]); }, [audience, choix.length]);
   const cips = audience === "toutes" ? [] : choix.map((p) => p.cip);
+  // brouillon repris (« Écrire à cette pharmacie », « Annuler et modifier », rechargement) : détails de joignabilité
+  useEffect(() => {
+    const sans = choix.filter((p) => p.appareils == null).map((p) => p.cip).slice(0, 20);
+    if (!sans.length) return;
+    appeler("chercher", { cips: sans }).then((r) => {
+      const m = new Map((r?.ok ? r.corps.pharmacies || [] : []).map((p) => [p.cip, p]));
+      if (m.size) setChoix((l) => l.map((x) => (m.has(x.cip) ? { ...x, ...m.get(x.cip), nom: x.nom || m.get(x.cip).nom } : x)));
+    }, () => {});
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const [estimation, setEstimation] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState(null);
   const [suivi, setSuivi] = useState(null);   // message unitaire parti : suivi de son envoi
-  const idem = useRef(nouvelleCle());   // une clé par message : un double clic ou une réponse perdue n'envoie jamais deux fois
   const chemin = cheminDe(typeLien, valeurLien);
   const lien = lienValide(chemin);
   const programmeIso = quand === "programmer" ? parisVersIso(date) : null;
+  const repliPossible = audience === "une" && type !== "promotion";
   const msg = { type, titre: titre.trim(), corps: corps.trim(), url: lien || "", audience, cips: audience === "toutes" ? null : cips,
-    repli_email: audience === "une" && repli, programme_pour: programmeIso };
+    repli_email: repliPossible && repli, programme_pour: programmeIso };
+  // une clé par CONTENU : un double clic ou une réponse perdue n'envoie jamais deux fois ; un message corrigé prend une
+  // nouvelle clé (jamais l'ancien envoyé à sa place)
+  const idem = useRef(nouvelleCle());
+  const signature = JSON.stringify([msg.type, msg.titre, msg.corps, msg.url, msg.audience, msg.cips, msg.repli_email, msg.programme_pour]);
+  useEffect(() => { idem.current = nouvelleCle(); }, [signature]);
   const v = verifierMessage(msg);
   const aCompleter = champsACompleter(`${titre} ${corps}`);
   const montant = transactionnel && contientMontant(`${titre} ${corps}`);
-  const dateValide = quand !== "programmer" || (!!programmeIso && Date.parse(programmeIso) > Date.now() + 4 * 60e3);
+  const referenceListe = type === "commande" && audience === "liste" && contientReference(`${titre} ${corps}`);
+  // au moins 5 minutes à l'avance (le serveur admet 30 s de moins : le temps des confirmations)
+  const dateValide = quand !== "programmer" || (!!programmeIso && Date.parse(programmeIso) >= Date.now() + PROGRAMME_MIN_MS);
   const valide = v.ok && dateValide;
   // seulement ce qu'une pharmacie peut ouvrir (menus masqués dans « Affichage » : le lien retomberait sur l'accueil)
   const promosActifs = promos.filter((p) => p.active && !masques.includes(`promo_${p.id}`));
@@ -216,13 +293,19 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
   }, [type, audience, cleCips, appeler, etat.disponible]);
 
   const appliquerModele = (id) => {
-    setModele(id);
     const m = MODELES_ELIXIR.find((x) => x.id === id) || modeles.find((x) => x.id === id);
-    if (!m) return;
+    if (!m) { setModele(id); return; }
+    // titre ou texte modifiés à la main : jamais écrasés sans le demander
+    const modifie = (titre.trim() || corps.trim()) && (titre !== origine.current.titre || corps !== origine.current.corps);
+    if (modifie && !window.confirm(`Remplacer le titre et le texte en cours par le modèle « ${m.nom} » ?`)) return;
+    setModele(id);
     setType(m.type); setTitre(m.titre); setCorps(m.corps);
-    const [tl, vl] = lienVersChamps(m.url);
-    setTypeLien(tl); setValeurLien(vl);
-    if (estTransactionnel(m.type) && audience === "toutes") setAudience("une");
+    origine.current = { titre: m.titre, corps: m.corps };
+    // « Nouveau menu », « Offre du moment » : menu promo à choisir (envoi bloqué tant qu'il ne l'est pas)
+    if (m.typeLien) { setTypeLien(m.typeLien); setValeurLien(""); }
+    else { const [tl, vl] = lienVersChamps(m.url); setTypeLien(tl); setValeurLien(vl); }
+    if (!audiencesDuType(m.type).includes(audience)) changerAudience("une");
+    if (m.type === "promotion") setRepli(false);
   };
   const persoChoisi = modeles.find((x) => x.id === modele);
 
@@ -231,12 +314,12 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
     try {
       const r = await appeler("apercu", { message: msg });
       setMessage(!r.ok ? { ton: "danger", texte: (r.corps.erreurs || [r.corps.message || r.corps.error || `HTTP ${r.statut}`]).join(" ") }
-        : r.corps.aucun ? { ton: "warn", texte: "Aucun de vos appareils n'est activé\u00a0: voir «\u00a0Vos appareils\u00a0» ci-dessus." }
+        : r.corps.aucun ? { ton: "warn", texte: "Aucun de vos appareils n'est activé : voir « Vos appareils (tests et aperçus) » plus bas." }
         : { ton: "ok", texte: `Aperçu envoyé à ${pluriel(r.corps.envoyes, "appareil")}${r.corps.echecs ? ` (${r.corps.echecs} en échec)` : ""}.` });
     } finally { setBusy(false); }
   };
   const recevront = estimation?.recevront ?? 0;
-  const emailPossible = audience === "une" && repli && (estimation?.email?.adresses || 0) > 0;
+  const emailPossible = repliPossible && repli && !!estimation?.email?.permis;
   const fermee = !!estimation?.fermee;
   const peutPartir = quand === "programmer" || recevront > 0 || emailPossible;
   const bloque = busy || !valide || !etat.disponible || !peutPartir || (quand === "maintenant" && fermee && !emailPossible) || (audience !== "toutes" && !cips.length);
@@ -256,18 +339,21 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
     return () => { annule = true; clearInterval(t); };
   }, [suivi?.id, suivi?.fini, appeler, onEnvoye]);
 
+  const nomUne = audience === "une" && choix[0] ? choix[0].nom || `CIP ${choix[0].cip}` : null;
   const envoyer = async () => {
-    const nomDest = audience === "une" ? choix[0]?.nom || `CIP ${choix[0]?.cip}` : null;
-    const cible = audience === "une" ? `«\u00a0${nomDest}\u00a0»` : pluriel(recevront, "pharmacie");
+    // plusieurs pharmacies : leurs noms dans la confirmation (12 au plus, puis « et N autres »)
+    const noms = choix.map((p) => p.nom || `CIP ${p.cip}`);
+    const liste = noms.length > 12 ? `${noms.slice(0, 12).join(", ")} et ${pluriel(noms.length - 12, "autre")}` : noms.join(", ");
+    const cible = audience === "une" ? `« ${nomUne} »` : audience === "liste" ? `${pluriel(choix.length, "pharmacie choisie", "pharmacies choisies")} (${liste})` : pluriel(recevront, "pharmacie");
     if (quand === "programmer") {
       const t = Date.parse(programmeIso);
-      if (!window.confirm(`Programmer «\u00a0${msg.titre}\u00a0» (${TYPES_MESSAGE[type].libelle}) pour le ${jourLong(programmeIso)} (heure de Paris)\u00a0?\n\nDestinataires calculés à l'heure d'envoi. Vous pourrez l'annuler jusque-là dans l'historique.`)) return;
-      if (horsHeures(t) && !window.confirm(`Le ${jourLong(programmeIso)} tombe ${motifHorsHeures(t)} (heure de Paris)\u00a0: les pharmacies le recevront à ce moment-là, sur leur téléphone. Programmer quand même\u00a0?`)) return;
+      if (!window.confirm(`Programmer « ${msg.titre} » (${TYPES_MESSAGE[type].libelle}) pour ${cible}, le ${jourLong(programmeIso)} (heure de Paris) ?\n\nDestinataires calculés à l'heure d'envoi. Vous pourrez l'annuler jusque-là dans l'historique.`)) return;
+      if (horsHeures(t) && !window.confirm(`Le ${jourLong(programmeIso)} tombe ${motifHorsHeures(t)} (heure de Paris) : les pharmacies le recevront à ce moment-là, sur leur téléphone. Programmer quand même ?`)) return;
     } else {
       const h = Date.now();
-      const secours = audience === "une" && repli ? "\n\nSi la pharmacie n'est jointe sur aucun appareil, l'e-mail de secours part aux adresses de son compte." : "";
-      if (!window.confirm(`Envoyer «\u00a0${msg.titre}\u00a0» (${TYPES_MESSAGE[type].libelle}) à ${cible} maintenant\u00a0?${secours}\n\nCe n'est pas annulable.`)) return;
-      if (horsHeures(h) && !window.confirm(`Il est ${texteHeureParis(h)} (heure de Paris)${partiesParis(h).jourSemaine === "dimanche" ? ", un dimanche" : ""}\u00a0: la pharmacie le recevra tout de suite, sur son téléphone. Envoyer quand même\u00a0?`)) return;
+      const secours = msg.repli_email ? "\n\nSi aucun téléphone de la pharmacie ne reçoit la notification, l'e-mail de secours part aux adresses de son compte." : "";
+      if (!window.confirm(`Envoyer « ${msg.titre} » (${TYPES_MESSAGE[type].libelle}) à ${cible} maintenant ?${secours}\n\nCe n'est pas annulable.`)) return;
+      if (horsHeures(h) && !window.confirm(`Il est ${texteHeureParis(h)} (heure de Paris)${partiesParis(h).jourSemaine === "dimanche" ? ", un dimanche" : ""} : la pharmacie le recevra tout de suite, sur son téléphone. Envoyer quand même ?`)) return;
     }
     setBusy(true); setMessage(null); setSuivi(null);
     try {
@@ -275,45 +361,59 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
       if (r.statut === 202 || (r.ok && (r.corps.deja || r.corps.programmee))) {
         idem.current = nouvelleCle();
         const a = r.corps.annonce;
-        flash(r.corps.programmee ? `✓ Message programmé pour le ${dt(a?.programme_pour)}` : "✓ Message parti\u00a0: suivez son envoi dans l'historique");
-        setTitre(""); setCorps(""); setModele("");
-        setMessage({ ton: "ok", texte: r.corps.deja ? "Ce message était déjà parti (double clic)\u00a0: rien n'a été envoyé deux fois."
+        flash(r.corps.programmee ? `✓ Message programmé pour le ${dt(a?.programme_pour)}` : "✓ Message parti : suivez son envoi dans l'historique");
+        setTitre(""); setCorps(""); setModele(""); origine.current = { titre: "", corps: "" };
+        // réclamation, commande : la pharmacie suivante se choisit, jamais héritée du message précédent
+        if (transactionnel) { setChoix([]); setRepli(false); }
+        setMessage({ ton: "ok", texte: r.corps.deja ? "Ce message était déjà enregistré (double clic ou réponse perdue) : il part tel quel, rien n'est envoyé deux fois."
           : r.corps.programmee ? `Programmé pour le ${jourLong(a?.programme_pour)} (heure de Paris). Annulable dans l'historique jusqu'à l'envoi.`
-          : "Message parti\u00a0: l'envoi prend quelques secondes (historique ci-dessous)." });
+          : "Message parti : l'envoi prend quelques secondes (historique ci-dessous)." });
         if (!r.corps.programmee && !r.corps.deja && a?.id && audience !== "toutes") setSuivi({ id: a.id, fini: false });
         await onEnvoye();
         return;
       }
-      setMessage({ ton: "danger", texte: r.corps.error === "en_cours" ? "Un message plafonné (offre ou information) est en cours d'envoi\u00a0: attendez qu'il soit terminé, ou programmez celui-ci."
-        : r.corps.error === "fermee" ? "Ouverture «\u00a0fermée\u00a0»\u00a0: aucune pharmacie ne reçoit encore les notifications (voir «\u00a0Ouverture aux pharmacies\u00a0»). Un message unitaire avec e-mail de secours peut partir."
-        : r.corps.error === "lancement" ? "Le message est enregistré mais l'envoi n'a pas démarré\u00a0: il est relancé automatiquement dans les 5 minutes (ou «\u00a0Relancer\u00a0» dans l'historique)."
-        : r.corps.error === "trop_de_programmes" ? "50 messages programmés au plus\u00a0: annulez-en un dans l'historique."
-        : r.corps.error === "configuration" ? "Service incomplet\u00a0: terminez la mise en service." : (r.corps.erreurs || [r.corps.message || `Erreur (HTTP ${r.statut})`]).join(" ") });
+      if (r.corps.error === "idem_reutilise") idem.current = nouvelleCle();
+      setMessage({ ton: "danger", texte: r.corps.error === "en_cours" ? "Un message plafonné (offre ou information) est en cours d'envoi : attendez qu'il soit terminé, ou programmez celui-ci."
+        : r.corps.error === "fermee" ? "Ouverture « fermée » : aucune pharmacie ne reçoit encore les notifications (voir « Ouverture aux pharmacies »). Un message unitaire avec e-mail de secours peut partir."
+        : r.corps.error === "lancement" ? "Le message est enregistré mais l'envoi n'a pas démarré : il est relancé automatiquement dans les 5 minutes (aux heures ouvertes), ou « Relancer » dans l'historique. Pour le corriger, annulez-le d'abord dans l'historique."
+        : r.corps.error === "idem_reutilise" ? "Ce message a changé depuis un premier essai enregistré : rien n'a été envoyé. Vérifiez l'historique, puis renvoyez-le."
+        : r.corps.error === "trop_de_programmes" ? "50 messages programmés au plus : annulez-en un dans l'historique."
+        : r.corps.error === "configuration" ? "Service incomplet : terminez la mise en service." : (r.corps.erreurs || [r.corps.message || `Erreur (HTTP ${r.statut})`]).join(" ") });
       if (r.corps.error === "lancement") await onEnvoye();
     } finally { setBusy(false); }
   };
 
   // modèles enregistrés
   const [nomModele, setNomModele] = useState(null);   // null : fermé ; texte : saisie du nom
-  const enregistrerModele = async () => {
-    const r = await appeler("modele_enregistrer", { modele: { nom: nomModele, type, titre: titre.trim(), corps: corps.trim(), url: lien || "/" } });
-    if (r.ok) { flash("✓ Modèle enregistré"); setNomModele(null); await onModeles(); setModele(r.corps.modele?.id || ""); return; }
-    flash(r.corps.error === "doublon" ? "⚠ Un modèle porte déjà ce nom" : r.corps.error === "trop" ? "⚠ 100 modèles au plus : supprimez-en un"
-      : `⚠ ${(r.corps.erreurs || [r.corps.message || r.corps.error || `HTTP ${r.statut}`]).join(" ")}`);
+  const enregistrerModele = async (remplacer = false) => {
+    const r = await appeler("modele_enregistrer", { modele: { nom: nomModele, type, titre: titre.trim(), corps: corps.trim(), url: lien || "/" }, ...(remplacer ? { remplacer: true } : {}) });
+    if (r.ok) { flash(r.corps.remplace ? "✓ Modèle remplacé" : "✓ Modèle enregistré"); setNomModele(null); await onModeles(); setModele(r.corps.modele?.id || ""); origine.current = { titre, corps }; return; }
+    if (r.corps.error === "doublon" && !remplacer) {
+      if (window.confirm(`Un modèle « ${nomModele.trim()} » existe déjà. Le remplacer par ce message ?`)) await enregistrerModele(true);
+      return;
+    }
+    flash(r.corps.error === "trop" ? "⚠ 100 modèles au plus : supprimez-en un" : `⚠ ${(r.corps.erreurs || [r.corps.message || r.corps.error || `HTTP ${r.statut}`]).join(" ")}`);
   };
   const supprimerModele = async () => {
-    if (!persoChoisi || !window.confirm(`Supprimer le modèle «\u00a0${persoChoisi.nom}\u00a0»\u00a0? Les messages déjà envoyés ne changent pas.`)) return;
+    if (!persoChoisi || !window.confirm(`Supprimer le modèle « ${persoChoisi.nom} » ? Les messages déjà envoyés ne changent pas.`)) return;
     const r = await appeler("modele_supprimer", { id: persoChoisi.id });
     flash(r.ok ? "✓ Modèle supprimé" : "⚠ Suppression impossible");
     setModele(""); await onModeles();
   };
 
   const champ = { ...ui.input, fontSize: 13 };
-  const optionsAudience = [["une", "Une pharmacie"], ["liste", "Plusieurs pharmacies"],
+  const optionsAudience = [["une", "Une pharmacie"],
+    ["liste", "Plusieurs pharmacies", !permises.includes("liste"), !permises.includes("liste") ? "Réclamation / SAV : une seule pharmacie à la fois" : undefined],
     ["toutes", "Toutes les pharmacies abonnées", transactionnel, transactionnel ? "Réclamation / SAV et Commande : une ou quelques pharmacies seulement" : undefined]];
-  const libelleBouton = busy ? "Envoi…" : quand === "programmer" ? (programmeIso ? `Programmer pour le ${dt(programmeIso)}` : "Programmer")
-    : audience === "une" ? (recevront ? "Envoyer à cette pharmacie" : emailPossible ? "Envoyer (e-mail de secours)" : "Envoyer")
+  const libelleBouton = busy ? "Envoi…" : quand === "programmer" ? "Programmer"
+    : audience === "une" ? (nomUne && (recevront || emailPossible) ? `Envoyer à ${nomUne}${!recevront ? " (e-mail de secours)" : ""}` : "Envoyer")
     : `Envoyer à ${pluriel(recevront, "pharmacie")}`;
+  const apercus = (
+    <div style={{ display: "grid", gridTemplateColumns: grille(250), gap: 12 }}>
+      <ApercuAndroid titre={msg.titre} corps={msg.corps} />
+      <ApercuIphone titre={msg.titre} corps={msg.corps} />
+    </div>
+  );
   return (
     <Section id="notif-message" titre="Nouveau message">
       {!etat.disponible && <div style={{ ...ui.encart("warn"), marginBottom: 12 }}>Service incomplet&nbsp;: le message ne peut pas partir.</div>}
@@ -321,7 +421,7 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
         <div>
           <div style={ui.label}>Type de message</div>
-          <Segment etiquette="Type de message" valeur={type} onChange={(t) => { setType(t); setModele(""); }} options={IDS_TYPES.map((k) => [k, TYPES_MESSAGE[k].libelle])} />
+          <Segment etiquette="Type de message" valeur={type} onChange={(t) => { setType(t); setModele(""); if (t === "promotion") setRepli(false); }} options={IDS_TYPES.map((k) => [k, TYPES_MESSAGE[k].libelle])} />
           <div style={{ ...sourdine, marginTop: 6 }}>{AIDES_TYPE[type]}</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "flex-end" }}>
@@ -337,19 +437,7 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
               </optgroup>}
             </select>
           </div>
-          {nomModele == null ? (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <Bouton onClick={() => setNomModele(titre.trim().slice(0, NOM_MODELE_MAX))} disabled={!titre.trim() || !corps.trim() || !lien}>Enregistrer comme modèle</Bouton>
-              {persoChoisi && <button type="button" className="ex-lien-danger" onClick={supprimerModele} style={{ ...ui.btn("lien"), fontSize: 12.5, fontWeight: 600 }}>Supprimer ce modèle</button>}
-            </div>
-          ) : (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", flex: "1 1 260px" }}>
-              <input value={nomModele} onChange={(e) => setNomModele(e.target.value)} maxLength={NOM_MODELE_MAX} aria-label="Nom du modèle" placeholder="Nom du modèle"
-                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); enregistrerModele(); } }} style={{ ...champ, flex: "1 1 160px", minHeight: 36 }} />
-              <Bouton principal onClick={enregistrerModele} disabled={!nomModele.trim()}>Enregistrer</Bouton>
-              <Bouton onClick={() => setNomModele(null)}>Annuler</Bouton>
-            </div>
-          )}
+          {persoChoisi && <button type="button" className="ex-lien-danger" onClick={supprimerModele} style={{ ...ui.btn("lien"), fontSize: 12.5, fontWeight: 600 }}>Supprimer ce modèle</button>}
         </div>
         <div style={sourdine}>Les champs entre crochets («&nbsp;[référence]&nbsp;», «&nbsp;[date]&nbsp;») sont à remplacer avant l'envoi. Un modèle enregistré est partagé entre les admins.</div>
 
@@ -358,7 +446,7 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
             <div>
               <label htmlFor="notif-titre-annonce" style={ui.label}>Titre</label>
               <input id="notif-titre-annonce" value={titre} onChange={(e) => setTitre(e.target.value)} maxLength={LIMITES.titre + 10}
-                placeholder={transactionnel ? "Réclamation traitée" : "Vaseline\u00a0: précommande ouverte"} style={champ} />
+                placeholder={transactionnel ? "Réclamation traitée" : "Vaseline : précommande ouverte"} style={champ} />
               <Compteur n={nT} max={LIMITES.titre} conseil={nT > TITRE_CONSEILLE ? "peut être coupé sur Android" : null} />
             </div>
             <div>
@@ -394,35 +482,42 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
                   <input value={valeurLien} onChange={(e) => setValeurLien(e.target.value)} inputMode="numeric" placeholder="CIP13 (ou CIP7)" aria-label="CIP du produit" style={champ} />)}
                 <div className="num" style={{ ...sourdine, marginTop: 4 }}>
                   {lien ? <>Page&nbsp;: <b style={{ color: T.ink }}>{libelleLien(lien, promos, sections)}</b>{lien === "/?commandes=1" ? " (la pharmacie connectée voit ses commandes)" : ""}</>
-                    : chemin ? <span style={{ color: T.danger }}>Lien refusé (CIP de 7 à 14 chiffres, menu ou outil du site)</span> : "Choisissez la page à ouvrir."}
+                    : chemin ? <span style={{ color: T.danger }}>Lien refusé (CIP de 7 à 14 chiffres, menu ou outil du site)</span>
+                    : <span style={{ color: tone("warn").fg, fontWeight: 600 }}>Choisissez la page à ouvrir.</span>}
                 </div>
               </div>
             </div>
           </div>
           <div style={{ minWidth: 0 }}>
-            <div style={ui.label}>Aperçu</div>
-            <div style={{ display: "grid", gridTemplateColumns: grille(250), gap: 12 }}>
-              <ApercuAndroid titre={msg.titre} corps={msg.corps} />
-              <ApercuIphone titre={msg.titre} corps={msg.corps} />
-            </div>
+            {etroit ? (
+              <details>
+                <summary style={{ cursor: "pointer", fontSize: 12.5, fontWeight: 600, color: T.ink, minHeight: 28 }}>Voir l'aperçu (Android et iPhone)</summary>
+                <div style={{ marginTop: 8 }}>{apercus}</div>
+              </details>
+            ) : <><div style={ui.label}>Aperçu</div>{apercus}</>}
             <p style={{ ...sourdine, margin: "8px 0 0" }}>Coupures simulées&nbsp;: titre sur une ligne et texte sur deux lignes sous Android (notification repliée), texte sur quatre lignes sur iPhone.</p>
           </div>
         </div>
 
         <div>
           <div style={ui.label}>Destinataires</div>
-          <Segment etiquette="Destinataires" valeur={audience} onChange={setAudience} options={optionsAudience} />
+          <Segment etiquette="Destinataires" valeur={audience} onChange={changerAudience} options={optionsAudience} />
           {audience !== "toutes" && <ChoixDestinataires appeler={appeler} etat={etat} audience={audience} categorie={categorie} choix={choix} setChoix={setChoix}
             max={audience === "une" ? 1 : transactionnel ? MAX_LISTE_TRANSACTIONNEL : 500} />}
-          {audience === "une" && (
+          {type === "commande" && audience === "liste" && (
+            <div role={referenceListe ? "alert" : "note"} style={{ ...ui.encart(referenceListe ? "danger" : "info"), marginTop: 10 }}>
+              Le même texte part à chaque pharmacie&nbsp;: aucune référence propre à une pharmacie (n° de commande, de bon…). {referenceListe ? "Ce texte en contient une : retirez-la, ou choisissez « Une pharmacie »." : ""}
+            </div>
+          )}
+          {repliPossible && (
             <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginTop: 12, fontSize: 13, lineHeight: 1.45, cursor: "pointer", color: T.ink }}>
               <input type="checkbox" checked={repli} onChange={(e) => setRepli(e.target.checked)} style={{ marginTop: 3, width: 16, height: 16, flexShrink: 0 }} />
               <span><b>Si la pharmacie n'est pas joignable sur téléphone, envoyer aussi par e-mail</b>
-                <span style={{ display: "block", ...sourdine }}>Aux adresses de connexion de son compte (jamais l'e-mail de la fiche Odoo, parfois partagé avec une autre officine). {type === "promotion" || type === "communication"
-                  ? "Pas d'e-mail si elle a coupé cette alerte sur ses appareils ou si le plafond l'écarte." : "Pas d'e-mail si le plafond de sécurité l'écarte."}</span></span>
+                <span style={{ display: "block", ...sourdine }}>Seulement si aucun de ses téléphones (iPhone, Android) n'accepte la notification. Aux adresses de connexion de son compte (jamais l'e-mail de la fiche Odoo, parfois partagé avec une autre officine). {type === "communication"
+                  ? "Pas d'e-mail si elle a coupé cette alerte sur ses appareils ou si le plafond l'écarte ; l'e-mail parti compte dans le plafond." : "Pas d'e-mail si le plafond de sécurité l'écarte ; l'e-mail parti y compte."}</span></span>
             </label>
           )}
-          <Estimation estimation={estimation} audience={audience} categorie={categorie} repli={audience === "une" && repli} transactionnel={transactionnel} />
+          <Estimation estimation={estimation} audience={audience} categorie={categorie} repli={repliPossible && repli} transactionnel={transactionnel} />
         </div>
 
         <div>
@@ -432,9 +527,10 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginTop: 8 }}>
               <label htmlFor="notif-date" style={{ fontSize: 13, color: T.ink }}>Le</label>
               <input id="notif-date" type="datetime-local" value={date} onChange={(e) => setDate(e.target.value)} min={isoVersParis(new Date(Date.now() + 5 * 60e3).toISOString())}
-                style={{ ...champ, width: "auto", minHeight: 36, padding: "5px 10px" }} />
+                style={{ ...champ, width: "auto", maxWidth: "100%", minHeight: 36, padding: "5px 10px" }} />
               <span style={sourdine}>heure de Paris{programmeIso && horsHeures(Date.parse(programmeIso)) ? <b style={{ color: tone("warn").fg }}> · {motifHorsHeures(Date.parse(programmeIso))}</b> : null}</span>
               {!dateValide && <span style={{ ...sourdine, color: T.danger }}>{programmeIso ? "Au moins 5 minutes à l'avance." : "Date ou heure illisible (ou inexistante au changement d'heure)."}</span>}
+              {dateValide && programmeIso && <div style={{ ...sourdine, flexBasis: "100%", color: T.ink }}>Envoi prévu le <b>{jourLong(programmeIso)}</b> (heure de Paris).</div>}
               <div style={{ ...sourdine, flexBasis: "100%" }}>Envoyé au plus 5 minutes après l'heure choisie, destinataires et plafonds calculés à ce moment-là. Annulable dans l'historique jusqu'à l'envoi.</div>
             </div>
           )}
@@ -443,41 +539,73 @@ function Composeur({ etat, appeler, flash, promos, sections, masques, modeles, o
       {!v.ok && (titre || corps) && <div style={{ marginTop: 12 }}><Erreur texte={v.erreurs.join(" ")} /></div>}
       {message && <div role={message.ton === "danger" ? "alert" : "status"} style={{ ...ui.encart(message.ton), marginTop: 12 }}>{message.texte}</div>}
       {suivi && <SuiviEnvoi suivi={suivi} />}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14, alignItems: "center" }}>
         <Bouton onClick={apercu} disabled={busy || !msg.titre || !msg.corps || !lien || !etat.disponible || aCompleter.length > 0}><Icone nom="envoyer" taille={15} />M'envoyer l'aperçu</Bouton>
-        <Bouton principal onClick={envoyer} disabled={bloque} style={bloque ? inactif : undefined}>
+        {nomModele == null && <Bouton onClick={() => setNomModele(titre.trim().slice(0, NOM_MODELE_MAX))} disabled={!titre.trim() || !corps.trim() || !lien}>Enregistrer comme modèle</Bouton>}
+        <Bouton principal onClick={envoyer} disabled={bloque} style={{ ...largeLibre, ...(bloque ? inactif : {}) }}>
           {quand === "programmer" ? <Icone nom="horloge" taille={15} /> : null}{libelleBouton}
         </Bouton>
       </div>
+      {nomModele != null && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+          <input value={nomModele} onChange={(e) => setNomModele(e.target.value)} maxLength={NOM_MODELE_MAX} aria-label="Nom du modèle" placeholder="Nom du modèle"
+            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); enregistrerModele(); } }} style={{ ...champ, flex: "1 1 200px", minHeight: 36 }} />
+          <Bouton principal onClick={() => enregistrerModele()} disabled={!nomModele.trim()}>Enregistrer le modèle</Bouton>
+          <Bouton onClick={() => setNomModele(null)}>Annuler</Bouton>
+        </div>
+      )}
     </Section>
   );
 }
 
-// Estimation des destinataires (lecture seule, mise à jour en direct)
+// Estimation des destinataires (lecture seule, mise à jour en direct) ; e-mail de secours : même règle que l'envoi
 function Estimation({ estimation: e, audience, categorie, repli, transactionnel }) {
   if (e == null) return <div role="status" style={{ ...sourdine, marginTop: 8 }}>Estimation…</div>;
   if (e.vide) return <div role="status" style={{ ...sourdine, marginTop: 8 }}>Choisissez {audience === "une" ? "la pharmacie" : "les pharmacies"}.</div>;
   if (e.erreur) return <div role="status" style={{ ...sourdine, marginTop: 8, color: T.danger }}>Estimation impossible pour le moment.</div>;
   const plafond = e.plafond;
   const lignes = [];
-  if (e.fermee) lignes.push("Ouverture «\u00a0fermée\u00a0»\u00a0: aucune pharmacie ne recevra de notification.");
+  if (e.fermee) lignes.push("Ouverture « fermée » : aucune pharmacie ne recevra de notification.");
   else {
     lignes.push(e.recevront ? `${pluriel(e.recevront, "pharmacie")} recevr${e.recevront > 1 ? "ont" : "a"} la notification (${pluriel(e.appareils, "appareil")}).`
       : "Aucune pharmacie ne recevra la notification.");
-    if (e.plafonnees) lignes.push(`${pluriel(e.plafonnees, "pharmacie écartée", "pharmacies écartées")} par le plafond (${plafond?.max} «\u00a0${CATS[categorie]}\u00a0» sur ${plafond?.fenetre}).`);
+    if (e.plafonnees) lignes.push(`${pluriel(e.plafonnees, "pharmacie écartée", "pharmacies écartées")} par le plafond (${plafond?.max} « ${CATS[categorie]} » sur ${plafond?.fenetre}).`);
     const non = [];
     if (e.sans_appareil) non.push(audience === "toutes" ? `${pluriel(e.sans_appareil, "pharmacie cliente", "pharmacies clientes")} sans notifications activées` : `${pluriel(e.sans_appareil, "pharmacie")} sans appareil`);
-    if (e.alerte_coupee) non.push(`${pluriel(e.alerte_coupee, "pharmacie")} avec l'alerte «\u00a0${CATS[categorie]}\u00a0» coupée`);
+    if (e.alerte_coupee) non.push(`${pluriel(e.alerte_coupee, "pharmacie")} avec l'alerte « ${CATS[categorie]} » coupée`);
     if (e.hors_ouverture) non.push(`${pluriel(e.hors_ouverture, "pharmacie")} hors pilote`);
-    if (non.length) lignes.push(`Non joignables${audience === "toutes" ? "" : " parmi les choisies"}\u00a0: ${non.join(", ")}.`);
+    if (non.length) lignes.push(`Non joignables${audience === "toutes" ? "" : " parmi les choisies"} : ${non.join(", ")}.`);
   }
-  if (audience === "une" && repli) {
+  if (audience === "une" && repli && e.email) {
     const m = e.email;
-    lignes.push(!m ? "" : m.adresses ? `E-mail de secours possible\u00a0: ${pluriel(m.adresses, "adresse")} du compte (${m.masquees.join(", ")}).`
-      : "E-mail de secours impossible\u00a0: aucune adresse de compte pour cette pharmacie.");
+    const adresses = m.adresses ? `${pluriel(m.adresses, "adresse")} du compte (${(m.masquees || []).join(", ")})` : "";
+    lignes.push(m.raison === "aucune_adresse" || !m.adresses ? "Pas d'e-mail de secours : aucune adresse de compte pour cette pharmacie."
+      : m.raison === "alerte_coupee" ? `Pas d'e-mail de secours : la pharmacie a coupé « ${CATS[categorie]} ».`
+      : m.raison === "plafond" ? "Pas d'e-mail de secours : plafond atteint pour cette pharmacie."
+      : m.raison === "type" ? "Pas d'e-mail de secours pour une Promotion."
+      : m.telephone ? `E-mail de secours seulement si son téléphone ne reçoit pas la notification : ${adresses}.`
+      : `E-mail de secours prévu (aucun téléphone de la pharmacie ne reçoit cette alerte) : ${adresses}.`);
   }
-  if (transactionnel && plafond) lignes.push(`Plafond de sécurité\u00a0: ${plafond.max} messages «\u00a0${CATS.commandes}\u00a0» par pharmacie sur ${plafond.fenetre}.`);
+  if (transactionnel && plafond) lignes.push(`Plafond de sécurité : ${plafond.max} messages « ${CATS.commandes} » par pharmacie sur ${plafond.fenetre}.`);
   return <div role="status" style={{ ...sourdine, marginTop: 10, color: T.ink, display: "flex", flexDirection: "column", gap: 2 }}>{lignes.filter(Boolean).map((l) => <span key={l}>{l}</span>)}</div>;
+}
+
+// résultat d'un message envoyé, en phrase (historique, suivi)
+function resultatTexte(a) {
+  if (["programmee", "annulee", "en_file", "en_cours"].includes(a.statut) || (a.statut === "erreur" && a.nb_visees == null)) return null;
+  const parties = [];
+  if (a.nb_reussis) parties.push(`${pluriel(a.nb_pharmacies || 0, "pharmacie jointe", "pharmacies jointes")} (${pluriel(a.nb_reussis, "appareil")})`);
+  else parties.push(a.email_statut === "envoye" ? "Aucun appareil joint" : "Personne de joint");
+  if (a.nb_echecs) parties.push(`${pluriel(a.nb_echecs, "appareil en échec", "appareils en échec")}`);
+  if (a.nb_plafonnees) parties.push(`${pluriel(a.nb_plafonnees, "pharmacie écartée", "pharmacies écartées")} par le plafond`);
+  if (a.nb_retires) parties.push(`${pluriel(a.nb_retires, "appareil retiré", "appareils retirés")} (plus joignable${a.nb_retires > 1 ? "s" : ""})`);
+  return parties.join(" · ");
+}
+const libelleEmail = (a) => (a.repli_email && a.email_statut ? `${EMAILS[a.email_statut]?.[0] || a.email_statut}${a.email_statut === "envoye" && a.nb_emails ? ` (${pluriel(a.nb_emails, "adresse")})` : ""}` : null);
+// statut affiché : « Envoyé » vert seulement si une pharmacie a été jointe (appareil ou e-mail de secours)
+function statutDe(a) {
+  if (a.statut === "envoyee" && !a.nb_reussis) return a.email_statut === "envoye" ? ["Envoyé par e-mail", "ok"] : ["Aucun appareil joint", "warn"];
+  return STATUTS[a.statut] || [a.statut, "neutral"];
 }
 
 // Suivi d'un message unitaire (ou d'une petite liste) juste après l'envoi
@@ -486,13 +614,10 @@ function SuiviEnvoi({ suivi }) {
   if (!suivi.fini) return <div role="status" style={{ ...ui.encart("info"), marginTop: 10 }}>Envoi en cours…</div>;
   if (!a) return <div role="status" style={{ ...ui.encart("warn"), marginTop: 10 }}>L'envoi prend plus de temps que prévu&nbsp;: suivez-le dans l'historique.</div>;
   if (a.statut === "erreur") return <div role="alert" style={{ ...ui.encart("danger"), marginTop: 10 }}>Non envoyé&nbsp;: {a.erreur || "erreur"}</div>;
-  const joints = a.nb_reussis || 0;
-  const email = a.email_statut ? EMAILS[a.email_statut]?.[0] : null;
+  const email = libelleEmail(a);
   return (
-    <div role="status" style={{ ...ui.encart(joints || a.email_statut === "envoye" ? "ok" : "warn"), marginTop: 10 }}>
-      {joints ? `Envoyé\u00a0: ${pluriel(joints, "appareil joint", "appareils joints")}${a.nb_echecs ? `, ${a.nb_echecs} en échec` : ""}.`
-        : `Aucun appareil joint${a.nb_plafonnees ? " (plafond atteint)" : ""}.`}
-      {email ? ` E-mail de secours\u00a0: ${email}${a.email_statut === "envoye" && a.nb_emails ? ` (${pluriel(a.nb_emails, "adresse")})` : ""}.` : ""}
+    <div role="status" style={{ ...ui.encart(a.nb_reussis || a.email_statut === "envoye" ? "ok" : "warn"), marginTop: 10 }}>
+      {resultatTexte(a)}.{email ? ` E-mail de secours : ${email}.` : ""}
     </div>
   );
 }
@@ -509,7 +634,7 @@ function Joignabilite({ p, categorie }) {
       {p.raison && <span style={{ color: tone("warn").fg }}> · {p.raison === "hors_pilote" ? "hors pilote" : "ouverture fermée"}</span>}
       <br />
       {p.derniere_visite ? `Vue le ${dt(p.derniere_visite)}` : "Jamais vue sur un appareil activé"}{p.derniere_notification ? ` · dernière notification le ${dt(p.derniere_notification)}` : ""}
-      {" · "}{p.adresses ? `e-mail de secours\u00a0: ${(p.adresses_masquees || []).join(", ")}` : "aucune adresse de compte"}
+      {" · "}{p.adresses ? `e-mail de secours : ${(p.adresses_masquees || []).join(", ")}` : "aucune adresse de compte"}
     </div>
   );
 }
@@ -657,24 +782,35 @@ export function ApercuIphone({ titre, corps }) {
 }
 
 // ── Historiques : messages, par pharmacie, outil entrepôt ──
-const RELANCE_MAX_MS = 24 * 3600e3;
-const ERREURS_RELANCE = { trop_tot: "⚠ Attendez 2 minutes avant de relancer", trop_ancienne: "⚠ Message de plus de 24 h\u00a0: recomposez-le plutôt que de le relancer",
-  en_cours: "⚠ Un autre message plafonné est en cours d'envoi\u00a0: relancez quand il sera terminé" };
-function Historiques({ annonces, etat, appeler, flash, onChange, promos, sections }) {
+const ERREURS_RELANCE = { trop_tot: "⚠ Attendez 2 minutes avant de relancer", trop_ancienne: "⚠ Prévu il y a plus de 3 h : il ne partira plus (recomposez-le si besoin)",
+  en_cours: "⚠ Un autre message plafonné est en cours d'envoi : relancez quand il sera terminé" };
+function Historiques({ annonces, etat, appeler, flash, onChange, onModifier, promos, sections }) {
   const [vue, setVue] = useState("messages");
   return (
     <Section id="notif-historique" titre="Historique" droite={<Segment etiquette="Historique" valeur={vue} onChange={setVue}
       options={[["messages", "Messages"], ["pharmacie", "Par pharmacie"], ["entrepot", "Outil entrepôt"]]} />}>
-      {vue === "messages" ? <HistoriqueMessages annonces={annonces} appeler={appeler} flash={flash} onChange={onChange} promos={promos} sections={sections} />
+      {vue === "messages" ? <HistoriqueMessages annonces={annonces} appeler={appeler} flash={flash} onChange={onChange} onModifier={onModifier} promos={promos} sections={sections} />
         : vue === "pharmacie" ? <HistoriquePharmacie appeler={appeler} etat={etat} />
         : <HistoriqueEntrepot appeler={appeler} />}
     </Section>
   );
 }
-const destinatairesDe = (a) => (a.audience === "une" ? (a.destinataire_nom || `CIP ${a.cips?.[0] || "?"}`) : a.audience === "liste" ? pluriel(a.nb_cips || 0, "pharmacie choisie", "pharmacies choisies") : "toutes");
-function HistoriqueMessages({ annonces, appeler, flash, onChange, promos, sections }) {
+const destinatairesDe = (a) => (a.audience === "une" ? (a.destinataire_nom || (a.cips?.[0] ? `CIP ${a.cips[0]}` : "pharmacie (effacée)")) : a.audience === "liste" ? pluriel(a.nb_cips || 0, "pharmacie choisie", "pharmacies choisies") : "toutes");
+// date d'un message : composé le …, prévu le …, parti le …
+function DateMessage({ a }) {
+  if (a.statut === "programmee") return <>prévu le<br />{dt(a.programme_pour)}</>;
+  if (a.programme_pour) return <>prévu le {dt(a.programme_pour)}{a.started_at ? <><br />parti le {dt(a.started_at)}</> : null}</>;
+  return <>{dt(a.created_at)}</>;
+}
+function HistoriqueMessages({ annonces, appeler, flash, onChange, onModifier, promos, sections }) {
+  const etroit = useEtroit();
   const [busy, setBusy] = useState(false);
+  const maintenant = Date.now();
+  const relancable = (a) => a.statut === "en_file" && maintenant - Date.parse(a.en_file_le || a.created_at) >= 2 * 60e3
+    && maintenant - Date.parse(a.programme_pour || a.created_at) <= PROGRAMME_RETARD_MAX_MS;
   const relancer = async (a) => {
+    const h = Date.now();
+    if (horsHeures(h) && !window.confirm(`Il est ${texteHeureParis(h)} (heure de Paris)${partiesParis(h).jourSemaine === "dimanche" ? ", un dimanche" : ""} : « ${a.titre} » partira tout de suite sur le téléphone des pharmacies. Relancer quand même ?`)) return;
     setBusy(true);
     try {
       const r = await appeler("relancer", { id: a.id });
@@ -682,65 +818,113 @@ function HistoriqueMessages({ annonces, appeler, flash, onChange, promos, sectio
       await onChange();
     } finally { setBusy(false); }
   };
-  const annuler = async (a) => {
-    if (!window.confirm(`Annuler «\u00a0${a.titre}\u00a0», programmé pour le ${jourLong(a.programme_pour)}\u00a0? Il ne partira pas.`)) return;
+  // annuler (programmé ou en file) ; modifier : le composeur repart du message annulé
+  const annuler = async (a, modifier = false) => {
+    const quand = a.statut === "programmee" ? `, programmé pour le ${jourLong(a.programme_pour)}` : ", en attente d'envoi";
+    if (!window.confirm(`Annuler « ${a.titre} »${quand} ? Il ne partira pas.${modifier ? "\n\nIl est repris dans « Nouveau message » pour être corrigé, puis renvoyé ou reprogrammé." : ""}`)) return;
     setBusy(true);
     try {
       const r = await appeler("annuler", { id: a.id });
-      flash(r.ok ? "✓ Message annulé\u00a0: il ne partira pas" : "⚠ Trop tard\u00a0: le message est déjà parti (ou en cours d'envoi)");
+      flash(r.ok ? (modifier ? "✓ Message annulé : corrigez-le dans « Nouveau message »" : "✓ Message annulé : il ne partira pas") : "⚠ Trop tard : le message est déjà parti (ou en cours d'envoi)");
+      if (r.ok && modifier) onModifier(r.corps.annonce || a);
       await onChange();
     } finally { setBusy(false); }
   };
   if (annonces == null) return <div role="status" style={sourdine}>Chargement…</div>;
   if (!annonces.length) return <p style={{ ...sourdine, margin: 0 }}>Aucun message envoyé.</p>;
+  const aVenir = annonces.filter((a) => a.statut === "programmee" || a.statut === "en_file");
+  const passes = annonces.filter((a) => !aVenir.includes(a));
+  const actions = (a, pleine) => {
+    const b = { ...ui.btn("ligne", "s"), ...(pleine ? { width: "100%", justifyContent: "center", minHeight: 36 } : {}) };
+    return (
+      <>
+        {(a.statut === "programmee" || a.statut === "en_file") && <button type="button" onClick={() => annuler(a)} disabled={busy} className="ex-btn-ligne" style={b}>Annuler</button>}
+        {(a.statut === "programmee" || a.statut === "en_file") && <button type="button" onClick={() => annuler(a, true)} disabled={busy} className="ex-btn-ligne" style={b}>Annuler et modifier</button>}
+        {relancable(a) && <button type="button" onClick={() => relancer(a)} disabled={busy} className="ex-btn-ligne" style={b}>Relancer</button>}
+      </>
+    );
+  };
+  const carte = (a) => {
+    const [l, t] = statutDe(a);
+    const email = libelleEmail(a);
+    return (
+      <Carte key={a.id}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><BadgeType type={a.type} /><span style={ui.badge(t)}>{l}</span>
+          <span className="num" style={{ color: T.inkSoft, fontSize: 11.5 }}><DateMessage a={a} /></span></div>
+        <div><b>{a.titre}</b><div style={{ color: T.inkSoft }}>{a.corps}</div></div>
+        <div style={{ color: T.inkSoft }}>À&nbsp;: {destinatairesDe(a)} · lien&nbsp;: {libelleLien(a.url, promos, sections)}</div>
+        {resultatTexte(a) && <div>{resultatTexte(a)}</div>}
+        {email && <div><span style={ui.badge(EMAILS[a.email_statut]?.[1] || "neutral")}>{email}</span></div>}
+        {a.erreur && <div style={{ color: a.statut === "erreur" ? T.danger : T.inkSoft }}>{a.erreur}</div>}
+        {a.statut === "annulee" && a.annule_at && <div style={{ color: T.inkSoft }}>Annulé le {dt(a.annule_at)}</div>}
+        <div style={{ display: "flex", flexDirection: etroit ? "column" : "row", flexWrap: "wrap", gap: 6, marginTop: 2 }}>{actions(a, etroit)}</div>
+      </Carte>
+    );
+  };
   return (
     <>
-      <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: R.s }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
-          <thead><tr>
-            <th style={thS}>Date</th><th style={thS}>Type</th><th style={thS}>Message</th><th style={thS}>Destinataires</th>
-            <th style={thS} title="Pharmacies : visées / écartées par le plafond / servies · Appareils : réussis / échecs / retirés">Résultat</th><th style={thS}>Statut</th>
-          </tr></thead>
-          <tbody>
-            {annonces.map((a) => {
-              const [l, t] = STATUTS[a.statut] || [a.statut, "neutral"];
-              const age = Date.now() - Date.parse(a.created_at);
-              const relancable = a.statut === "en_file" && age >= 2 * 60e3 && age <= RELANCE_MAX_MS;
-              const [lE, tE] = a.repli_email ? (EMAILS[a.email_statut] || ["prévu", "neutral"]) : [null, null];
-              return (
-                <tr key={a.id} className="ex-tr" style={{ borderTop: `1px solid ${T.lineSoft}`, verticalAlign: "top" }}>
-                  <td className="num" style={{ ...tdS, whiteSpace: "nowrap" }}>{a.statut === "programmee" ? <>prévu le<br />{dt(a.programme_pour)}</> : dt(a.created_at)}</td>
-                  <td style={tdS}><BadgeType type={a.type} /></td>
-                  <td style={{ ...tdS, minWidth: 220, maxWidth: 340 }}><b>{a.titre}</b><div style={{ color: T.inkSoft, overflowWrap: "anywhere" }}>{a.corps}</div>
-                    <div style={{ color: T.inkMute, marginTop: 3, overflowWrap: "anywhere" }} title={a.url}>Lien&nbsp;: {libelleLien(a.url, promos, sections)}</div></td>
-                  <td style={{ ...tdS, minWidth: 110 }}>{destinatairesDe(a)}</td>
-                  <td className="num" style={{ ...tdS, whiteSpace: "nowrap" }}>
-                    {a.statut === "programmee" || a.statut === "annulee" ? "—" : <>
-                      <div>Pharmacies&nbsp;: {a.nb_visees ?? "–"} / {a.nb_plafonnees ?? "–"} / {a.nb_pharmacies ?? "–"}</div>
-                      <div>Appareils&nbsp;: {a.nb_reussis ?? "–"} / {a.nb_echecs ?? "–"} / {a.nb_retires ?? "–"}</div></>}
-                    {lE && <div style={{ marginTop: 4 }}><span style={ui.badge(tE)}>{lE}{a.email_statut === "envoye" && a.nb_emails ? ` (${a.nb_emails})` : ""}</span></div>}
-                  </td>
-                  <td style={tdS}>
-                    <span style={ui.badge(t)}>{l}</span>
-                    {a.erreur && <div style={{ color: a.statut === "erreur" ? T.danger : T.inkSoft, marginTop: 4 }}>{a.erreur}</div>}
-                    {a.statut === "annulee" && a.annule_at && <div style={{ color: T.inkSoft, marginTop: 4 }}>le {dt(a.annule_at)}</div>}
-                    {a.statut === "programmee" && <button type="button" onClick={() => annuler(a)} disabled={busy} className="ex-btn-ligne" style={{ ...ui.btn("ligne", "s"), marginTop: 6 }}>Annuler</button>}
-                    {relancable && <button type="button" onClick={() => relancer(a)} disabled={busy} className="ex-btn-ligne" style={{ ...ui.btn("ligne", "s"), marginTop: 6 }}>Relancer</button>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <p style={{ ...sourdine, margin: "8px 0 0" }}>Résultat&nbsp;: pharmacies visées / écartées par le plafond / servies (au moins un appareil joint)&nbsp;; appareils réussis / échecs / retirés (plus joignables)&nbsp;; e-mail de secours d'un message unitaire. Un message resté «&nbsp;En file&nbsp;» est relancé automatiquement toutes les 5 minutes pendant 24 heures.</p>
+      {aVenir.length > 0 && (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ ...ui.label, marginBottom: 6 }}>À venir ({aVenir.length})</div>
+          <div style={{ display: "grid", gridTemplateColumns: grille(300), gap: 8 }}>{aVenir.map(carte)}</div>
+        </div>
+      )}
+      {passes.length > 0 && (etroit ? <Cartes>{passes.map(carte)}</Cartes> : (
+        <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: R.s }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 760 }}>
+            <thead><tr>
+              <th style={thS}>Date</th><th style={thS}>Type</th><th style={thS}>Message</th><th style={thS}>Destinataires</th><th style={thS}>Résultat</th><th style={thS}>Statut</th>
+            </tr></thead>
+            <tbody>
+              {passes.map((a) => {
+                const [l, t] = statutDe(a);
+                const email = libelleEmail(a);
+                return (
+                  <tr key={a.id} className="ex-tr" style={{ borderTop: `1px solid ${T.lineSoft}`, verticalAlign: "top" }}>
+                    <td className="num" style={{ ...tdS, whiteSpace: "nowrap" }}><DateMessage a={a} /></td>
+                    <td style={tdS}><BadgeType type={a.type} /></td>
+                    <td style={{ ...tdS, minWidth: 220, maxWidth: 340 }}><b>{a.titre}</b><div style={{ color: T.inkSoft, overflowWrap: "anywhere" }}>{a.corps}</div>
+                      <div style={{ color: T.inkMute, marginTop: 3, overflowWrap: "anywhere" }} title={a.url}>Lien&nbsp;: {libelleLien(a.url, promos, sections)}</div></td>
+                    <td style={{ ...tdS, minWidth: 110 }}>{destinatairesDe(a)}</td>
+                    <td style={{ ...tdS, minWidth: 170, maxWidth: 260 }}>
+                      {resultatTexte(a) || "—"}
+                      {email && <div style={{ marginTop: 4 }}><span style={ui.badge(EMAILS[a.email_statut]?.[1] || "neutral")}>{email}</span></div>}
+                    </td>
+                    <td style={tdS}>
+                      <span style={ui.badge(t)}>{l}</span>
+                      {a.erreur && <div style={{ color: a.statut === "erreur" ? T.danger : T.inkSoft, marginTop: 4 }}>{a.erreur}</div>}
+                      {a.statut === "annulee" && a.annule_at && <div style={{ color: T.inkSoft, marginTop: 4 }}>le {dt(a.annule_at)}</div>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+      <p style={{ ...sourdine, margin: "8px 0 0" }}>Un message resté «&nbsp;En file&nbsp;» est relancé automatiquement toutes les 5 minutes, aux heures ouvertes (8 h – 20 h, hors dimanche)&nbsp;; prévu depuis plus de 3 heures, il ne part plus (erreur expliquée). «&nbsp;Annuler&nbsp;» reste possible tant qu'il n'est pas parti.</p>
     </>
   );
 }
 
 // Envois d'une pharmacie (90 jours) : messages de l'admin, retours en stock, outil entrepôt
 export function ListeEnvois({ envois, compact = false }) {
+  const etroit = useEtroit();
   if (!envois.length) return <p style={{ ...sourdine, margin: 0 }}>Aucune notification envoyée à cette pharmacie ces 90 derniers jours.</p>;
+  const appareils = (e) => (e.nb_appareils ? `${e.nb_reussis} / ${pluriel(e.nb_appareils, "appareil joint", "appareils joints")}` : "aucun appareil");
+  if (etroit) return (
+    <Cartes>
+      {envois.map((e) => (
+        <Carte key={e.id}>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>{e.type ? <BadgeType type={e.type} /> : null}<span style={{ color: T.inkSoft }}>{CATS[e.categorie] || e.categorie}</span>
+            <span className="num" style={{ color: T.inkSoft, fontSize: 11.5 }}>{dt(e.created_at)}</span></div>
+          <div><b>{e.titre || "—"}</b></div>
+          <div style={{ color: e.nb_appareils && !e.nb_reussis ? T.danger : T.inkSoft }}>{SOURCES[e.source] || e.source || "—"} · {appareils(e)}</div>
+          {e.email && <div><span style={ui.badge(EMAILS[e.email]?.[1] || "neutral")}>{EMAILS[e.email]?.[0] || e.email}</span></div>}
+        </Carte>
+      ))}
+    </Cartes>
+  );
   return (
     <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: R.s }}>
       <table style={{ width: "100%", borderCollapse: "collapse", minWidth: compact ? 520 : 680 }}>
@@ -801,7 +985,7 @@ function HistoriquePharmacie({ appeler, etat }) {
       {res && (
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
           {!res.length && <span style={sourdine}>Aucune pharmacie ne correspond.</span>}
-          {res.map((p) => <button key={p.cip} type="button" className="ex-btn-ligne" aria-pressed={cip === p.cip} onClick={() => setCip(p.cip)} style={ui.btn("ligne", "s")}>{p.nom || "—"} · {p.cip}</button>)}
+          {res.map((p) => <button key={p.cip} type="button" className="ex-btn-ligne" aria-pressed={cip === p.cip} onClick={() => setCip(p.cip)} style={{ ...ui.btn("ligne", "s"), ...largeLibre, minHeight: 30 }}>{p.nom || "—"} · {p.cip}</button>)}
         </div>
       )}
       <div style={{ marginTop: 12 }}>
@@ -817,41 +1001,61 @@ function HistoriquePharmacie({ appeler, etat }) {
     </div>
   );
 }
+// résultat d'un événement de l'outil entrepôt : badge (vert seulement si un appareil a été joint)
+function resultatEvt(e) {
+  const libelle = RESULTATS[e.resultat] || e.resultat || "en cours";
+  const ton = e.resultat === "envoye" ? (e.nb_reussis ? "ok" : "warn") : e.resultat === "differe" || e.resultat === "envoi" ? "info" : e.resultat ? "warn" : "neutral";
+  const detail = e.resultat === "differe" && e.a_envoyer_le ? `prévue le ${dt(e.a_envoyer_le)}`
+    : e.nb_appareils != null ? (e.nb_reussis ? pluriel(e.nb_reussis, "appareil joint", "appareils joints") : e.nb_appareils ? `aucun des ${pluriel(e.nb_appareils, "appareil")} joint` : "") : "";
+  return { libelle: e.resultat === "envoye" && !e.nb_reussis ? "aucun appareil joint" : libelle, ton, detail };
+}
 function HistoriqueEntrepot({ appeler }) {
+  const etroit = useEtroit();
   const [evts, setEvts] = useState(null);
   useEffect(() => { let annule = false; appeler("evenements").then((r) => { if (!annule) setEvts(r.ok ? r.corps.evenements || [] : []); }, () => { if (!annule) setEvts([]); }); return () => { annule = true; }; }, [appeler]);
   if (evts == null) return <div role="status" style={sourdine}>Chargement…</div>;
+  const pharmacie = (e) => <>{e.pharmacie_nom || "Pharmacie"} <span className="num" style={{ color: T.inkSoft }}>· CIP {e.pharmacy_cip}</span></>;
+  const quoi = (e) => `${TYPES_EVT[e.type] || e.type} ${STATUTS_EVT[e.statut] || e.statut.replace(/_/g, " ")}`;
   return (
     <>
-      {!evts.length ? <p style={{ ...sourdine, margin: 0 }}>Aucun événement reçu de l'outil entrepôt (API push-evenement, docs/notifications.md §&nbsp;6).</p> : (
+      {!evts.length ? <p style={{ ...sourdine, margin: 0 }}>Aucun événement reçu de l'outil entrepôt (API push-evenement, docs/notifications.md §&nbsp;6).</p> : etroit ? (
+        <Cartes>
+          {evts.map((e) => { const r = resultatEvt(e); return (
+            <Carte key={e.cle}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}><span style={ui.badge(r.ton)}>{r.libelle}</span><span className="num" style={{ color: T.inkSoft, fontSize: 11.5 }}>{dt(e.recu_le)}</span></div>
+              <div><b>{pharmacie(e)}</b></div>
+              <div>{quoi(e)} · <span className="num">{e.reference || "—"}</span></div>
+              {e.titre && <div style={{ color: T.inkSoft }}>Notification&nbsp;: {e.titre}</div>}
+              {r.detail && <div style={{ color: T.inkSoft }}>{r.detail}</div>}
+            </Carte>); })}
+        </Cartes>
+      ) : (
         <div style={{ overflowX: "auto", border: `1px solid ${T.line}`, borderRadius: R.s }}>
           <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 700 }}>
-            <thead><tr><th style={thS}>Reçu le</th><th style={thS}>CIP</th><th style={thS}>Type</th><th style={thS}>Statut</th><th style={thS}>Référence</th><th style={thS}>Notification</th><th style={thS}>Résultat</th></tr></thead>
+            <thead><tr><th style={thS}>Reçu le</th><th style={thS}>Pharmacie</th><th style={thS}>Événement</th><th style={thS}>Référence</th><th style={thS}>Notification</th><th style={thS}>Résultat</th></tr></thead>
             <tbody>
-              {evts.map((e) => (
+              {evts.map((e) => { const r = resultatEvt(e); return (
                 <tr key={e.cle} className="ex-tr" style={{ borderTop: `1px solid ${T.lineSoft}`, verticalAlign: "top" }}>
                   <td className="num" style={{ ...tdS, whiteSpace: "nowrap" }}>{dt(e.recu_le)}</td>
-                  <td className="num" style={tdS}>{e.pharmacy_cip}</td>
-                  <td style={tdS}>{{ reclamation: "Réclamation", ticket: "Ticket", commande: "Commande" }[e.type] || e.type}</td>
-                  <td style={tdS}>{e.statut}</td>
+                  <td style={tdS}>{pharmacie(e)}</td>
+                  <td style={tdS}>{quoi(e)}</td>
                   <td className="num" style={tdS}>{e.reference || "—"}</td>
                   <td style={{ ...tdS, maxWidth: 220 }}>{e.titre || "—"}</td>
-                  <td style={tdS}><span style={ui.badge(e.resultat === "envoye" ? "ok" : e.resultat ? "warn" : "neutral")}>{RESULTATS[e.resultat] || e.resultat || "en cours"}</span>
-                    {e.nb_appareils != null && <div className="num" style={{ color: T.inkSoft, marginTop: 3 }}>{e.nb_reussis ?? 0} / {e.nb_appareils} appareil{e.nb_appareils > 1 ? "s" : ""}</div>}</td>
-                </tr>
-              ))}
+                  <td style={tdS}><span style={ui.badge(r.ton)}>{r.libelle}</span>{r.detail && <div style={{ color: T.inkSoft, marginTop: 3 }}>{r.detail}</div>}</td>
+                </tr>); })}
             </tbody>
           </table>
         </div>
       )}
-      <p style={{ ...sourdine, margin: "8px 0 0" }}>Notifications automatiques «&nbsp;Mes commandes et réclamations&nbsp;» déclenchées par l'outil entrepôt (Réclamations, Tickets). Un même statut d'une même référence n'est notifié qu'une fois.</p>
+      <p style={{ ...sourdine, margin: "8px 0 0" }}>Notifications automatiques «&nbsp;Mes commandes et réclamations&nbsp;» déclenchées par l'outil entrepôt (Réclamations, Tickets). Reçues avant 8 h, après 20 h ou le dimanche&nbsp;: envoyées le matin suivant à 8 h. Un même statut d'une même référence reçu deux fois en 10 minutes n'est notifié qu'une fois.</p>
     </>
   );
 }
 
 // ── Bloc « Notifications envoyées » de la fiche pharmacie (onglet 🏥 Pharmacies) ──
-// cip : CIP de la fiche en cours d'édition (lu 600 ms après la dernière frappe) ; lecture seule
-export function NotificationsEnvoyees({ adminFetch, cip }) {
+// cip : CIP de la fiche en cours d'édition (lu 600 ms après la dernière frappe) ; lecture seule. onEcrire : ouvre l'onglet
+// 📲 Notifications, le composeur prérempli pour cette pharmacie (« Écrire à cette pharmacie »).
+export function NotificationsEnvoyees({ adminFetch, cip, onEcrire }) {
   const c = String(cip || "").trim();
   const valide = /^\d{7,14}$/.test(c);
   const [donnees, setDonnees] = useState(null);
@@ -869,10 +1073,18 @@ export function NotificationsEnvoyees({ adminFetch, cip }) {
     return () => { annule = true; clearTimeout(t); };
   }, [c, valide, appeler]);
   if (!valide) return null;
+  const ecrire = () => {
+    garderBrouillon({ type: "reclamation", titre: "", corps: "", typeLien: "commandes", valeurLien: "", audience: "une", choix: [{ cip: c, nom: donnees?.nom || null, ville: null }],
+      repli: false, quand: "maintenant", date: "" });
+    onEcrire?.();
+  };
   return (
     <section aria-labelledby="pharm-notif-titre" style={{ background: T.surface, borderRadius: 12, padding: 16, border: "1.5px solid var(--line)", marginTop: 16 }}>
-      <div id="pharm-notif-titre" style={{ fontWeight: 700, fontSize: 14, color: T.ink, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>
-        <Icone nom="cloche" taille={16} />Notifications envoyées <span style={{ fontWeight: 400, fontSize: 12, color: T.inkMute }}>(90 derniers jours · détail et envoi dans 📲 Notifications)</span>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap", marginBottom: 8 }}>
+        <div id="pharm-notif-titre" style={{ fontWeight: 700, fontSize: 14, color: T.ink, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <Icone nom="cloche" taille={16} />Notifications envoyées <span style={{ fontWeight: 400, fontSize: 12, color: T.inkMute }}>(90 derniers jours)</span>
+        </div>
+        {onEcrire && <Bouton onClick={ecrire}><Icone nom="envoyer" taille={14} />Écrire à cette pharmacie</Bouton>}
       </div>
       {donnees == null ? <div role="status" style={sourdine}>Chargement…</div>
         : donnees.erreur ? <div style={sourdine}>Lecture impossible (service des notifications pas encore en place&nbsp;?).</div>

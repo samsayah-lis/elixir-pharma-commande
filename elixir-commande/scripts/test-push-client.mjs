@@ -449,8 +449,10 @@ eq("carte : retour en stock branché (plus de « bientôt »)", [/bientôt/.test
 eq("App.jsx : lien ?commandes=1 (Mes commandes ouvert, paramètre retiré)", [APP.includes('new URLSearchParams(window.location.search).get("commandes") === "1"'),
   APP.includes('u.searchParams.delete("commandes")'), /if \(!lienCommandes\.current \|\| !onboardingDone \|\| !pharmacyCip \|\| pharmacyCip === "0"\) return;/.test(APP)], [true, true, true]);
 eq("panneau : catégories avec le plafond des informations", [NOTIF.includes("plafond_infos_7j"), NOTIF.includes("categoriesAffichees(plafond, vue.statut?.plafond_infos_7j ?? PLAFOND_INFOS_DEFAUT)")], [true, true]);
-eq("admin : bloc « Notifications envoyées » dans la fiche pharmacie, messages dans un module à part",
-  [ADMIN.includes("<NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} />"), readFileSync(join(RACINE, "src/components/AdminNotifications.jsx"), "utf8").includes("<Messages etat={etat}")], [true, true]);
+const ONGLET = readFileSync(join(RACINE, "src/components/AdminNotifications.jsx"), "utf8");
+eq("admin : bloc « Notifications envoyées » dans la fiche pharmacie (« Écrire à cette pharmacie » ouvre l'onglet), messages dans un module à part, en tête de l'onglet",
+  [ADMIN.includes('<NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} onEcrire={() => setTab("notifications")} />'), ONGLET.includes("<Messages etat={etat}"),
+    ONGLET.indexOf("<Messages etat={etat}") < ONGLET.indexOf("<EtatService etat={etat}")], [true, true, true]);
 eq("aucun module chargé à la demande nommé index.*", /import\(["'][^"']*\/index(\.jsx?)?["']\)/.test(ENTREE + readFileSync(join(RACINE, "src/notifications/demarrage.js"), "utf8")), false);
 
 console.log(`\n${ok} OK, ${ko} échec(s)`);

@@ -205,6 +205,11 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
   const p = etat?.parcours || "activer";
   const plafond = etat?.statut?.plafond_offres_7j ?? PLAFOND_DEFAUT;
   const plafondInfos = etat?.statut?.plafond_infos_7j ?? PLAFOND_INFOS_DEFAUT;
+  // alertes plafonnées incluses à l'activation, selon les plafonds non nuls (« nos informations (2 par semaine au plus) »…)
+  const parSem = (n) => `${n} par semaine au plus`;
+  const inclus = plafond > 0 && plafondInfos > 0 ? (plafond === plafondInfos ? `nos informations et nos offres (${parSem(plafond)} chacune)`
+    : `nos informations (${parSem(plafondInfos)}) et nos offres (${parSem(plafond)})`)
+    : plafondInfos > 0 ? `nos informations (${parSem(plafondInfos)})` : plafond > 0 ? `nos offres (${parSem(plafond)})` : "";
   const dejaJoints = joignables(etat?.statut).total;
   const [occupe, setOccupe] = useState(false);
   const [message, setMessage] = useState(null);   // { ton, texte }
@@ -283,7 +288,7 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
               </div>
               {message && <Message ton={message.ton}>{message.texte}</Message>}
               <p style={{ margin: "10px 0 0", fontSize: 12, lineHeight: 1.5, color: T.inkMute }}>
-                {plafond > 0 || plafondInfos > 0 ? `Vous choisissez ce que vous recevez. L'activation inclut nos informations et nos offres (${Math.max(plafond, plafondInfos)} par semaine au plus chacune), désactivables à tout moment dans «\u00a0Notifications\u00a0».`
+                {inclus ? `Vous choisissez ce que vous recevez. L'activation inclut ${inclus}, désactivables à tout moment dans «\u00a0Notifications\u00a0».`
                   : "Vous choisissez ce que vous recevez, à tout moment dans «\u00a0Notifications\u00a0»."}
               </p>
             </>

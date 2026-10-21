@@ -15,10 +15,11 @@ export const CATEGORIES = [
     aide: "Les produits pour lesquels vous avez cliqué «\u00a0M’avertir du retour\u00a0», dès leur retour en stock." },
   // « commandes » : messages « Réclamation / SAV » et « Commande » de l'admin, et l'outil entrepôt (push-evenement.js)
   { id: "commandes", libelle: "Mes commandes et réclamations",
-    aide: "Le suivi de vos commandes et de vos réclamations\u00a0: expédition, reliquat, retour, avoir." },
-  // « infos » : messages « Communication » de l'admin (plafonnés comme les offres)
+    aide: "Le suivi de vos commandes, réclamations et demandes\u00a0: expédition, reliquat, retour, avoir." },
+  // « infos » : messages « Communication » de l'admin (plafonnés comme les offres), jamais d'offre ni de nouveau produit
+  // (ceux-là sont des « Promotion » : une pharmacie qui coupe les offres n'en reçoit plus)
   { id: "infos", libelle: "Informations Elixir",
-    aide: "Fermetures exceptionnelles, changements de service, nouveautés du site\u00a0: 2 par semaine au plus." },
+    aide: "Fermetures exceptionnelles, horaires, changements de service et du site\u00a0: 2 par semaine au plus." },
   { id: "offres", libelle: "Offres et nouveautés",
     aide: "Nos offres et nouveaux produits, 2 par semaine au plus." },
 ];
@@ -37,15 +38,16 @@ export const aideOffres = (plafond = PLAFOND_DEFAUT) => plafond > 0
   ? `Nos offres et nouveaux produits, ${parSemaine(plafond)} au plus.`
   : "Nos offres et nouveaux produits (aucun envoi en ce moment).";
 export const aideInfos = (plafond = PLAFOND_INFOS_DEFAUT) => plafond > 0
-  ? `Fermetures exceptionnelles, changements de service, nouveautés du site\u00a0: ${parSemaine(plafond)} au plus.`
-  : "Fermetures exceptionnelles, changements de service, nouveautés du site (aucun envoi en ce moment).";
+  ? `Fermetures exceptionnelles, horaires, changements de service et du site\u00a0: ${parSemaine(plafond)} au plus.`
+  : "Fermetures exceptionnelles, horaires, changements de service et du site (aucun envoi en ce moment).";
 export const categoriesAffichees = (plafond = PLAFOND_DEFAUT, plafondInfos = PLAFOND_INFOS_DEFAUT) =>
   CATEGORIES.map((c) => (c.id === "offres" ? { ...c, aide: aideOffres(plafond) } : c.id === "infos" ? { ...c, aide: aideInfos(plafondInfos) } : c));
 
 // ── Types de message de l'admin (docs/notifications.md § 4) : chacun arrive dans une catégorie que la pharmacie choisit ──
 //  • promotion, communication : plafonnés par pharmacie (7 jours glissants), une, plusieurs ou toutes les pharmacies ;
-//  • reclamation, commande (transactionnels) : hors plafonds marketing, plafond de sécurité par pharmacie sur 24 h, une ou
-//    quelques pharmacies choisies seulement (jamais « toutes »), aucun montant (écran verrouillé).
+//  • reclamation, commande (transactionnels) : hors plafonds marketing, plafond de sécurité par pharmacie sur 24 h, aucun
+//    montant (écran verrouillé) ; réclamation : UNE pharmacie (le message porte sa référence) ; commande : une pharmacie,
+//    ou quelques-unes pour un message sans référence propre à l'une d'elles (jamais « toutes »).
 export const TYPES_MESSAGE = {
   promotion: { libelle: "Promotion", categorie: "offres", transactionnel: false },
   communication: { libelle: "Communication", categorie: "infos", transactionnel: false },
@@ -58,6 +60,8 @@ export const estTransactionnel = (type) => !!TYPES_MESSAGE[type]?.transactionnel
 // destinataires : « une » pharmacie, une « liste » (plusieurs), « toutes » les pharmacies abonnées
 export const AUDIENCES = ["une", "liste", "toutes"];
 export const MAX_LISTE = 500, MAX_LISTE_TRANSACTIONNEL = 20;
+// audiences admises par type (réclamation : une seule pharmacie)
+export const audiencesDuType = (type) => (type === "reclamation" ? ["une"] : type === "commande" ? ["une", "liste"] : AUDIENCES);
 // programmation : au plus tôt dans 5 minutes, au plus tard dans 60 jours ; un message dû depuis plus de 3 h n'est plus envoyé
 export const PROGRAMME_MIN_MS = 5 * 60e3, PROGRAMME_MAX_JOURS = 60, PROGRAMME_RETARD_MAX_MS = 3 * 3600e3;
 
@@ -120,9 +124,15 @@ export const texteNet = (v) => String(v ?? "").replace(/[\u0000-\u001f\u007f-\u0
 export const longueur = (s) => [...String(s ?? "")].length;
 export const couper = (s, n) => { const t = [...String(s ?? "")]; return t.length > n ? t.slice(0, n).join("") : String(s ?? ""); };
 
-// Montant en euros (« 12,50 € », « 30 euros ») : interdit dans les messages transactionnels (avoir, réclamation, commande),
-// lisibles sur l'écran verrouillé ; les prix d'une promotion restent admis
-export const contientMontant = (s) => /€|\d\s*(?:[.,]\d{1,2})?\s*eur(?:os?)?\b/i.test(String(s ?? ""));
+// Montant (« 12,50 € », « 30 euros », « 45,90 HT », « 1 250,00 », « 30 E », « quarante euros », « solde : 120 ») : interdit
+// dans les messages transactionnels (avoir, réclamation, commande) et l'API de l'outil entrepôt, lisibles sur l'écran
+// verrouillé ; les prix d'une promotion restent admis. Dates (« 22/10 »), heures (« 24 h »), ordinaux (« 2e »), numéros
+// (« EN-601-2026-12 », « S04512 ») et téléphone (« 01 86 04 39 95 ») ne sont pas des montants.
+const RE_MONTANT = /€|\b(?:eur(?:os?)?|ht|ttc)\b|\d\s*[.,]\d{2}\b|\b(?:solde|montant|total|remboursement|restant|avoir de)\s*(?:de\s*|du\s*|:\s*)?\d/i;
+export const contientMontant = (s) => { const t = String(s ?? ""); return RE_MONTANT.test(t) || /\d\s*E\b/.test(t); };
+// Référence propre à une pharmacie (n° de commande, de bon, de réclamation : « S04512 », « EN-601 », « n° 45120 ») : refusée
+// dans un message « Commande » à plusieurs pharmacies (le même texte part à chacune)
+export const contientReference = (s) => /\b[A-Z]{1,4}-?\d{3,}|\bn[°o]\s*\d{3,}|\d{5,}/u.test(String(s ?? ""));
 // Champ de modèle pas encore rempli : « [référence] », « [n° de commande] », « [date] » (minuscules entre crochets ;
 // « [NOUVEAU] » reste admis)
 export const champsACompleter = (s) => String(s ?? "").match(/\[[a-zà-ÿœæ°'’ .-]{2,40}\]/gu) || [];
@@ -146,6 +156,9 @@ export function verifierMessage(m = {}) {
   const audience = m.audience == null ? "toutes" : AUDIENCES.includes(m.audience) ? m.audience : null;
   if (!audience) erreurs.push("Destinataires inconnus.");
   else if (audience === "toutes" && transactionnel) erreurs.push("Réclamation / SAV et Commande\u00a0: une ou quelques pharmacies choisies, jamais toutes.");
+  else if (type === "reclamation" && audience !== "une") erreurs.push("Réclamation / SAV\u00a0: une seule pharmacie à la fois (le message porte la référence de son dossier).");
+  else if (type === "commande" && audience === "liste" && contientReference(`${titre} ${corps}`))
+    erreurs.push("Commande à plusieurs pharmacies\u00a0: le même texte part à chacune, sans référence propre à l'une d'elles (n° de commande, de bon…). Pour une commande précise, choisissez «\u00a0Une pharmacie\u00a0».");
   let cips = null;
   if (audience === "une" || audience === "liste") {
     cips = [...new Set((Array.isArray(m.cips) ? m.cips : []).map((c) => String(c).trim()))];
@@ -154,8 +167,10 @@ export function verifierMessage(m = {}) {
     else if (cips.some((c) => !RE_CIP.test(c))) erreurs.push("Un CIP de la liste est illisible (7 à 14 chiffres).");
     else if (cips.length > max) erreurs.push(audience === "une" ? "Une seule pharmacie pour un message unitaire." : `${max} pharmacies au plus${transactionnel ? " pour ce type de message" : " par message"}.`);
   }
-  // e-mail de secours : message unitaire seulement
-  const repli_email = audience === "une" && m.repli_email === true;
+  // e-mail de secours : message unitaire seulement, jamais pour une Promotion (prospection par e-mail : aucun lien
+  // d'opposition dans l'e-mail, finalité absente de l'information des pharmacies)
+  if (type === "promotion" && m.repli_email === true) erreurs.push("E-mail de secours\u00a0: pas pour une Promotion (seulement Communication, Réclamation / SAV et Commande).");
+  const repli_email = audience === "une" && m.repli_email === true && type !== "promotion";
   const programme_pour = m.programme_pour == null || m.programme_pour === "" ? null : String(m.programme_pour);
   return { ok: !erreurs.length, erreurs, message: { type, categorie: categorieDuType(type), titre, corps, url, audience, cips, repli_email, programme_pour } };
 }
@@ -210,6 +225,18 @@ export function horsHeures(t = Date.now()) {
   return p.heure < 8 || p.heure >= 20 || p.jourSemaine === "dimanche";
 }
 export const texteHeureParis = (t = Date.now()) => { const p = partiesParis(t); return `${String(p.heure).padStart(2, "0")}\u00a0h\u00a0${String(p.minute).padStart(2, "0")}`; };
+// Prochain matin hors dimanche (heure de Paris) à heure:minute, strictement après t ; demain : à partir du lendemain.
+// → ISO UTC. Envois de l'outil entrepôt reçus le soir, la nuit ou le dimanche (différés à 8 h) ; date proposée pour
+// programmer un message (prochain jour hors dimanche, 8 h 30).
+export function prochainMatin(t = Date.now(), { heure = 8, minute = 0, demain = false } = {}) {
+  const d = (n) => String(n).padStart(2, "0");
+  for (let j = demain ? 1 : 0; j < 10; j++) {
+    const p = partiesParis(t + j * 86400e3);
+    const iso = parisVersIso(`${p.annee}-${d(p.mois)}-${d(p.jour)}T${d(heure)}:${d(minute)}`);
+    if (iso && Date.parse(iso) > t && partiesParis(Date.parse(iso)).jourSemaine !== "dimanche") return iso;
+  }
+  return new Date(t + 86400e3).toISOString();
+}
 
 // Réglages de l'admin → { ok, erreurs, reglages } (validation stricte, côté serveur) ; plafonds des informations et de
 // sécurité absents (page d'avant les types) : valeurs par défaut

@@ -11,25 +11,29 @@
 //   apercu        { message: { type, titre, corps, url } } (ou { annonce }) → idem, le message composé (pas de plafond, rien
 //                 dans push_envois)
 //   estimer       { type, audience: une | liste | toutes, cips? } → { categorie, visees, plafonnees, recevront, appareils, fermee,
-//                 plafond, sans_appareil, alerte_coupee, hors_ouverture, email? (une : adresses de secours, masquées) }
+//                 plafond, sans_appareil, alerte_coupee, hors_ouverture, email? (une : { adresses, masquees, permis, raison,
+//                 telephone } — même règle que l'envoi : repliPermis, plafond compris) }
 //   envoyer       { message: { type, titre, corps, url, audience, cips?, repli_email?, programme_pour? }, idem } (ou
 //                 { annonce } : promotion, comme avant les types) → 202 { annonce } (envoi par push-envoi-background)
-//                 · 200 { annonce, programmee: true } · même idem → le message déjà créé (200, deja) · 400 { erreurs }
+//                 · 200 { annonce, programmee: true } · même idem et même contenu → le message déjà créé (200, deja)
+//                 · 409 idem_reutilise (même idem, autre contenu : rien n'est créé) · 400 { erreurs }
 //                 · 409 en_cours | fermee | configuration | trop_de_programmes · 502 lancement (« Relancer »)
-//   relancer      { id } → 202 (message resté « en file » depuis 2 min au moins et moins de 24 h) · 409 en_cours (un autre
-//                 message plafonné est en cours de diffusion) | trop_tot | trop_ancienne | statut
-//   annuler       { id } → { annonce } (message « programmé » seulement) · 409 statut
+//   relancer      { id } → 202 (message resté « en file » depuis 2 min au moins, heure prévue passée de moins de 3 h) · 409
+//                 en_cours (un autre message plafonné est en cours de diffusion) | trop_tot | trop_ancienne | statut
+//   annuler       { id } → { annonce } (message « programmé » ou « en file ») · 409 statut
 //   message       { id } → { annonce } (suivi d'un envoi)
 //   historique    { limite? } → { annonces } · { cip } → { cip, nom, envois (90 jours), appareils } (historique d'une pharmacie)
-//   evenements    { limite? } → { evenements } (outil entrepôt, push-evenement.js)
+//   evenements    { limite? } → { evenements } (outil entrepôt, push-evenement.js ; nom de la pharmacie joint)
 //   chercher      { q } | { cips } → { pharmacies: [{ cip, nom, ville, appareils, plateformes, categories, derniere_visite,
 //                 derniere_notification, en_echec, adresses, adresses_masquees, raison }] } (20 au plus ; jamais d'adresse complète)
 //   modeles       → { modeles } (enregistrés par l'admin ; les modèles Elixir sont dans src/notifications/modeles.js)
-//   modele_enregistrer { modele: { nom, type, titre, corps, url } } → { modele } · 400 { erreurs } · 409 doublon | trop
+//   modele_enregistrer { modele: { nom, type, titre, corps, url }, remplacer? } → { modele, remplace? } · 400 { erreurs }
+//                 · 409 doublon (même nom : renvoyer avec remplacer: true) | trop
 //   modele_supprimer { id } → { success }
 //   pharmacie     { cip } → { appareils, raison } (saisie « Commander pour une pharmacie » : lecture seule)
-//   retirer_pharmacie { cip, id? } → { success, retires } (demande d'effacement, appareil perdu : un appareil ou tous ceux
-//                 de la pharmacie ; journal sans contenu)
+//   retirer_pharmacie { cip, id?, effacer_historique? } → { success, retires, historique_efface? } (demande d'effacement,
+//                 appareil perdu : un appareil ou tous ceux de la pharmacie ; effacer_historique : ses envois, ses événements
+//                 de l'outil entrepôt, et son CIP et son nom retirés des messages terminés ; journal sans contenu)
 // Jamais de 401/403 pour une raison métier (adminFetch déconnecterait l'admin) : 400 / 409. Aucune réponse ne contient endpoint,
 // p256dh, auth, la clé privée ni une adresse e-mail complète. Hôte d'aperçu (fonctions branchées sur la production) : réponses
 // fictives, rien n'est envoyé.
@@ -38,23 +42,25 @@ import { verifyAdmin } from "./auth.js";
 import {
   configPush, creerStockPush, validerAbonnement, envoyerAAppareils, charge, appareilPublic, libelleNet, plateformeNette,
   statistiques, destinataires, estApercu, siteBase, json, estUuid, lancerEnvoi, TTL, URGENCE, MAX_APPAREILS, CATEGORIES_PLAFONNEES,
+  lignesDesComptesActuels, repliPermis, cipAuPlafond, heurePrevue, empreinte, PLATEFORMES_TELEPHONE,
 } from "./_push.js";
 import { joignabilite, resumeAppareils, masquerEmail, ADRESSES_MAX } from "./_push-messages.js";
 import {
   verifierMessage, verifierReglages, verifierProgrammation, raisonOuverture, categorieDuType, estTransactionnel, REGLAGES_DEFAUT, RE_CIP,
-  TYPES_MESSAGE, AUDIENCES, MAX_LISTE,
+  TYPES_MESSAGE, AUDIENCES, MAX_LISTE, PROGRAMME_RETARD_MAX_MS,
 } from "../../src/notifications/regles.js";
 import { verifierModele, MODELES_MAX } from "../../src/notifications/modeles.js";
 
 const ACTIONS = new Set(["etat", "reglages", "abonner_admin", "retirer_admin", "test", "apercu", "estimer", "envoyer", "relancer", "historique", "pharmacie",
   "retirer_pharmacie", "annuler", "message", "evenements", "chercher", "modeles", "modele_enregistrer", "modele_supprimer"]);
 const MINUTE = 60e3;
-const RELANCE_MAX_H = 24;   // au-delà, un message resté « en file » n'est plus relancé : le recomposer
 const PROGRAMMES_MAX = 50;  // messages programmés en attente au plus
+// empreinte du contenu d'un message (clé idem réutilisée avec un autre contenu : refusée, jamais l'ancien envoyé à sa place)
+const empreinteMessage = (m) => empreinte(JSON.stringify([m.type, m.titre, m.corps, m.url, m.audience, m.cips, m.repli_email, m.programme_pour || null]));
 
-// message de l'historique : liste de CIP abrégée au-delà de 20
-const resumeAnnonce = (a) => a && ({ ...a, type: a.type || "promotion", categorie: a.categorie || "offres",
-  cips: Array.isArray(a.cips) ? a.cips.slice(0, 20) : null, nb_cips: Array.isArray(a.cips) ? a.cips.length : 0 });
+// message de l'historique : liste de CIP abrégée au-delà de 20 (complète : suivi d'un message, « Annuler et modifier »)
+const resumeAnnonce = (a, complet = false) => a && ({ ...a, type: a.type || "promotion", categorie: a.categorie || "offres",
+  cips: Array.isArray(a.cips) ? (complet ? a.cips : a.cips.slice(0, 20)) : null, nb_cips: Array.isArray(a.cips) ? a.cips.length : 0 });
 // ligne d'envoi de l'historique d'une pharmacie
 const envoiPublic = (e, titres) => ({ id: e.id, categorie: e.categorie, type: e.type || titres.get(e.annonce_id)?.type || null,
   titre: e.titre || titres.get(e.annonce_id)?.titre || null, source: e.source || (e.annonce_id ? "message" : e.categorie), message: !!e.annonce_id,
@@ -68,7 +74,8 @@ function apercu(cors, action) {
       sujet_defaut: false, cle_serveur: true, cron_secret: true, tables: true, tables_messages: true, defauts: [] }, sujet_affiche: "mailto:pharmacien@elixirpharma.fr", cle_publique: null,
       reglages: REGLAGES_DEFAUT, stats: { pharmacies: 0, appareils: 0, par_categorie: { stock: 0, commandes: 0, infos: 0, offres: 0 },
         par_plateforme: { ios: 0, android: 0, ordinateur: 0, autre: 0 }, installes: 0, en_echec: 0, vus_30j: 0 }, pharmacies: [], mes_appareils: [] });
-    case "estimer": return json(cors, 200, { apercu: true, categorie: "offres", visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond: null });
+    case "estimer": return json(cors, 200, { apercu: true, categorie: "offres", visees: 0, plafonnees: 0, recevront: 0, appareils: 0, fermee: false, plafond: null,
+      sans_appareil: 0, alerte_coupee: 0, hors_ouverture: 0 });
     case "envoyer": return json(cors, 202, { apercu: true, annonce: { id: "apercu", statut: "envoyee", created_at: maintenant } });
     case "historique": return json(cors, 200, { apercu: true, annonces: [], envois: [] });
     case "evenements": return json(cors, 200, { apercu: true, evenements: [] });
@@ -204,24 +211,39 @@ export function creerHandler(deps = {}) {
           const out = { categorie, visees: d.visees, plafonnees: d.plafonnees, recevront: d.recevront, appareils: d.appareils, fermee: d.fermee,
             plafond: d.plafond ? { max: d.plafond.max, fenetre: d.plafond.libelle } : null, plafond_offres_7j: d.reglages.plafond_offres_7j,
             sans_appareil: 0, alerte_coupee: 0, hors_ouverture: 0 };
+          // appareils dont le compte n'est plus rattaché à la pharmacie : écartés (supprimés à l'envoi), comme destinataires()
+          const actuels = async (lignes) => lignesDesComptesActuels(stock, lignes.filter((l) => l.role === "pharmacie" && l.pharmacy_cip), { supprimer: false });
           if (cips) {
-            // pharmacies choisies non joignables : pas d'appareil, alerte coupée, hors pilote
-            const lignes = d.injoignables.length ? (await stock.abonnements.deCips(d.injoignables)).filter((l) => l.role === "pharmacie") : [];
+            // pharmacies choisies non joignables : hors pilote, pas d'appareil, alerte coupée
+            const lignes = d.injoignables.length ? await actuels(await stock.abonnements.deCips(d.injoignables)) : [];
             for (const c of d.injoignables) {
               if (!d.fermee && raisonOuverture(d.reglages, c)) out.hors_ouverture++;
               else if (!lignes.some((l) => l.pharmacy_cip === c)) out.sans_appareil++;
               else out.alerte_coupee++;
             }
             if (audience === "une" && cips.length) {
-              const comptes = (await stock.comptesDuCip(cips[0]).catch(() => [])).slice(0, ADRESSES_MAX);
-              out.email = { adresses: comptes.length, masquees: comptes.map((c) => masquerEmail(c.email)).filter(Boolean) };
+              // e-mail de secours : même règle que l'envoi (repliPermis, plafond compris) ; « jointe » ne se sait qu'à l'envoi
+              const cip = cips[0];
+              const comptes = (await stock.comptesDuCip(cip).catch(() => [])).slice(0, ADRESSES_MAX);
+              const secours = { adresses: comptes.length, masquees: comptes.map((c) => masquerEmail(c.email)).filter(Boolean), permis: false, raison: null,
+                telephone: (d.parCip.get(cip) || []).some((l) => PLATEFORMES_TELEPHONE.includes(l.plateforme)) };
+              if (type === "promotion") secours.raison = "type";
+              else {
+                const plafonnee = d.cipsPlafonnes.includes(cip) || (!d.parCip.has(cip) && await cipAuPlafond(stock, categorie, d.reglages, cip, maintenant));
+                const p = repliPermis({ categorie, jointe: false, plafonnee, appareilsPharmacie: await actuels(await stock.abonnements.dePharmacie(cip)) });
+                secours.permis = p.ok && comptes.length > 0;
+                secours.raison = !p.ok ? p.raison : comptes.length ? null : "aucune_adresse";
+              }
+              out.email = secours;
             }
           } else {
-            // toutes : pharmacies dont aucun appareil ne reçoit cette alerte ; pharmacies clientes sans aucun appareil
-            const tous = (await stock.abonnements.tous()).filter((l) => l.role === "pharmacie" && l.pharmacy_cip);
+            // toutes : hors pilote ; pharmacies dont aucun appareil ne reçoit cette alerte ; pharmacies clientes sans aucun appareil
+            const tous = await actuels(await stock.abonnements.tous());
             const avecAppareil = new Set(tous.map((l) => l.pharmacy_cip));
             const avecAlerte = new Set(tous.filter((l) => (l.categories || []).includes(categorie)).map((l) => l.pharmacy_cip));
-            out.alerte_coupee = [...avecAppareil].filter((c) => !avecAlerte.has(c)).length;
+            const horsOuverture = d.fermee ? new Set() : new Set([...avecAppareil].filter((c) => raisonOuverture(d.reglages, c)));
+            out.hors_ouverture = horsOuverture.size;
+            out.alerte_coupee = [...avecAppareil].filter((c) => !avecAlerte.has(c) && !horsOuverture.has(c)).length;
             const clientes = await Promise.resolve().then(() => stock.cipsClientes()).catch(() => null);
             out.sans_appareil = clientes ? [...clientes].filter((c) => !avecAppareil.has(c)).length : null;
           }
@@ -234,8 +256,11 @@ export function creerHandler(deps = {}) {
           const idem = typeof body.idem === "string" && /^[A-Za-z0-9-]{8,64}$/.test(body.idem) ? body.idem : null;
           if (!idem) return json(cors, 400, { error: "idem" });
           if (!conf.ok) return json(cors, 409, { error: "configuration" });
+          const emp = empreinteMessage(m);
+          // même clé : le message déjà créé (double clic, réponse perdue), seulement s'il a le même contenu
+          const memeCle = (a) => (a.idem_empreinte && a.idem_empreinte !== emp ? json(cors, 409, { error: "idem_reutilise" }) : json(cors, 200, { annonce: resumeAnnonce(a), deja: true }));
           const deja = await stock.annonces.parIdem(idem);
-          if (deja) return json(cors, 200, { annonce: resumeAnnonce(deja), deja: true });
+          if (deja) return memeCle(deja);
           let programme = null;
           if (m.programme_pour) {
             const p = verifierProgrammation(m.programme_pour, maintenant().getTime());
@@ -250,10 +275,10 @@ export function creerHandler(deps = {}) {
             if ((await stock.reglages.lire({ frais: true })).ouverture === "fermee" && !(m.audience === "une" && m.repli_email)) return json(cors, 409, { error: "fermee" });
           }
           const nom = m.audience === "une" ? (await stock.comptesDuCip(m.cips[0]).catch(() => [])).find((c) => c.name)?.name || null : null;
-          const { annonce, existante } = await stock.annonces.creer({ idem, type: m.type, categorie: m.categorie, titre: m.titre, corps: m.corps, url: m.url,
+          const { annonce, existante } = await stock.annonces.creer({ idem, idem_empreinte: emp, type: m.type, categorie: m.categorie, titre: m.titre, corps: m.corps, url: m.url,
             audience: m.audience, cips: m.cips, repli_email: m.repli_email, destinataire_nom: nom, admin_email: email, source: "admin",
-            statut: programme ? "programmee" : "en_file", programme_pour: programme });
-          if (existante) return json(cors, 200, { annonce: resumeAnnonce(annonce), deja: true });
+            statut: programme ? "programmee" : "en_file", programme_pour: programme, en_file_le: programme ? null : iso() });
+          if (existante) return memeCle(annonce);
           if (programme) {
             journal({ evt: "push_admin", action, annonce: String(annonce.id).slice(0, 8), code: "programmee", type: m.type, audience: m.audience });
             return json(cors, 200, { annonce: resumeAnnonce(annonce), programmee: true });
@@ -268,9 +293,10 @@ export function creerHandler(deps = {}) {
           if (!estUuid(body.id)) return json(cors, 400, { error: "id" });
           const a = await stock.annonces.lire(body.id);
           if (!a || a.statut !== "en_file") return json(cors, 409, { error: "statut" });
-          const age = maintenant().getTime() - Date.parse(a.created_at);
-          if (age < 2 * MINUTE) return json(cors, 409, { error: "trop_tot" });
-          if (!(age <= RELANCE_MAX_H * 60 * MINUTE)) return json(cors, 409, { error: "trop_ancienne" });
+          const t = maintenant().getTime();
+          if (t - Date.parse(a.en_file_le || a.created_at) < 2 * MINUTE) return json(cors, 409, { error: "trop_tot" });
+          // heure prévue (ou de composition) passée de plus de 3 h : jamais envoyé en retard (push-programmes le passe en erreur)
+          if (!(t - heurePrevue(a) <= PROGRAMME_RETARD_MAX_MS)) return json(cors, 409, { error: "trop_ancienne" });
           // une seule diffusion plafonnée à la fois : jamais pendant qu'un autre message plafonné part
           if (CATEGORIES_PLAFONNEES.includes(a.categorie || "offres") && (await stock.annonces.diffusionEnCours()).some((x) => x.id !== a.id))
             return json(cors, 409, { error: "en_cours" });
@@ -283,12 +309,12 @@ export function creerHandler(deps = {}) {
           const a = await stock.annonces.annuler(body.id, email);
           if (!a) return json(cors, 409, { error: "statut" });
           journal({ evt: "push_admin", action, annonce: String(a.id).slice(0, 8), code: "annulee" });
-          return json(cors, 200, { annonce: resumeAnnonce(a) });
+          return json(cors, 200, { annonce: resumeAnnonce(a, true) });
         }
         case "message": {
           if (!estUuid(body.id)) return json(cors, 400, { error: "id" });
           const a = await stock.annonces.lire(body.id);
-          return a ? json(cors, 200, { annonce: resumeAnnonce(a) }) : json(cors, 404, { error: "inconnu" });
+          return a ? json(cors, 200, { annonce: resumeAnnonce(a, true) }) : json(cors, 404, { error: "inconnu" });
         }
         case "historique": {
           if (body.cip != null) {
@@ -306,7 +332,10 @@ export function creerHandler(deps = {}) {
         }
         case "evenements": {
           const evenements = await stock.evenements.lister(Math.max(1, Math.min(200, parseInt(body.limite, 10) || 50)));
-          return json(cors, 200, { evenements });
+          // nom de la pharmacie (comptes du site) : jamais d'adresse e-mail dans la réponse
+          const noms = new Map((await stock.comptesDesCips([...new Set(evenements.map((e) => e.pharmacy_cip))].slice(0, 200)).catch(() => []))
+            .filter((r) => r.name).map((r) => [r.cip, r.name]));
+          return json(cors, 200, { evenements: evenements.map((e) => ({ ...e, pharmacie_nom: noms.get(e.pharmacy_cip) || null })) });
         }
         case "chercher": {
           let comptes;
@@ -322,7 +351,16 @@ export function creerHandler(deps = {}) {
         case "modele_enregistrer": {
           const v = verifierModele(body.modele || {});
           if (!v.ok) return json(cors, 400, { erreurs: v.erreurs });
-          if ((await stock.modeles.lister(MODELES_MAX + 1)).length >= MODELES_MAX) return json(cors, 409, { error: "trop" });
+          const existants = await stock.modeles.lister(MODELES_MAX + 1);
+          // même nom (sans casse) : remplacé seulement si l'admin le confirme
+          const meme = existants.find((x) => String(x.nom).toLowerCase() === v.modele.nom.toLowerCase());
+          if (meme) {
+            if (body.remplacer !== true) return json(cors, 409, { error: "doublon" });
+            const r = await stock.modeles.remplacer(meme.id, { ...v.modele, admin_email: email });
+            journal({ evt: "push_admin", action, type: v.modele.type, code: "remplace" });
+            return json(cors, 200, { modele: r, remplace: true });
+          }
+          if (existants.length >= MODELES_MAX) return json(cors, 409, { error: "trop" });
           const r = await stock.modeles.creer({ ...v.modele, admin_email: email });
           if (r.doublon) return json(cors, 409, { error: "doublon" });
           journal({ evt: "push_admin", action, type: v.modele.type });
@@ -345,8 +383,11 @@ export function creerHandler(deps = {}) {
           const lignes = await stock.abonnements.deIdentite({ role: "pharmacie", cip });
           const ids = (typeof body.id === "string" ? lignes.filter((l) => l.id === body.id) : lignes).map((l) => l.id);
           if (ids.length) await stock.abonnements.supprimerIds(ids);
-          journal({ evt: "push_admin", action, n: ids.length, tous: typeof body.id !== "string" });
-          return json(cors, 200, { success: true, retires: ids.length });
+          // demande d'effacement : historique de la pharmacie aussi (envois, événements, CIP et nom dans les messages terminés)
+          const effacer = body.effacer_historique === true;
+          if (effacer) await Promise.all([stock.envois.purgerCip(cip), stock.evenements.purgerCip(cip), stock.annonces.effacerCip(cip)]);
+          journal({ evt: "push_admin", action, n: ids.length, tous: typeof body.id !== "string", effacer });
+          return json(cors, 200, { success: true, retires: ids.length, ...(effacer ? { historique_efface: true } : {}) });
         }
       }
       return json(cors, 400, { error: "action" });

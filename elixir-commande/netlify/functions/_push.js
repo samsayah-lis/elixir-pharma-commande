@@ -25,7 +25,7 @@ import crypto from "node:crypto";
 import webpush from "web-push";
 import {
   CATEGORIES_DEFAUT, IDS_CATEGORIES, fusionnerReglages, raisonOuverture, lienValide, texteNet, couper, RE_CIP, cipPropre, HOTES_PUSH,
-  plafondDe, TYPES_MESSAGE,
+  plafondDe, TYPES_MESSAGE, PROGRAMME_RETARD_MAX_MS,
 } from "../../src/notifications/regles.js";
 
 export const TTL = { offres: 86400, infos: 86400, stock: 43200, commandes: 86400, test: 600 };
@@ -35,7 +35,9 @@ export const MAX_APPAREILS = 10;          // appareils par pharmacie
 export const ECHECS_EN_ALERTE = 3;        // « ⚠ ne répond plus » dans les listes
 const ECHECS_SUPPRESSION = 10;            // filet : supprimé après 10 échecs sans succès depuis 30 jours
 const JOUR = 86400e3;
-export const CONSERVATION = { envois_jours: 90, inactif_jours: 365, hotes_jours: 90 };   // ménage quotidien (push-menage)
+// ménage quotidien (push-menage) ; messages de l'admin terminés (envoyés, en erreur, annulés) : 12 mois (durée à confirmer
+// par Zineb, docs/notifications.md § 8)
+export const CONSERVATION = { envois_jours: 90, inactif_jours: 365, hotes_jours: 90, annonces_jours: 365 };
 export const TRANCHE = 100;               // identifiants par écriture groupée (≈ 4,3 Ko d'URL encodée)
 export const TRANCHE_EMAILS = 50;         // e-mails par lecture de elixir_pharmacies
 export const ANNONCE_BLOQUEE_MIN = 20;    // annonce « en_cours » depuis plus longtemps : interrompue (fonction coupée à 15 min)
@@ -44,6 +46,14 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const estUuid = (v) => UUID.test(String(v || ""));
 // catégories plafonnées par 7 jours (une seule diffusion à la fois : index unique push_annonces_une_en_cours)
 export const CATEGORIES_PLAFONNEES = ["offres", "infos"];
+// e-mail de secours : la pharmacie est « jointe » si un de ses TÉLÉPHONES (iPhone, iPad, Android) a accepté la notification
+// (service push d'Apple ou de Google) ; un ordinateur joint ne suffit pas (case « pas joignable sur téléphone »)
+export const PLATEFORMES_TELEPHONE = ["ios", "android"];
+// message programmé (ou resté en file) dû depuis plus de 3 h : jamais envoyé, texte de l'historique
+const dateParis = (t) => new Date(t).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+export const texteRetard = (prevu) => `Non envoyé : prévu le ${dateParis(prevu)}, le service n'a pas pu l'envoyer à temps (plus de 3 h de retard). Recomposez-le si besoin.`;
+// heure de référence d'un message : heure prévue (programmé), sinon heure de composition
+export const heurePrevue = (a) => Date.parse(a?.programme_pour || a?.created_at || "");
 
 // ── Petites aides HTTP communes aux trois fonctions ──
 const APERCU = /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/;
@@ -303,10 +313,10 @@ export async function lignesDesComptesActuels(stock, lignes, { journal = () => {
 // ── Stockage Supabase (tables push_*, clé serveur) ──
 const COLS = "id,endpoint,p256dh,auth,role,pharmacy_cip,pharmacie_nom,compte_email,categories,appareil,plateforme,installe,created_at,updated_at,last_seen_at,last_success_at,last_failure_at,failures,last_error";
 const COLS_ANNONCE = "id,idem,titre,corps,url,audience,cips,admin_email,statut,erreur,nb_visees,nb_plafonnees,nb_pharmacies,nb_appareils,nb_reussis,nb_echecs,nb_retires,created_at,started_at,finished_at"
-  // sql/push-messages.sql : types, programmation, e-mail de secours
-  + ",type,categorie,repli_email,programme_pour,annule_at,annule_par,destinataire_nom,email_statut,nb_emails,source";
+  // sql/push-messages.sql : types, programmation, e-mail de secours, passage en file, empreinte du contenu (clé idem)
+  + ",type,categorie,repli_email,programme_pour,annule_at,annule_par,destinataire_nom,email_statut,nb_emails,source,en_file_le,idem_empreinte";
 const COLS_ENVOI = "id,categorie,annonce_id,tag,nb_appareils,nb_reussis,created_at,titre,type,source,email";
-const COLS_EVENEMENT = "cle,pharmacy_cip,type,statut,reference,titre,recu_le,traite_le,resultat,nb_appareils,nb_reussis";
+const COLS_EVENEMENT = "cle,pharmacy_cip,type,statut,reference,titre,recu_le,traite_le,resultat,nb_appareils,nb_reussis,corps,url,etiquette,a_envoyer_le";
 const COLS_MODELE = "id,nom,type,titre,corps,url,admin_email,created_at,updated_at";
 const CHAMPS_ENVOI_MESSAGES = ["titre", "type", "source", "email"];   // colonnes de sql/push-messages.sql
 const enc = encodeURIComponent;
@@ -455,17 +465,19 @@ export function creerStockPush(deps = {}) {
     // ── programmation (push-programmes.js, toutes les 5 minutes) ──
     // messages programmés dont l'heure est passée (au plus 20 par passage, les plus anciens d'abord)
     dus(avantIso) { return sb(`push_annonces?statut=eq.programmee&programme_pour=lte.${enc(avantIso)}&select=${COLS_ANNONCE}&order=programme_pour.asc&limit=20`).then((r) => r || []); },
-    // programmée → en_file, une seule fois (deux passages simultanés : un seul gagne) ; null si plus « programmée »
+    // programmée → en_file, une seule fois (deux passages simultanés : un seul gagne) ; null si plus « programmée ». L'heure
+    // de composition (created_at) et l'heure prévue restent : seule en_file_le note le passage
     async passerEnFile(id) {
       if (!estUuid(id)) return null;
       const [r] = (await sb(`push_annonces?id=eq.${id}&statut=eq.programmee&select=${COLS_ANNONCE}`, { method: "PATCH", prefer: "return=representation",
-        body: { statut: "en_file", created_at: iso() } })) || [];
+        body: { statut: "en_file", en_file_le: iso() } })) || [];
       return r || null;
     },
-    // programmée → annulée (admin, avant l'envoi) ; null si déjà partie, annulée ou inconnue
+    // programmée ou en file → annulée (admin, avant l'envoi) ; null si déjà partie, annulée ou inconnue. Écriture
+    // conditionnelle : face à reclamer (en_file → en_cours), une seule des deux gagne
     async annuler(id, admin) {
       if (!estUuid(id)) return null;
-      const [r] = (await sb(`push_annonces?id=eq.${id}&statut=eq.programmee&select=${COLS_ANNONCE}`, { method: "PATCH", prefer: "return=representation",
+      const [r] = (await sb(`push_annonces?id=eq.${id}&statut=in.(programmee,en_file)&select=${COLS_ANNONCE}`, { method: "PATCH", prefer: "return=representation",
         body: { statut: "annulee", annule_at: iso(), annule_par: String(admin || "").slice(0, 120) || null, finished_at: iso() } })) || [];
       return r || null;
     },
@@ -476,8 +488,16 @@ export function creerStockPush(deps = {}) {
         body: { statut: "erreur", erreur: String(texte).slice(0, 300), finished_at: iso() } })) || [];
       return r || null;
     },
-    // messages restés « en file » (lancement perdu, autre diffusion en cours) entre `depuis` et `avant` : relancés
-    enFile(depuis, avant) { return sb(`push_annonces?statut=eq.en_file&created_at=gte.${enc(depuis)}&created_at=lt.${enc(avant)}&select=id,statut,categorie,created_at,source&order=created_at.asc&limit=20`).then((r) => r || []); },
+    // en file trop en retard (heure prévue passée de plus de 3 h) : jamais envoyé, erreur expliquée ; null si plus « en file »
+    async expirer(id, texte) {
+      if (!estUuid(id)) return null;
+      const [r] = (await sb(`push_annonces?id=eq.${id}&statut=eq.en_file&select=id`, { method: "PATCH", prefer: "return=representation",
+        body: { statut: "erreur", erreur: String(texte).slice(0, 300), finished_at: iso() } })) || [];
+      return r || null;
+    },
+    // messages restés « en file » (lancement perdu, autre diffusion en cours), les plus anciens d'abord : relancés ou expirés
+    // par push-programmes selon leur heure prévue (programme_pour, sinon created_at) et leur passage en file (en_file_le)
+    enFile() { return sb("push_annonces?statut=eq.en_file&select=id,statut,categorie,created_at,programme_pour,en_file_le,source&order=created_at.asc&limit=50").then((r) => r || []); },
     programmees(limite = 50) { return sb(`push_annonces?statut=eq.programmee&select=${COLS_ANNONCE}&order=programme_pour.asc&limit=${Math.max(1, Math.min(200, limite | 0))}`).then((r) => r || []); },
     // annonce « en_cours » depuis plus de ANNONCE_BLOQUEE_MIN (fonction coupée) : passée en erreur, le verrou est libéré
     liberer(avant) {
@@ -496,6 +516,20 @@ export function creerStockPush(deps = {}) {
       } catch (e) { if (doublon(e)) return null; throw e; }
     },
     terminer(id, champs) { return sb(`push_annonces?id=eq.${id}`, { method: "PATCH", body: { ...champs, finished_at: iso() } }); },
+    // conservation : messages terminés (envoyés, en erreur, annulés) composés avant `avant` (ISO) ; jamais un message à venir
+    purger(avant) { return sb(`push_annonces?statut=in.(envoyee,erreur,annulee)&created_at=lt.${enc(avant)}`, { method: "DELETE" }); },
+    // demande d'effacement d'une pharmacie : son CIP (et son nom, message unitaire) retiré des messages terminés qui la
+    // visaient ; les messages à venir ne sont pas touchés (à annuler d'abord) → nombre de messages modifiés
+    async effacerCip(cip) {
+      const c = cipPropre(cip);
+      if (!c) return 0;
+      const rows = await tout(`push_annonces?cips=cs.${enc(`{${c}}`)}&statut=in.(envoyee,erreur,annulee)&select=id,audience,cips&order=id.asc`, 5000);
+      for (const r of rows) {
+        const reste = (Array.isArray(r.cips) ? r.cips : []).filter((x) => x !== c);
+        await sb(`push_annonces?id=eq.${r.id}`, { method: "PATCH", body: r.audience === "une" || !reste.length ? { cips: null, destinataire_nom: null } : { cips: reste } });
+      }
+      return rows.length;
+    },
     // historique : programmés d'abord (par date prévue), puis les autres (les plus récents d'abord)
     async lister(limite = 50) {
       const n = Math.max(1, Math.min(200, limite | 0));
@@ -528,17 +562,35 @@ export function creerStockPush(deps = {}) {
       for (const [n, cips] of parValeur)
         await parTranches(cips, (t) => sb(`push_envois?annonce_id=eq.${enc(annonceId)}&pharmacy_cip=in.${listeIn(t)}`, { method: "PATCH", body: { nb_reussis: n } }));
     },
-    // CIP → nombre d'envois réussis (≥ 1 appareil joint) d'une catégorie plafonnée (offres par défaut) depuis `depuis` (ISO)
+    // une ligne, écrite AVANT l'envoi (plafond compté même si la fonction est coupée) → id (pour corrigerId) ou null
+    async ajouterUne(ligne) {
+      const ecrire = (l) => sb("push_envois?select=id", { method: "POST", prefer: "return=representation", body: l });
+      let r;
+      try { r = await ecrire(ligne); }
+      catch (e) {
+        if (e?.code !== "schema" || !CHAMPS_ENVOI_MESSAGES.some((k) => k in ligne)) throw e;
+        r = await ecrire(Object.fromEntries(Object.entries(ligne).filter(([k]) => !CHAMPS_ENVOI_MESSAGES.includes(k))));
+      }
+      return Array.isArray(r) && r[0]?.id != null ? r[0].id : null;
+    },
+    corrigerId(id, champs) { return id == null ? null : sb(`push_envois?id=eq.${enc(id)}`, { method: "PATCH", body: champs }); },
+    // CIP → nombre d'envois réussis (≥ 1 appareil joint, OU e-mail de secours parti) d'une catégorie plafonnée (offres par
+    // défaut) depuis `depuis` (ISO) ; colonne email absente (sql/push-messages.sql pas encore passé) : appareils seulement
     async plafond(depuis, categorie = "offres") {
-      const rows = await tout(`push_envois?categorie=eq.${enc(categorie)}&nb_reussis=gt.0&created_at=gte.${enc(depuis)}&select=pharmacy_cip&order=id.asc`);
+      const base = `push_envois?categorie=eq.${enc(categorie)}&created_at=gte.${enc(depuis)}&select=pharmacy_cip&order=id.asc`;
+      const rows = await tout(`${base}&or=(nb_reussis.gt.0,email.eq.envoye)`)
+        .catch((e) => { if (e?.code === "schema") return tout(`push_envois?categorie=eq.${enc(categorie)}&nb_reussis=gt.0&created_at=gte.${enc(depuis)}&select=pharmacy_cip&order=id.asc`); throw e; });
       const n = new Map();
       for (const r of rows) n.set(r.pharmacy_cip, (n.get(r.pharmacy_cip) || 0) + 1);
       return n;
     },
-    // CIP → nombre d'envois TENTÉS (≥ 1 appareil visé) depuis `depuis` : plafond de sécurité « commandes » (24 h)
+    // CIP → nombre d'envois TENTÉS (≥ 1 appareil visé, OU e-mail de secours parti) depuis `depuis` : plafond de sécurité
+    // « commandes » (24 h)
     async tentatives(depuis, categorie = "commandes", cips = null) {
       const filtre = Array.isArray(cips) && cips.length ? `&pharmacy_cip=in.${listeIn(cips.slice(0, TRANCHE))}` : "";
-      const rows = await tout(`push_envois?categorie=eq.${enc(categorie)}&nb_appareils=gt.0&created_at=gte.${enc(depuis)}${filtre}&select=pharmacy_cip&order=id.asc`);
+      const base = `push_envois?categorie=eq.${enc(categorie)}&created_at=gte.${enc(depuis)}${filtre}&select=pharmacy_cip&order=id.asc`;
+      const rows = await tout(`${base}&or=(nb_appareils.gt.0,email.eq.envoye)`)
+        .catch((e) => { if (e?.code === "schema") return tout(`push_envois?categorie=eq.${enc(categorie)}&nb_appareils=gt.0&created_at=gte.${enc(depuis)}${filtre}&select=pharmacy_cip&order=id.asc`); throw e; });
       const n = new Map();
       for (const r of rows) n.set(r.pharmacy_cip, (n.get(r.pharmacy_cip) || 0) + 1);
       return n;
@@ -552,6 +604,8 @@ export function creerStockPush(deps = {}) {
       return rows.length > 0;
     },
     purger(avant) { return sb(`push_envois?created_at=lt.${enc(avant)}`, { method: "DELETE" }); },
+    // demande d'effacement d'une pharmacie : tous ses envois
+    purgerCip(cip) { const c = cipPropre(cip); return c ? sb(`push_envois?pharmacy_cip=eq.${enc(c)}`, { method: "DELETE" }) : null; },
   };
 
   // nom de la pharmacie (affichage de l'admin) : compte du jeton, comme auth.js (même e-mail → même CIP)
@@ -619,14 +673,26 @@ export function creerStockPush(deps = {}) {
         return { modele: r || null, doublon: false };
       } catch (e) { if (doublon(e)) return { modele: null, doublon: true }; throw e; }
     },
+    // même nom (« Remplacer ») : type, titre, texte et lien remplacés, auteur mis à jour
+    async remplacer(id, m) {
+      if (!estUuid(id)) return null;
+      const [r] = (await sb(`push_modeles?id=eq.${id}&select=${COLS_MODELE}`, { method: "PATCH", prefer: "return=representation", body: { ...m, updated_at: iso() } })) || [];
+      return r || null;
+    },
     supprimer(id) { return estUuid(id) ? sb(`push_modeles?id=eq.${id}`, { method: "DELETE" }) : null; },
   };
 
-  // Événements de l'outil entrepôt (push-evenement.js) : clé d'idempotence = clé primaire, empreinte (pharmacie, type,
-  // référence, statut) unique : un même statut d'une même référence n'est notifié qu'une fois
+  // Événements de l'outil entrepôt (push-evenement.js) : clé d'idempotence = clé primaire ; empreinte (pharmacie, type,
+  // référence, statut, tranche de 10 minutes) unique : un double envoi de l'outil entrepôt sous deux clés n'est notifié
+  // qu'une fois ; le même statut d'une même référence, plus tard (2e reliquat, ticket rouvert), l'est de nouveau
   const evenements = {
-    // → { nouveau: true, ligne } | { nouveau: false, ligne (existante, par clé ou par empreinte) }
-    async reserver(ligne) {
+    // → { nouveau: true, ligne } | { nouveau: false, ligne (existante, par clé ou par empreinte) } ; precedente : empreinte de
+    // la tranche précédente, vue depuis `depuis` (ISO) — un doublon à cheval sur deux tranches reste un doublon
+    async reserver(ligne, { precedente = null, depuis = null } = {}) {
+      if (precedente && depuis) {
+        const [p] = (await sb(`push_evenements?empreinte=eq.${enc(precedente)}&recu_le=gte.${enc(depuis)}&select=${COLS_EVENEMENT},empreinte&limit=1`)) || [];
+        if (p) return { nouveau: false, ligne: p };
+      }
       try {
         const [r] = (await sb(`push_evenements?select=${COLS_EVENEMENT},empreinte`, { method: "POST", prefer: "return=representation", body: ligne })) || [];
         return { nouveau: true, ligne: r || ligne };
@@ -636,9 +702,29 @@ export function creerStockPush(deps = {}) {
         return { nouveau: false, ligne: r || null };
       }
     },
+    // réservation orpheline de cette clé (fonction coupée entre la réservation et la fin, reçue avant `avant`) : reprise
+    // une seule fois (écriture conditionnelle : deux reprises simultanées, une seule gagne) → ligne ou null
+    async reprendre(cle, avant) {
+      const [r] = (await sb(`push_evenements?cle=eq.${enc(cle)}&resultat=is.null&recu_le=lt.${enc(avant)}&select=${COLS_EVENEMENT},empreinte`, { method: "PATCH",
+        prefer: "return=representation", body: { recu_le: iso() } })) || [];
+      return r || null;
+    },
+    // échec passager (base, configuration, appareils tous en échec) : réservation retirée, l'outil entrepôt rejoue la même clé
+    liberer(cle) { return sb(`push_evenements?cle=eq.${enc(cle)}&traite_le=is.null`, { method: "DELETE" }); },
+    // reçu le soir, la nuit ou le dimanche : différé à `a_envoyer_le` (texte, lien et étiquette gardés pour push-programmes)
+    differer(cle, champs) { return sb(`push_evenements?cle=eq.${enc(cle)}`, { method: "PATCH", body: { ...champs, resultat: "differe" } }); },
+    differesDus(avant) { return sb(`push_evenements?resultat=eq.differe&a_envoyer_le=lte.${enc(avant)}&select=${COLS_EVENEMENT}&order=a_envoyer_le.asc&limit=50`).then((r) => r || []); },
+    // différé → « envoi » (en cours), une seule fois → ligne ou null
+    async prendreDiffere(cle) {
+      const [r] = (await sb(`push_evenements?cle=eq.${enc(cle)}&resultat=eq.differe&select=${COLS_EVENEMENT}`, { method: "PATCH", prefer: "return=representation",
+        body: { resultat: "envoi" } })) || [];
+      return r || null;
+    },
     terminer(cle, champs) { return sb(`push_evenements?cle=eq.${enc(cle)}`, { method: "PATCH", body: { ...champs, traite_le: iso() } }); },
     lister(limite = 50) { return sb(`push_evenements?select=${COLS_EVENEMENT}&order=recu_le.desc&limit=${Math.max(1, Math.min(200, limite | 0))}`).then((r) => r || []); },
     purger(avant) { return sb(`push_evenements?recu_le=lt.${enc(avant)}`, { method: "DELETE" }); },
+    // demande d'effacement d'une pharmacie : tous ses événements
+    purgerCip(cip) { const c = cipPropre(cip); return c ? sb(`push_evenements?pharmacy_cip=eq.${enc(c)}`, { method: "DELETE" }) : null; },
   };
 
   // services push refusés (hôte seulement) : admin → État du service, pour élargir HOTES_PUSH à bon escient
@@ -725,17 +811,28 @@ export async function destinataires(stock, { audience = "toutes", cips = null, c
     plafond, cipsPlafonnes, injoignables: choisis ? choisis.filter((c) => !tous.has(c)) : [] };
 }
 
-// L'e-mail de secours d'un message unitaire peut-il partir ? (la pharmacie n'a été jointe sur aucun appareil)
-// Jamais quand le plafond l'a écartée. Promotion et Communication : jamais quand elle a des appareils et a coupé cette
-// alerte sur tous (son choix est respecté). Réclamation / SAV et Commande : oui (suivi de son dossier, voie habituelle).
-// → { ok: true } | { ok: false, raison: "plafond" | "alerte_coupee" | "jointe" }
+// L'e-mail de secours d'un message unitaire peut-il partir ? (la pharmacie n'a été jointe sur aucun de ses téléphones)
+// Jamais pour une Promotion (prospection : refusée dès la composition, verifierMessage). Jamais quand le plafond l'a
+// écartée (l'e-mail parti compte dans le plafond, comme une notification). Communication : jamais quand elle a des
+// appareils et a coupé cette alerte sur tous (son choix est respecté). Réclamation / SAV et Commande : oui (suivi de son
+// dossier, voie habituelle).
+// → { ok: true } | { ok: false, raison: "type" | "plafond" | "alerte_coupee" | "jointe" }
 export function repliPermis({ categorie, jointe, plafonnee, appareilsPharmacie = [] }) {
+  if (categorie === "offres") return { ok: false, raison: "type" };
   if (jointe) return { ok: false, raison: "jointe" };
   if (plafonnee) return { ok: false, raison: "plafond" };
   if (categorie !== "commandes" && appareilsPharmacie.length && !appareilsPharmacie.some((l) => (l.categories || []).includes(categorie)))
     return { ok: false, raison: "alerte_coupee" };
   return { ok: true };
 }
+// Pharmacie hors des destinataires retenus (aucun appareil, ouverture fermée) : a-t-elle atteint le plafond de la catégorie ?
+// (destinataires() ne classe que les pharmacies qui ont un appareil abonné) — l'e-mail de secours ne le contourne jamais
+export async function cipAuPlafond(stock, categorie, reglages, cip, maintenant = () => new Date()) {
+  const { plafond, deja } = await dejaRecus(stock, categorie, reglages, maintenant, [cip]);
+  return !!plafond && (deja.get(cip) || 0) >= plafond.max;
+}
+// raison du refus de l'e-mail de secours → statut noté sur le message (historique, suivi de l'envoi)
+const STATUT_REFUS = { jointe: "non_requis", plafond: "plafond", alerte_coupee: "alerte_coupee", type: "non_requis" };
 
 // Envoi d'un message (push-envoi-background) : réclamation (une diffusion PLAFONNÉE à la fois), destinataires (comptes
 // revérifiés), push_envois écrits AVANT l'envoi (le plafond compte le message même si la fonction est coupée), envoi,
@@ -748,6 +845,12 @@ export async function diffuserAnnonce(id, deps = {}) {
   const a = await stock.annonces.reclamer(id);
   if (!a) return { lancee: false };
   try {
+    // heure prévue (ou de composition) passée de plus de 3 h (lancement perdu, relance tardive) : jamais envoyé en retard
+    const prevu = heurePrevue(a);
+    if (Number.isFinite(prevu) && maintenant().getTime() - prevu > PROGRAMME_RETARD_MAX_MS) {
+      await stock.annonces.terminer(a.id, { statut: "erreur", erreur: texteRetard(prevu) });
+      return { lancee: true, statut: "erreur" };
+    }
     const conf = deps.config || configPush();
     if (!conf.ok) {
       await stock.annonces.terminer(a.id, { statut: "erreur", erreur: "Configuration incomplète (clés VAPID ou clé serveur)." });
@@ -756,7 +859,8 @@ export async function diffuserAnnonce(id, deps = {}) {
     const categorie = IDS_CATEGORIES.includes(a.categorie) ? a.categorie : "offres";
     const type = TYPES_MESSAGE[a.type] ? a.type : "promotion";
     const unitaire = a.audience === "une" && Array.isArray(a.cips) && a.cips.length === 1;
-    const avecRepli = unitaire && a.repli_email === true && typeof deps.repli === "function";
+    // jamais d'e-mail de secours pour une Promotion (même une ligne d'avant la règle)
+    const avecRepli = unitaire && a.repli_email === true && type !== "promotion" && categorie !== "offres" && typeof deps.repli === "function";
     const d = await destinataires(stock, { audience: a.audience, cips: a.cips, categorie }, { maintenant, supprimer: true, journal });
     if (d.fermee && !avecRepli) {
       await stock.annonces.terminer(a.id, { statut: "erreur", erreur: "Ouverture « fermée » : aucune pharmacie ne reçoit encore les notifications.",
@@ -777,26 +881,30 @@ export async function diffuserAnnonce(id, deps = {}) {
     // nombres réels (seulement ceux qui diffèrent du provisoire)
     const reussis = new Map();
     let servies = 0;
-    const jointes = new Set();
     for (const [cip, ls] of d.parCip) {
       const n = ls.filter((l) => r.parLigne.get(l.id)?.ok).length;
-      if (n > 0) { servies++; jointes.add(cip); }
+      if (n > 0) servies++;
       if (n !== ls.length) reussis.set(cip, n);
     }
     if (reussis.size) await stock.envois.corriger(a.id, reussis).catch((e) => journal({ evt: "push_annonce", code: "envois", erreur: e.message }));
-    // e-mail de secours (message unitaire) : la pharmacie n'a été jointe sur aucun appareil
+    // e-mail de secours (message unitaire) : la pharmacie n'a été jointe sur aucun de ses TÉLÉPHONES ; jamais au-delà du
+    // plafond de la catégorie (pharmacie sans appareil comprise : cipAuPlafond), et l'e-mail parti y compte
     let email = { email_statut: null, nb_emails: null };
     if (avecRepli) {
       const cip = String(a.cips[0]);
+      const jointeTel = (d.parCip.get(cip) || []).some((l) => PLATEFORMES_TELEPHONE.includes(l.plateforme) && r.parLigne.get(l.id)?.ok);
+      let plafonnee = d.cipsPlafonnes.includes(cip), lecture = true;
+      if (!plafonnee && !jointeTel && !d.parCip.has(cip)) plafonnee = await cipAuPlafond(stock, categorie, d.reglages, cip, maintenant).catch(() => { lecture = false; return true; });
       const appareilsPharmacie = await stock.abonnements.dePharmacie(cip).catch(() => []);
-      const permis = repliPermis({ categorie, jointe: jointes.has(cip), plafonnee: d.cipsPlafonnes.includes(cip), appareilsPharmacie });
-      if (permis.ok) {
+      const permis = repliPermis({ categorie, jointe: jointeTel, plafonnee, appareilsPharmacie });
+      if (!lecture) email = { email_statut: "echec", nb_emails: 0 };   // plafond illisible : rien ne part
+      else if (permis.ok) {
         const e = await deps.repli({ annonce: { ...a, categorie, type }, cip }).catch(() => ({ statut: "echec", nb: 0 }));
         email = { email_statut: e.statut, nb_emails: e.nb || 0 };
         if (d.parCip.has(cip)) await stock.envois.noterEmail(a.id, cip, e.statut).catch(() => {});
         else await stock.envois.ajouter([{ categorie, pharmacy_cip: cip, annonce_id: a.id, tag, nb_appareils: 0, nb_reussis: 0, titre: titreEnvoi, type,
           source: "message", email: e.statut }]).catch(() => {});
-      } else email = { email_statut: "non_requis", nb_emails: 0 };
+      } else email = { email_statut: STATUT_REFUS[permis.raison] || "non_requis", nb_emails: 0 };
     }
     await stock.annonces.terminer(a.id, { statut: "envoyee", erreur: d.fermee ? "Ouverture « fermée » : e-mail de secours seulement." : null,
       nb_visees: d.visees, nb_plafonnees: d.plafonnees, nb_pharmacies: servies, nb_appareils: d.lignes.length, nb_reussis: r.envoyes, nb_echecs: r.echecs,
@@ -815,9 +923,9 @@ export async function diffuserAnnonce(id, deps = {}) {
 // ── Ménage quotidien (push-menage, planifié) ──
 // envois > 90 jours ; appareils de pharmacie sans ouverture du site depuis 12 mois ; appareils dont le compte n'est plus
 // rattaché au CIP ; annonce bloquée « en_cours » (fonction coupée) ; services push refusés > 90 jours ; événements de l'outil
-// entrepôt > 90 jours.
-// → bilan { envois, inactifs, comptes, annonces, hotes, evenements } (« ok » ou « erreur » par étape : une étape en échec
-// n'arrête pas les suivantes)
+// entrepôt > 90 jours ; messages de l'admin terminés > 12 mois (texte, destinataires, adresse de l'admin).
+// → bilan { envois, inactifs, comptes, annonces, hotes, evenements, messages } (« ok » ou « erreur » par étape : une étape en
+// échec n'arrête pas les suivantes)
 export async function menage(deps = {}) {
   const stock = deps.stock || creerStockPush();
   const maintenant = deps.maintenant || (() => new Date());
@@ -838,6 +946,7 @@ export async function menage(deps = {}) {
   await etape("annonces", () => stock.annonces.liberer(new Date(maintenant().getTime() - ANNONCE_BLOQUEE_MIN * 60e3).toISOString()).then(() => "ok"));
   await etape("hotes", () => stock.hotes.purger(avant(CONSERVATION.hotes_jours)).then(() => "ok"));
   if (stock.evenements) await etape("evenements", () => stock.evenements.purger(avant(CONSERVATION.envois_jours)).then(() => "ok"));
+  if (stock.annonces.purger) await etape("messages", () => stock.annonces.purger(avant(CONSERVATION.annonces_jours)).then(() => "ok"));
   return bilan;
 }
 
@@ -871,11 +980,25 @@ export async function notifierPharmacie(cip, categorie, { titre, corps, url, tag
     let lignes = (await stock.abonnements.dePharmacie(c)).filter((l) => (l.categories || []).includes(categorie));
     if (lignes.length) lignes = await lignesDesComptesActuels(stock, lignes, { journal: opts.journal });
     if (!lignes.length) return rien("aucun_appareil");
-    const r = await envoyerAAppareils(lignes, charge({ categorie, titre, corps, url, tag: t }, maintenant().getTime()),
-      { cles: conf.cles, ttl: TTL[categorie], urgence: URGENCE[categorie], sujet: t, delaiMs: opts.delaiMs ?? 4000 },
-      { stock, transport: opts.transport, hotesEssai: opts.hotesEssai, maintenant, journal: opts.journal });
-    await stock.envois.ajouter([{ categorie, pharmacy_cip: c, tag: t, nb_appareils: lignes.length, nb_reussis: r.envoyes,
-      titre: couper(texteNet(titre), 80) || null, ...(opts.type ? { type: String(opts.type).slice(0, 20) } : {}), source: opts.source ? String(opts.source).slice(0, 20) : categorie }]).catch(() => {});
+    const ligneEnvoi = { categorie, pharmacy_cip: c, tag: t, nb_appareils: lignes.length, nb_reussis: lignes.length,
+      titre: couper(texteNet(titre), 80) || null, ...(opts.type ? { type: String(opts.type).slice(0, 20) } : {}), source: opts.source ? String(opts.source).slice(0, 20) : categorie };
+    // catégorie plafonnée (offres, infos, commandes) : ligne écrite AVANT l'envoi, comptée tout de suite (une rafale de
+    // l'outil entrepôt ne passe pas entre la lecture du plafond et l'écriture) ; écriture impossible → rien ne part
+    const plafonnee = !!plafond;
+    let idEnvoi = null;
+    if (plafonnee) { try { idEnvoi = await stock.envois.ajouterUne(ligneEnvoi); } catch { return rien("erreur"); } }
+    let r;
+    try {
+      r = await envoyerAAppareils(lignes, charge({ categorie, titre, corps, url, tag: t }, maintenant().getTime()),
+        { cles: conf.cles, ttl: TTL[categorie], urgence: URGENCE[categorie], sujet: t, delaiMs: opts.delaiMs ?? 4000 },
+        { stock, transport: opts.transport, hotesEssai: opts.hotesEssai, maintenant, journal: opts.journal });
+    } catch (e) {
+      // rien n'est parti (configuration refusée) : la ligne ne compte pas
+      if (plafonnee) await stock.envois.corrigerId(idEnvoi, { nb_appareils: 0, nb_reussis: 0 })?.catch?.(() => {});
+      throw e;
+    }
+    if (!plafonnee) await stock.envois.ajouter([{ ...ligneEnvoi, nb_reussis: r.envoyes }]).catch(() => {});
+    else if (r.envoyes !== lignes.length) await stock.envois.corrigerId(idEnvoi, { nb_reussis: r.envoyes })?.catch?.(() => {});
     return { envoyes: r.envoyes, echecs: r.echecs, retires: r.retires, raison: null };
   } catch (e) {
     return rien(e?.code === "schema" ? "schema" : e?.code === "configuration" ? "configuration" : "erreur");

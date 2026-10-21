@@ -1,23 +1,26 @@
 // ── Notifications de l'appli Elixir : messages typés de l'admin, e-mail de secours, programmation, API de l'outil entrepôt ──
 // (docs/notifications.md § 4 à 6). Utilisé par push-admin.js, push-envoi-background.js, push-programmes.js et
 // push-evenement.js ; s'appuie sur _push.js (stockage, envoi, destinataires), jamais l'inverse.
-//  • E-mail de secours (message unitaire, case cochée par l'admin) : quand la pharmacie n'a été jointe sur AUCUN appareil.
+//  • E-mail de secours (message unitaire, case cochée par l'admin ; jamais pour une Promotion) : quand la pharmacie n'a été
+//    jointe sur AUCUN de ses téléphones ; jamais au-delà du plafond de la catégorie, et l'e-mail parti y compte.
 //    Destinataires : adresses de COMPTE de la pharmacie (lignes de elixir_pharmacies portant son CIP), jamais l'e-mail de
 //    la fiche Odoo (il peut être celui d'une autre officine du même titulaire) ni une adresse venue du navigateur. Un e-mail
 //    par adresse (5 au plus), expéditeur pharmacien@elixirpharma.fr (comme sendMail), clé d'idempotence Resend par
 //    message et par adresse (une reprise ne renvoie jamais), charte de l'e-mail « De retour en stock » (Inter, pétrole, or).
 //  • Programmation : push-programmes.js (toutes les 5 minutes) passe les messages dus de « programmée » à « en file » (une
 //    seule fois), lance l'envoi ; un message dû depuis plus de 3 h n'est jamais envoyé (erreur expliquée) ; un message
-//    resté « en file » (lancement perdu, autre diffusion plafonnée en cours) est relancé pendant 24 h.
+//    resté « en file » (lancement perdu, autre diffusion plafonnée en cours) est relancé tant que son heure prévue date de
+//    moins de 3 h, jamais le soir, la nuit ni le dimanche (bouton « Relancer », avec confirmation) ; au-delà : erreur.
 //  • API de l'outil entrepôt (push-evenement.js) : signature HMAC-SHA256 comme l'API « chatbot-intake »
 //    (docs/assistant-contrat.md : X-Elixir-Horodatage, X-Elixir-Signature: sha256=…, Idempotency-Key), textes par défaut
-//    selon le type et le statut, jamais de montant.
+//    selon le type et le statut (texte libre seulement pour un statut sans texte par défaut), jamais de montant ;
+//    événement reçu le soir, la nuit ou le dimanche : différé au prochain matin 8 h (traiterDifferes, push-programmes).
 // Code compatible Node 18. Journaux : JSON une ligne, jamais d'adresse e-mail, de texte de message ni de secret.
 import crypto from "node:crypto";
 import {
-  LIMITES, PROGRAMME_RETARD_MAX_MS, lienValide, texteNet, longueur, cipPropre, contientMontant, raisonOuverture,
+  LIMITES, PROGRAMME_RETARD_MAX_MS, lienValide, texteNet, longueur, cipPropre, contientMontant, raisonOuverture, horsHeures,
 } from "../../src/notifications/regles.js";
-import { creerStockPush, lancerEnvoi, siteBaseEnv, ECHECS_EN_ALERTE, estUuid } from "./_push.js";
+import { creerStockPush, lancerEnvoi, siteBaseEnv, ECHECS_EN_ALERTE, estUuid, texteRetard, heurePrevue, notifierPharmacie } from "./_push.js";
 
 export const SITE_PHARMACIES = "https://elixir-commande.expepharma.com";
 const FROM_DEFAUT = "Elixir Pharma <pharmacien@elixirpharma.fr>";
@@ -79,7 +82,7 @@ export function emailSecours({ type = "communication", titre, corps, url = "/", 
         <p style="margin:0;">L’équipe Elixir Pharma${pharmacie ? ` · pour <b>${esc(pharmacie)}</b>` : ""}</p>
       </td></tr>
       <tr><td style="padding:18px 28px 24px 28px;border-top:1px solid #e3ddd2;${POLICE};font-size:12px;line-height:19px;color:#6f6863;">
-        <p style="margin:0 0 8px 0;">Vous recevez cet e-mail parce que ce message n’a pu s’afficher sur aucun téléphone ni ordinateur de votre pharmacie (notifications de l’application Elixir non activées ou injoignables).</p>
+        <p style="margin:0 0 8px 0;">Vous recevez cet e-mail parce que ce message n’a pu être remis sur aucun téléphone de votre pharmacie (notifications de l’application Elixir non activées ou injoignables).</p>
         <p style="margin:0 0 8px 0;">Pour le recevoir directement sur votre téléphone, activez les notifications&nbsp;: <a href="${esc(`${site}/?notifications=1`)}" style="color:#0f2d3d;">${esc(`${site.replace(/^https:\/\//, "")}/?notifications=1`)}</a>.</p>
         <p style="margin:0;">Elixir Pharma · pharmacien@elixirpharma.fr · 01&nbsp;86&nbsp;04&nbsp;39&nbsp;95</p>
       </td></tr>
@@ -161,30 +164,42 @@ export async function joignabilite(stock, comptes, { limite = 20 } = {}) {
 }
 
 // ── Programmation (push-programmes.js) ──
-const dateParis = (t) => new Date(t).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
-// deps : { stock, lancer(id) → null | raison, maintenant, journal } → bilan { dus, lances, abandonnes, relances, echecs }
+export const RELANCE_APRES_MS = 2 * 60e3;   // en file depuis 2 minutes au moins (lancement en cours sinon)
+// deps : { stock, lancer(id) → null | raison, maintenant, journal } → bilan { dus, lances, abandonnes, relances, expires, echecs }
 export async function traiterProgrammes(deps = {}) {
   const stock = deps.stock || creerStockPush();
   const maintenant = deps.maintenant || (() => new Date());
   const journal = deps.journal || (() => {});
   const lancer = deps.lancer || ((id) => lancerEnvoi(siteBaseEnv(), id));
   const t = maintenant().getTime();
-  const bilan = { dus: 0, lances: 0, abandonnes: 0, relances: 0, echecs: 0 };
+  const bilan = { dus: 0, lances: 0, abandonnes: 0, relances: 0, expires: 0, echecs: 0 };
   // 1. messages dus : trop en retard → jamais envoyés ; sinon « en file » (une seule fois) puis lancés
   const aLancer = [];
   for (const a of await stock.annonces.dus(new Date(t).toISOString())) {
     bilan.dus++;
     const prevu = Date.parse(a.programme_pour);
     if (t - prevu > PROGRAMME_RETARD_MAX_MS) {
-      if (await stock.annonces.abandonner(a.id, `Non envoyé : prévu le ${dateParis(prevu)}, le service n'a pas pu l'envoyer à temps (plus de 3 h de retard). Recomposez-le si besoin.`)) bilan.abandonnes++;
+      if (await stock.annonces.abandonner(a.id, texteRetard(prevu))) bilan.abandonnes++;
       continue;
     }
     const pris = await stock.annonces.passerEnFile(a.id);   // annulé entre-temps ou pris par un autre passage : null
     if (pris) aLancer.push(pris.id);
   }
-  // 2. messages restés « en file » depuis 2 minutes à 24 heures (lancement perdu, autre diffusion plafonnée en cours)
-  const relances = (await stock.annonces.enFile(new Date(t - 24 * 3600e3).toISOString(), new Date(t - 2 * 60e3).toISOString()))
-    .map((a) => a.id).filter((id) => estUuid(id) && !aLancer.includes(id));
+  // 2. messages restés « en file » (lancement perdu, autre diffusion plafonnée en cours) : heure prévue (ou de composition)
+  // passée de plus de 3 h → erreur, jamais envoyés ; sinon relancés après 2 minutes en file, mais jamais le soir, la nuit
+  // ni le dimanche (l'admin relance avec une confirmation : « Relancer »)
+  const relances = [];
+  const calme = horsHeures(t);
+  for (const a of await stock.annonces.enFile()) {
+    if (!estUuid(a.id) || aLancer.includes(a.id)) continue;
+    const prevu = heurePrevue(a);
+    if (!(t - prevu <= PROGRAMME_RETARD_MAX_MS)) {
+      if (await stock.annonces.expirer(a.id, texteRetard(prevu))) bilan.expires++;
+      continue;
+    }
+    if (calme || t - Date.parse(a.en_file_le || a.created_at) < RELANCE_APRES_MS) continue;
+    relances.push(a.id);
+  }
   const resultats = await Promise.all([...aLancer, ...relances].map(async (id) => [id, await lancer(id).catch(() => "injoignable")]));
   for (const [id, echec] of resultats) {
     if (echec) bilan.echecs++;
@@ -253,8 +268,11 @@ export function verifierEvenement(b = {}) {
   const reference = RE_REFERENCE.test(String(b.reference ?? "").trim()) ? String(b.reference).trim() : null;
   if (!reference) erreurs.push("reference : 1 à 40 caractères (lettres, chiffres, - _ / . espace)");
   const defaut = type && statut ? TEXTES_EVENEMENT[type][statut] : null;
-  const titre = b.titre == null || b.titre === "" ? (defaut ? defaut[0] : null) : texteNet(b.titre);
-  const corps = b.corps == null || b.corps === "" ? (defaut && reference ? defaut[1](reference) : null) : texteNet(b.corps);
+  const libre = (v) => !(v == null || v === "");
+  // statut connu : texte par défaut seulement (jamais le texte d'un ticket, qui pourrait contenir un nom de patient)
+  if (defaut && (libre(b.titre) || libre(b.corps))) erreurs.push(`statut « ${statut} » : texte par défaut seulement (titre et corps libres réservés aux statuts sans texte par défaut)`);
+  const titre = !libre(b.titre) || defaut ? (defaut ? defaut[0] : null) : texteNet(b.titre);
+  const corps = !libre(b.corps) || defaut ? (defaut && reference ? defaut[1](reference) : null) : texteNet(b.corps);
   if (!titre || !corps) { if (type && statut && !defaut) erreurs.push(`statut « ${statut} » sans texte par défaut : fournir titre et corps (statuts connus : ${STATUTS_EVENEMENT[type].join(", ")})`); }
   else {
     if (longueur(titre) > LIMITES.titre) erreurs.push(`titre : ${LIMITES.titre} caractères au plus`);
@@ -268,6 +286,46 @@ export function verifierEvenement(b = {}) {
 // une même référence garde la même étiquette (le nouveau statut remplace l'ancien sur l'appareil) ; empreinte à clé : la
 // référence n'est jamais lisible par le service push (en-tête Topic en clair)
 export const etiquetteEvenement = (type, reference, cle) => `evt-${crypto.createHmac("sha256", String(cle || "elixir")).update(`${type}|${reference}`).digest("base64url").slice(0, 16)}`;
-// un même statut d'une même référence pour une même pharmacie n'est notifié qu'une fois (clé d'idempotence différente comprise)
-export const empreinteEvenement = (e) => sha(`${e.cip}|${e.type}|${e.reference}|${e.statut}`);
+// doublon de l'outil entrepôt (même pharmacie, type, référence et statut sous une autre clé) : écarté pendant 10 minutes ;
+// au-delà, le même statut est notifié de nouveau (2e reliquat d'une commande, ticket rouvert)
+export const FENETRE_DOUBLON_MS = 10 * 60e3;
+export const trancheDoublon = (t) => Math.floor(t / FENETRE_DOUBLON_MS);
+export const empreinteEvenement = (e, tranche = "") => sha(`${e.cip}|${e.type}|${e.reference}|${e.statut}|${tranche}`);
 export const typeMessageDeEvenement = (type) => (type === "commande" ? "commande" : "reclamation");
+// échec passager d'une notification (base, configuration, tous les appareils en échec) : à rejouer
+export const echecPassager = (r) => ["erreur", "schema", "configuration"].includes(r.raison) || (r.raison == null && r.envoyes === 0 && r.echecs > 0);
+// résultat noté d'une notification de l'outil entrepôt
+export const resultatEvenement = (r) => r.raison || (r.envoyes > 0 ? "envoye" : r.echecs > 0 ? "echec" : "aucun_appareil");
+
+// Événements différés (reçus le soir, la nuit ou le dimanche) dont l'heure est venue : envoyés par push-programmes, jamais
+// hors heures ; échec passager → reporté de 10 minutes (12 h au plus, puis erreur). deps : { stock, config, transport,
+// hotesEssai, maintenant, journal, notifier } → bilan { differes, envoyes, reportes }
+export const REPORT_DIFFERE_MS = 10 * 60e3, REPORT_DIFFERE_MAX_MS = 12 * 3600e3;
+export async function traiterDifferes(deps = {}) {
+  const stock = deps.stock || creerStockPush();
+  const maintenant = deps.maintenant || (() => new Date());
+  const journal = deps.journal || (() => {});
+  const notifier = deps.notifier || notifierPharmacie;
+  const t = maintenant().getTime();
+  const bilan = { differes: 0, envoyes: 0, reportes: 0 };
+  if (horsHeures(t)) return bilan;
+  for (const ev of await stock.evenements.differesDus(new Date(t).toISOString())) {
+    const pris = await stock.evenements.prendreDiffere(ev.cle);   // pris par un autre passage : null
+    if (!pris) continue;
+    bilan.differes++;
+    const r = await notifier(ev.pharmacy_cip, "commandes", { titre: ev.titre, corps: ev.corps, url: ev.url, tag: ev.etiquette },
+      { type: typeMessageDeEvenement(ev.type), source: "entrepot", stock, config: deps.config, transport: deps.transport, hotesEssai: deps.hotesEssai,
+        maintenant, journal, delaiMs: 4000 });
+    const passager = ["erreur", "schema", "configuration"].includes(r.raison);
+    if (passager && t - Date.parse(ev.a_envoyer_le) < REPORT_DIFFERE_MAX_MS) {
+      await stock.evenements.differer(ev.cle, { a_envoyer_le: new Date(t + REPORT_DIFFERE_MS).toISOString() }).catch(() => {});
+      bilan.reportes++;
+      continue;
+    }
+    const resultat = passager ? "erreur" : resultatEvenement(r);
+    await stock.evenements.terminer(ev.cle, { resultat, nb_appareils: r.envoyes + r.echecs + r.retires, nb_reussis: r.envoyes }).catch(() => {});
+    if (resultat === "envoye") bilan.envoyes++;
+    journal({ evt: "push_evenement", type: ev.type, statut: ev.statut, code: resultat, differe: true, envoyes: r.envoyes, echecs: r.echecs });
+  }
+  return bilan;
+}

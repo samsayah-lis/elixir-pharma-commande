@@ -1770,8 +1770,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 {pharmSaving?"⏳ Sauvegarde…":"💾 Sauvegarder"}
               </button>
             </div>
-            {/* Notifications de l'appli reçues par la pharmacie de la fiche (CIP), lecture seule (docs/notifications.md § 7) */}
-            <NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} />
+            {/* Notifications de l'appli reçues par la pharmacie de la fiche (CIP), lecture seule (docs/notifications.md § 7) ;
+                « Écrire à cette pharmacie » : onglet 📲 Notifications, composeur prérempli */}
+            <NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} onEcrire={() => setTab("notifications")} />
           </div>
         )}
 

@@ -105,11 +105,12 @@ export default function AdminNotifications({ adminFetch, flash, promos = [], sec
         «&nbsp;Retour en stock&nbsp;» part juste après l'e-mail de l'onglet «&nbsp;🔔 Alertes retour&nbsp;». L'e-mail reste la voie des informations importantes. Mode d'emploi&nbsp;: docs/notifications.md.
       </p>
       {erreur && <Erreur texte={erreur} />}
+      {/* usage quotidien d'abord (nouveau message, historique) : sur téléphone, le composeur arrive sans défilement */}
+      <Messages etat={etat} appeler={appeler} flash={flash} promos={promos} sections={sections} masques={masques} onEnvoye={charger} />
       <EtatService etat={etat} onActualiser={charger} busy={busy} />
       <Ouverture etat={etat} appeler={appeler} flash={flash} adminFetch={adminFetch} onEnregistre={(reglages) => setEtat((e) => ({ ...e, reglages }))} />
       <MesAppareils etat={etat} api={api} flash={flash} onChange={charger} />
       <Statistiques etat={etat} appeler={appeler} flash={flash} onChange={charger} />
-      <Messages etat={etat} appeler={appeler} flash={flash} promos={promos} sections={sections} masques={masques} onEnvoye={charger} />
     </div>
   );
 }
@@ -347,13 +348,15 @@ function MesAppareils({ etat, api, flash, onChange }) {
 function Statistiques({ etat, appeler, flash, onChange }) {
   const s = etat.stats || {};
   const [busy, setBusy] = useState(false);
-  // demande d'effacement, appareil perdu ou vendu : tous les appareils de la pharmacie (elle pourra les réactiver)
+  // demande d'effacement, appareil perdu ou vendu : tous les appareils de la pharmacie (elle pourra les réactiver) ;
+  // demande d'effacement : son historique aussi (envois, événements de l'outil entrepôt, son nom dans les messages envoyés)
   const retirer = async (p) => {
     if (!window.confirm(`Retirer les ${pluriel(p.appareils, "appareil")} de «\u00a0${p.nom || `CIP ${p.cip}`}\u00a0»\u00a0?\n\nIls ne recevront plus aucune notification\u00a0; la pharmacie pourra les réactiver. À utiliser pour une demande d'effacement ou un appareil perdu.`)) return;
+    const effacer = window.confirm(`Demande d'effacement\u00a0: effacer aussi l'historique de «\u00a0${p.nom || `CIP ${p.cip}`}\u00a0» (notifications reçues, événements de l'outil entrepôt, son nom dans les messages envoyés)\u00a0?\n\nOK\u00a0: tout effacer. Annuler\u00a0: retirer seulement les appareils.`);
     setBusy(true);
     try {
-      const r = await appeler("retirer_pharmacie", { cip: p.cip });
-      flash(r.ok ? `✓ ${pluriel(r.corps.retires || 0, "appareil retiré", "appareils retirés")}` : `⚠ Retrait impossible (${r.corps.error || r.statut})`);
+      const r = await appeler("retirer_pharmacie", { cip: p.cip, ...(effacer ? { effacer_historique: true } : {}) });
+      flash(r.ok ? `✓ ${pluriel(r.corps.retires || 0, "appareil retiré", "appareils retirés")}${r.corps.historique_efface ? ", historique effacé" : ""}` : `⚠ Retrait impossible (${r.corps.error || r.statut})`);
       await onChange();
     } finally { setBusy(false); }
   };

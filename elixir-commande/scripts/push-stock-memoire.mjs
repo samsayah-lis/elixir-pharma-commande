@@ -2,7 +2,9 @@
 // scripts/test-push-serveur.mjs et scripts/test-push-messages.mjs. Aucun accès réseau.
 // Reproduit les règles de la base qui comptent pour le code : index unique « un seul message PLAFONNÉ en cours »
 // (push_annonces_une_en_cours, sql/push-messages.sql), clé d'idempotence unique des messages, clé et empreinte uniques des
-// événements de l'outil entrepôt, nom de modèle unique (sans casse), passages conditionnels (programmée → en file, annulée).
+// événements de l'outil entrepôt (empreinte de la tranche précédente vue depuis `depuis`), nom de modèle unique (sans
+// casse), passages conditionnels (programmée → en file, programmée ou en file → annulée, en file → erreur, différé → envoi,
+// réservation orpheline reprise une fois), plafonds comptant l'e-mail de secours parti (email = « envoye »).
 // Options :
 //   reglages, lignes (abonnements), envois, annonces ;
 //   comptes : Map(e-mail → CIP actuel dans elixir_pharmacies) ; absent : chaque e-mail d'abonnement rattaché à son CIP ;
@@ -69,14 +71,24 @@ export function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], 
       async liberer(avant) { for (const a of db.annonces) if (a.statut === "en_cours" && a.started_at < avant) Object.assign(a, { statut: "erreur", erreur: "Envoi interrompu" }); },
       async terminer(id, champs) { Object.assign(db.annonces.find((a) => a.id === id), champs, { finished_at: maintenant() }); },
       async dus(avant) { return copie(db.annonces.filter((a) => a.statut === "programmee" && a.programme_pour <= avant).sort((x, y) => x.programme_pour.localeCompare(y.programme_pour)).slice(0, 20)); },
-      async passerEnFile(id) { const a = db.annonces.find((x) => x.id === id && x.statut === "programmee"); if (!a) return null; Object.assign(a, { statut: "en_file", created_at: maintenant() }); return copie(a); },
+      async passerEnFile(id) { const a = db.annonces.find((x) => x.id === id && x.statut === "programmee"); if (!a) return null; Object.assign(a, { statut: "en_file", en_file_le: maintenant() }); return copie(a); },
       async annuler(id, admin) {
-        const a = db.annonces.find((x) => x.id === id && x.statut === "programmee");
+        const a = db.annonces.find((x) => x.id === id && ["programmee", "en_file"].includes(x.statut));
         if (!a) return null;
         Object.assign(a, { statut: "annulee", annule_at: maintenant(), annule_par: admin || null, finished_at: maintenant() }); return copie(a);
       },
       async abandonner(id, texte) { const a = db.annonces.find((x) => x.id === id && x.statut === "programmee"); if (!a) return null; Object.assign(a, { statut: "erreur", erreur: texte, finished_at: maintenant() }); return { id }; },
-      async enFile(depuis, avant) { return copie(db.annonces.filter((a) => a.statut === "en_file" && a.created_at >= depuis && a.created_at < avant)); },
+      async expirer(id, texte) { const a = db.annonces.find((x) => x.id === id && x.statut === "en_file"); if (!a) return null; Object.assign(a, { statut: "erreur", erreur: texte, finished_at: maintenant() }); return { id }; },
+      async enFile() { return copie(db.annonces.filter((a) => a.statut === "en_file").sort((x, y) => String(x.created_at).localeCompare(String(y.created_at))).slice(0, 50)); },
+      async purger(avant) { db.annonces = db.annonces.filter((a) => !["envoyee", "erreur", "annulee"].includes(a.statut) || a.created_at >= avant); },
+      async effacerCip(cip) {
+        let n = 0;
+        for (const a of db.annonces) if (["envoyee", "erreur", "annulee"].includes(a.statut) && (a.cips || []).includes(cip)) {
+          n++; const reste = a.cips.filter((c) => c !== cip);
+          Object.assign(a, a.audience === "une" || !reste.length ? { cips: null, destinataire_nom: null } : { cips: reste });
+        }
+        return n;
+      },
       async programmees(limite = 50) { return copie(db.annonces.filter((a) => a.statut === "programmee").sort((x, y) => x.programme_pour.localeCompare(y.programme_pour)).slice(0, limite)); },
       async lister(limite = 50) {
         const prog = db.annonces.filter((a) => a.statut === "programmee").sort((x, y) => x.programme_pour.localeCompare(y.programme_pour));
@@ -85,16 +97,19 @@ export function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], 
     },
     envois: {
       async ajouter(l) { for (const e of l) db.envois.push({ id: db.envois.length + 1, created_at: maintenant(), ...e }); },
+      async ajouterUne(e) { const id = db.envois.length + 1; db.envois.push({ id, created_at: maintenant(), ...e }); return id; },
+      async corrigerId(id, champs) { const e = db.envois.find((x) => x.id === id); if (e) Object.assign(e, champs); },
+      async purgerCip(cip) { db.envois = db.envois.filter((e) => e.pharmacy_cip !== cip); },
       async noterEmail(annonceId, cip, statut) { for (const e of db.envois) if (e.annonce_id === annonceId && e.pharmacy_cip === cip) e.email = statut; },
       async corriger(annonceId, reussis) { for (const e of db.envois) if (e.annonce_id === annonceId && reussis.has(e.pharmacy_cip)) e.nb_reussis = reussis.get(e.pharmacy_cip); },
       async plafond(depuis, categorie = "offres") {
         const n = new Map();
-        for (const e of db.envois) if (e.categorie === categorie && e.nb_reussis > 0 && e.created_at >= depuis) n.set(e.pharmacy_cip, (n.get(e.pharmacy_cip) || 0) + 1);
+        for (const e of db.envois) if (e.categorie === categorie && (e.nb_reussis > 0 || e.email === "envoye") && e.created_at >= depuis) n.set(e.pharmacy_cip, (n.get(e.pharmacy_cip) || 0) + 1);
         return n;
       },
       async tentatives(depuis, categorie = "commandes", cips = null) {
         const n = new Map();
-        for (const e of db.envois) if (e.categorie === categorie && e.nb_appareils > 0 && e.created_at >= depuis && (!cips || cips.includes(e.pharmacy_cip)))
+        for (const e of db.envois) if (e.categorie === categorie && (e.nb_appareils > 0 || e.email === "envoye") && e.created_at >= depuis && (!cips || cips.includes(e.pharmacy_cip)))
           n.set(e.pharmacy_cip, (n.get(e.pharmacy_cip) || 0) + 1);
         return n;
       },
@@ -126,15 +141,27 @@ export function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], 
         if (db.modeles.some((x) => x.nom.toLowerCase() === String(m.nom).toLowerCase())) return { modele: null, doublon: true };
         const n = { id: crypto.randomUUID(), created_at: maintenant(), updated_at: maintenant(), ...m }; db.modeles.push(n); return { modele: copie(n), doublon: false };
       },
+      async remplacer(id, m) { const x = db.modeles.find((y) => y.id === id); if (!x) return null; Object.assign(x, m, { updated_at: maintenant() }); return copie(x); },
       async supprimer(id) { db.modeles = db.modeles.filter((x) => x.id !== id); },
     },
     evenements: {
-      async reserver(ligne) {
+      async reserver(ligne, { precedente = null, depuis = null } = {}) {
+        const prec = precedente && depuis ? db.evenements.find((e) => e.empreinte === precedente && e.recu_le >= depuis) : null;
+        if (prec) return { nouveau: false, ligne: copie(prec) };
         const ex = db.evenements.find((e) => e.cle === ligne.cle || e.empreinte === ligne.empreinte);
         if (ex) return { nouveau: false, ligne: copie(ex) };
         const n = { recu_le: maintenant(), traite_le: null, resultat: null, nb_appareils: null, nb_reussis: null, ...ligne };
         db.evenements.push(n); return { nouveau: true, ligne: copie(n) };
       },
+      async reprendre(cle, avant) {
+        const e = db.evenements.find((x) => x.cle === cle && x.resultat == null && x.recu_le < avant);
+        if (!e) return null; e.recu_le = maintenant(); return copie(e);
+      },
+      async liberer(cle) { db.evenements = db.evenements.filter((e) => e.cle !== cle || e.traite_le); },
+      async differer(cle, champs) { const e = db.evenements.find((x) => x.cle === cle); if (e) Object.assign(e, champs, { resultat: "differe" }); },
+      async differesDus(avant) { return copie(db.evenements.filter((e) => e.resultat === "differe" && e.a_envoyer_le <= avant).sort((x, y) => x.a_envoyer_le.localeCompare(y.a_envoyer_le)).slice(0, 50)); },
+      async prendreDiffere(cle) { const e = db.evenements.find((x) => x.cle === cle && x.resultat === "differe"); if (!e) return null; e.resultat = "envoi"; return copie(e); },
+      async purgerCip(cip) { db.evenements = db.evenements.filter((e) => e.pharmacy_cip !== cip); },
       async terminer(cle, champs) { const e = db.evenements.find((x) => x.cle === cle); if (e) Object.assign(e, champs, { traite_le: maintenant() }); },
       async lister(limite = 50) { return copie(db.evenements.slice().reverse().slice(0, limite)); },
       async purger(avant) { db.evenements = db.evenements.filter((e) => e.recu_le >= avant); },

@@ -82,7 +82,9 @@
   schedule = "35 3 * * *"
 
 # Notifications de l'appli : messages programmés de l'admin (heure de Paris choisie dans l'onglet 📲 Notifications), envoyés
-# au plus 5 minutes après l'heure prévue ; messages restés « en file » relancés (docs/notifications.md § 5)
+# au plus 5 minutes après l'heure prévue ; messages restés « en file » relancés aux heures ouvertes, jamais plus de 3 h
+# après l'heure prévue ; événements de l'outil entrepôt reçus le soir, la nuit ou le dimanche envoyés à 8 h
+# (docs/notifications.md § 5 et § 6)
 [functions."push-programmes"]
   schedule = "*/5 * * * *"
 

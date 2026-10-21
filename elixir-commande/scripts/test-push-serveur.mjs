@@ -463,7 +463,7 @@ const lancements = [];
   const e4 = await h(A({ action: "envoyer", annonce: { ...annonce, audience: "liste", cips: ["2000001"] }, idem: "idem-00000003" }));
   eq("nouvelle annonce après la fin de la précédente → 202", e4.statusCode, 202);
   eq("relancer trop tôt → 409", corpsDe(await h(A({ action: "relancer", id: corpsDe(e4).annonce.id }))).error, "trop_tot");
-  stock.db.annonces.find((a) => a.id === corpsDe(e4).annonce.id).created_at = new Date(Date.now() - 3 * 60e3).toISOString();
+  Object.assign(stock.db.annonces.find((a) => a.id === corpsDe(e4).annonce.id), { created_at: new Date(Date.now() - 3 * 60e3).toISOString(), en_file_le: new Date(Date.now() - 3 * 60e3).toISOString() });
   const nLanc = lancements.length;
   eq("relancer après 2 min → 202, relancée", [(await h(A({ action: "relancer", id: corpsDe(e4).annonce.id }))).statusCode, lancements.length], [202, nLanc + 1]);
   const hEchec = handlerAdmin({ stock, config: () => CONF, verifierAdmin, lancer: async () => "HTTP 500", journal: () => {} });
@@ -587,7 +587,8 @@ const lancements = [];
   eq("reclamer : annonce bloquée « en_cours » libérée d'abord, puis écriture conditionnelle (statut en_file)",
     [appels[3].init.method, /statut=eq\.en_cours&started_at=lt\./.test(appels[3].u), appels[4].init.method, appels[4].u.includes("statut=eq.en_file")], ["PATCH", true, "PATCH", true]);
   await s.envois.plafond("2026-10-13T00:00:00.000Z");
-  eq("plafond : offres réussies depuis 7 jours", /categorie=eq\.offres&nb_reussis=gt\.0&created_at=gte\./.test(appels[5].u), true);
+  eq("plafond : offres réussies (appareil joint ou e-mail de secours parti) depuis 7 jours", [/categorie=eq\.offres&created_at=gte\./.test(appels[5].u),
+    decodeURIComponent(appels[5].u).includes("or=(nb_reussis.gt.0,email.eq.envoye)")], [true, true]);
   const s409 = P.creerStockPush({ url: "u", cle: "k", fetch: async (u, init) => new Response(init.method === "PATCH" && u.includes("statut=eq.en_file")
     ? JSON.stringify({ code: "23505", message: "duplicate key value violates unique constraint" }) : "[]", { status: u.includes("statut=eq.en_file") ? 409 : 200 }) });
   eq("reclamer : autre annonce en cours (index unique, 23505) → null, l'annonce reste en file", await s409.annonces.reclamer("00000000-0000-4000-8000-000000000000"), null);

@@ -454,7 +454,10 @@ function etatAdminBanc(endpoint) {
 }
 // messages d'exemple de l'historique (types, e-mail de secours, programmation)
 const MESSAGES_EXEMPLE = () => [
-  { id: "banc-ex-4", type: "reclamation", categorie: "commandes", titre: "Réclamation traitée", corps: "Votre réclamation EN-601-2026-118 est traitée. Le détail vous est envoyé par e-mail.",
+  { id: "banc-ex-5", type: "communication", categorie: "infos", titre: "Horaires du 11 novembre", corps: "Le 11 novembre, les commandes reçues avant 10 h partiront le jour même.",
+    url: "/", audience: "toutes", cips: null, nb_cips: 0, admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 3, nb_plafonnees: 1, nb_pharmacies: 2, nb_appareils: 2,
+    nb_reussis: 2, nb_echecs: 0, nb_retires: 0, programme_pour: ilYaH(20), en_file_le: ilYaH(20), started_at: ilYaH(20), created_at: ilYa(2), finished_at: ilYaH(20) },
+  { id: "banc-ex-4", type: "reclamation", categorie: "commandes", titre: "Réclamation traitée", corps: "Votre réclamation EN-601-2026-118 est traitée. Une question : 01 86 04 39 95.",
     url: "/?commandes=1", audience: "une", cips: ["2000007"], nb_cips: 1, destinataire_nom: "PHARMACIE DES TILLEULS", repli_email: true, email_statut: "envoye", nb_emails: 2,
     admin_email: "pharmacien@elixirpharma.fr", statut: "envoyee", nb_visees: 0, nb_plafonnees: 0, nb_pharmacies: 0, nb_appareils: 0, nb_reussis: 0, nb_echecs: 0, nb_retires: 0,
     created_at: ilYaH(26), finished_at: ilYaH(26) },
@@ -478,7 +481,11 @@ function envoisExemple(cip) {
   if (cip === "2000007") return [{ id: 9010, categorie: "commandes", type: "reclamation", titre: "Réclamation traitée", source: "message", message: true, nb_appareils: 0, nb_reussis: 0, email: "envoye", created_at: ilYaH(26) }];
   return [];
 }
+// matin 8 h à venir (heure de Paris), pour l'exemple d'un événement différé
+const prochain8h = () => { const d = new Date(); d.setUTCHours(6, 0, 0, 0); if (d.getTime() < Date.now()) d.setUTCDate(d.getUTCDate() + 1); return d.toISOString(); };
 const EVENEMENTS_EXEMPLE = () => [
+  { cle: "entrepot-S04530-reliquat", pharmacy_cip: "2000006", type: "commande", statut: "reliquat", reference: "S04530", titre: "Reliquat sur votre commande", recu_le: ilYaH(1),
+    traite_le: null, resultat: "differe", nb_appareils: null, nb_reussis: null, a_envoyer_le: prochain8h() },
   { cle: "entrepot-EN-601-2026-131-recue", pharmacy_cip: "2000003", type: "reclamation", statut: "recue", reference: "EN-601-2026-131", titre: "Réclamation reçue", recu_le: ilYaH(3),
     traite_le: ilYaH(3), resultat: "envoye", nb_appareils: 1, nb_reussis: 1 },
   { cle: "entrepot-S04512-expediee", pharmacy_cip: "2000001", type: "commande", statut: "expediee", reference: "S04512", titre: "Commande expédiée", recu_le: ilYaH(20),
@@ -502,7 +509,13 @@ function estimationBanc(b) {
     appareils: fermee ? 0 : recoit.filter(p => p.cip !== "2000002" || categorie !== "offres").reduce((n, p) => n + p.appareils, 0), fermee, plafond, plafond_offres_7j: pushBanc.reglages.plafond_offres_7j,
     sans_appareil: fiches.filter(p => !p.appareils).length, alerte_coupee: fiches.filter(p => p.appareils && !p.raison && !p.categories.includes(categorie)).length,
     hors_ouverture: fermee ? 0 : fiches.filter(p => p.raison === "hors_pilote").length };
-  if (audience === "une" && fiches[0]) out.email = { adresses: fiches[0].adresses, masquees: fiches[0].adresses_masquees };
+  // e-mail de secours : même règle que le serveur (jamais pour une Promotion ; Communication : alerte coupée → non)
+  if (audience === "une" && fiches[0]) {
+    const p = fiches[0];
+    const telephone = !fermee && !p.raison && p.categories.includes(categorie) && p.plateformes.some(x => x === "ios" || x === "android");
+    const raison = type === "promotion" ? "type" : categorie === "infos" && p.appareils && !p.categories.includes("infos") ? "alerte_coupee" : !p.adresses ? "aucune_adresse" : null;
+    out.email = { adresses: p.adresses, masquees: p.adresses_masquees, permis: !raison, raison, telephone };
+  }
   return out;
 }
 function reponsePushAdminBanc(b) {
@@ -543,7 +556,7 @@ function reponsePushAdminBanc(b) {
       if (!prog && pushBanc.reglages.ouverture === "fermee" && !(m.audience === "une" && m.repli_email)) return ok({ error: "fermee" }, 409);
       const e = estimationBanc({ type: m.type, audience: m.audience, cips: m.cips });
       const une = m.audience === "une" ? joignabiliteBanc(m.cips[0]) : null;
-      const email = m.repli_email ? (e.recevront ? "non_requis" : une?.adresses ? "envoye" : "aucune_adresse") : null;
+      const email = m.repli_email ? (e.email?.telephone ? "non_requis" : e.email?.raison === "alerte_coupee" ? "alerte_coupee" : une?.adresses ? "envoye" : "aucune_adresse") : null;
       const maintenant = new Date().toISOString();
       const a = { id: `banc-${Date.now()}`, idem: b.idem, ...m, nb_cips: m.cips?.length || 0, destinataire_nom: une?.nom || null, admin_email: "pharmacien@elixirpharma.fr", source: "admin",
         ...(prog ? { statut: "programmee", programme_pour: prog.iso, created_at: maintenant }
@@ -557,7 +570,7 @@ function reponsePushAdminBanc(b) {
     }
     case "message": { const a = pushBanc.annonces.find(x => x.id === b.id); return a ? ok({ annonce: a }) : ok({ error: "inconnu" }, 404); }
     case "annuler": {
-      const a = pushBanc.annonces.find(x => x.id === b.id && x.statut === "programmee");
+      const a = pushBanc.annonces.find(x => x.id === b.id && ["programmee", "en_file"].includes(x.statut));
       if (!a) return ok({ error: "statut" }, 409);
       Object.assign(a, { statut: "annulee", annule_at: new Date().toISOString(), annule_par: "pharmacien@elixirpharma.fr" });
       return ok({ annonce: a });
@@ -573,12 +586,14 @@ function reponsePushAdminBanc(b) {
       const prog = pushBanc.annonces.filter(a => a.statut === "programmee").sort((x, y) => x.programme_pour.localeCompare(y.programme_pour));
       return ok({ annonces: [...prog, ...pushBanc.annonces.filter(a => a.statut !== "programmee"), ...MESSAGES_EXEMPLE()] });
     }
-    case "evenements": return ok({ evenements: EVENEMENTS_EXEMPLE() });
+    case "evenements": return ok({ evenements: EVENEMENTS_EXEMPLE().map(e => ({ ...e, pharmacie_nom: joignabiliteBanc(e.pharmacy_cip)?.nom || null })) });
     case "modeles": return ok({ modeles: pushBanc.modeles });
     case "modele_enregistrer": {
       const v = verifierModele(b.modele || {});
       if (!v.ok) return ok({ erreurs: v.erreurs }, 400);
-      if (pushBanc.modeles.some(m => m.nom.toLowerCase() === v.modele.nom.toLowerCase())) return ok({ error: "doublon" }, 409);
+      const meme = pushBanc.modeles.find(m => m.nom.toLowerCase() === v.modele.nom.toLowerCase());
+      if (meme && b.remplacer !== true) return ok({ error: "doublon" }, 409);
+      if (meme) { Object.assign(meme, v.modele, { updated_at: new Date().toISOString() }); return ok({ modele: meme, remplace: true }); }
       const m = { id: `banc-modele-${++pushBanc.n}`, ...v.modele, admin_email: "pharmacien@elixirpharma.fr", created_at: new Date().toISOString() };
       pushBanc.modeles.push(m); pushBanc.modeles.sort((x, y) => x.nom.localeCompare(y.nom, "fr"));
       return ok({ modele: m });

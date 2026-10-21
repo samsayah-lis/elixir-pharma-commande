@@ -14,6 +14,9 @@
 //     étiquette à clé) ;
 //  6. push-admin : recherche (adresses masquées seulement), estimation, historique d'une pharmacie, modèles, refus ;
 //  7. creerStockPush : chemins PostgREST des nouvelles lectures et écritures, repli sans les colonnes de push-messages.sql ;
+//  7 bis. correctifs de la revue : e-mail de secours plafonné et compté, Promotion sans e-mail, relances bornées à 3 h et
+//     jamais la nuit, annulation en file, API (débit avant signature, échecs passagers rejouables, orpheline, doublon 10 min,
+//     différé de nuit), estimation = envoi, clé idem par contenu, modèles remplacés, effacement, conservation ;
 //  8. rendu de l'onglet (React côté serveur) et empaquetage esbuild des nouvelles fonctions (comme Netlify).
 import crypto from "node:crypto";
 import { build } from "esbuild";
@@ -212,19 +215,21 @@ const A = (corps, { hote = "elixir-commande.expepharma.com" } = {}) => ({ httpMe
   ["Réclamation traitée", true, true, true, true, true]);
   eq("push_envois de la pharmacie : ligne sans appareil, e-mail envoyé", stock.db.envois.filter((e) => e.annonce_id === r1.id).map((e) => [e.pharmacy_cip, e.nb_appareils, e.email]), [["5000003", 0, "envoye"]]);
   mails.length = 0;
+  // plafond de sécurité de 5000001 remis à zéro : la pharmacie est jointe sur son téléphone Android
+  stock.db.envois = stock.db.envois.filter((e) => !(e.pharmacy_cip === "5000001" && e.categorie === "commandes"));
   const r2 = await creer({ type: "reclamation", categorie: "commandes", audience: "une", cips: ["5000001"], repli_email: true });
   await lancer(r2.id);
-  eq("pharmacie jointe sur son téléphone : pas d'e-mail (non nécessaire)", [parId(r2.id).email_statut, mails.length], ["non_requis", 0]);
+  eq("pharmacie jointe sur son téléphone : pas d'e-mail (inutile)", [parId(r2.id).email_statut, mails.length], ["non_requis", 0]);
   const r3 = await creer({ type: "reclamation", categorie: "commandes", audience: "une", cips: ["5000005"], repli_email: true });
   await lancer(r3.id);
   eq("transactionnel, alerte « Mes commandes » coupée : e-mail quand même (suivi de son dossier)", [parId(r3.id).email_statut, mails.map((m) => m.to)], ["envoye", ["p5000005@pharma.fr"]]);
   mails.length = 0;
   const r4 = await creer({ type: "communication", categorie: "infos", audience: "une", cips: ["5000002"], repli_email: true, url: "/" });
   await lancer(r4.id);
-  eq("communication, alerte « Informations » coupée sur ses appareils : jamais d'e-mail (son choix)", [parId(r4.id).email_statut, mails.length], ["non_requis", 0]);
+  eq("communication, alerte « Informations » coupée sur ses appareils : jamais d'e-mail (son choix, noté)", [parId(r4.id).email_statut, mails.length], ["alerte_coupee", 0]);
   const r5 = await creer({ type: "communication", categorie: "infos", audience: "une", cips: ["5000001"], repli_email: true, url: "/" });
   await lancer(r5.id);
-  eq("plafond atteint : ni notification ni e-mail", [parId(r5.id).nb_plafonnees, parId(r5.id).email_statut, mails.length], [1, "non_requis", 0]);
+  eq("plafond atteint : ni notification ni e-mail (noté « plafond »)", [parId(r5.id).nb_plafonnees, parId(r5.id).email_statut, mails.length], [1, "plafond", 0]);
   const r6 = await creer({ type: "commande", categorie: "commandes", audience: "une", cips: ["5000009"], repli_email: true });
   await lancer(r6.id);
   eq("aucun compte pour ce CIP : aucune adresse", parId(r6.id).email_statut, "aucune_adresse");
@@ -317,7 +322,7 @@ const A = (corps, { hote = "elixir-commande.expepharma.com" } = {}) => ({ httpMe
   eq("push-programmes sans clé serveur : rien, noté", journaux, [{ evt: "push_programmes", code: "configuration" }]);
   const j2 = [];
   await handlerProgrammes({ stock, config: () => CONF, lancer, maintenant: horloge, journal: (o) => j2.push(o) })();
-  eq("push-programmes : bilan au journal, sans contenu", Object.keys(j2[0] || {}).sort(), ["abandonnes", "dus", "echecs", "evt", "lances", "relances"]);
+  eq("push-programmes : bilan au journal, sans contenu", Object.keys(j2[0] || {}).sort(), ["abandonnes", "dus", "echecs", "evt", "expires", "lances", "relances"]);
 }
 
 // ── 5. API de l'outil entrepôt (push-evenement) ──
@@ -354,8 +359,8 @@ const A = (corps, { hote = "elixir-commande.expepharma.com" } = {}) => ({ httpMe
   eq("champs refusés → 400 avec la liste (cip, type, statut, reference)", [mauvais.error, mauvais.erreurs.length], ["requete", 4]);
   eq("statut inconnu sans texte → 400 ; avec titre et corps → admis", [(await h(evt({ ...base, statut: "en_attente_labo" }))).statusCode,
     (await h(evt({ ...base, statut: "en_attente_labo", titre: "Réclamation en attente", corps: "Nous attendons la réponse du laboratoire." }))).statusCode], [400, 200]);
-  eq("montant refusé (écran verrouillé) ; lien hors site refusé", [corpsDe(await h(evt({ ...base, corps: "Avoir de 45,20 € émis." }))).erreurs, corpsDe(await h(evt({ ...base, url: "https://x.fr" }))).erreurs.length],
-    [["aucun montant (écran verrouillé)"], 1]);
+  eq("montant refusé (écran verrouillé) ; lien hors site refusé", [corpsDe(await h(evt({ ...base, statut: "en_attente_labo", titre: "Avoir", corps: "Avoir de 45,20 € émis." }))).erreurs,
+    corpsDe(await h(evt({ ...base, url: "https://x.fr" }))).erreurs.length], [["aucun montant (écran verrouillé)"], 1]);
   recus.length = 0;
   const cle = "entrepot-EN-601-2026-12-traitee";
   const r1 = await h(evt(base, { cle }));
@@ -412,8 +417,8 @@ const A = (corps, { hote = "elixir-commande.expepharma.com" } = {}) => ({ httpMe
   eq("chercher par CIP choisis", corpsDe(await h(A({ action: "chercher", cips: ["9000002"] }))).pharmacies.map((p) => [p.nom, p.plateformes]), [["PHARMACIE B", ["ios"]]]);
   eq("chercher : moins de 2 caractères → rien", corpsDe(await h(A({ action: "chercher", q: "a" }))).pharmacies, []);
   const e1 = corpsDe(await h(A({ action: "estimer", type: "reclamation", audience: "une", cips: ["9000003"] })));
-  eq("estimer (réclamation, une pharmacie sans appareil) : 0 recevra, sans appareil, e-mail de secours possible (masqué)", [e1.categorie, e1.recevront, e1.sans_appareil, e1.email, e1.plafond.fenetre],
-    ["commandes", 0, 1, { adresses: 1, masquees: ["ti…@…fr"] }, "24 heures"]);
+  eq("estimer (réclamation, une pharmacie sans appareil) : 0 recevra, sans appareil, e-mail de secours permis (masqué)", [e1.categorie, e1.recevront, e1.sans_appareil, e1.email, e1.plafond.fenetre],
+    ["commandes", 0, 1, { adresses: 1, masquees: ["ti…@…fr"], permis: true, raison: null, telephone: false }, "24 heures"]);
   const e2 = corpsDe(await h(A({ action: "estimer", type: "communication", audience: "liste", cips: ["9000001", "9000002", "9000003"] })));
   eq("estimer (communication, liste) : 1 recevra, 1 alerte coupée, 1 sans appareil", [e2.recevront, e2.alerte_coupee, e2.sans_appareil], [1, 1, 1]);
   const e3 = corpsDe(await h(A({ action: "estimer", type: "promotion", audience: "toutes" })));
@@ -499,6 +504,279 @@ const A = (corps, { hote = "elixir-commande.expepharma.com" } = {}) => ({ httpMe
   appels.length = 0;
   await s.evenements.reserver({ cle: "entrepot-cle-1", empreinte: "a".repeat(64), pharmacy_cip: "1", type: "commande", statut: "expediee" });
   eq("événement déjà connu (409) : relu par clé OU empreinte", appels[1]?.u.includes('push_evenements?or=(cle.eq."entrepot-cle-1",empreinte.eq."aaaa'), true);
+}
+
+// ── 7 bis. Correctifs de la revue (21/10/2026) : plafonds de l'e-mail de secours, Promotion sans e-mail, relances et
+// annulation des messages en file, API (débit avant signature, échec passager rejouable, réservation orpheline, doublon
+// sur 10 minutes, statuts connus sans texte libre, différé de nuit), estimation alignée sur l'envoi, clé idem par contenu,
+// destinataires des messages transactionnels, modèles, effacement, conservation ──
+{
+  // règles
+  eq("montants élargis : HT, TTC, décimales, « E », en toutes lettres, solde ; dates, heures, ordinaux, numéros admis",
+    ["Avoir de 45,90 HT émis", "Solde restant : 1 250,00", "Remboursement 12,5 TTC", "Avoir de 30 E", "quarante euros", "Solde : 120",
+      "le 22/10", "Réponse sous 24 h ouvrées", "Votre 2e colis", "EN-601-2026-12", "S04512", "01 86 04 39 95", "le 1er novembre", "Europe"].map(R.contientMontant),
+    [true, true, true, true, true, true, false, false, false, false, false, false, false, false]);
+  eq("référence propre (commande à plusieurs pharmacies)", ["S04512", "EN-601", "n° 45120", "commande 45120", "Livraisons retardées le 22/10/2026", "tournée Nord"].map(R.contientReference),
+    [true, true, true, true, false, false]);
+  const v = (m) => R.verifierMessage({ titre: "Titre", corps: "Texte du message.", url: "/?commandes=1", ...m });
+  eq("réclamation : une seule pharmacie ; commande à plusieurs : sans référence ; promotion : jamais d'e-mail de secours",
+    [v({ type: "reclamation", audience: "liste", cips: ["2000001", "2000002"] }).ok, v({ type: "commande", audience: "liste", cips: ["2000001", "2000002"], corps: "Votre commande S04512 part demain." }).ok,
+      v({ type: "commande", audience: "liste", cips: ["2000001", "2000002"], corps: "Livraisons retardées ce matin (neige)." }).ok,
+      v({ type: "promotion", audience: "une", cips: ["2000001"], repli_email: true, url: "/" }).ok, v({ type: "communication", audience: "une", cips: ["2000001"], repli_email: true, url: "/" }).message.repli_email],
+    [false, false, true, false, true]);
+  eq("audiences par type", [R.audiencesDuType("reclamation"), R.audiencesDuType("commande"), R.audiencesDuType("promotion")], [["une"], ["une", "liste"], ["une", "liste", "toutes"]]);
+  eq("prochain matin (Paris) : nuit → 8 h même jour ; soir → lendemain ; samedi soir et dimanche → lundi ; programmation : lendemain 8 h 30 hors dimanche",
+    [["2026-10-21T04:00:00Z"], ["2026-10-21T19:00:00Z"], ["2026-10-24T19:30:00Z"], ["2026-10-25T08:00:00Z"], ["2026-10-24T10:00:00Z", { heure: 8, minute: 30, demain: true }]]
+      .map(([d, o]) => R.isoVersParis(R.prochainMatin(Date.parse(d), o))), ["2026-10-21T08:00", "2026-10-22T08:00", "2026-10-26T08:00", "2026-10-26T08:00", "2026-10-26T08:30"]);
+  eq("modèles : aucun ne promet un e-mail ; « Nouveau menu » est une Promotion à menu promo à choisir",
+    [MODELES_ELIXIR.filter((m) => /e-mail|espace de la pharmacie/i.test(m.corps)).map((m) => m.id), MODELES_ELIXIR.find((m) => m.id === "nouveau_menu").type, MODELES_ELIXIR.find((m) => m.id === "nouveau_menu").typeLien],
+    [[], "promotion", "promo"]);
+  eq("« Informations Elixir » : plus de « nouveautés » ; « Mes commandes et réclamations » cite les demandes",
+    [/nouveaut/i.test(R.CATEGORIES.find((c) => c.id === "infos").aide + R.aideInfos(2)), /demandes/.test(R.CATEGORIES.find((c) => c.id === "commandes").aide)], [false, true]);
+}
+{
+  // e-mail de secours : jamais au-delà du plafond, compté dedans ; jamais pour une Promotion ; téléphones seulement
+  const t0 = Date.parse("2026-10-22T09:00:00Z");
+  const mk = (lignes, reglages, pharmacies) => stockMemoire({ reglages: { ouverture: "toutes", ...reglages }, lignes, pharmacies, horloge: () => new Date(t0) });
+  const pharmacies = [{ email: "titulaire@sans.fr", name: "SANS APPAREIL", cip: "5500001" }, { email: "p5500002@pharma.fr", name: "ÉCHEC", cip: "5500002" },
+    { email: "p5500003@pharma.fr", name: "COMPTOIR", cip: "5500003" }, { email: "p5500004@pharma.fr", name: "TÉLÉPHONE", cip: "5500004" }];
+  const lignes = [ligne("/m/2", { pharmacy_cip: "5500002", categories: ["commandes", "infos"] }), ligne("/m/3", { pharmacy_cip: "5500003", categories: ["commandes", "infos"], plateforme: "ordinateur" }),
+    ligne("/m/4", { pharmacy_cip: "5500004", categories: ["commandes", "infos"], plateforme: "ios" })];
+  const essai = async (stock, statuts, messages) => {
+    const mails = [];
+    const { transport } = espion(statuts);
+    const bg = handlerEnvoi({ stock, config: () => CONF, transport, hotesEssai: ESSAI, journal: () => {}, autoriser: () => true, maintenant: () => new Date(t0),
+      envoyerEmail: async (m) => { mails.push(m.to); return { sent: true }; } });
+    const ids = [];
+    for (const m of messages) {
+      const a = (await stock.annonces.creer({ titre: "Titre", corps: "Texte.", url: "/", statut: "en_file", audience: "une", repli_email: true, ...m })).annonce;
+      ids.push(a.id);
+      await bg({ httpMethod: "POST", headers: {}, body: JSON.stringify({ annonce: a.id }) });
+    }
+    return { mails, statuts: ids.map((id) => stock.db.annonces.find((a) => a.id === id).email_statut) };
+  };
+  const s1 = mk(lignes, { plafond_infos_7j: 2 }, pharmacies);
+  const r1 = await essai(s1, {}, Array.from({ length: 3 }, () => ({ type: "communication", categorie: "infos", cips: ["5500001"] })));
+  eq("Communication, pharmacie sans appareil, plafond 2 : 3 messages → 2 e-mails, le 3e « plafond »", [r1.mails.length, r1.statuts], [2, ["envoye", "envoye", "plafond"]]);
+  eq("l'e-mail parti compte dans le plafond des informations", (await s1.envois.plafond("2026-01-01T00:00:00Z", "infos")).get("5500001"), 2);
+  const s2 = mk(lignes, { plafond_commandes_jour: 2 }, pharmacies);
+  const r2 = await essai(s2, {}, Array.from({ length: 3 }, () => ({ type: "reclamation", categorie: "commandes", url: "/?commandes=1", cips: ["5500001"] })));
+  eq("Réclamation, pharmacie sans appareil, plafond de sécurité 2 : 3 messages → 2 e-mails", [r2.mails.length, r2.statuts], [2, ["envoye", "envoye", "plafond"]]);
+  const s3 = mk(lignes, { plafond_commandes_jour: 2 }, pharmacies);
+  const r3 = await essai(s3, { "/m/2": 500 }, Array.from({ length: 3 }, () => ({ type: "reclamation", categorie: "commandes", url: "/?commandes=1", cips: ["5500002"] })));
+  eq("appareil toujours en échec, plafond 2 : 2 e-mails au plus", [r3.mails.length, r3.statuts], [2, ["envoye", "envoye", "plafond"]]);
+  const s4 = mk(lignes, {}, pharmacies);
+  const r4 = await essai(s4, {}, [{ type: "promotion", categorie: "offres", cips: ["5500001"] }]);
+  eq("Promotion (ligne d'avant la règle, case cochée) : jamais d'e-mail", [r4.mails.length, r4.statuts], [0, [null]]);
+  const s5 = mk(lignes, {}, pharmacies);
+  const r5 = await essai(s5, {}, [{ type: "reclamation", categorie: "commandes", url: "/?commandes=1", cips: ["5500003"] }, { type: "reclamation", categorie: "commandes", url: "/?commandes=1", cips: ["5500004"] }]);
+  eq("jointe sur un ordinateur seulement : e-mail quand même (« pas joignable sur téléphone ») ; jointe sur son iPhone : inutile",
+    [r5.mails, r5.statuts], [["p5500003@pharma.fr"], ["envoye", "non_requis"]]);
+  eq("ordinateur joint + e-mail : une seule ligne d'envoi, comptée une fois", s5.db.envois.filter((e) => e.pharmacy_cip === "5500003").map((e) => [e.nb_reussis, e.email]), [[1, "envoye"]]);
+  const s6 = mk(lignes, { ouverture: "fermee", plafond_infos_7j: 1 }, pharmacies);
+  const r6 = await essai(s6, {}, Array.from({ length: 2 }, () => ({ type: "communication", categorie: "infos", cips: ["5500001"] })));
+  eq("ouverture fermée : l'e-mail de secours respecte aussi le plafond", [r6.mails.length, r6.statuts], [1, ["envoye", "plafond"]]);
+}
+{
+  // programmation : relance bornée à 3 h, jamais le soir ni la nuit, annulation d'un message en file, heure de composition gardée
+  let t = Date.parse("2026-10-23T08:00:00Z");   // vendredi 10 h à Paris
+  const horloge = () => new Date(t);
+  const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/q/1", { pharmacy_cip: "7600001", categories: ["stock", "commandes", "infos", "offres"] })], horloge });
+  const id = crypto.randomUUID();
+  stock.db.annonces.push({ id, statut: "programmee", programme_pour: "2026-10-23T08:00:00.000Z", type: "communication", categorie: "infos", titre: "Fermeture demain",
+    corps: "Elixir fermé demain samedi.", url: "/", audience: "toutes", created_at: "2026-10-20T08:00:00.000Z" });
+  let panne = true; const lances = [];
+  const lancer = async (x) => { if (panne) return "injoignable"; lances.push([x, R.texteHeureParis(t)]); return null; };
+  await M.traiterProgrammes({ stock, lancer, maintenant: horloge });
+  const a = stock.db.annonces.find((x) => x.id === id);
+  eq("passage en file : heure de composition gardée, passage noté à part", [a.statut, a.created_at, a.en_file_le], ["en_file", "2026-10-20T08:00:00.000Z", "2026-10-23T08:00:00.000Z"]);
+  t += 30 * MIN; panne = false;
+  const b1 = await M.traiterProgrammes({ stock, lancer, maintenant: horloge });
+  eq("lancement perdu, 30 min plus tard en journée : relancé", [b1.relances, lances.length], [1, 1]);
+  // même message resté en file (autre diffusion en cours), service muet jusqu'à 23 h 05 : jamais relancé, passé en erreur
+  lances.length = 0;
+  for (let i = 0; i < 12 * 13; i++) { t += 5 * MIN; await M.traiterProgrammes({ stock, lancer: async () => "injoignable", maintenant: horloge }); }
+  t += 5 * MIN;
+  const b2 = await M.traiterProgrammes({ stock, lancer, maintenant: horloge });
+  eq("prévu à 10 h, encore en file à 23 h : jamais relancé, erreur « plus de 3 h de retard »", [lances.length, b2.relances, a.statut === "en_file" ? "en_file" : stock.db.annonces.find((x) => x.id === id).statut,
+    /plus de 3 h/.test(stock.db.annonces.find((x) => x.id === id).erreur || "")], [0, 0, "erreur", true]);
+  // soir : en file à 19 h 50, pas de relance après 20 h (bouton « Relancer » avec confirmation) ; expiré à 22 h 51
+  t = Date.parse("2026-10-22T17:50:00Z");
+  const id2 = crypto.randomUUID();
+  stock.db.annonces.push({ id: id2, statut: "en_file", type: "promotion", categorie: "offres", titre: "Offre", corps: "c", url: "/", audience: "toutes", created_at: new Date(t).toISOString(), en_file_le: new Date(t).toISOString() });
+  t = Date.parse("2026-10-22T18:01:00Z");
+  const b3 = await M.traiterProgrammes({ stock, lancer, maintenant: horloge });
+  t = Date.parse("2026-10-22T20:51:00Z");
+  const b4 = await M.traiterProgrammes({ stock, lancer, maintenant: horloge });
+  eq("en file depuis 19 h 50 : pas de relance automatique après 20 h, expiré après 22 h 50", [b3.relances, b4.expires, stock.db.annonces.find((x) => x.id === id2).statut], [0, 1, "erreur"]);
+  // lancement tardif (relance manuelle ou fonction relancée) d'un message trop ancien : terminé en erreur, rien d'envoyé
+  const { recus, transport } = espion();
+  const id3 = crypto.randomUUID();
+  stock.db.annonces.push({ id: id3, statut: "en_file", type: "communication", categorie: "infos", titre: "Fermeture", corps: "c", url: "/", audience: "toutes",
+    programme_pour: new Date(t - 4 * H).toISOString(), created_at: new Date(t - 2 * J).toISOString(), en_file_le: new Date(t - 4 * H).toISOString() });
+  const d3 = await P.diffuserAnnonce(id3, { stock, config: CONF, transport, hotesEssai: ESSAI, maintenant: horloge });
+  eq("diffusion d'un message prévu il y a 4 h : erreur, rien d'envoyé", [d3.statut, recus.length, /plus de 3 h/.test(stock.db.annonces.find((x) => x.id === id3).erreur)], ["erreur", 0, true]);
+  // annulation d'un message en file ; reclamer ensuite : sans effet
+  t = Date.parse("2026-10-22T09:00:00Z");
+  const h = handlerAdmin({ stock, config: () => CONF, verifierAdmin, lancer: async () => "HTTP 500", maintenant: horloge, journal: () => {} });
+  const e1 = await h(A({ action: "envoyer", message: { type: "communication", titre: "Fermeture exceptionnelle", corps: "Elixir fermé le 1er novembre.", url: "/", audience: "toutes" }, idem: "revue-0000001" }));
+  const idF = corpsDe(e1).annonce.id;
+  const an = await h(A({ action: "annuler", id: idF }));
+  eq("502 lancement, puis « Annuler » du message en file : annulé, jamais diffusé", [e1.statusCode, an.statusCode, corpsDe(an).annonce.statut, (await P.diffuserAnnonce(idF, { stock, config: CONF, transport, hotesEssai: ESSAI, maintenant: horloge })).lancee],
+    [502, 200, "annulee", false]);
+  // relance manuelle : refusée au-delà de 3 h après l'heure prévue
+  const id4 = crypto.randomUUID();
+  stock.db.annonces.push({ id: id4, statut: "en_file", type: "commande", categorie: "commandes", titre: "t", corps: "c", url: "/", audience: "une", cips: ["7600001"],
+    programme_pour: new Date(t - 3.5 * H).toISOString(), created_at: new Date(t - J).toISOString(), en_file_le: new Date(t - 3.5 * H).toISOString() });
+  eq("« Relancer » au-delà de 3 h : 409 trop_ancienne", corpsDe(await h(A({ action: "relancer", id: id4 }))).error, "trop_ancienne");
+}
+{
+  // API : débit avant la signature, échecs passagers rejouables, réservation orpheline, doublon sur 10 minutes, différé de nuit
+  const SECRET = crypto.randomBytes(32).toString("hex");
+  let t = Date.parse("2026-10-22T09:00:00Z");   // jeudi 11 h à Paris
+  const horloge = () => new Date(t);
+  const req = (corps, { cle, ip = "198.51.100.7", signe = true } = {}) => {
+    const texte = JSON.stringify(corps), ts = String(Math.floor(t / 1000));
+    return { httpMethod: "POST", headers: { host: "elixir-commande.expepharma.com", "x-nf-client-connection-ip": ip, ...(signe ? { "x-elixir-horodatage": ts, "x-elixir-signature": M.signer(SECRET, ts, texte) } : {}),
+      ...(cle ? { "idempotency-key": cle } : {}) }, body: texte };
+  };
+  const base = { cip: "8100001", type: "reclamation", statut: "traitee", reference: "REC-42" };
+  {
+    const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/f/1", { pharmacy_cip: "8100001", categories: ["commandes"] })], horloge });
+    const { transport } = espion();
+    const h = handlerEvenement({ stock, config: () => CONF, secret: SECRET, transport, hotesEssai: ESSAI, maintenant: horloge, journal: () => {} });
+    for (let i = 0; i < 130; i++) await h(req({}, { ip: "203.0.113.66", signe: false }));
+    const ok1 = await h(req(base, { cle: "evt-debit-0001" }));
+    eq("130 requêtes NON signées d'une adresse : l'outil entrepôt (autre adresse) passe ; l'adresse fautive est limitée",
+      [ok1.statusCode, (await h(req({}, { ip: "203.0.113.66", signe: false }))).statusCode], [200, 429]);
+  }
+  {
+    const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/f/2", { pharmacy_cip: "8100001", categories: ["commandes"] })], horloge });
+    const lire = stock.reglages.lire; let panne = true;
+    stock.reglages.lire = async (...x) => { if (panne) throw Object.assign(new Error("Supabase HTTP 503"), { status: 503 }); return lire(...x); };
+    const { recus, transport } = espion();
+    const h = handlerEvenement({ stock, config: () => CONF, secret: SECRET, transport, hotesEssai: ESSAI, maintenant: horloge, journal: () => {} });
+    const r1 = await h(req(base, { cle: "evt-panne-0001" }));
+    panne = false;
+    const r2 = await h(req(base, { cle: "evt-panne-0001" }));
+    eq("panne passagère pendant l'envoi : 503 Retry-After, réservation retirée ; rejeu de la même clé → envoyée une fois",
+      [r1.statusCode, corpsDe(r1).error, Number(r1.headers["Retry-After"]) > 0, r2.statusCode, corpsDe(r2).resultat, recus.length], [503, "indisponible", true, 200, "envoye", 1]);
+  }
+  {
+    const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/f/3", { pharmacy_cip: "8100001", categories: ["commandes"] })], horloge });
+    const { recus, transport } = espion();
+    const h = handlerEvenement({ stock, config: () => CONF, secret: SECRET, transport, hotesEssai: ESSAI, maintenant: horloge, journal: () => {} });
+    const e = { cip: "8100001", type: "commande", statut: "expediee", reference: "BL-1" };
+    stock.db.evenements.push({ cle: "evt-orphelin-01", empreinte: M.empreinteEvenement(e, M.trancheDoublon(t - 2 * MIN)), pharmacy_cip: "8100001", type: "commande", statut: "expediee",
+      reference: "BL-1", titre: "Commande expédiée", recu_le: new Date(t - 2 * MIN).toISOString(), traite_le: null, resultat: null });
+    stock.db.evenements.push({ cle: "evt-recent-0001", empreinte: M.empreinteEvenement({ ...e, reference: "BL-2" }, M.trancheDoublon(t)), pharmacy_cip: "8100001", type: "commande", statut: "expediee",
+      reference: "BL-2", titre: "Commande expédiée", recu_le: new Date(t - 20e3).toISOString(), traite_le: null, resultat: null });
+    const r1 = await h(req(e, { cle: "evt-orphelin-01" }));
+    const r2 = await h(req({ ...e, reference: "BL-2" }, { cle: "evt-recent-0001" }));
+    eq("réservation orpheline (fonction coupée, 2 min) : reprise et envoyée ; réservation de 20 s : « déjà » (en cours ailleurs)",
+      [corpsDe(r1).resultat, corpsDe(r2).deja, recus.length, stock.db.evenements.find((x) => x.cle === "evt-orphelin-01").resultat], ["envoye", true, 1, "envoye"]);
+  }
+  {
+    const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/f/4", { pharmacy_cip: "8100001", categories: ["commandes"] })], horloge });
+    const statuts = { "/f/4": 500 };
+    const { recus, transport } = espion(statuts);
+    const h = handlerEvenement({ stock, config: () => CONF, secret: SECRET, transport, hotesEssai: ESSAI, maintenant: horloge, journal: () => {} });
+    const r1 = await h(req(base, { cle: "evt-echecs-0001" }));
+    statuts["/f/4"] = 201;
+    const r2 = await h(req(base, { cle: "evt-echecs-0001" }));
+    eq("appareils tous en échec : 503 (à rejouer), jamais « envoyée » ; rejeu → envoyée", [r1.statusCode, corpsDe(r2).resultat, recus.length], [503, "envoye", 2]);
+    const r3 = await h(req({ ...base, reference: "REC-43" }, { cle: "evt-doublon-001" }));
+    const r4 = await h(req({ ...base, reference: "REC-43" }, { cle: "evt-doublon-002" }));
+    t += 11 * MIN;
+    const r5 = await h(req({ ...base, reference: "REC-43" }, { cle: "evt-doublon-003" }));
+    eq("même statut, même référence, autre clé : écarté dans les 10 minutes, notifié de nouveau après", [corpsDe(r3).resultat, corpsDe(r4).deja, corpsDe(r5).resultat], ["envoye", true, "envoye"]);
+    statuts["/f/4"] = 410;
+    const r6 = await h(req({ ...base, reference: "REC-44" }, { cle: "evt-retire-0001" }));
+    eq("seul appareil retiré (410) : « aucun appareil », jamais « envoyée »", corpsDe(r6).resultat, "aucun_appareil");
+    eq("statut connu avec un texte libre : refusé (texte par défaut seulement)", corpsDe(await h(req({ ...base, reference: "REC-45", corps: "Ordonnance de Mme X traitée." }, { cle: "evt-libre-00001" }))).error, "requete");
+    eq("statut inconnu, montant hors euro (« 45,90 HT ») : refusé", corpsDe(await h(req({ ...base, statut: "avoir_partiel", reference: "REC-46", titre: "Avoir", corps: "Avoir de 45,90 HT." }, { cle: "evt-montant-001" }))).erreurs,
+      ["aucun montant (écran verrouillé)"]);
+  }
+  {
+    // soir, nuit, dimanche : différé au matin 8 h (push-programmes) ; jamais la nuit
+    t = Date.parse("2026-10-22T20:00:00Z");   // 22 h à Paris
+    const stock = stockMemoire({ reglages: { ouverture: "toutes" }, lignes: [ligne("/f/5", { pharmacy_cip: "8100001", categories: ["commandes"] })], horloge });
+    const { recus, transport } = espion();
+    const h = handlerEvenement({ stock, config: () => CONF, secret: SECRET, transport, hotesEssai: ESSAI, maintenant: horloge, journal: () => {} });
+    const r1 = await h(req({ cip: "8100001", type: "commande", statut: "expediee", reference: "S04512" }, { cle: "evt-nuit-000001" }));
+    const deja = corpsDe(await h(req({ cip: "8100001", type: "commande", statut: "expediee", reference: "S04512" }, { cle: "evt-nuit-000001" })));
+    eq("22 h : différé au lendemain 8 h, rien d'envoyé ; rejeu → « déjà », différé", [r1.statusCode, corpsDe(r1).resultat, R.isoVersParis(corpsDe(r1).envoi_prevu), recus.length, deja.deja, deja.resultat],
+      [200, "differe", "2026-10-23T08:00", 0, true, "differe"]);
+    t = Date.parse("2026-10-23T05:59:00Z");   // 7 h 59
+    const b0 = await M.traiterDifferes({ stock, config: CONF, transport, hotesEssai: ESSAI, maintenant: horloge });
+    t = Date.parse("2026-10-23T06:02:00Z");   // 8 h 02
+    const [b1, b2] = await Promise.all([M.traiterDifferes({ stock, config: CONF, transport, hotesEssai: ESSAI, maintenant: horloge }),
+      M.traiterDifferes({ stock, config: CONF, transport, hotesEssai: ESSAI, maintenant: horloge })]);
+    eq("7 h 59 : rien ; 8 h 02 (deux passages simultanés) : envoyé une fois, texte et lien gardés", [b0.differes, b1.envoyes + b2.envoyes, recus.length, recus[0]?.charge.corps,
+      recus[0]?.charge.url, stock.db.evenements[0].resultat], [0, 1, 1, "Votre commande S04512 est sortie de l'entrepôt.", "/?commandes=1", "envoye"]);
+    const jp = [];
+    await handlerProgrammes({ stock, config: () => CONF, transport, hotesEssai: ESSAI, lancer: async () => null, maintenant: horloge, journal: (o) => jp.push(o) })();
+    eq("push-programmes : traite aussi les différés (rien de plus à envoyer)", recus.length, 1);
+  }
+}
+{
+  // admin : estimation de l'e-mail de secours (même règle que l'envoi), appareils détachés, pilote ; clé idem par contenu ;
+  // modèles remplacés ; effacement ; événements nommés ; conservation des messages
+  const t0 = Date.parse("2026-10-22T09:00:00Z");
+  const horloge = () => new Date(t0);
+  const lignes = [ligne("/g/1", { pharmacy_cip: "9500001", categories: ["stock", "commandes", "offres"], plateforme: "ios" }),
+    ligne("/g/2", { pharmacy_cip: "9500002", categories: ["commandes"], compte_email: "ancien@pharma.fr" }),
+    ligne("/g/3", { pharmacy_cip: "9500003", categories: ["stock", "commandes", "infos", "offres"] })];
+  const pharmacies = [{ email: "p9500001@pharma.fr", name: "UN", cip: "9500001" }, { email: "titulaire@deux.fr", name: "DEUX", cip: "9500002" },
+    { email: "p9500003@pharma.fr", name: "TROIS", cip: "9500003" }, { email: "p9500004@pharma.fr", name: "QUATRE", cip: "9500004" }];
+  const comptes = new Map([["p9500001@pharma.fr", "9500001"], ["p9500003@pharma.fr", "9500003"]]);
+  const stock = stockMemoire({ reglages: { ouverture: "toutes", plafond_infos_7j: 1 }, lignes, pharmacies, comptes, horloge });
+  stock.db.envois.push({ id: 500, categorie: "infos", pharmacy_cip: "9500004", nb_appareils: 0, nb_reussis: 0, email: "envoye", created_at: new Date(t0 - J).toISOString() });
+  const h = handlerAdmin({ stock, config: () => CONF, verifierAdmin, lancer: async () => null, maintenant: horloge, journal: () => {} });
+  const est = async (type, cip) => corpsDe(await h(A({ action: "estimer", type, audience: "une", cips: [cip] })));
+  const [ePromo, eAlerte, ePlafond, eTel, eDetache] = [await est("promotion", "9500004"), await est("communication", "9500001"), await est("communication", "9500004"), await est("reclamation", "9500001"), await est("reclamation", "9500002")];
+  eq("estimation de l'e-mail de secours = règle de l'envoi : Promotion non ; alerte coupée ; plafond (e-mail déjà parti) ; téléphone joignable",
+    [[ePromo.email.permis, ePromo.email.raison], [eAlerte.email.permis, eAlerte.email.raison], [ePlafond.email.permis, ePlafond.email.raison], [eTel.email.permis, eTel.email.telephone]],
+    [[false, "type"], [false, "alerte_coupee"], [false, "plafond"], [true, true]]);
+  eq("appareil d'un compte détaché : compté « sans appareil » (comme à l'envoi), jamais « alerte coupée »", [eDetache.sans_appareil, eDetache.alerte_coupee], [1, 0]);
+  stock.db.reglages = R.fusionnerReglages({ ouverture: "pilote", pilote_cips: ["9500001"] });
+  const eToutes = corpsDe(await h(A({ action: "estimer", type: "communication", audience: "toutes" })));
+  eq("toutes, en pilote : pharmacies hors pilote comptées", [eToutes.recevront, eToutes.hors_ouverture], [0, 1]);
+  stock.db.reglages = R.fusionnerReglages({ ouverture: "toutes" });
+  const msg = { type: "reclamation", titre: "Réclamation reçue", corps: "Votre réclamation REC-1 est reçue.", url: "/?commandes=1", audience: "une", cips: ["9500001"] };
+  const k1 = await h(A({ action: "envoyer", message: msg, idem: "revue-idem-0001" }));
+  const k2 = await h(A({ action: "envoyer", message: msg, idem: "revue-idem-0001" }));
+  const k3 = await h(A({ action: "envoyer", message: { ...msg, titre: "Réclamation traitée", corps: "Votre réclamation REC-1 est traitée." }, idem: "revue-idem-0001" }));
+  eq("même clé, même contenu : « déjà » ; même clé, autre contenu : 409 idem_reutilise (rien de créé)", [k1.statusCode, corpsDe(k2).deja, k3.statusCode, corpsDe(k3).error,
+    stock.db.annonces.filter((a) => a.idem === "revue-idem-0001").length], [202, true, 409, "idem_reutilise", 1]);
+  eq("réclamation à plusieurs pharmacies : 400", (await h(A({ action: "envoyer", message: { ...msg, audience: "liste", cips: ["9500001", "9500003"] }, idem: "revue-idem-0002" }))).statusCode, 400);
+  eq("promotion avec e-mail de secours : 400", (await h(A({ action: "envoyer", message: { ...msg, type: "promotion", url: "/", repli_email: true }, idem: "revue-idem-0003" }))).statusCode, 400);
+  const m1 = await h(A({ action: "modele_enregistrer", modele: { nom: "Retour Pfizer", type: "reclamation", titre: "Retour", corps: "Votre retour [référence] est accepté.", url: "/?commandes=1" } }));
+  const m2 = await h(A({ action: "modele_enregistrer", modele: { nom: "retour pfizer", type: "reclamation", titre: "Retour accepté", corps: "Votre retour [référence] est accepté.", url: "/?commandes=1" } }));
+  const m3 = await h(A({ action: "modele_enregistrer", modele: { nom: "retour pfizer", type: "reclamation", titre: "Retour accepté", corps: "Votre retour [référence] est accepté.", url: "/?commandes=1" }, remplacer: true }));
+  eq("modèle de même nom : 409 doublon, puis « Remplacer »", [m1.statusCode, corpsDe(m2).error, corpsDe(m3).remplace, corpsDe(m3).modele.id === corpsDe(m1).modele.id, stock.db.modeles.length, stock.db.modeles[0].titre],
+    [200, "doublon", true, true, 1, "Retour accepté"]);
+  stock.db.evenements.push({ cle: "evt-nom-000001", pharmacy_cip: "9500003", type: "commande", statut: "expediee", reference: "S1", recu_le: new Date(t0).toISOString(), resultat: "envoye" });
+  eq("événements : nom de la pharmacie joint (jamais d'adresse)", corpsDe(await h(A({ action: "evenements" }))).evenements.map((e) => e.pharmacie_nom), ["TROIS"]);
+  // effacement d'une pharmacie
+  stock.db.envois.push({ id: 600, categorie: "commandes", pharmacy_cip: "9500003", nb_appareils: 1, nb_reussis: 1, created_at: new Date(t0).toISOString() });
+  stock.db.annonces.push({ id: crypto.randomUUID(), statut: "envoyee", type: "reclamation", categorie: "commandes", audience: "une", cips: ["9500003"], destinataire_nom: "TROIS", titre: "t", corps: "c", url: "/", created_at: new Date(t0).toISOString() },
+    { id: crypto.randomUUID(), statut: "envoyee", type: "promotion", categorie: "offres", audience: "liste", cips: ["9500001", "9500003"], titre: "t", corps: "c", url: "/", created_at: new Date(t0).toISOString() });
+  const ef = corpsDe(await h(A({ action: "retirer_pharmacie", cip: "9500003", effacer_historique: true })));
+  eq("demande d'effacement : appareils, envois, événements, CIP et nom dans les messages", [ef.retires, ef.historique_efface, stock.db.envois.some((e) => e.pharmacy_cip === "9500003"),
+    stock.db.evenements.some((e) => e.pharmacy_cip === "9500003"), stock.db.annonces.some((a) => (a.cips || []).includes("9500003") || a.destinataire_nom === "TROIS")], [1, true, false, false, false]);
+  // conservation : messages terminés de plus de 12 mois purgés, programmés jamais
+  const ms = stockMemoire({ annonces: [{ id: "a1", statut: "envoyee", created_at: "2025-09-01T00:00:00.000Z" }, { id: "a2", statut: "programmee", created_at: "2025-09-01T00:00:00.000Z" },
+    { id: "a3", statut: "envoyee", created_at: "2026-10-01T00:00:00.000Z" }] });
+  const bilan = await P.menage({ stock: ms, maintenant: horloge, journal: () => {} });
+  eq("ménage : messages terminés de plus de 12 mois effacés, programmés gardés", [bilan.messages, ms.db.annonces.map((a) => a.id)], ["ok", ["a2", "a3"]]);
+  // notifierPharmacie : ligne d'envoi écrite AVANT l'envoi (plafond de sécurité compté pendant l'envoi)
+  const sn = stockMemoire({ reglages: { ouverture: "toutes", plafond_commandes_jour: 1 }, lignes: [ligne("/g/9", { pharmacy_cip: "9500009", categories: ["commandes"] })], horloge });
+  let pendant = null;
+  const tr = async () => { pendant ??= sn.db.envois.map((e) => [e.pharmacy_cip, e.nb_appareils]); return new Response(null, { status: 201 }); };
+  const n1 = await P.notifierPharmacie("9500009", "commandes", { titre: "C", tag: "c-1" }, { stock: sn, config: CONF, transport: tr, hotesEssai: ESSAI, maintenant: horloge });
+  const n2 = await P.notifierPharmacie("9500009", "commandes", { titre: "C", tag: "c-2" }, { stock: sn, config: CONF, transport: tr, hotesEssai: ESSAI, maintenant: horloge });
+  eq("notifierPharmacie (commandes) : ligne écrite avant l'envoi, la suivante plafonnée", [pendant, n1.raison, n2.raison, sn.db.envois.map((e) => e.nb_reussis)], [[["9500009", 1]], null, "plafond", [1]]);
 }
 
 // ── 8. Rendu de l'onglet (React côté serveur) et empaquetage ──
