@@ -1,12 +1,13 @@
 # Appli Elixir installable et notifications sur le téléphone
 
-Pour Zineb Moulatif. État du 21/10/2026 : branche `notifications-messages`, créée à partir de la version en ligne `b1dbd3e` : messages unitaires et collectifs, avec les correctifs de la revue (sécurité, fiabilité, confort sur iPhone).
+Pour Zineb Moulatif. État du 21/10/2026 : branche `notifications-messages`, créée à partir de la version en ligne `b1dbd3e` : messages unitaires et collectifs, avec les correctifs de la revue (sécurité, fiabilité, confort sur iPhone). Elle contient aussi la correction de l'appli « Elixir Admin » (branche `appli-admin-ios`, adresse `/admin`), déjà intégrée : rien à fusionner.
 
 Vos demandes :
 - 20/10/2026 : « Est ce que c'ets compliqué de faire de tout ça une vraie app qui enverrai des notifications », puis « On peut faire le 1 ». C'est en ligne : appli installable, notifications « Retour en stock » et annonces « Offres et nouveautés ».
+- 21/10/2026 : l'icône « Elixir Admin » de votre iPhone ouvrait la connexion des pharmacies. Corrigé par l'adresse `https://elixir-commande.expepharma.com/admin` (branche `appli-admin-ios`, comprise dans celle-ci : § 3 f et § 10).
 - 21/10/2026 : « prévoir l'envoi d'une notification unitaire ou collective : communication, promotion, traitement d'une reclamation, etc. ». C'est l'objet de cette branche (§ 3 à 7).
 
-**Rien de nouveau n'est en ligne tant que vous ne lancez pas la commande de mise en ligne** (§ 3 c). Un script SQL se passe juste **avant** (§ 3 a), un petit second juste **après** (§ 3 d).
+**Rien de nouveau n'est en ligne tant que vous ne lancez pas les commandes de mise en ligne** (§ 3 : d'abord l'appli « Elixir Admin », puis les messages, § 3 c ; ou seulement la seconde, qui contient la première). Pour les messages, un script SQL se passe juste **avant** (§ 3 a), un petit second juste **après** (§ 3 d).
 
 ---
 
@@ -61,9 +62,20 @@ On ne peut pas promettre « tous les pharmaciens ». On peut promettre que **cha
 
 ---
 
-## 3. Mise en service des messages (dans l'ordre)
+## 3. Mise en service (dans l'ordre)
 
-La branche part de la version en ligne (`b1dbd3e`). Rien n'est à fusionner tant qu'aucune autre branche n'est mise en ligne avant elle.
+Deux mises en ligne, **dans cet ordre**, chacune par une seule commande dans l'application Terminal du Mac. Rien à fusionner : les deux branches partent de la version en ligne (`b1dbd3e`) et celle des messages contient déjà celle de l'appli « Elixir Admin ».
+
+1. **L'appli « Elixir Admin » à l'adresse `/admin`** (branche `appli-admin-ios`) : ni script SQL ni réglage.
+
+   ```
+   git -C ~/Downloads/elixir-admin-ios-wt push origin appli-admin-ios:master
+   ```
+
+   Netlify déploie en 2 à 3 minutes (Deploys : « Published »). Vous pouvez alors faire tout de suite l'étape f (votre iPhone).
+2. **Les messages** (cette branche) : étapes a à e ci-dessous, la commande étant celle de l'étape c.
+
+**Si vous lancez seulement la commande de l'étape c** (sans la première) : elle met en ligne les deux d'un coup, puisqu'elle contient l'appli « Elixir Admin ». Rien n'est perdu ; l'étape f attend alors cette mise en ligne. Une fois la seconde en ligne, la première est inutile : lancée quand même, Git la refuse (« rejected ») sans rien changer.
 
 **a. Passer le script SQL, juste avant la mise en ligne.** Dans l'application Terminal du Mac, tapez cette ligne : elle copie le script dans le presse-papiers (rien ne s'affiche).
 
@@ -92,9 +104,10 @@ Puis Supabase → SQL Editor → New query → Cmd+V → Run.
 git -C ~/Downloads/elixir-notif-msg-wt push origin notifications-messages:master
 ```
 
-- Ne supprimez pas le dossier `~/Downloads/elixir-notif-msg-wt` avant.
+- Après la commande de l'appli « Elixir Admin » (1 ci-dessus), celle-ci ajoute seulement les messages. Lancée seule, elle met aussi en ligne l'appli « Elixir Admin ».
+- Ne supprimez pas les dossiers `~/Downloads/elixir-admin-ios-wt` et `~/Downloads/elixir-notif-msg-wt` avant.
 - Netlify déploie en 2 à 3 minutes (Deploys : « Published »).
-- Si Git répond « rejected » ou « non-fast-forward » : une autre branche a été mise en ligne entre-temps (par exemple l'appli admin iPhone ou la Péremption à −50 %). **Ne forcez rien** : demandez une intégration de la branche, puis relancez la même commande.
+- Si Git répond « rejected » ou « non-fast-forward » (à l'une ou l'autre commande) : une autre branche que ces deux-là a été mise en ligne entre-temps (par exemple la Péremption à −50 %). **Ne forcez rien** : demandez une intégration de la branche, puis relancez la même commande.
 - La fonction planifiée `push-programmes` (messages programmés et événements différés de l'outil entrepôt, toutes les 5 minutes) démarre seule avec le déploiement.
 
 **d. Juste après la mise en ligne (Netlify : « Published »), le rattrapage d'« Informations Elixir »** :
@@ -107,7 +120,7 @@ Puis Supabase → SQL Editor → New query → Cmd+V → Run. Il affiche le nomb
 
 **e. Vérifier dans l'admin.** 📲 Notifications → « État du service » : toutes les coches vertes, aucune ligne « Tables des messages absentes ». Les plafonds de « Ouverture aux pharmacies » affichent 2, 2 et 10.
 
-**f. Votre téléphone : l'appli « Elixir Admin »** (adresse `/admin`).
+**f. Votre téléphone : l'appli « Elixir Admin »**, dès que l'adresse `/admin` est en ligne (commande 1, ou celle de l'étape c).
 
 *Sur iPhone :*
 1. Ouvrez Safari et **tapez** l'adresse `https://elixir-commande.expepharma.com/admin` dans la barre d'adresse (pas l'ancienne adresse en `/#admin`). L'écran « Espace Admin » s'affiche (ou directement l'administration si vous y êtes déjà connectée dans Safari).
