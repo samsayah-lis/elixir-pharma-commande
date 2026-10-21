@@ -107,7 +107,7 @@ git -C ~/Downloads/elixir-notif-msg-wt push origin notifications-messages:master
 - Après la commande de l'appli « Elixir Admin » (1 ci-dessus), celle-ci ajoute seulement les messages. Lancée seule, elle met aussi en ligne l'appli « Elixir Admin ».
 - Ne supprimez pas les dossiers `~/Downloads/elixir-admin-ios-wt` et `~/Downloads/elixir-notif-msg-wt` avant.
 - Netlify déploie en 2 à 3 minutes (Deploys : « Published »).
-- Si Git répond « rejected » ou « non-fast-forward » (à l'une ou l'autre commande) : une autre branche que ces deux-là a été mise en ligne entre-temps (par exemple la Péremption à −50 %). **Ne forcez rien** : demandez une intégration de la branche, puis relancez la même commande.
+- Si Git répond « rejected » ou « non-fast-forward » (à la commande de l'étape c, ou à la commande 1 lancée avant elle) : une autre branche que ces deux-là a été mise en ligne entre-temps (par exemple la Péremption à −50 %). **Ne forcez rien** (ni `--force`, ni `git pull` que Git suggère) : demandez une intégration de la branche, puis relancez la même commande. La commande 1 lancée après celle de l'étape c est refusée normalement : rien à faire.
 - La fonction planifiée `push-programmes` (messages programmés et événements différés de l'outil entrepôt, toutes les 5 minutes) démarre seule avec le déploiement.
 
 **d. Juste après la mise en ligne (Netlify : « Published »), le rattrapage d'« Informations Elixir »** :
@@ -128,7 +128,7 @@ Puis Supabase → SQL Editor → New query → Cmd+V → Run. Il affiche le nomb
 3. Ouvrez l'icône « Elixir Admin » : l'écran « Espace Admin » s'affiche (ou directement l'administration), jamais celui des pharmacies (à confirmer au premier essai). Connectez-vous si besoin.
 4. Allez dans 📲 Notifications → « Recevoir les notifications sur cet appareil », puis « Autoriser ».
 5. Touchez « M'envoyer un test » et verrouillez l'écran : la notification doit arriver.
-6. Composez un message et touchez « M'envoyer l'aperçu ». Toucher l'aperçu ouvre son lien dans une nouvelle fenêtre : votre brouillon reste en place.
+6. Composez un message (« Nouveau message » ; si seule la commande 1 est en ligne : « Nouvelle annonce — Offres et nouveautés ») et touchez « M'envoyer l'aperçu ». Toucher l'aperçu ouvre son lien dans une nouvelle fenêtre : votre brouillon reste en place.
 7. Profitez-en pour relire le guide iPhone du panneau (côté pharmacie) : sur iOS 26, le libellé exact de l'interrupteur « Ouvrir en tant qu'app web » est à confirmer.
 
 *Sur Android :* ouvrez Chrome à la même adresse `https://elixir-commande.expepharma.com/admin`, puis suivez les mêmes boutons. L'installation est facultative (⋮ → Installer l'application) ; elle doit donner une appli « Elixir Admin » à part, sans toucher à l'appli « Elixir » des pharmacies (vérifié seulement dans Chrome sur ordinateur). Si l'appli « Elixir » des pharmacies est déjà installée sur ce téléphone, Chrome peut proposer « Ouvrir dans Elixir » au lieu d'« Installer l'application » : restez alors dans Chrome sur `…/admin` ; l'installation est facultative et les notifications s'activent aussi dans Chrome (à confirmer au premier essai).
@@ -455,7 +455,7 @@ Option possible plus tard : une sortie d'entrepôt lue dans Odoo (`stock.picking
   - `node scripts/test-appli-admin.mjs` : script d'`index.html` exécuté pour chaque adresse (une seule balise manifeste, `/admin` → `/admin#admin`, pages des pharmacies inchangées), manifestes, routage Netlify, `src/adresse-admin.js`, textes d'installation ; aussi sur `dist/index.html` après `npm run build` ;
   - `node scripts/banc/controle-appli-admin.mjs <banc>` : Chrome sans tête sur le banc local (manifeste lu par Chrome, identifiants d'appli, admin ou connexion des pharmacies affichés, fermer avec rechargement sur le manifeste des pharmacies, retour arrière, cadenas de l'en-tête, appli « Elixir Admin » simulée).
 
-**Bundle des pharmacies** : 906 018 octets pour un budget de 940 000 (`npm run zones`), soit +1 855 octets depuis `b1dbd3e` : le lien `?commandes=1` (+378) et l'adresse `/admin` (+1 477 : `src/adresse-admin.js`, lien et cadenas de retour à l'admin). L'onglet admin est dans le chunk de l'admin, chargé à la demande.
+**Bundle des pharmacies** : 906 018 octets pour un budget de 940 000 (`npm run zones -- --ref origin/master` : contrôle de référence, aucun écart ; sans option, `npm run zones` compare au `master` local, qui peut être en retard sur la version en ligne et ne prouve alors rien sur elle), soit +1 855 octets depuis `b1dbd3e` : le lien `?commandes=1` (+378) et l'adresse `/admin` (+1 477 : `src/adresse-admin.js`, lien et cadenas de retour à l'admin). L'onglet admin est dans le chunk de l'admin, chargé à la demande.
 
 ---
 
@@ -521,4 +521,4 @@ Faite avec la version en ligne `b1dbd3e` ; détail complet dans l'historique git
 - Clés VAPID générées par vous sur le Mac (`npx web-push generate-vapid-keys`), jamais montrées à personne, gardées dans votre gestionnaire de mots de passe. Variables Netlify : `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` (secret), `VAPID_SUBJECT` = `mailto:pharmacien@elixirpharma.fr` ; déjà en place : `SUPABASE_SERVICE_ROLE_KEY`, `CRON_SECRET`. **Ne jamais changer les clés VAPID** (tous les appareils devraient se réabonner).
 - `sql/push-schema.sql` dans Supabase.
 - Ouverture « Fermée », puis « Pilote » avec une ou deux pharmacies volontaires, puis « Toutes » **seulement après l'étape « Bloc 1 » du plan de fermeture de Supabase**.
-- Test sur votre téléphone : iPhone → Safari sur `…/#admin` → Partager → « Sur l'écran d'accueil » (« Elixir Admin ») → 📲 Notifications → « Recevoir les notifications sur cet appareil » → « M'envoyer un test ». Depuis l'appli « Elixir Admin » à l'adresse `/admin`, l'installation se fait depuis `https://elixir-commande.expepharma.com/admin` (§ 3 f) ; une icône ajoutée depuis `…/#admin` est à supprimer, puis à rajouter ainsi.
+- Test sur votre téléphone, à l'époque : iPhone → Safari sur `…/#admin` (ancienne adresse, périmée) → Partager → « Sur l'écran d'accueil » (« Elixir Admin ») → 📲 Notifications → « Recevoir les notifications sur cet appareil » → « M'envoyer un test ». Depuis la mise en ligne de l'adresse `/admin` (§ 3 : commande 1, ou celle de l'étape c), l'installation se fait depuis `https://elixir-commande.expepharma.com/admin` (§ 3 f) ; une icône ajoutée depuis `…/#admin` est à supprimer, puis à rajouter ainsi.
