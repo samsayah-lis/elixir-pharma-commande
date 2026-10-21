@@ -140,17 +140,17 @@ git -C ~/Downloads/elixir-appli-wt push origin appli-notifications:master
 **f. Tester sur votre téléphone d'abord.**
 
 *Sur iPhone :*
-1. Ouvrez Safari à l'adresse `https://elixir-commande.expepharma.com/#admin`.
+1. Ouvrez Safari et **tapez** l'adresse `https://elixir-commande.expepharma.com/admin` dans la barre d'adresse (pas l'ancienne adresse en `/#admin`). L'écran de connexion de l'admin s'affiche.
 2. Touchez Partager → « Sur l'écran d'accueil ». Le nom proposé est « Elixir Admin ». Touchez Ajouter.
-3. Ouvrez l'icône « Elixir Admin » et connectez-vous à l'admin.
+3. Ouvrez l'icône « Elixir Admin » : l'écran de connexion de l'admin s'affiche (jamais celui des pharmacies). Connectez-vous.
 4. Allez dans 📲 Notifications → « Recevoir les notifications sur cet appareil », puis « Autoriser ».
 5. Touchez « M'envoyer un test » et verrouillez l'écran : la notification doit arriver.
 6. Composez une annonce et touchez « M'envoyer l'aperçu ». Toucher l'aperçu ouvre son lien dans une nouvelle fenêtre : votre brouillon reste en place.
 7. Profitez-en pour relire le guide iPhone du panneau (côté pharmacie) : sur iOS 26, le libellé exact de l'interrupteur « Ouvrir en tant qu'app web » est à confirmer.
 
-*Sur Android :* ouvrez Chrome à la même adresse `…/#admin`, puis suivez les mêmes boutons. L'installation est facultative (⋮ → Installer l'application).
+*Sur Android :* ouvrez Chrome à la même adresse `https://elixir-commande.expepharma.com/admin`, puis suivez les mêmes boutons. L'installation est facultative (⋮ → Installer l'application) ; elle donne une appli « Elixir Admin » distincte de l'appli « Elixir » des pharmacies, qui n'est pas touchée.
 
-*Si l'icône « Elixir Admin » de l'iPhone ouvre l'accueil des pharmacies au lieu de l'admin* : faites l'essai sur Android ou sur votre ordinateur. Vous pouvez aussi faire le pilote avec une pharmacie amie. Ce cas n'a pas pu être vérifié avant votre essai.
+*Si l'icône « Elixir Admin » de l'iPhone ouvre l'accueil des pharmacies au lieu de l'admin* : c'est une icône ajoutée avant le 21/10/2026, depuis l'ancienne adresse en `/#admin` : l'iPhone l'a enregistrée comme l'appli des pharmacies (détail au § 10). Supprimez-la (appui long sur l'icône → Supprimer, puis confirmez), puis refaites les étapes 1 à 3 ci-dessus depuis `https://elixir-commande.expepharma.com/admin`.
 
 Vos appareils ne reçoivent jamais les notifications des pharmacies, donc pas leurs retours en stock : ceux-ci se vérifient pendant le pilote.
 
@@ -200,6 +200,8 @@ Vos appareils ne reçoivent jamais les notifications des pharmacies, donc pas le
 | Situation | Réponse |
 |---|---|
 | « Je n'ai rien reçu » | Panneau → « Envoyer une notification de test ». Vérifiez Ne pas déranger / Concentration, **et que le navigateur (ou l'application Elixir) a le droit d'afficher des notifications dans les réglages du téléphone ou de l'ordinateur** : Android → Réglages → Applications → Chrome → Notifications ; iPhone → Réglages → Notifications → Elixir ; Mac → Réglages Système → Notifications → Chrome ; Windows → Paramètres → Système → Notifications. Sur ordinateur, le navigateur doit être ouvert. |
+| L'icône « Elixir Admin » ouvre l'accueil des pharmacies | Icône ajoutée avant le 21/10/2026 depuis l'ancienne adresse `/#admin`. Supprimez l'icône, puis ajoutez-la de nouveau depuis Safari à l'adresse `https://elixir-commande.expepharma.com/admin` (§ 3 f). |
+| Dans l'appli « Elixir Admin », je suis sur la connexion des pharmacies (après « Retour au catalogue », la croix ou « Commander pour une pharmacie ») | Touchez « Ouvrir l'administration Elixir → » sous le bouton « Continuer » : l'admin se rouvre. |
 | « Le bouton n'apparaît pas sur mon iPhone » | La page est ouverte dans Safari : il faut d'abord ajouter l'application à l'écran d'accueil (guide du panneau), puis l'ouvrir depuis l'icône. **Si une icône Elixir existe déjà et ouvre Safari (barre d'adresse visible), supprimez-la puis ajoutez-la de nouveau depuis Safari.** |
 | « Bloquées » | L'autorisation a été refusée. Le panneau indique où la rétablir : iPhone → Réglages → Notifications → Elixir ; Android → icône à gauche de l'adresse (cadenas ou réglages) → Notifications ; ordinateur → même icône → Notifications. |
 | « Cet appareil n'était plus joignable » | Le service de Google ou d'Apple ne connaît plus l'appareil (données effacées, appli réinstallée). Touchez « Activer les notifications » : un nouvel abonnement est pris, sans nouvelle demande. |
@@ -335,13 +337,20 @@ Ce que garantit `notifierPharmacie(cip, catégorie, contenu, options)` :
   - `src/components/AdminNotifications.jsx`.
 - Appli installable :
   - `public/manifest.webmanifest`, `public/admin.webmanifest`, `public/sw.js`, `public/icones/`, `public/apple-touch-icon.png` ;
+  - `index.html` (script en ligne : choix du manifeste, adresse `/admin#admin`) et `src/adresse-admin.js` (quitter l'admin, revenir à l'admin) ;
   - les icônes sont générées depuis `scripts/icones/*.svg` par `node scripts/genere-icones.mjs` (Chrome sans interface + sips, sur le Mac).
 - Dépendances épinglées à la version exacte : `web-push` 3.6.7 (serveur), `qrcode-generator` 2.0.4 (code QR, chunk chargé à la demande).
 
 **Règles tenues**
 - **Identité = jeton**, jamais le corps de la requête. CIP nettoyé et lisible (7 à 14 chiffres), sinon 403 « fiche ». Un jeton admin est refusé pour abonner un appareil au nom d'une pharmacie.
 - **Comptes revérifiés** à chaque envoi (annonce, `notifierPharmacie`) et chaque nuit : l'e-mail du compte doit toujours être rattaché au CIP de l'abonnement.
-- **Service worker** : aucun gestionnaire `fetch`, aucun cache, servi en `no-store`. Un test met la fenêtre au premier plan sans la recharger ; un aperçu ou une fenêtre sur `#admin` ouvre le lien dans une nouvelle fenêtre.
+- **Service worker** : aucun gestionnaire `fetch`, aucun cache, servi en `no-store`. Un test met la fenêtre au premier plan sans la recharger ; un aperçu ou une fenêtre sur l'admin (`/admin#admin`, ancienne `/#admin`) ouvre le lien dans une nouvelle fenêtre ; sans fenêtre ouverte, le test de l'admin (`test-admin`) ouvre `/admin`, pas l'accueil des pharmacies.
+- **Appli « Elixir Admin » = adresse `/admin`** (21/10/2026). Une icône d'iPhone ajoutée depuis `/#admin` s'ouvrait sur la connexion des pharmacies : l'ancien `index.html` avait une balise manifeste fixe (celle des pharmacies) que le script ne changeait qu'au chargement d'une page déjà sur `#admin` — Safari lit la première balise manifeste de la page et garde le manifeste déjà lu pour la page (WebKit, `DocumentLoader::loadApplicationManifest`), donc un `#admin` ajouté sans rechargement gardait celui des pharmacies — et un fragment `#…` dans l'adresse de départ d'une appli d'écran d'accueil n'est pas fiable sur iOS (perdu selon plusieurs signalements). La cause exacte sur l'iPhone de Zineb ne peut pas être observée d'ici ; la correction écarte les deux. Désormais :
+  - `index.html` n'a plus de balise manifeste fixe : son script en ligne en ajoute UNE, avant le démarrage du site, selon l'adresse (`/admin`, `/admin/` ou `#admin` → `admin.webmanifest`, nom « Elixir Admin » ; sinon `manifest.webmanifest`, nom « Elixir ») ;
+  - `admin.webmanifest` : `start_url` `/admin` (sans fragment), `id` `/admin` (distinct de `/`, celui des pharmacies : deux applis séparées sur Android), `scope` `/` ;
+  - le même script complète `/admin`, `/admin/` et l'ancienne `/#admin` en `/admin#admin` (`history.replaceState`) : le site affiche toujours l'admin sur `#admin`. Les liens des e-mails (`…/#admin`) marchent toujours. Netlify sert `index.html` pour `/admin` (`/* /index.html 200`, sans fichier `admin` dans `public/`) ;
+  - quitter l'admin (`src/adresse-admin.js`) : « Retour au catalogue », la croix de la connexion et Ctrl+Maj+A mènent à `/` (nouvelle entrée d'historique : le retour arrière rouvre l'admin) ; « Commander pour une pharmacie » remplace l'adresse par `/` ; « Réinitialiser et recharger » (erreur de l'admin) recharge `/admin` : connexion de l'admin ;
+  - écran de connexion des pharmacies : « Ouvrir l'administration Elixir → » quand ce navigateur a un jeton admin, ou dans l'appli « Elixir Admin » (sans barre d'adresse, aucun autre chemin pour revenir) ; la page est rechargée sur `/admin`.
 - **Anti-SSRF** : seules les adresses https de Google (FCM), Mozilla, Apple et Microsoft (WNS) sont admises, et aucune redirection n'est suivie. Un hôte refusé est noté (hôte seul).
 - **Configuration** : une erreur de configuration VAPID ne supprime jamais d'abonnement ; elle est contrôlée comme web-push avant d'afficher « prêt ».
 - **404/410** du service push : l'abonnement est supprimé côté serveur, et désinscrit côté navigateur au test suivant (la réactivation prend toujours une nouvelle adresse).
@@ -353,7 +362,9 @@ Ce que garantit `notifierPharmacie(cip, catégorie, contenu, options)` :
 **Essais**
 - Tests :
   - `node scripts/test-push-serveur.mjs` (255) : faux service push local, corps déchiffré, jeton VAPID vérifié, CIP « 0 » et « false », sujets refusés par web-push, comptes retirés, ménage, diffusions simultanées, redirection 307, 1 000 appareils et 500 CIP, empaquetage esbuild comme Netlify (dont restock-notify et restock-notify-cron, avec web-push) ;
-  - `node scripts/test-push-sw.mjs` (29) ;
+  - `node scripts/test-push-sw.mjs` (33) : dont fenêtres sur `/admin#admin` et `/admin`, test de l'admin sans fenêtre → `/admin` ;
+  - `node scripts/test-appli-admin.mjs` : script d'`index.html` exécuté pour chaque adresse (une seule balise manifeste, `/admin` → `/admin#admin`, pages des pharmacies inchangées), manifestes, routage Netlify, `src/adresse-admin.js`, textes d'installation ; aussi sur `dist/index.html` après `npm run build` ;
+  - `node scripts/banc/controle-appli-admin.mjs <banc>` : Chrome sans tête sur le banc local (manifeste lu par Chrome, identifiants d'appli, admin ou connexion des pharmacies affichés, fermer, retour arrière, appli « Elixir Admin » simulée) ;
   - `node scripts/test-push-client.mjs` (95) : dont abonnement mort réactivé avec une nouvelle adresse, carte utile, écoute après activation, points d'intégration avec `master` ;
   - `node scripts/test-alertes-retour.mjs` (216, dont 56 pour la notification « Retour en stock » : marge de fin, bilan figé, étiquette à clé, notification gardée ou lancée tout de suite, deux appels ; les 160 cas d'origine inchangés).
 - Banc local (`npm run dev`) :

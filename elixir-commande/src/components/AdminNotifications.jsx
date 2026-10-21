@@ -315,12 +315,13 @@ function MesAppareils({ etat, api, flash, onChange }) {
           <Icone nom="cloche" taille={15} style={{ flexShrink: 0 }} />{busy ? "Activation…" : "Recevoir les notifications sur cet appareil"}</Bouton>
         : p === "installer_ios" ? (
           <div style={ui.encart("info")}>
-            <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b> depuis cette page&nbsp;: Safari → Partager → <b>Sur l'écran d'accueil</b> → Ajouter. Ouvrez ensuite l'icône
-            «&nbsp;Elixir Admin&nbsp;», connectez-vous à l'admin, revenez dans 📲 Notifications et touchez «&nbsp;Recevoir les notifications sur cet appareil&nbsp;». iOS 16.4 ou plus récent.
+            <b>Sur iPhone, installez l'appli «&nbsp;Elixir Admin&nbsp;»</b>&nbsp;: dans Safari, tapez l'adresse <b style={{ overflowWrap: "anywhere" }}>elixir-commande.expepharma.com<wbr />/admin</b>, puis Partager → <b>Sur l'écran d'accueil</b> → Ajouter.
+            Ouvrez ensuite l'icône «&nbsp;Elixir Admin&nbsp;», connectez-vous à l'admin, revenez dans 📲 Notifications et touchez «&nbsp;Recevoir les notifications sur cet appareil&nbsp;». iOS 16.4 ou plus récent.
+            <br />Une icône «&nbsp;Elixir Admin&nbsp;» qui ouvre l'accueil des pharmacies (ajoutée avant le 21/10/2026)&nbsp;: supprimez-la de l'écran d'accueil, puis ajoutez-la de nouveau ainsi.
           </div>
         ) : p === "refuse" ? <div style={ui.encart("warn")}>Notifications bloquées pour ce site sur cet appareil&nbsp;: autorisez-les dans les réglages du navigateur, puis actualisez.</div>
         : p === "maj_ios" ? <div style={ui.encart("warn")}>Cet iPhone doit passer à iOS 16.4 ou plus récent (Réglages → Général → Mise à jour logicielle).</div>
-        : p === "ouvrir_safari" ? <div style={ui.encart("warn")}>Ouvrez cette page dans Safari pour installer l'appli «&nbsp;Elixir Admin&nbsp;».</div>
+        : p === "ouvrir_safari" ? <div style={ui.encart("warn")}>Ouvrez <b style={{ overflowWrap: "anywhere" }}>elixir-commande.expepharma.com<wbr />/admin</b> dans Safari pour installer l'appli «&nbsp;Elixir Admin&nbsp;».</div>
         : <div style={ui.encart("warn")}>Ce navigateur ne permet pas les notifications{a.ios ? "" : " (utilisez Chrome, Edge, Firefox ou Safari)"}.</div>}
       {message && <div role={message.ton === "danger" ? "alert" : "status"} style={{ ...ui.encart(message.ton), marginTop: 10 }}>{message.texte}</div>}
       {(etat.mes_appareils || []).length > 0 && (

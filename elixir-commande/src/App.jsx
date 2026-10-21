@@ -30,6 +30,8 @@ import { PanneauAssistant, GroupeAide, CoucheAssistant } from "./components/assi
 import { authAssistant, etatAssistant } from "./assistant-client.js";
 // Notifications de l'appli installable (docs/notifications.md) : entrée du menu et chargement à la demande seulement ici
 import { CarteNotifications, PanneauNotifications, EntreeMenuNotifications, demarrerNotifications, oublierAppareilNotifications } from "./notifications/entree.jsx";
+// Adresse de l'admin (/admin, appli « Elixir Admin » de l'iPhone) : quitter l'admin, revenir à l'admin (src/adresse-admin.js)
+import { CHEMIN_ADMIN, adresseHorsAdmin, quitterAdresseAdmin, OUVERT_EN_APPLI_ADMIN } from "./adresse-admin.js";
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
@@ -511,16 +513,18 @@ export default function App() {
   useEffect(() => {
     const onHash = () => setShowAdmin(window.location.hash === "#admin");
     window.addEventListener("hashchange", onHash);
+    // retour arrière / avant entre « / » et /admin#admin (chemins différents : aucun hashchange, seulement popstate)
+    window.addEventListener("popstate", onHash);
     // Keyboard shortcut: Ctrl+Shift+A (or Cmd+Shift+A on Mac)
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "A") {
         e.preventDefault();
-        if (window.location.hash === "#admin") { window.location.hash = ""; }
+        if (window.location.hash === "#admin") { quitterAdresseAdmin(() => setShowAdmin(false)); }
         else { window.location.hash = "#admin"; }
       }
     };
     window.addEventListener("keydown", onKey);
-    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("keydown", onKey); };
+    return () => { window.removeEventListener("hashchange", onHash); window.removeEventListener("popstate", onHash); window.removeEventListener("keydown", onKey); };
   }, []);
 
   // Campagnes groupement (config dynamique depuis Supabase)
@@ -981,7 +985,7 @@ export default function App() {
     const [q, sp, lj] = readCart(a);
     setActingFor(a); setQuantities(q); setSpecialItems(sp); setJustifInfo(lj);
     setPharmacyName(a.name); setPharmacyEmail(a.email); setPharmacyCip(a.cip); setIsClient(true);
-    setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", window.location.pathname + window.location.search);
+    setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", adresseHorsAdmin(window.location));
   };
   const stopActing = () => {
     if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return;
@@ -2061,6 +2065,9 @@ export default function App() {
           {obErreur}
           <button className="ex-btn-petrole" onClick={handleEmailLookup} style={obBtn}>Continuer →</button>
           {reconnexion && <button onClick={annulerReconnexion} style={{ ...obLien, marginTop:8 }}>← Revenir au catalogue sans me reconnecter</button>}
+          {/* équipe Elixir (jeton admin dans ce navigateur, ou appli « Elixir Admin » sans barre d'adresse) : retour à l'admin,
+              page rechargée sur /admin (manifeste et adresse de l'admin) */}
+          {!reconnexion && (hasAdminToken || OUVERT_EN_APPLI_ADMIN) && <button onClick={() => window.location.assign(CHEMIN_ADMIN)} style={{ ...obLien, marginTop:8 }}>Ouvrir l'administration Elixir →</button>}
           {obFooter}
         </div>
       )}
@@ -3753,11 +3760,12 @@ export default function App() {
 
       {/* Admin Panel */}
       {showAdmin && (
-        /* erreur de l'admin (lot 8) : même dessin que les autres erreurs, textes et bouton (même onClick) inchangés */
+        /* erreur de l'admin (lot 8) : même dessin que les autres erreurs, textes inchangés. « Réinitialiser et recharger » : jeton admin
+           retiré, page rechargée sur /admin → connexion de l'admin (appli « Elixir Admin » comprise ; avant : « # » vidé et rechargement) */
         <ErrorBoundary fallback={<div style={{position:"fixed",inset:0,zIndex:9999,background:T.cream,display:"flex",alignItems:"center",justifyContent:"center",padding:16}}>
           <EtatVide erreur icone="alerte" titre="Erreur Admin Panel" texte="Une erreur s'est produite. Essayez de vider le cache du navigateur."
             style={{ ...ui.modal, maxWidth: 500, border: `1px solid ${T.line}`, padding: "40px 32px" }}
-            actions={<button className="ex-btn-petrole" onClick={() => { localStorage.removeItem("admin_token"); window.location.hash = ""; window.location.reload(); }}
+            actions={<button className="ex-btn-petrole" onClick={() => { localStorage.removeItem("admin_token"); window.location.replace(CHEMIN_ADMIN); }}
               style={{ ...ui.btn("primaire", "l"), background: undefined, color: undefined }}>
               Réinitialiser et recharger
             </button>} />
@@ -3769,7 +3777,7 @@ export default function App() {
             sectionMeta={SECTION_META}
             onOrderForPharmacy={() => setShowPharmacyPicker(true)}
             onClose={() => {
-              window.location.hash = "";
+              quitterAdresseAdmin(() => setShowAdmin(false));   // /admin → « / » ; /#admin → « # » vidé (comme avant)
               fetchProducts();
               try { setPromoSections(JSON.parse(localStorage.getItem("admin_promos") || "[]")); } catch {}
             }}

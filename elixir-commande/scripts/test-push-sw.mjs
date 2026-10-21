@@ -5,7 +5,7 @@
 //  • push : charge valide (titre, texte, étiquette, icône, badge, lien) ; charge illisible, vide ou texte brut → notification
 //    générique (jamais aucune : exigence d'iOS) ; textes coupés ; lien d'une autre origine ou javascript: → accueil ;
 //  • notificationclick : fenêtre ouverte → focus puis navigate ; navigate absent ou refusé → message à la page ; aucune
-//    fenêtre → openWindow ;
+//    fenêtre → openWindow ; fenêtre sur l'admin (/#admin, /admin#admin, /admin) → nouvelle fenêtre ;
 //  • pushsubscriptionchange : ancien abonnement → POST renouveler avec la preuve ; sans nouvel abonnement → subscribe avec
 //    la clé publique du GET ; sans ancien → aucun appel.
 import { readFileSync } from "node:fs";
@@ -138,6 +138,15 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   const { t, evenement } = bac({ fenetres: [admin] });
   await evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
   eq("fenêtre sur #admin : lien ouvert dans une nouvelle fenêtre, l'admin n'est pas rechargé", [journal.splice(0), t.ouvertes.splice(0)], [[], [`${ORIGINE}/?menu=promo_1`]]);
+  // appli « Elixir Admin » (adresse /admin, docs/notifications.md § 10) : /admin#admin, ou /admin sans fragment → nouvelle fenêtre ;
+  // /administration n'est pas l'admin → navigation comme une fenêtre de pharmacie
+  for (const [adresse, attendu] of [[`${ORIGINE}/admin?menu=accueil#admin`, [[], [`${ORIGINE}/?menu=promo_1`]]], [`${ORIGINE}/admin`, [[], [`${ORIGINE}/?menu=promo_1`]]],
+    [`${ORIGINE}/administration`, [["focus", `navigate ${ORIGINE}/?menu=promo_1`], []]]]) {
+    const fen = { ...admin, url: adresse };
+    const b = bac({ fenetres: [fen] });
+    await b.evenement("notificationclick", { notification: notif(`${ORIGINE}/?menu=promo_1`) });
+    eq(`fenêtre sur ${adresse.slice(ORIGINE.length)} : ${attendu[1].length ? "nouvelle fenêtre, l'admin n'est pas rechargé" : "navigation (pas l'admin)"}`, [journal.splice(0), b.t.ouvertes], attendu);
+  }
   const pharmacie = { url: `${ORIGINE}/?menu=otc`, focused: true, focus: async () => journal.push("focus"), navigate: async (u) => journal.push(`navigate ${u}`) };
   const b2 = bac({ fenetres: [pharmacie] });
   await b2.evenement("notificationclick", { notification: { tag: "apercu", data: { url: `${ORIGINE}/?menu=promo_2`, categorie: "offres" }, close() {} } });
@@ -148,6 +157,10 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   await evenement("notificationclick", { notification: notif("https://evil.fr/") });
   await evenement("notificationclick", { notification: { data: null, close() {} } });
   eq("aucune fenêtre → openWindow (lien étranger ou absent → accueil)", t.ouvertes, [`${ORIGINE}/`, `${ORIGINE}/`]);
+  // test de l'admin sans fenêtre : l'admin (/admin), jamais l'accueil des pharmacies ; test d'une pharmacie : son lien
+  await evenement("notificationclick", { notification: { tag: "test-admin", data: { url: `${ORIGINE}/`, categorie: "test" }, close() {} } });
+  await evenement("notificationclick", { notification: { tag: "test", data: { url: `${ORIGINE}/?notifications=1`, categorie: "test" }, close() {} } });
+  eq("aucune fenêtre : test de l'admin → /admin ; test d'une pharmacie → son lien", t.ouvertes.slice(2), [`${ORIGINE}/admin`, `${ORIGINE}/?notifications=1`]);
 }
 
 // ── pushsubscriptionchange ──
