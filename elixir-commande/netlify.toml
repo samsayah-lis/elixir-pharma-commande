@@ -81,6 +81,11 @@
 [functions."push-menage"]
   schedule = "35 3 * * *"
 
+# Notifications de l'appli : messages programmés de l'admin (heure de Paris choisie dans l'onglet 📲 Notifications), envoyés
+# au plus 5 minutes après l'heure prévue ; messages restés « en file » relancés (docs/notifications.md § 5)
+[functions."push-programmes"]
+  schedule = "*/5 * * * *"
+
 # Péremption courte, « Odoo facture la remise » (docs/peremption-odoo.md) : filet complet à h:25. Décisions ouvertes
 # seulement : faits frais (stock et dates), retraits (page cachée 3 h avant la fin de la règle, stock court épuisé, lot long
 # reçu), suppression dans Odoo après le délai et l'import des commandes en cours. Aucune création. Aux autres quarts

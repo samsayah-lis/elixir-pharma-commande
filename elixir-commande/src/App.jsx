@@ -1039,6 +1039,15 @@ export default function App() {
     try { const u = new URL(window.location.href); u.searchParams.delete("notifications"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
     if (notif.visible) ouvrirNotifications();
   }, [notif]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // lien ?commandes=1 (notification « Mes commandes et réclamations ») : « Mes commandes » ouvert une fois la pharmacie
+  // connue ; paramètre retiré
+  const lienCommandes = useRef((() => { try { return new URLSearchParams(window.location.search).get("commandes") === "1"; } catch { return false; } })());
+  useEffect(() => {
+    if (!lienCommandes.current || !onboardingDone || !pharmacyCip || pharmacyCip === "0") return;
+    lienCommandes.current = false;
+    try { const u = new URL(window.location.href); u.searchParams.delete("commandes"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
+    setShowMyOrders(true); fetchMyOrders();
+  }, [onboardingDone, pharmacyCip]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");

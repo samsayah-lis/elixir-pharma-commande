@@ -7,7 +7,8 @@
 //  • notificationclick : fenêtre ouverte → focus puis navigate ; navigate absent ou refusé → message à la page ; aucune
 //    fenêtre → openWindow ;
 //  • pushsubscriptionchange : ancien abonnement → POST renouveler avec la preuve ; sans nouvel abonnement → subscribe avec
-//    la clé publique du GET ; sans ancien → aucun appel.
+//    la clé publique du GET ; sans ancien → aucun appel ;
+//  • messages de l'admin et outil entrepôt : catégories « commandes » et « infos », lien /?commandes=1.
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import webpush from "web-push";
@@ -90,6 +91,15 @@ const donnees = (valeur) => ({ json: () => { if (typeof valeur === "string") ret
     await evenement("push", { data: donnees({ titre: "t", url: u }) });
     eq(`lien ${JSON.stringify(u)} → ${attendu}`, t.notifications.at(-1).options.data.url, attendu);
   }
+  // messages de l'admin et outil entrepôt (docs/notifications.md § 4 à 6) : « Mes commandes et réclamations » (commandes),
+  // « Informations Elixir » (infos) ; le service worker les affiche comme les autres, lien « Mes commandes » compris
+  await evenement("push", { data: donnees({ v: 1, categorie: "commandes", titre: "Réclamation traitée", corps: "Votre réclamation EN-601-2026-12 est traitée.",
+    url: "/?commandes=1", tag: "evt-AbCdEf0123456789", id: "m1", ts: 1760950000001 }) });
+  const c = t.notifications.at(-1);
+  eq("push « commandes » : titre, lien Mes commandes, catégorie, étiquette (remplace le statut précédent)", [c.titre, c.options.data.url, c.options.data.categorie, c.options.tag, c.options.renotify],
+    ["Réclamation traitée", `${ORIGINE}/?commandes=1`, "commandes", "evt-AbCdEf0123456789", true]);
+  await evenement("push", { data: donnees({ v: 1, categorie: "infos", titre: "Fermeture exceptionnelle", corps: "Elixir Pharma sera fermé le 1er novembre.", url: "/", tag: "msg-1a2b3c4d" }) });
+  eq("push « infos » : catégorie gardée, lien accueil", [t.notifications.at(-1).options.data.categorie, t.notifications.at(-1).options.data.url], ["infos", `${ORIGINE}/`]);
   eq("aucun accès à Cache Storage pendant l'exécution", t.caches, 0);
 }
 
@@ -110,6 +120,13 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   const { evenement } = bac({ fenetres: [fen] });
   await evenement("notificationclick", { notification: notif(`${ORIGINE}/?outil=saisie`) });
   eq("navigate absent (Safari) → message à la page", journal, ["focus", `message elixir-notification ${ORIGINE}/?outil=saisie`]);
+}
+{
+  const journal = [];
+  const fen = { url: `${ORIGINE}/?menu=otc`, focus: async () => { journal.push("focus"); }, navigate: async (u) => { journal.push(`navigate ${u}`); } };
+  const { evenement } = bac({ fenetres: [fen] });
+  await evenement("notificationclick", { notification: { tag: "evt-x", data: { url: `${ORIGINE}/?commandes=1`, categorie: "commandes" }, close() {} } });
+  eq("notification « Mes commandes et réclamations » : la fenêtre va sur /?commandes=1 (App ouvre « Mes commandes »)", journal, ["focus", `navigate ${ORIGINE}/?commandes=1`]);
 }
 {
   const journal = [];

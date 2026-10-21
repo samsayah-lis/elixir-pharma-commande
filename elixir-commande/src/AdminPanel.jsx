@@ -16,6 +16,7 @@ import AdminSanofiPro from "./components/AdminSanofiPro";
 import AdminAssistant from "./components/AdminAssistant.jsx";
 import AdminAlertesRetour from "./components/AdminAlertesRetour.jsx";
 import AdminNotifications from "./components/AdminNotifications.jsx";
+import { NotificationsEnvoyees } from "./components/AdminMessages.jsx";
 import { envoisEnCours } from "./components/photo-manuelle.js";
 import { T, R, tone, alpha, adm } from "./theme.js";
 import { Icone, CroixElixir } from "./icons.jsx";
@@ -1769,6 +1770,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 {pharmSaving?"⏳ Sauvegarde…":"💾 Sauvegarder"}
               </button>
             </div>
+            {/* Notifications de l'appli reçues par la pharmacie de la fiche (CIP), lecture seule (docs/notifications.md § 7) */}
+            <NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} />
           </div>
         )}
 

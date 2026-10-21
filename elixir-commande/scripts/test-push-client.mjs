@@ -10,7 +10,8 @@
 //    renouvellement après changement de clés VAPID ;
 //  • démarrage : saisie Elixir (aucun statut, aucun abonnement), ouverture fermée, service indisponible, 401, carte,
 //    « Plus tard » (30 jours) ; messages du service worker (même origine seulement) ;
-//  • App.jsx : points d'insertion attendus (déconnexion, carte jamais en saisie Elixir, panneau, entrée du menu).
+//  • App.jsx : points d'insertion attendus (déconnexion, carte jamais en saisie Elixir, panneau, entrée du menu, lien
+//    ?commandes=1 des messages « Mes commandes et réclamations »).
 import { build } from "esbuild";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -443,6 +444,13 @@ eq("admin : onglets « Alertes retour » et « Notifications » distincts, chacu
   [true, true, true, true]);
 const NOTIF = readFileSync(join(RACINE, "src/notifications/Notifications.jsx"), "utf8");
 eq("carte : retour en stock branché (plus de « bientôt »)", [/bientôt/.test(NOTIF), NOTIF.includes("Vos produits attendus dès leur retour en stock")], [false, true]);
+// messages de l'admin et outil entrepôt (docs/notifications.md § 4 à 6) : lien /?commandes=1 → « Mes commandes » ouvert une fois
+// la pharmacie connue, paramètre retiré ; panneau : plafond des informations lu du statut ; admin : bloc de la fiche pharmacie
+eq("App.jsx : lien ?commandes=1 (Mes commandes ouvert, paramètre retiré)", [APP.includes('new URLSearchParams(window.location.search).get("commandes") === "1"'),
+  APP.includes('u.searchParams.delete("commandes")'), /if \(!lienCommandes\.current \|\| !onboardingDone \|\| !pharmacyCip \|\| pharmacyCip === "0"\) return;/.test(APP)], [true, true, true]);
+eq("panneau : catégories avec le plafond des informations", [NOTIF.includes("plafond_infos_7j"), NOTIF.includes("categoriesAffichees(plafond, vue.statut?.plafond_infos_7j ?? PLAFOND_INFOS_DEFAUT)")], [true, true]);
+eq("admin : bloc « Notifications envoyées » dans la fiche pharmacie, messages dans un module à part",
+  [ADMIN.includes("<NotificationsEnvoyees adminFetch={adminFetch} cip={pharmManual.cip} />"), readFileSync(join(RACINE, "src/components/AdminNotifications.jsx"), "utf8").includes("<Messages etat={etat}")], [true, true]);
 eq("aucun module chargé à la demande nommé index.*", /import\(["'][^"']*\/index(\.jsx?)?["']\)/.test(ENTREE + readFileSync(join(RACINE, "src/notifications/demarrage.js"), "utf8")), false);
 
 console.log(`\n${ok} OK, ${ko} échec(s)`);

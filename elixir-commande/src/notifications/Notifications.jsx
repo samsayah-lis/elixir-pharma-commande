@@ -11,7 +11,7 @@ import FocusFenetre from "../components/ui/FocusFenetre.jsx";
 import { Chargement } from "../components/ui/EtatVide.jsx";
 import * as C from "./client.js";
 import { analyser, parcours as parcoursDe, versionIosTexte, libelleAppareil, joignables } from "./plateforme.js";
-import { categoriesAffichees, PLAFOND_DEFAUT } from "./regles.js";
+import { categoriesAffichees, PLAFOND_DEFAUT, PLAFOND_INFOS_DEFAUT } from "./regles.js";
 import { masquer } from "./memo.js";
 
 const dateLongue = (s) => (s ? new Date(s).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" }) : "");
@@ -204,6 +204,7 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
   const a = analyser(env);
   const p = etat?.parcours || "activer";
   const plafond = etat?.statut?.plafond_offres_7j ?? PLAFOND_DEFAUT;
+  const plafondInfos = etat?.statut?.plafond_infos_7j ?? PLAFOND_INFOS_DEFAUT;
   const dejaJoints = joignables(etat?.statut).total;
   const [occupe, setOccupe] = useState(false);
   const [message, setMessage] = useState(null);   // { ton, texte }
@@ -245,7 +246,7 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
   const texte = p === "installer_ios" ? `Sur ${a.ipad ? "iPad" : "iPhone"}, les alertes arrivent par l'application Elixir\u00a0: ajoutez-la à votre écran d'accueil, c'est gratuit et cela prend 30 secondes.`
     : p === "ouvrir_safari" ? "Cette page est ouverte dans une autre application. Copiez le lien, puis ouvrez Safari, touchez la barre d'adresse et collez-le\u00a0: vous pourrez y installer l'application Elixir."
     : a.mobile ? (dejaJoints ? `${dejaJoints > 1 ? `${dejaJoints} appareils de votre pharmacie reçoivent` : "Un appareil de votre pharmacie reçoit"} déjà nos alertes\u00a0: les recevoir aussi sur ce téléphone\u00a0?`
-      : "Vos produits attendus dès leur retour en stock, et nos offres\u00a0: vous êtes prévenu sur votre téléphone, même quand le site est fermé.")
+      : "Vos produits attendus dès leur retour en stock, le suivi de vos commandes et réclamations, nos informations et nos offres\u00a0: vous êtes prévenu sur votre téléphone, même quand le site est fermé.")
     : "Le plus pratique\u00a0: sur votre téléphone, en visant un code avec l'appareil photo. Vous pouvez aussi les recevoir sur cet ordinateur, tant que le navigateur est ouvert.";
   return (
     <section className="acc-section" aria-labelledby="acc-notif-titre">
@@ -282,7 +283,7 @@ export function CarteNotifications({ appel, identite, etat, mobile = false, onOu
               </div>
               {message && <Message ton={message.ton}>{message.texte}</Message>}
               <p style={{ margin: "10px 0 0", fontSize: 12, lineHeight: 1.5, color: T.inkMute }}>
-                {plafond > 0 ? `Vous choisissez ce que vous recevez. L'activation inclut nos offres (${plafond} par semaine au plus), désactivables à tout moment dans «\u00a0Notifications\u00a0».`
+                {plafond > 0 || plafondInfos > 0 ? `Vous choisissez ce que vous recevez. L'activation inclut nos informations et nos offres (${Math.max(plafond, plafondInfos)} par semaine au plus chacune), désactivables à tout moment dans «\u00a0Notifications\u00a0».`
                   : "Vous choisissez ce que vous recevez, à tout moment dans «\u00a0Notifications\u00a0»."}
               </p>
             </>
@@ -378,7 +379,7 @@ export function PanneauNotifications({ appel, acting = null, pharmacyName, mobil
   const libelle = a.ipad ? "iPad" : "iPhone";   // guide et messages iOS
   const sousTitre = acting ? `Saisie pour ${pharmacyName}` : [pharmacyName, `cet appareil\u00a0: ${libelleAppareil(env)}`].filter(Boolean).join(" · ");
   const plafond = vue.statut?.plafond_offres_7j ?? PLAFOND_DEFAUT;
-  const categories = vue.statut?.categories_disponibles || categoriesAffichees(plafond);
+  const categories = vue.statut?.categories_disponibles || categoriesAffichees(plafond, vue.statut?.plafond_infos_7j ?? PLAFOND_INFOS_DEFAUT);
   const pleinEcran = mobile;
   const sb = mobile ? pleineLargeur : undefined;   // boutons du panneau sur téléphone
   const ligne = { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12, ...(mobile ? { flexDirection: "column" } : {}) };
