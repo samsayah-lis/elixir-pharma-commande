@@ -12,6 +12,10 @@
 //  5. paliers multiples injectés dans les réponses (navigateur seulement : 4 paliers sur DAFALGAN et DIFFU-K) : aucune
 //     étiquette d'étape sur une autre (Saisie 1 440 / 375 / 320, tableau 1 280, tiroir du panier, cartes 1 440 / 375, liste
 //     mobile) ; tableau du détail dans la jauge (tiroir du panier, liste mobile).
+// Produits repérés par leur CIP dans la Saisie et dans les réponses (paliers injectés) : avec dev-fixtures/_capture.json,
+// la recherche du banc (catalogueLocal de plugin.mjs) donne les noms Odoo capturés (« DAFALGAN 1000 mg (paracétamol),
+// comprimés effervescents (B/8) ») et non ceux de products-get ; les menus, le tiroir du panier et la liste mobile lisent
+// products-get (noms inchangés, sans CIP affiché) et restent repérés par le nom. Le contrôle passe avec ou sans la capture.
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -34,10 +38,14 @@ if (!page) { console.error("Chrome injoignable"); chrome.kill(); process.exit(2)
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise(r => { ws.onopen = r; });
 let n = 0; const attente = new Map();
-// paliers injectés (contrôle 5) : réécrits dans la réponse de products-get et de la recherche de la Saisie
+// produits du contrôle (CIP de dev-fixtures/get/products-get.json ; noms de products-get pour les menus et le panier)
+const CIP_DAFALGAN_EFFV = "3400935291035";     // DAFALGAN 1000MG CPR EFFV TB 8 (Master, palier 20)
+const CIP_DAFALGAN_GELU = "3400930186947";     // DAFALGAN 1000MG GELU BT 8 (Stratège, colis 160, palier 160)
+const CIP_DIFFU_K = "3400932905997";           // DIFFU-K 600MG BTE 40 CAPS (OTC)
+// paliers injectés (contrôle 5), par CIP : réécrits dans la réponse de products-get et de la recherche de la Saisie
 const INJ = {
-  "DAFALGAN 1000MG CPR EFFV TB 8": [{ min_qty: 6, price: 0.82 }, { min_qty: 12, price: 0.81 }, { min_qty: 24, price: 0.79 }, { min_qty: 48, price: 0.77 }],
-  "DIFFU-K 600MG BTE 40 CAPS": [{ min_qty: 6, price: 1.53 }, { min_qty: 12, price: 1.5 }, { min_qty: 30, price: 1.45 }, { min_qty: 60, price: 1.4 }],
+  [CIP_DAFALGAN_EFFV]: [{ min_qty: 6, price: 0.82 }, { min_qty: 12, price: 0.81 }, { min_qty: 24, price: 0.79 }, { min_qty: 48, price: 0.77 }],
+  [CIP_DIFFU_K]: [{ min_qty: 6, price: 1.53 }, { min_qty: 12, price: 1.5 }, { min_qty: 30, price: 1.45 }, { min_qty: 60, price: 1.4 }],
 };
 let injecter = false;
 ws.onmessage = async (e) => {
@@ -49,7 +57,7 @@ ws.onmessage = async (e) => {
     if (!injecter) throw new Error("tel quel");
     const b = await cdp("Fetch.getResponseBody", { requestId });
     const j = JSON.parse(b.base64Encoded ? Buffer.from(b.body, "base64").toString("utf8") : b.body);
-    for (const p of j.products || []) if (INJ[p.name]) p.price_tiers = INJ[p.name].map(t => ({ ...t, pct: Math.round((1 - t.price / (p.pv || p.list_price)) * 1000) / 10 }));
+    for (const p of j.products || []) if (INJ[p.cip]) p.price_tiers = INJ[p.cip].map(t => ({ ...t, pct: Math.round((1 - t.price / (p.pv || p.list_price)) * 1000) / 10 }));
     await cdp("Fetch.fulfillRequest", { requestId, responseCode: 200, responseHeaders: [{ name: "Content-Type", value: "application/json" }], body: Buffer.from(JSON.stringify(j)).toString("base64") });
   } catch { cdp("Fetch.continueRequest", { requestId }).catch(() => {}); }
 };
@@ -71,7 +79,8 @@ async function ouvrir(chemin, l, h, mobile = false) {
 // frappe dans un champ (setter natif + événement input), validation par Entrée
 const taper = (sel, v) => js(`(() => { const i = ${sel}; const s = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set; i.focus(); s.call(i, ${JSON.stringify(String(v))}); i.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
 const valider = (sel) => js(`(() => { ${sel}.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); return true; })()`);
-const ligneSaisie = (nom) => `[...document.querySelectorAll(".ex-saisie-ligne")].find(l => l.querySelector(".ex-saisie-info div")?.textContent === ${JSON.stringify(nom)})`;
+// ligne de la Saisie par son CIP (écrit en clair par CipCell dans .ex-saisie-info), quel que soit le nom affiché
+const ligneSaisie = (cip) => `[...document.querySelectorAll(".ex-saisie-ligne")].find(l => [...l.querySelectorAll(".ex-saisie-info span")].some(s => s.textContent === ${JSON.stringify(cip)}))`;
 const rangee = (re) => `[...document.querySelectorAll("tr.ex-tr")].find(t => ${re}.test(t.textContent))`;
 const defile = () => js(`document.documentElement.scrollWidth - document.documentElement.clientWidth`);
 // chevauchement (px) le plus fort entre étiquettes visibles d'une même jauge : prix des étapes, quantités (et le 0)
@@ -89,7 +98,7 @@ await cdp("Page.enable"); await cdp("Runtime.enable");
 await cdp("Fetch.enable", { patterns: [{ urlPattern: "*/.netlify/functions/products-get*", requestStage: "Response" }, { urlPattern: "*/.netlify/functions/odoo-catalog?q=*", requestStage: "Response" }] });
 try {
   // 1. Saisie : hauteur stable, pas de défilement, détail dans la jauge
-  const D = ligneSaisie("DAFALGAN 1000MG CPR EFFV TB 8");
+  const D = ligneSaisie(CIP_DAFALGAN_EFFV);
   for (const [l, h, mob] of [[1440, 900, false], [375, 812, true], [320, 700, true]]) {
     await ouvrir("?cip=dafalgan", l, h, mob);
     await attendre(`${D}?.querySelector(".ex-jauge")`);
@@ -101,7 +110,7 @@ try {
     if (mob) vrai(`Saisie ${l} px : tableau du détail dans la jauge`, await tableHors(`${D}.querySelector(".ex-jauge")`) <= 0.5, `${await tableHors(`${D}.querySelector(".ex-jauge")`)} px`);
     vrai(`Saisie ${l} px : aucun défilement horizontal`, await defile() <= 0, `${await defile()} px`);
     // 2. colis Stratège : badge, pas de jauge
-    const S = ligneSaisie("DAFALGAN 1000MG GELU BT 8");
+    const S = ligneSaisie(CIP_DAFALGAN_GELU);
     if (l === 1440) vrai("Saisie, colis 160 et palier 160 : petit badge, pas de jauge", await js(`!${S}.querySelector(".ex-jauge") && /0,80\\s€ dès 160/.test(${S}.textContent)`));
   }
   // 3. Saisie, quantité déjà au panier
