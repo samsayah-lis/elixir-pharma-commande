@@ -38,7 +38,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "no
 import { createHash } from "node:crypto";
 import { basename, resolve } from "node:path";
 import { DOSSIER_FIXTURES, DOSSIER_GET, DOSSIER_POST, DOSSIER_ENVOIS, decoupe, nomFixture } from "./commun.mjs";
-import { reponseFictive, FICHIERS_FICTIFS, accueilFictif } from "../../src/dev/reponses-fictives.js";
+import { reponseFictive, FICHIERS_FICTIFS, accueilFictif, BONS_FICTIFS, idBonFictif } from "../../src/dev/reponses-fictives.js";
 import { contexteMenus } from "../../netlify/functions/_accueil-selection.js";
 import { cipsAVerifier, verification } from "../../netlify/functions/_accueil-vedettes.js";
 import { categoriesAffichees, filtrerCategories, verifierReglages, fusionnerReglages, CATEGORIES_DEFAUT, verifierMessage, verifierProgrammation, estTransactionnel,
@@ -618,7 +618,7 @@ function reponsePushAdminBanc(b) {
 // par l'attente (GET ?tour=) : une étape d'abord (texte du serveur, d'après la carte), puis la réponse.
 const ETAPES_FICTIVES = {
   document: "Je recherche vos factures…", documents: "Je recherche vos factures…", releve: "Je prépare votre relevé…",
-  commande: "Je consulte vos commandes…", recap_retour: "Je prépare le récapitulatif de votre demande…",
+  commande: "Je consulte vos commandes…", bons_livraison: "Je recherche vos bons de livraison…", recap_retour: "Je prépare le récapitulatif de votre demande…",
   transmission: "Je transmets votre demande à l'équipe Elixir…",
 };
 const toursDuBanc = new Map();   // tour_id → { message, erreur, etape, appels }
@@ -684,6 +684,20 @@ async function fichierFictif(q) {
   }
   if (id === FICHIERS_FICTIFS.releve_pdf) return { corps: pdfFictif([...mention, "Releve des factures et avoirs emis (fictif)"]), type: "application/pdf", nom: "Releve_banc_essai.pdf" };
   if (id === FICHIERS_FICTIFS.facture) return { corps: pdfFictif([...mention, "Duplicata de facture INV/2026/90412 (fictif)"]), type: "application/pdf", nom: "Duplicata_INV_2026_90412.pdf" };
+  // bons de livraison : VRAI duplicata (_chat-bl.js) sur les bons fictifs ; ?n=<rang> : un seul bon de l'autorisation
+  const tous = BONS_FICTIFS(), seul = tous.findIndex((_, i) => id === idBonFictif(i));
+  if (id === FICHIERS_FICTIFS.bl || seul >= 0) {
+    const autorises = seul >= 0 ? [tous[seul]] : tous;
+    const rang = q.n === undefined || q.n === "" ? null : Number(q.n);
+    if (rang !== null && !(Number.isInteger(rang) && rang >= 0 && rang < autorises.length)) return null;
+    const { blPdf, nomFichierBl } = await import("../../netlify/functions/_chat-bl.js");
+    const odoo = (jour, heure) => new Date(`${jour}T${heure}:00`).toISOString().slice(0, 19).replace("T", " ");   // heure locale du banc → UTC
+    const bons = (rang === null ? autorises : [autorises[rang]]).map((b, i) => ({ id: i + 1, numero: b.numero, date_done: odoo(b.date, b.heure),
+      origine: b.renvoi ? "Retour de EP/IN/31007" : b.commande, commande: b.commande, reference_client: b.commande ? "BC 4821 (fictif)" : null, renvoi: b.renvoi,
+      adresse: { nom: "PHARMACIE D'ESSAI", rue: "1 rue de l'Essai", rue2: null, cp: "75001", ville: "PARIS", pays: "France" },
+      lignes: b.lignes.map((l) => ({ ...l, unite: "Unité(s)" })), restes: b.restes.map((r) => ({ ...r, unite: "Unité(s)" })) }));
+    return { corps: await blPdf(bons), type: "application/pdf", nom: nomFichierBl(bons) };
+  }
   return null;
 }
 function envoieFichier(res, f, log) {

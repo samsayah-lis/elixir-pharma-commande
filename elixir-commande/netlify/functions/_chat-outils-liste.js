@@ -1,4 +1,4 @@
-// ── Assistant Elixir : définitions des 7 outils (sans dépendance) ──
+// ── Assistant Elixir : définitions des 8 outils (sans dépendance) ──
 // Séparées de _chat-outils.js (Zod, relevé PDF/Excel) pour que chat.js, appelé à chaque attente de réponse, ne charge
 // que ces définitions (VERSION_OUTILS) : son paquet passe d'environ 2 Mo à quelques dizaines de Ko.
 // _chat-outils.js les réexporte (contrat : docs/assistant-contrat.md, « Outils »). Définitions JSON écrites à la main,
@@ -14,7 +14,7 @@ export const SOUHAITS = ["renvoi", "avoir", "garde", "reprise", "remise", "recev
 export const CATEGORIES = ["documents", "commande", "livraison", "qualite", "reglement", "compte", "tarifs", "disponibilite", "referencement", "autre"];
 const gel = (o) => { if (o && typeof o === "object") { for (const v of Object.values(o)) gel(v); Object.freeze(o); } return o; };
 
-// conception § 2.5 ; duplicata_facture.envoi : telechargement | email_compte
+// conception § 2.5 ; duplicata_facture.envoi : telechargement | email_compte ; bons_de_livraison : ajouté le 22/10/2026
 export const OUTILS = gel([
   { name: "rechercher_factures", strict: true,
     description: "Liste les factures et avoirs émis par Elixir Pharma à la pharmacie connectée (elle seule). À appeler dès qu'une facture, un avoir ou un montant facturé est évoqué, ou pour retrouver un numéro. Ne renvoie jamais d'état de paiement (information non disponible).",
@@ -52,6 +52,14 @@ export const OUTILS = gel([
     description: "Détail d'une commande de la pharmacie connectée : lignes commandées, servies, non servies et facturées, sortie d'entrepôt, tournée, lots et péremptions (si la livraison est validée), factures liées. La référence vient de rechercher_commandes ou de la pharmacie.",
     input_schema: { type: "object", additionalProperties: false, required: ["reference"],
       properties: { reference: { type: "string", description: "S348696, référence du site (13 chiffres) ou EP/OUT/…" } } } },
+  { name: "bons_de_livraison", strict: true,
+    description: "Liste les bons de livraison (sorties de l'entrepôt validées) de la pharmacie connectée, 20 par page, et prépare leur téléchargement en PDF : chaque bon, ou ceux de la période en un seul fichier (60 au plus). À appeler pour un bon de livraison, un BL, un bordereau de livraison ou un justificatif de livraison. Les boutons sont affichés par l'interface : ne jamais écrire de lien ; rien n'est envoyé par e-mail.",
+    input_schema: { type: "object", additionalProperties: false, required: ["date_debut", "date_fin", "recherche", "page"],
+      properties: {
+        date_debut: { ...D, description: "Jour de sortie de l'entrepôt AAAA-MM-JJ inclus ; null = 14 jours avant date_fin (toute la profondeur si une recherche est donnée)" },
+        date_fin: { ...D, description: "AAAA-MM-JJ inclus ; null = aujourd'hui ; un seul jour : date_debut = date_fin" },
+        recherche: { anyOf: [{ type: "string" }, { type: "null" }], description: "N° de bon (EP/OUT/…, ou le nombre lu sur le papier), de commande (S…), référence du site (13 chiffres), n° de facture, CIP13 ou mot du nom d'un produit ; null = tous les bons de la période" },
+        page: { type: "integer", description: "1 = les 20 plus récents" } } } },
   { name: "preparer_demande_retour", strict: true,
     description: "Prépare (n'envoie PAS) une demande de retour ou une réclamation sur une livraison ou une facture de la pharmacie connectée. L'interface affiche un récapitulatif que la pharmacie confirme par un bouton. À appeler seulement quand document, produits, quantités et motif sont connus. Ne jamais promettre d'avoir ni de reprise. Qualité pharmaceutique : utiliser transmettre_a_un_conseiller.",
     input_schema: { type: "object", additionalProperties: false, required: ["reference_document", "motif", "souhait", "lignes", "commentaire"],
@@ -84,6 +92,7 @@ export const ETAPES = Object.freeze({
   releve_facturation: "Je prépare votre relevé de facturation…",
   rechercher_commandes: "Je recherche vos commandes…",
   detail_commande: "Je consulte le détail de la commande…",
+  bons_de_livraison: "Je recherche vos bons de livraison…",
   preparer_demande_retour: "Je prépare le récapitulatif de votre demande…",
   transmettre_a_un_conseiller: "Je transmets votre demande à l'équipe Elixir…",
 });

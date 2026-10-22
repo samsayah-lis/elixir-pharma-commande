@@ -20,6 +20,7 @@ L'Assistant Elixir est un panneau de conversation dans l'espace de commande des 
 1. retrouver une facture ou un avoir et en donner le **duplicata** (le PDF d'origine, téléchargé dans l'app) ;
 2. produire un **relevé de facturation** sur une période (liste des factures et avoirs, totaux HT, TVA par taux et TTC, en PDF et Excel), **sans solde ni statut de paiement** ;
 3. renseigner sur une **commande passée**, qu'elle vienne du site ou du logiciel de l'officine : préparation, sortie d'entrepôt, tournée, quantités servies ou non, lots et péremptions, facture liée ;
+3 bis. remettre les **bons de livraison** (ajout du 22/10/2026, § 2.12) : liste par jour de sortie, numéro, commande, facture ou produit, et « Duplicata de bon de livraison » en PDF, un par bon ou plusieurs en un seul fichier ;
 4. **préparer une demande de retour ou une réclamation**, que la pharmacie **confirme par un bouton** avant tout envoi ;
 5. **passer la main à un conseiller** avec un résumé.
 
@@ -121,7 +122,8 @@ Les chiffres **qui font foi** sont ceux des cartes, lus par le serveur. Le texte
 |---|---|---|
 | Document | Icône `document`. « Facture INV/2026/51300 · 16/10/2026 · 1 234,56 € TTC » (ou « Avoir RINV/… »). | « Télécharger le PDF » (pétrole) ; mention « Duplicata » si elle est retenue (décision 4) |
 | Relevé | « Relevé du 01/09/2026 au 30/09/2026 · 41 factures, 5 avoirs · Net 91 530,54 € TTC », avec un tableau de TVA repliable. Mention : « Liste des documents émis ; ne reflète pas les règlements. » | « PDF » et « Excel » |
-| Commande | Frise à 4 étapes (Reçue → En préparation → Sortie d'entrepôt → Facturée), avec dates et origine (site, logiciel de l'officine, saisie Elixir). Lignes : commandé / servi / non servi. « Lots et péremptions » repliable, seulement si la livraison est validée. | « Signaler un problème sur cette commande » (préremplit la demande) |
+| Commande | Frise à 4 étapes (Reçue → En préparation → Sortie d'entrepôt → Facturée), avec dates et origine (site, logiciel de l'officine, saisie Elixir). Lignes : commandé / servi / non servi, et « + N à livrer » quand un reliquat est encore ouvert (cette quantité ne compte pas dans le non servi, comme sur le bon de livraison). « Lots et péremptions » repliable, seulement si la livraison est validée. | « Bon de livraison » (une fois la sortie validée : envoie « Je voudrais le bon de livraison EP/OUT/… », qui passe par l'outil et le téléchargement sécurisé) ; « Signaler un problème sur cette commande » (préremplit la demande) |
+| Bons de livraison (22/10/2026) | Icône `camion`. Période de sortie (absente pour un numéro, une commande ou un produit cherchés sans date), nombre de bons (et page) ; pour chaque bon : n° EP/OUT, « Expédié le JJ/MM/AAAA à HH:MM », commande, nombre de produits et les trois premiers, badges « Renvoi après retour » (`info`) et « Reste à livrer » (`warn`). Mention : « Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées à la date d'édition… ». | « PDF » par bon (`?n=<rang>`), ou un seul bon : « Télécharger le bon de livraison (PDF) » (pétrole) ; « Les N bons de la période en un seul PDF » (60 au plus) ou « Les N bons en un seul PDF » (pétrole) ; « Bons suivants » s'il y a d'autres pages. Quota atteint : pas de téléchargement, message dans la réponse ou sous la carte. |
 | Récapitulatif de retour | Document et date de livraison ; produits (nom, CIP13, lot, péremption, quantité) ; motif ; souhait ; information sur le délai. Encart `info` : « Envoyé seulement si vous confirmez. Décision du Pharmacien Responsable. » | « Confirmer la demande » (pétrole, 48 px), « Modifier », « Annuler » (filet) |
 | Demande enregistrée | Encart `ok` : n° de demande, date, délai annoncé (texte de la configuration), adresse de connexion masquée qui reçoit le récapitulatif. | aucune |
 | Transmission | « Transmis à l'équipe Elixir : n° T-… », délai annoncé, téléphone et horaires. | « Appeler » (lien `tel:` posé par le serveur, seul lien autorisé) |
@@ -264,7 +266,8 @@ Stockage : Supabase (tables chat_*, RLS activé, clé serveur dédiée) · Odoo 
 |---|---|---|
 | `netlify/functions/chat.js` | synchrone | Actions : <br>• `ouvrir` : reprend ou crée la conversation, renvoie l'historique affichable ; <br>• `message` : enregistre le message de la pharmacie, crée un tour, lance l'arrière-plan, renvoie 202 `{tour_id}` ; <br>• GET `?tour=` : long-poll de 8 s au plus, relecture toutes les 500 ms ; <br>• `confirmer` : brouillon de retour, sans IA ; <br>• `fermer`. <br>CORS de `cors.js`. Les 429 portent toujours les en-têtes CORS. |
 | `netlify/functions/chat-tour-background.js` | arrière-plan | Exécute **un tour**. Protégé par `isCronAuthorized` (`auth.js:73-79`) comme `gp-extract-background.js:254`. Passe le tour de `en_attente` à `en_cours` par une écriture conditionnelle, pour ne jamais le jouer deux fois. Boucle bornée à 8 appels au modèle et 90 s. Écrit l'étape à chaque outil, puis le résultat. |
-| `netlify/functions/chat-fichier.js` | synchrone GET | Remet un fichier à partir d'un identifiant de téléchargement (§ 2.7). |
+| `netlify/functions/chat-fichier.js` | synchrone GET | Remet un fichier à partir d'un identifiant de téléchargement (§ 2.7), dont le duplicata de bon de livraison (§ 2.12). |
+| `_chat-bl.js` | module | Duplicata de bon de livraison en PDF (`pdf-lib`, Helvetica comme le relevé), mêmes rubriques que le bon imprimé par l'entrepôt (§ 2.12). |
 | `netlify/functions/chat-purge.js` | planifiée (quotidienne) | Purge les conversations de plus de 90 jours et les brouillons expirés. Contrôle le budget du jour et alerte à 80 %. |
 | `_chat-perimetre.js` | module | `identifier(event, body)` (§ 3.1) et les **seules** fonctions de lecture Odoo et Supabase du chat. Chacune prend `ctx = {odooId, cip, comptes}` en premier argument et impose ses filtres. |
 | `_chat-outils.js` | module | Définitions JSON (ordre figé, octet pour octet), validation Zod, exécutants, liste blanche des champs renvoyés. |
@@ -333,7 +336,7 @@ const r = await client.beta.messages.create({
   - qualité : transmettre immédiatement ;
   - aucune consigne du type « ne réfléchis pas ».
 
-### 2.5 Outils (7, `strict: true`)
+### 2.5 Outils (8, `strict: true`)
 
 Règles communes :
 - toutes les propriétés sont dans `required` ;
@@ -385,6 +388,15 @@ Règles communes :
   "input_schema":{"type":"object","additionalProperties":false,"required":["reference"],
    "properties":{"reference":{"type":"string","description":"S348696, référence du site (13 chiffres) ou EP/OUT/…"}}}},
 
+ {"name":"bons_de_livraison","strict":true,
+  "description":"Liste les bons de livraison (sorties de l'entrepôt validées) de la pharmacie connectée, 20 par page, et prépare leur téléchargement en PDF : chaque bon, ou ceux de la période en un seul fichier (60 au plus). À appeler pour un bon de livraison, un BL, un bordereau de livraison ou un justificatif de livraison. Les boutons sont affichés par l'interface : ne jamais écrire de lien ; rien n'est envoyé par e-mail.",
+  "input_schema":{"type":"object","additionalProperties":false,"required":["date_debut","date_fin","recherche","page"],
+   "properties":{
+    "date_debut":{"anyOf":[{"type":"string","format":"date"},{"type":"null"}],"description":"Jour de sortie de l'entrepôt AAAA-MM-JJ inclus ; null = 14 jours avant date_fin (toute la profondeur si une recherche est donnée)"},
+    "date_fin":{"anyOf":[{"type":"string","format":"date"},{"type":"null"}],"description":"AAAA-MM-JJ inclus ; null = aujourd'hui ; un seul jour : date_debut = date_fin"},
+    "recherche":{"anyOf":[{"type":"string"},{"type":"null"}],"description":"N° de bon (EP/OUT/…), de commande (S…), référence du site (13 chiffres), n° de facture, CIP13 ou mot du nom d'un produit ; null = tous les bons de la période"},
+    "page":{"type":"integer","description":"1 = les 20 plus récents"}}}},
+
  {"name":"preparer_demande_retour","strict":true,
   "description":"Prépare (n'envoie PAS) une demande de retour ou une réclamation sur une livraison ou une facture de la pharmacie connectée. L'interface affiche un récapitulatif que la pharmacie confirme par un bouton. À appeler seulement quand document, produits, quantités et motif sont connus. Ne jamais promettre d'avoir ni de reprise. Qualité pharmaceutique : utiliser transmettre_a_un_conseiller.",
   "input_schema":{"type":"object","additionalProperties":false,
@@ -435,6 +447,8 @@ Sans `allowed_company_ids`, Odoo ouvre toutes les sociétés de l'utilisateur. L
 | `releve_facturation` | `account.move` (comme ci-dessus), puis `account.move.line` | `move_id in (pièces retenues)` | Base HT par taux = somme de `balance` des lignes `display_type = product`, regroupée par `tax_ids`. TVA = `−balance` des lignes `tax`. **Pas `tax_base_amount`, qui n'est pas signé** (étude Odoo § 4). Test de non-régression : le 595 en septembre doit donner HT 89 041,89 €, TVA 2 488,65 €, TTC 91 530,54 €. |
 | `rechercher_commandes` | (a) Supabase `elixir_orders` (`pharmacy_cip` = CIP de **la fiche**) pour les commandes du site pas encore dans Odoo, plus l'état simplifié du relais (`kv pmlr:tache:<ref>`) ; (b) `sale.order` | (b) `company_id=2`, `partner_id child_of P`, `state in (sale, done)`, période | `name, date_order, from_pharmaml, delivery_status, x_studio_statut_prparation, x_studio_tourne, pharmaml_lock_status, effective_date, amount_untaxed`. Le lien site → Odoo passe par `sale.order.line.pml_order_ref` ∈ {id, id+"P2"…} (`_relais.js:344-349`, champ stocké, `c5-champs.mjs`). |
 | `detail_commande` | `sale.order` (par `name`, filtré comme ci-dessus), puis `sale.order.line`, puis `stock.picking`, puis `stock.move.line`, puis `account.move` | Livraisons : `id in picking_ids` et `company_id=2`. Lots : `picking_id in (ces livraisons)` et `state=done`. Factures : relues avec le filtre factures. | Lignes : `pharmaml_ordered_qty`, `product_uom_qty`, `qty_delivered`, `qty_invoiced`. Livraisons : `name, state, date_done`. Lots : `lot_id, expiration_date, quantity`. Une ligne entièrement à 0 s'affiche « non servie », jamais « livrée ». |
+| `bons_de_livraison` (22/10/2026) | `stock.picking` `search_count` puis `search_read`, tri `date_done desc, id desc`, 20 par page ; résumé par `stock.move` (produits sortis) et reliquats ouverts | `company_id=2`, `partner_id child_of P`, `picking_type_code=outgoing`, `state=done`, `location_dest_id.usage=customer`, `date_done` entre deux minuits de Paris. Recherche : `name` (EP/OUT, 5 chiffres au moins), `sale_id in` (commandes S… ou référence du site, relues avec le filtre commandes ; commandes d'une facture relue avec le filtre factures), ou `stock.move` validés et sortants de la fiche pour un produit (`product_id.default_code`, ou nom). | `name, date_done, origin, sale_id, backorder_ids, return_id`. Vers le modèle : n°, jour et heure de sortie, commande, produits (3) et leur nombre, `renvoi`, `reste_a_livrer`. |
+| `chat-fichier` (type `bl`) | `stock.picking` (`search_count` puis `search_read`), `res.partner`, `sale.order`, `stock.move.line`, `stock.move` | Les ids de l'autorisation relus avec le domaine ci-dessus (un seul manquant → 404) ; adresse : `id ∈ partner_id` ∧ `commercial_partner_id=P` ∧ `company_id ∈ {2, false}` ; commande : filtre commandes ; lignes : `picking_id.partner_id child_of P` ∧ `state=done` ; reliquats : `backorder_ids` hors `done/cancel`. | Adresse : `name, street, street2, zip, city, country_id` (**ni téléphone ni e-mail**). Commande : `name, client_order_ref` (imprimée, jamais transmise au modèle). Lignes : `product_id, lot_id, expiration_date, quantity, product_uom_id`. Reliquats : `product_id, product_uom_qty, product_uom`. |
 | `preparer_demande_retour` | Résout le document vers la livraison EP/OUT validée, ses lignes et lots, et la facture | Mêmes filtres, plus les retours déjà faits (`stock.picking.return_id = OUT`) | Quantité ≤ livrée − déjà retournée. La date de livraison retenue vient de `date_done` en heure de Paris (règle à confirmer, décision 6). |
 
 Libellés d'état montrés à la pharmacie :
@@ -462,6 +476,7 @@ Jamais « livrée chez vous » : `date_done` est la sortie d'entrepôt, et Odoo 
    - Envoi vers une adresse dictée dans la conversation.
    - Rendu par RPC : `_render_qweb_pdf` est privé (étude Odoo § 2).
 7. **Envoi par e-mail** (si la décision 4 l'ouvre) : pièce jointe par Resend vers les **adresses de compte** de la fiche seulement, c'est-à-dire la liste `emails` de `demandeur`, `lab-justif.js:79-93`.
+8. **Bons de livraison** (22/10/2026, § 2.12) : autorisation `type: bl`, `params.picking_ids` (toute la période si elle compte 60 bons au plus, sinon ceux de la page ; ordre de la liste), 15 min, 3 usages par bon de la page + 3 pour l'ensemble (60 au plus). `?n=<rang>` : un seul bon (rang dans l'autorisation, donné par la carte) ; sans `n` : tous en un seul PDF. `chat-fichier` lit d'abord l'autorisation sans la consommer (rang hors bornes → 404 sans brûler d'usage ; premier téléchargement → quota de fichiers, 429 au-delà), puis relit **tous** les bons de l'autorisation avec le domaine de la fiche avant d'en servir un seul (un id forgé, d'une autre pharmacie, d'une autre société, un retour, un transfert non validé : 404, même réponse qu'un document inconnu), puis les relit encore pour l'impression. Rien n'est stocké ; aucune pièce jointe n'est lue.
 
 ### 2.8 Création d'une demande de retour
 
@@ -513,6 +528,27 @@ Canal : Resend par `sendMail` (`_gp-mail.js:7-22`), expéditeur `pharmacien@elix
   - outils en erreur.
 - **Réglages `ec_config.chatbot`** (sans redéploiement) : `actif`, `pilote` (liste d'`odoo_id`), `modele`, `effort`, quotas, `budget_jour_eur`, `delai_annonce`, adresses d'alerte, `demandes: simulation | entrepot | email`, `duplicata_email`, profondeurs (factures 24 mois, relevé 12 mois, commandes 6 mois).
 
+### 2.12 Bons de livraison (demande du 22/10/2026)
+
+Demande de Zineb : « peux tu faire en sorte qu'une pharmacie obtienne ses bons de livraison via le chatbot ? ». Enquête en lecture seule du 22/10/2026 (Odoo 17.0 Enterprise ; chiffres détaillés et pistes écartées dans la note privée de l'enquête, hors dépôt) :
+- le bon de livraison est le rapport standard d'Odoo « Bon de livraison » (`stock.report_deliveryslip`), avec lot et date d'expiration ; **Odoo ne le garde jamais** : il le recalcule à chaque impression ;
+- son calcul par l'API est **refusé** (méthode privée, aucun équivalent public en version 17) ; le PDF du portail client n'a ni lot ni péremption et demanderait de générer des jetons : écarté ;
+- quelques PDF joints aux transferts (envoi par e-mail à la validation, actif quelques semaines en 2026) : jamais lus ni servis (une seule présentation) ;
+- un bon a le plus souvent une seule ligne ; toutes les lignes ont un lot et une date d'expiration ; une livraison regroupe le plus souvent **plusieurs bons** (un par commande) ;
+- **près de la moitié des bons sortent de l'entrepôt entre 0 h et 9 h** (heure de Paris), c'est-à-dire la nuit ou le matin même de la livraison : un bon cherché par jour de réception se trouve dans les sorties de ce jour-là et des trois jours d'avant.
+
+**Choix retenu (par défaut, révisable par Zineb)** : un **« Duplicata de bon de livraison » généré par le site pour tous les bons** (`_chat-bl.js`), une seule présentation, aucune écriture Odoo, aucun jeton du portail, aucune pièce jointe servie. Rubriques reprises du bon imprimé par l'entrepôt : libellé « Bon de livraison », numéro, commande (`origin`), date d'expédition (`date_done`, heure de Paris), référence client, adresse de livraison, produits `[CIP13] libellé`, lot, date d'expiration, quantité livrée, « Quantités restantes non encore livrées » (reliquats ouverts), mentions légales de la société 2, « Page x / y ». Plusieurs bons : chacun commence sur une nouvelle page.
+
+Ce que le duplicata **n'affirme pas** : une identité avec un papier remis à la livraison. Il est établi avec les données d'Odoo **à la date d'édition** (lots, péremptions et quantités restantes relus à ce moment ; une ligne corrigée après l'expédition apparaît corrigée). Mention de la carte et du PDF : « Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées à la date d'édition : produits, lots, péremptions et quantités livrées. »
+
+Écarts assumés avec le PDF d'Odoo : mise en page et police (Helvetica) ; bandeau « DUPLICATA » et « Édité le … » ; **pas de téléphone** sur l'adresse de livraison (l'assistant ne lit jamais les téléphones) ; date d'expiration sans l'heure (« 31/03/2028 » au lieu de « 31/03/2028 23:59:59 ») ; nom du fichier (`Duplicata_BL_EP_OUT_01001.pdf`, `Duplicatas_BL_<jour>[_<jour>].pdf`).
+
+Périmètre : celui des commandes (`partner_id child_of P` : la fiche, ses contacts, et une société rattachée à la fiche dans Odoo avec `parent_id = P`). Adresse de livraison et commande sont relues dans ce même périmètre : adresse introuvable → aucun duplicata (404), jamais une adresse de remplacement ; commande hors périmètre → ni son numéro ni l'origine qui le recopie. Réceptions de retour (EP/IN), retours fournisseur (sortants vers « Partners/Vendors ») et transferts non validés ne sont **jamais** des bons de livraison ; les **renvois** après un retour (sortants vers les clients, `return_id` posé, origine « Retour de EP/IN/… ») sont listés et signalés. Date d'un bon = **sortie de l'entrepôt**, jamais une date de réception (décision 6 non confirmée).
+
+Téléchargement : 20 bons par page (un bouton PDF chacun ; un seul bon : bouton principal « Télécharger le bon de livraison (PDF) ») ; le fichier unique couvre **toute la période si elle compte 60 bons au plus** (« Les N bons de la période en un seul PDF »), sinon les bons de la page : pour un long historique, l'assistant propose des périodes plus courtes (une semaine). Quota de fichiers : une liste parcourue ne compte pas ; une autorisation de bons compte à son premier téléchargement (contrôlé par `chat-fichier`, 429 au-delà).
+
+**À trancher par Zineb** : le PDF d'Odoo à l'identique (une création dans Odoo, voir la note privée de l'enquête) ; imprimer le téléphone ; chercher par jour de livraison plutôt que de sortie ; servir les PDF joints au printemps 2026 (déconseillé : deux présentations) ; limiter les bons d'une société rattachée à sa seule fiche (`commercial_partner_id = P`, comme les factures) plutôt qu'au périmètre des commandes.
+
 ---
 
 ## 3. Sécurité
@@ -538,6 +574,7 @@ Canal : Resend par `sendMail` (`_gp-mail.js:7-22`), expéditeur `pharmacien@elix
 |---|---|
 | Factures, duplicata, relevé, autorisation de fichier | `company_id=2` ∧ `commercial_partner_id=P` ∧ `state=posted` ∧ `move_type ∈ {out_invoice, out_refund}` |
 | Commandes, détail, retour | `sale.order`: `company_id=2` ∧ `partner_id child_of P`. Livraisons : `id ∈ picking_ids` ∧ `company_id=2`. Lots : `picking_id ∈` ces livraisons. Factures liées : relues avec le filtre factures. |
+| Bons de livraison (outil et `chat-fichier`) | `stock.picking` : `company_id=2` ∧ `partner_id child_of P` ∧ `picking_type_code=outgoing` ∧ `state=done` ∧ `location_dest_id.usage=customer` ; lignes et reliquats : `picking_id.partner_id child_of P` ; adresse : `id child_of P` ∧ `company_id ∈ (2, faux)` (introuvable → 404) ; commande : domaine des commandes. Téléchargement : tous les ids de l'autorisation relus (un seul manquant → 404). |
 | Commandes du site | `elixir_orders.pharmacy_cip` = CIP **de la fiche**. Ces données sont déclaratives (`order-save.js` n'est pas authentifié), donc présentées comme « envoyées depuis le site ». |
 | Demandes, fichiers, conversations | `odoo_id = ctx.odooId` à **chaque** lecture, y compris à la confirmation et au téléchargement |
 
@@ -699,6 +736,7 @@ Total : environ **15 jours**, plus 1 jour dans l'outil entrepôt. Chaque lot fai
 | 8 | **Officines qui partagent une adresse e-mail** (ex. 7 pharmacies sur une même adresse) | En v1, une seule officine : celle du compte. Une vue multi-officines plus tard, à partir d'une liste tenue par Elixir. |
 | 9 | **Modèle, budget, conservation** | Opus 5.5 en effort bas, avec une clé dédiée plafonnée à 150 € par mois (≈ 50 € attendus). Conversations conservées 90 jours, consultables par l'admin. Mention RGPD (Anthropic sous-traitant) dans les mentions de l'espace. |
 | 10 | **Pilote** | 5 à 10 pharmacies volontaires pendant 2 semaines avant l'ouverture à toutes : lesquelles ? |
+| 11 | **Bons de livraison** (22/10/2026, § 2.12) | Construit par défaut : duplicata généré par le site pour tous les bons (établi à la date d'édition, sans identité affirmée avec un papier), sans téléphone, recherche par jour de sortie de l'entrepôt (jour de réception : ce jour et les trois d'avant), toute la période en un seul PDF jusqu'à 60 bons, renvois signalés, périmètre des commandes (sociétés rattachées comprises). À trancher : le PDF d'Odoo à l'identique (une création dans Odoo) ; imprimer le téléphone ; chercher par jour de livraison ; servir les PDF joints au printemps 2026 (déconseillé : deux présentations) ; sociétés rattachées limitées à leur seule fiche. |
 
 ---
 

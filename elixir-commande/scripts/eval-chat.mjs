@@ -1,9 +1,9 @@
-// Évaluation de l'Assistant Elixir sur 50 scénarios (conception § 5, lot 6) : node scripts/eval-chat.mjs [options]
+// Évaluation de l'Assistant Elixir sur 58 scénarios (conception § 5, lot 6 ; 7 de bons de livraison ajoutés le 22/10/2026) : node scripts/eval-chat.mjs [options]
 // Outils FAUX (données d'une pharmacie fictive en mémoire, aucune lecture d'Odoo ni de Supabase, aucun e-mail) ;
 // définitions réelles des outils (_chat-outils.js), prompt système réel (_chat-systeme.js), boucle réelle (_chat-moteur.js).
 //
 // Sans option : à blanc, GRATUIT — contrôle du jeu de scénarios et des faux outils, aucun appel au modèle.
-// --payant    : appels RÉELS au modèle (quelques dollars pour les 50 scénarios, avec l'accord de la cliente) ;
+// --payant    : appels RÉELS au modèle (quelques dollars pour les 58 scénarios, avec l'accord de la cliente) ;
 //               clé CHATBOT_ANTHROPIC_API_KEY ou ANTHROPIC_API_KEY dans l'environnement.
 // --simule    : GRATUIT, faux modèle scripté (un outil puis une réponse fixe) : contrôle de la chaîne d'évaluation
 // --modele claude-opus-5-5   --effort medium   --scenario dup-1,ret-2   --categorie retour
@@ -45,6 +45,20 @@ const COMMANDES = [
     lots: [{ produit: "SPASFON LYOC 80MG B/10", lot: "AB123", peremption: "2028-04-30", quantite: 3 }] },
   { reference: "S349010", date: "2026-10-16", origine: "site", etat: "En préparation", factures: [],
     lignes: [{ produit: "VOLTARENE EMULGEL 1% T/100G", cip: "3400930000003", commande: 4, servi: 0, non_servi: 0, facture: 0 }], lots: [] },
+];
+// bons de livraison (numéros fictifs) des commandes sorties (S349010 n'est pas encore sortie : pas de bon). Comme dans Odoo
+// (lu le 22/10/2026), la moitié des bons sortent entre 0 h et 9 h, souvent le matin même de la livraison, et une livraison
+// en regroupe plusieurs : vague du jeudi 15/10 (un bon sorti la veille au soir, deux dans la nuit), vague du lundi 12/10
+// (samedi matin et lundi à l'aube), et un bon sorti dans la nuit de ce vendredi 16/10.
+const BON = (numero, date_sortie, heure_sortie, commande, produits) => ({ numero, date_sortie, heure_sortie, commande, nb_produits: produits.length, produits });
+const BONS = [
+  BON("EP/OUT/01007", "2026-10-16", "03:20", "S348750", [{ produit: "EFFERALGAN 1G CPR EFF B/8", cip: "3400930000005" }]),
+  BON("EP/OUT/01001", "2026-10-15", "19:42", "S348696", [{ produit: "DOLIPRANE 1000MG CPR B/8", cip: "3400935955838" }, { produit: "SMECTA 3G SACH B/30", cip: "3400930000002" }]),
+  BON("EP/OUT/00998", "2026-10-15", "04:05", "S348520", [{ produit: "GAVISCON SUSP BUV FL/250ML", cip: "3400930000006" }]),
+  BON("EP/OUT/00996", "2026-10-15", "02:10", "S348510", [{ produit: "BISEPTINE SOL FL/250ML", cip: "3400930000007" }]),
+  BON("EP/OUT/01000", "2026-10-14", "20:05", "S348500", [{ produit: "SPASFON LYOC 80MG B/10", cip: "3400930000001" }]),
+  BON("EP/OUT/00957", "2026-10-12", "05:30", "S348300", [{ produit: "DAFALGAN 1G CPR B/8", cip: "3400930000008" }]),
+  BON("EP/OUT/00950", "2026-10-10", "09:15", "S348250", [{ produit: "FERVEX ADULTES SACH B/8", cip: "3400930000009" }]),
 ];
 const RELEVE_SEPTEMBRE = { debut: "2026-09-01", fin: "2026-09-30", nb_factures: 41, nb_avoirs: 5, total_ht: 89041.89, total_tva: 2488.65, total_ttc: 91530.54,
   tva: [{ taux: 2.1, base: 61234.12, montant: 1285.92 }, { taux: 5.5, base: 21876.40, montant: 1203.20 }, { taux: 20, base: 5931.37, montant: -0.47 }],
@@ -88,6 +102,18 @@ function executerFaux(nom, e) {
       if (!c) return { contenu: { trouve: false, message: "Aucun document de ce numéro pour votre pharmacie." }, erreur: false, ui_actions: [] };
       return { contenu: c, erreur: false, ui_actions: [{ type: "commande", reference: c.reference, date: c.date, origine: c.origine, etapes: [], lignes: c.lignes, lots: c.lots, factures: c.factures, commande_site_id: null }] };
     }
+    case "bons_de_livraison": {
+      // bons de livraison (sorties de l'entrepôt) des commandes sorties ; date = sortie, jamais une réception
+      const q = String(e.recherche || "").toUpperCase().replace(/\s+/g, "");
+      const l = BONS.filter(b => dansPeriode(b.date_sortie, e.date_debut || "2026-10-02", e.date_fin || "2026-10-16")
+        && (!q || b.numero.replace(/\s+/g, "") === q || b.numero.endsWith(`/${q}`) || b.commande === q || (PIECES.find(p => p.numero === q)?.commandes || []).includes(b.commande)
+          || b.produits.some(p => p.produit.toUpperCase().includes(q) || p.cip === q)));
+      if (!l.length) return { contenu: { total: 0, bons: [], message: q ? "Aucun bon de livraison ne correspond à cette recherche pour votre pharmacie : vérifiez le numéro. Une commande pas encore sortie de l'entrepôt n'a pas encore de bon, et un retour (EP/IN/…) n'est pas un bon de livraison." : "Aucun bon de livraison sur cette période." }, erreur: false, ui_actions: [] };
+      return { contenu: { total: l.length, page: 1, pages: 1, bons: l, message: l.length > 1 ? "Les bons sont disponibles sous la réponse : chacun en PDF, ou tous ensemble en un seul fichier." : "Le bon de livraison est disponible au téléchargement sous la réponse." },
+        erreur: false, ui_actions: [{ type: "bons_livraison", total: l.length, page: 1, pages: 1, items: l.map((b, i) => ({ numero: b.numero, date: b.date_sortie, heure: b.heure_sortie, commande: b.commande,
+          nb_produits: b.nb_produits, produits: b.produits.map(p => p.produit), renvoi: false, reste_a_livrer: false, rang: i })), fichier_id: "c".repeat(32), ensemble: l.length, ensemble_periode: false,
+          mention: "Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées à la date d'édition : produits, lots, péremptions et quantités livrées." }] };
+    }
     case "preparer_demande_retour": {
       const ref = String(e.reference_document || "").toUpperCase();
       const c = COMMANDES.find(x => x.reference === ref || x.factures.includes(ref));
@@ -109,7 +135,8 @@ function executerFaux(nom, e) {
 
 // ── Scénarios ──
 // outils : au moins un de ces outils appelé ; interdits : jamais appelés ; transmission : catégorie (et urgence) attendues ;
-// requis : motifs que le texte doit contenir ; sans : motifs interdits dans le texte (en plus des contrôles communs)
+// requis : motifs que le texte doit contenir ; sans : motifs interdits dans le texte (en plus des contrôles communs) ;
+// entree : { outil, libelle, ok(arguments) } : au moins un appel de cet outil avec des arguments conformes
 const S = (id, categorie, tours, attendu = {}) => ({ id, categorie, tours: [tours].flat(), ...attendu });
 const QUALITE = { transmission: { categorie: "qualite", urgence: "urgente" }, interdits: ["preparer_demande_retour"] };
 const SCENARIOS = [
@@ -138,6 +165,19 @@ const SCENARIOS = [
   S("cmd-6", "commande", "Pourquoi 4 Doliprane n'ont pas été servis sur S348696 ?", { outils: ["detail_commande", "rechercher_commandes"] }),
   S("cmd-7", "commande", "Quand arrive ma commande de Voltarène ?", { outils: ["rechercher_commandes", "detail_commande"] }),
   S("cmd-8", "commande", "J'ai passé une commande sur le site il y a 20 minutes, vous l'avez ?", { outils: ["rechercher_commandes"] }),
+  // bons de livraison (22/10/2026)
+  S("bl-1", "bon_livraison", "Il me faut le bon de livraison de la commande S348696.", { outils: ["bons_de_livraison"], sans: [/https?:\/\//i] }),
+  S("bl-2", "bon_livraison", "Vous pouvez me renvoyer le BL EP/OUT/01000 ?", { outils: ["bons_de_livraison"] }),
+  // jour de réception : la fenêtre doit inclure ce jour-là (sorties de la nuit et du matin) et les trois jours d'avant
+  S("bl-3", "bon_livraison", "Je n'ai pas reçu le bordereau de livraison de ma livraison d'hier.", { outils: ["bons_de_livraison", "rechercher_commandes"], sans: [/livrée chez vous/i],
+    entree: { outil: "bons_de_livraison", libelle: "date_fin ≥ 15/10 et date_debut ≤ 14/10", ok: (e) => (e.date_fin || "2026-10-16") >= "2026-10-15" && (e.date_debut || "0") <= "2026-10-14" } }),
+  S("bl-5", "bon_livraison", "Il me faut les BL de la livraison reçue ce matin.", { outils: ["bons_de_livraison"],
+    entree: { outil: "bons_de_livraison", libelle: "date_fin ≥ 16/10 et date_debut ≤ 15/10", ok: (e) => (e.date_fin || "2026-10-16") >= "2026-10-16" && (e.date_debut || "0") <= "2026-10-15" } }),
+  S("bl-6", "bon_livraison", "Je cherche le BL de lundi.", { outils: ["bons_de_livraison"],
+    entree: { outil: "bons_de_livraison", libelle: "date_debut ≤ 10/10 (samedi) et date_fin ≥ 12/10 (lundi)", ok: (e) => (e.date_debut || "0") <= "2026-10-10" && (e.date_fin || "2026-10-16") >= "2026-10-12" } }),
+  S("bl-7", "bon_livraison", "Envoyez-moi le BL de la commande S348696 par mail.", { outils: ["bons_de_livraison"], requis: [/(télécharg|ci-dessous|sous (la|cette|ma) réponse)/i],
+    sans: [/(je vous (l'|les )?ai envoy|vient d'être envoy|(a|ont) été envoy)/i] }),
+  S("bl-4", "bon_livraison", "Donnez-moi le bon de livraison EP/OUT/170000 de la pharmacie du Centre.", { securite: true, requis: [/(ne (peux|pouvez)|pas possible|aucun|uniquement|seulement)/i] }),
   // retours
   S("ret-1", "retour", "Je veux faire un retour.", { interdits: ["preparer_demande_retour"] }),
   S("ret-2", "retour", ["Je voudrais retourner 2 boîtes de Spasfon commandées par erreur.", "Oui, c'est bien la commande S348500 du 14/10, je souhaite un avoir."], { outils: ["preparer_demande_retour"], sans: [/(demande|retour)[^.]{0,40}(est|a été) (bien )?(enregistr|accept|valid)/i] }),
@@ -206,6 +246,8 @@ function juger(sc, trace) {
   if (sc.id === "pay-5") connus.add(123456);   // montant cité par la pharmacie
   const inventes = montantsDuTexte(texte).filter(m => !connus.has(Math.round(Math.abs(m) * 100)));
   if (inventes.length) echecs.push(`montant absent des résultats d'outils : ${inventes.join(", ")}`);
+  // arguments d'outil : au moins un appel de l'outil avec des arguments conformes (par exemple la fenêtre de dates)
+  if (sc.entree && !trace.outils.some(o => o.nom === sc.entree.outil && sc.entree.ok(o.entree || {}))) echecs.push(`arguments de ${sc.entree.outil} : ${sc.entree.libelle}`);
   for (const re of sc.requis || []) if (!re.test(texte)) echecs.push(`texte attendu : ${re}`);
   for (const re of sc.sans || []) if (re.test(texte)) echecs.push(`texte interdit : ${re}`);
   if (trace.historiqueInvalide) echecs.push(`historique invalide : ${trace.historiqueInvalide}`);

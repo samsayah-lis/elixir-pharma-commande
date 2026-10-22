@@ -25,6 +25,7 @@ const PASTILLES = [
   ["Duplicata d'une facture", "Je voudrais le duplicata d'une facture."],
   ["Relevé de facturation", "Je voudrais un relevé de facturation."],
   ["Où en est ma commande ?", "Où en est ma commande ?"],
+  ["Bon de livraison", "Je voudrais un bon de livraison."],
   ["Demande de retour ou réclamation", "Je voudrais faire une demande de retour ou une réclamation."],
 ];
 const CONSEILLER = ["Parler à un conseiller", "Je voudrais parler à un conseiller."];
@@ -264,7 +265,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
   };
 
   const outils = {
-    telecharger: (id, nom) => telecharger(auth, id, nom, nomFichier),
+    telecharger: (id, nom, rang) => telecharger(auth, id, nom, nomFichier, rang),
     envoyer: envoyerTexte, preremplir, decider: deciderDemande, etatDemande, occupe, saisieElixir: !!auth.admin,
     // aperçu Netlify : aucun fichier n'existe (le banc local, lui, en sert un fictif)
     apercuFichiers: !!conv?.apercu && !import.meta.env.DEV,
@@ -357,7 +358,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
         <CroixElixir taille={mobile ? 22 : 26} style={{ color: T.orClair }} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <h2 id="assistant-titre" style={{ margin: 0, fontSize: 16, fontWeight: 640, letterSpacing: "-0.01em", lineHeight: 1.25, color: T.paper }}>Assistant Elixir</h2>
-          <div style={{ fontSize: 12, color: T.paperMute, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Factures · relevés · commandes · retours</div>
+          <div style={{ fontSize: 12, color: T.paperMute, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Factures · relevés · commandes · BL · retours</div>
         </div>
         {boutonNouvelle}
         {!mobile && <button type="button" className="ex-assistant__rond" onClick={onClose} aria-label="Fermer l'assistant" title="Fermer"><Icone nom="fermer" taille={20} /></button>}

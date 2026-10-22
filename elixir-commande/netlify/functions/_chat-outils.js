@@ -1,4 +1,4 @@
-// ── Assistant Elixir : les 7 outils (définitions, validation, exécution) ──
+// ── Assistant Elixir : les 8 outils (définitions, validation, exécution) ──
 // Contrat : docs/assistant-contrat.md (« Outils », « Cartes UiAction ») ; conception § 2.5 et § 1.3.
 // Définitions JSON (`strict: true`, ordre et octets stables) : _chat-outils-liste.js, réexportées ici. Le mode strict
 // ne prend ni bornes (min/max, longueurs) ni motifs : ils sont vérifiés ici par Zod.
@@ -10,9 +10,10 @@ import { MOTIFS, SOUHAITS, CATEGORIES } from "./_chat-outils-liste.js";
 import {
   listerPieces, piecesPourDuplicata, donneesReleve, listerCommandes, commandesSite, detailCommande, construireRetour,
   combinaisonValide, SOUHAITS_PAR_MOTIF, MSG_DOC_INCONNU, DELAI_RETOUR_JOURS, jourParis, jourPlus, jourValide, moisAvant, jourFr,
-  analyserRecherche, depsParDefaut, tronquer,
+  analyserRecherche, depsParDefaut, tronquer, listerLivraisons, joursLivraisonProches, rechercheBL, BL_PAR_PAGE,
 } from "./_chat-perimetre.js";
 import { calculerReleve, MENTION_RELEVE } from "./_chat-releve.js";
+import { MENTION_BL } from "./_chat-bl.js";
 import { REGLAGES_DEFAUT, fusionnerReglages, lireReglages, journalJson } from "./_chat-config.js";
 
 // ── Définitions, version et textes d'attente : _chat-outils-liste.js (sans dépendance, lu seul par chat.js) ──
@@ -31,6 +32,7 @@ const SCHEMAS = {
   rechercher_commandes: z.strictObject({ date_debut: date.nullable(), date_fin: date.nullable(),
     etat: z.enum(["toutes", "en_cours", "sorties", "partiellement_servies", "facturees"]), recherche: texteNul(60), page }),
   detail_commande: z.strictObject({ reference: texte(40).min(3, "référence trop courte") }),
+  bons_de_livraison: z.strictObject({ date_debut: date.nullable(), date_fin: date.nullable(), recherche: texteNul(60), page }),
   preparer_demande_retour: z.strictObject({ reference_document: texte(40).min(3, "référence trop courte"), motif: z.enum(MOTIFS), souhait: z.enum(SOUHAITS),
     lignes: z.array(z.strictObject({ produit: texte(120).min(2, "produit manquant"), quantite: z.number().int("nombre entier attendu").min(1, "1 au moins").max(9999, "9999 au plus"),
       lot: texteNul(40) })).min(1, "au moins une ligne").max(30, "30 lignes au plus"),
@@ -94,15 +96,22 @@ const docModele = (p) => ({ piece: p.piece, numero: p.numero, date: p.date, mont
   commandes: p.commandes.length, pdf_disponible: p.pdf_disponible, ...(p.piece === "avoir" ? { avoir_de: p.avoir_de || null, motif: p.motif || null } : {}) });
 const docCarte = (p) => ({ piece: p.piece, numero: p.numero, date: p.date, montant_ttc: p.montant_ttc, pdf_disponible: p.pdf_disponible });
 const carteDocuments = (pieces) => (pieces.length ? [{ type: "documents", items: pieces.slice(0, 20).map(docCarte) }] : []);
+// bons de livraison : date = sortie de l'entrepôt (heure de Paris) ; 3 produits au plus par bon (nombre total à part)
+const blModele = (b) => ({ numero: b.numero, date_sortie: b.date, heure_sortie: b.heure, commande: b.commande, nb_produits: b.nb_produits,
+  produits: b.produits.slice(0, 3), ...(b.renvoi ? { renvoi: true } : {}), ...(b.reste_a_livrer ? { reste_a_livrer: true } : {}) });
+// rang : place du bon dans l'autorisation (?n=<rang>), qui peut couvrir toute la période et pas seulement la page
+const blCarte = (b, rang) => ({ numero: b.numero, date: b.date, heure: b.heure, commande: b.commande, nb_produits: b.nb_produits,
+  produits: b.produits.slice(0, 3).map(p => p.produit), renvoi: b.renvoi, reste_a_livrer: b.reste_a_livrer, rang });
 
-// période d'une recherche : bornée à aujourd'hui et à la profondeur des réglages
+// période d'une recherche : bornée à aujourd'hui et à la profondeur des réglages ; la note ne signale que la réduction d'une
+// date de début DEMANDÉE (une recherche sans date couvre d'office toute la profondeur : rien à signaler)
 function periode(debut, fin, defautJours, profondeurMois, d) {
   const auj = jourParis(d.maintenant());
   const limite = moisAvant(auj, profondeurMois);
   let f = fin && fin < auj ? fin : auj;
   let deb = debut || jourPlus(f, -defautJours);
   let note = null;
-  if (deb < limite) { deb = limite; note = `Recherche limitée aux ${profondeurMois} derniers mois.`; }
+  if (deb < limite) { deb = limite; if (debut) note = `Recherche limitée aux ${profondeurMois} derniers mois.`; }
   if (f < deb) f = deb;
   return { debut: deb, fin: f, note };
 }
@@ -199,16 +208,65 @@ const EXECUTANTS = {
       trouve: true,
       commandes: r.commandes.map(c => ({ reference: c.reference, date: c.date, heure: c.heure, origine: c.origine, etat: c.etat,
         etapes: c.etapes.filter(x => x.fait).map(x => x.libelle), lignes_total: c.lignes.length,
-        lignes: c.lignes.map(l => ({ produit: l.produit, cip: l.cip, commande: l.commande, servi: l.servi, non_servi: l.non_servi, facture: l.facture })),
-        lots: c.lots, factures: c.factures, ...(c.avoirs?.length ? { avoirs: c.avoirs } : {}), ...(c.retours.length ? { retours: c.retours } : {}) })),
+        lignes: c.lignes.map(l => ({ produit: l.produit, cip: l.cip, commande: l.commande, servi: l.servi, non_servi: l.non_servi, ...(l.a_livrer ? { a_livrer: l.a_livrer } : {}), facture: l.facture })),
+        lots: c.lots, factures: c.factures, ...(c.avoirs?.length ? { avoirs: c.avoirs } : {}), ...(c.livraisons.length ? { bons_de_livraison: c.livraisons } : {}),
+        ...(c.retours.length ? { retours: c.retours } : {}) })),
       ...(r.site && !r.commandes.length ? { commande_site: { reference_site: r.site.reference_site, date: r.site.date, heure: r.site.heure, origine: r.site.origine,
         lignes: r.site.lignes, etat: r.site.libelle, produits: r.site.produits } } : {}),
     };
     if (r.commandes.length > 1) contenu.note = "Cette commande du site a été répartie sur plusieurs commandes de préparation.";
     const ui = r.commandes.map(c => ({ type: "commande", reference: c.reference, date: c.date, origine: c.origine, etapes: c.etapes,
-      lignes: c.lignes.map(l => ({ produit: l.produit, cip: l.cip, commande: l.commande, servi: l.servi, non_servi: l.non_servi })),
-      lots: c.lots, factures: c.factures, ...(c.avoirs?.length ? { avoirs: c.avoirs } : {}), commande_site_id: c.commande_site_id || null }));
+      lignes: c.lignes.map(l => ({ produit: l.produit, cip: l.cip, commande: l.commande, servi: l.servi, non_servi: l.non_servi, ...(l.a_livrer ? { a_livrer: l.a_livrer } : {}) })),
+      lots: c.lots, factures: c.factures, ...(c.avoirs?.length ? { avoirs: c.avoirs } : {}), livraisons: c.livraisons, commande_site_id: c.commande_site_id || null }));
     return ok(contenu, ui);
+  },
+
+  // Bons de livraison : liste (20 par page) et UNE autorisation de téléchargement : chaque bon de la page (rang « n »), et en
+  // un seul PDF tous les bons de la période si elle en compte 60 au plus (sinon ceux de la page). Le quota de fichiers ne
+  // compte une autorisation de bons qu'une fois utilisée (_chat-stock.js) : parcourir la liste ne le consomme pas.
+  async bons_de_livraison(e, ctx, d, R) {
+    if (e.date_debut && e.date_fin && e.date_debut > e.date_fin) return echec("La date de début est postérieure à la date de fin.");
+    // une référence ou un produit cherché sans période : toute la profondeur des documents (24 mois), sinon 14 jours
+    const recherche = rechercheBL(e.recherche);
+    const rech = analyserRecherche(recherche);
+    const sansDate = !e.date_debut && !e.date_fin;
+    const p = periode(e.date_debut, e.date_fin, rech ? 9999 : 14, R.profondeur.factures_mois, d);
+    const r = await listerLivraisons(ctx, { debut: p.debut, fin: p.fin, recherche, page: e.page }, d);
+    const pages = Math.max(1, Math.ceil(r.total / BL_PAR_PAGE));
+    const notes = [p.note, r.tronque ? "Recherche très large : seuls les bons les plus récents sont listés ; pour les plus anciens, précisez une période ou le CIP." : null];
+    const contenu = { periode: { debut: p.debut, fin: p.fin }, total: r.total, page: e.page, pages, bons: r.bons.map(blModele) };
+    // carte : la période n'est affichée que si elle a un sens (pas pour un numéro, une commande ou un produit cherchés sans date)
+    const periodeCarte = rech && sansDate ? null : { debut: p.debut, fin: p.fin };
+    if (!r.total) {
+      if (!rech && p.debut === p.fin) {   // un jour sans sortie : les jours de sortie les plus proches
+        const proches = await joursLivraisonProches(ctx, p.debut, { limite: moisAvant(jourParis(d.maintenant()), R.profondeur.factures_mois) }, d);
+        contenu.message = proches.length ? `Aucun bon de livraison pour une sortie de l'entrepôt le ${jourFr(p.debut)}. Jours de sortie les plus proches : ${proches.map(jourFr).join(", ")} : demandez lequel.`
+          : "Aucun bon de livraison sur cette période.";
+        if (proches.length) contenu.jours_proches = proches;
+      } else contenu.message = rech ? "Aucun bon de livraison ne correspond à cette recherche pour votre pharmacie : vérifiez le numéro. Une commande pas encore sortie de l'entrepôt n'a pas encore de bon, et un retour (EP/IN/…) n'est pas un bon de livraison."
+        : "Aucun bon de livraison sur cette période.";
+      const note = notes.filter(Boolean).join(" ");
+      if (note) contenu.note = note;
+      return ok(contenu);
+    }
+    if (!r.bons.length) return ok({ ...contenu, message: `Cette page est vide : ${pages} page(s) en tout.` });
+    if (r.total > r.bons.length) notes.push(`${r.total} bons au total : page ${e.page} sur ${pages}.`);
+    // fichier unique : toute la période (60 bons au plus) ; si un bon de la page n'y figure pas (bon validé entre les deux
+    // lectures), l'autorisation se limite à la page
+    let ids = r.ensemble?.length ? r.ensemble : r.bons.map(b => b.id);
+    if (r.bons.some(b => !ids.includes(b.id))) ids = r.bons.map(b => b.id);
+    const ensembleTotal = ids.length > r.bons.length;
+    if (r.total > ids.length) notes.push(`Le fichier unique couvre au plus ${ids.length} bons : pour tous les bons d'une longue période, proposez des périodes plus courtes (une semaine par exemple).`);
+    const note = notes.filter(Boolean).join(" ");
+    if (note) contenu.note = note;
+    const quota = await quotaFichiers(ctx, d, R, 1);
+    const n = r.bons.length;
+    const fichier_id = quota ? null : await d.stock.fichiers.creer({ odoo_id: ctx.odooId, type: "bl", params: { picking_ids: ids },
+      ttl_min: 15, usages_max: Math.min(60, 3 * (n + 1)) });
+    contenu.message = quota || (ids.length > 1 ? `Les bons sont disponibles sous la réponse : chacun en PDF, ou ${ensembleTotal ? `les ${ids.length} bons de la période` : "tous ceux de la liste"} en un seul fichier.`
+      : "Le bon de livraison est disponible au téléchargement sous la réponse.");
+    return ok(contenu, [{ type: "bons_livraison", periode: periodeCarte, total: r.total, page: e.page, pages, items: r.bons.map(b => blCarte(b, ids.indexOf(b.id))),
+      fichier_id, ensemble: ids.length, ensemble_periode: ensembleTotal, mention: MENTION_BL }]);
   },
 
   async preparer_demande_retour(e, ctx, d) {

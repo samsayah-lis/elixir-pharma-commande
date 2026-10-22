@@ -210,7 +210,7 @@ export function creerStock(deps = {}) {
     lister: ({ depuisIso }) => tout(`chat_tours?created_at=gte.${enc(depuisIso)}&select=created_at,statut,cout_eur,repli,refus,code&order=created_at.asc`),
   };
 
-  // ── Autorisations de téléchargement (duplicata, relevé) ──
+  // ── Autorisations de téléchargement (duplicata, relevé, bons de livraison) ──
   const fichiers = {
     async creer({ odoo_id, type, params, ttl_min = 15, usages_max = 3 }) {
       const n = entier(odoo_id);
@@ -220,6 +220,15 @@ export function creerStock(deps = {}) {
         id, odoo_id: n, type: String(type), params: JSON.stringify(params ?? {}),
         expire_at: new Date(maintenant().getTime() + Math.max(1, ttl_min) * 60e3).toISOString(), usages: 0, usages_max: Math.max(1, usages_max) } });
       return id;
+    },
+    // lecture SANS consommer (chat-fichier contrôle le rang d'un bon et le quota avant de compter l'usage) ; null si
+    // inconnu, d'une autre fiche, expiré ou épuisé
+    async lire(id, odooId) {
+      const n = entier(odooId);
+      if (!HEX32.test(String(id || "")) || !n) return null;
+      const [r] = await sb(`chat_fichiers?id=eq.${id}&odoo_id=eq.${n}&select=id,odoo_id,type,params,expire_at,usages,usages_max&limit=1`) || [];
+      if (!r || !(Date.parse(r.expire_at) > maintenant().getTime()) || r.usages >= r.usages_max) return null;
+      return { id: r.id, odoo_id: r.odoo_id, type: r.type, params: lireJson(r.params, {}), usages: r.usages, usages_max: r.usages_max };
     },
     // compte un usage ; null si inconnu, d'une autre fiche, expiré ou épuisé (même réponse dans tous les cas)
     async consommer(id, odooId) {
@@ -297,7 +306,9 @@ export function creerStock(deps = {}) {
     // messages de la pharmacie elle-même (ceux d'un admin en saisie Elixir comptent pour l'admin : messagesAdmin)
     messages: (odooId, depuisIso) => sb(`chat_tours?odoo_id=eq.${entier(odooId) || 0}&admin_email=is.null&${depuis(depuisIso)}&select=id`, { compter: true }),
     messagesAdmin: (admin, depuisIso) => sb(`chat_tours?admin_email=eq.${enc(admin)}&${depuis(depuisIso)}&select=id`, { compter: true }),
-    fichiers: (odooId, depuisIso) => sb(`chat_fichiers?odoo_id=eq.${entier(odooId) || 0}&${depuis(depuisIso)}&select=id`, { compter: true }),
+    // fichiers préparés (facture, relevé) et autorisations de bons de livraison réellement utilisées : une liste de bons
+    // parcourue sans téléchargement ne compte pas
+    fichiers: (odooId, depuisIso) => sb(`chat_fichiers?odoo_id=eq.${entier(odooId) || 0}&${depuis(depuisIso)}&or=(type.neq.bl,usages.gt.0)&select=id`, { compter: true }),
     demandes: (odooId, type, depuisIso, statuts = null) => sb(`chat_demandes?odoo_id=eq.${entier(odooId) || 0}&type=eq.${type === "retour" ? "retour" : "transmission"}&${depuis(depuisIso)}${statuts ? `&statut=in.${liste(statuts)}` : ""}&select=id`, { compter: true }),
     erreurs: (depuisIso) => sb(`chat_tours?statut=eq.erreur&${depuis(depuisIso)}&select=id`, { compter: true }),
     // somme des coûts des tours du jour « AAAA-MM-JJ » (heure de Paris)

@@ -13,7 +13,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { analyseTexte, segments } from "../../src/components/assistant/texte-sur.js";
 import { dateFr, peremptionFr, heureFr, dateHeureFr, libelleCommande, tauxFr, pluriel, lienTel, nomFichier, qteFr } from "../../src/components/assistant/format.js";
-import { reponseFictive, reponseChatFictive, FICHIERS_FICTIFS } from "../../src/dev/reponses-fictives.js";
+import { reponseFictive, reponseChatFictive, FICHIERS_FICTIFS, idBonFictif } from "../../src/dev/reponses-fictives.js";
 
 const SRC = resolve(dirname(fileURLToPath(import.meta.url)), "../../src");
 let ok = 0, ko = 0;
@@ -55,7 +55,7 @@ eq("nom de fichier nettoyé", nomFichier('attachment; filename="../../etc/passwd
 eq("nom de fichier absent", nomFichier(null, "Duplicata.pdf"), "Duplicata.pdf");
 
 // ── 3. conversation fictive ──
-const TYPES = ["document", "documents", "releve", "commande", "recap_retour", "demande_enregistree", "transmission", "erreur"];
+const TYPES = ["document", "documents", "releve", "commande", "bons_livraison", "recap_retour", "demande_enregistree", "transmission", "erreur"];
 const formeMessage = (m) => m && typeof m.id === "string" && m.role === "assistant" && typeof m.texte === "string"
   && Array.isArray(m.ui_actions) && !Number.isNaN(Date.parse(m.at)) && m.ui_actions.every(a => TYPES.includes(a.type));
 eq("etat", reponseFictive({ fn: "chat", corps: { action: "etat" } }).disponible, true);
@@ -68,9 +68,17 @@ const question = (texte, contexte) => reponseChatFictive({ action: "message", co
 const premiereCarte = (texte, contexte) => question(texte, contexte).message.ui_actions[0]?.type ?? null;
 eq("pastilles d'accueil → cartes", [
   premiereCarte("Je voudrais le duplicata d'une facture."), premiereCarte("Je voudrais un relevé de facturation."),
-  premiereCarte("Où en est ma commande ?"), premiereCarte("Je voudrais faire une demande de retour ou une réclamation."),
+  premiereCarte("Où en est ma commande ?"), premiereCarte("Je voudrais un bon de livraison."), premiereCarte("Je voudrais faire une demande de retour ou une réclamation."),
   premiereCarte("Je voudrais parler à un conseiller."), premiereCarte("Bonjour"),
-], ["documents", "releve", "commande", "recap_retour", "transmission", null]);
+], ["documents", "releve", "commande", "bons_livraison", "recap_retour", "transmission", null]);
+{
+  const un = question("Je voudrais le bon de livraison EP/OUT/190087.").message.ui_actions[0];
+  eq("bon de livraison cité (bouton de la carte commande) : ce bon seul, son autorisation", [un.type, un.items.map(i => i.numero), un.fichier_id],
+    ["bons_livraison", ["EP/OUT/190087"], idBonFictif(1)]);
+  const tous = question("Je voudrais un bon de livraison.").message.ui_actions[0];
+  eq("bons de livraison : trois bons, une autorisation pour tous", [tous.items.length, tous.fichier_id, tous.items.map(i => [i.renvoi, i.reste_a_livrer])],
+    [3, FICHIERS_FICTIFS.bl, [[false, true], [false, false], [true, false]]]);
+}
 eq("choix d'un document → duplicata", premiereCarte("Le document INV/2026/90388"), "document");
 eq("avoir sans PDF", question("Le document RINV/2026/09021").message.ui_actions[0].fichier_id, null);
 eq("question sur une commande du site", question("Une question", { commande_site_id: "1700000000003" }).message.ui_actions[0].commande_site_id, "1700000000003");
@@ -282,13 +290,48 @@ vrai("récapitulatif expiré", html("recap_retour", { ...outils, etatDemande: ()
 vrai("transmission : « Appeler » en tel:", /href="tel:0186043995"/.test(html("transmission")));
 vrai("demande enregistrée : mention de la phase pilote", html("demande_enregistree").includes("Phase pilote"));
 vrai("commande : frise et lots", html("commande").includes("Suivi de la commande") && html("commande").includes("Lots et péremptions"));
+vrai("commande : bouton « Bon de livraison » (sortie validée)", html("commande").includes(">Bon de livraison<") && html("commande").includes("Bon de livraison EP/OUT/190123"), html("commande"));
+vrai("commande : reliquat ouvert affiché « + 4 à livrer », non servi 0 (comme le bon de la commande)", html("commande").includes("+ 4 à livrer"), html("commande"));
+{
+  const b = html("bons_livraison");
+  vrai("bons de livraison : un bouton PDF par bon et tous en un seul PDF", (b.match(/>PDF</g) || []).length === 3 && b.includes("Les 3 bons en un seul PDF"), b);
+  vrai("bons de livraison : expédié le, commande, renvoi, reste à livrer, mention du duplicata",
+    ["Expédié le", "commande S900123", "Renvoi après retour", "Reste à livrer", "Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées"].every(t => b.includes(t)), b);
+  vrai("bons de livraison : heure de sortie (« Expédié le … à 19:42 »), aucune identité affirmée avec un papier", /Expédié le \d{2}\/\d{2}\/\d{4} à 19:42/.test(b) && !/mêmes produits|bon remis/.test(b), b);
+  vrai("bons de livraison : boutons nommés pour les lecteurs d'écran", b.includes('aria-label="Télécharger le bon de livraison EP/OUT/190123 en PDF"'));
+  const sansId = rendu.carte({ ...toutes.find(a => a.type === "bons_livraison"), fichier_id: null }, outils);
+  vrai("bons de livraison sans autorisation (quota) : boutons inactifs, pas de « tous en un seul PDF »", !sansId.includes("un seul PDF") && sansId.includes("Téléchargement indisponible"), sansId);
+  const pages = rendu.carte({ ...toutes.find(a => a.type === "bons_livraison"), total: 25, pages: 2, ensemble: 25, ensemble_periode: true }, outils);
+  vrai("bons de livraison sur plusieurs pages : « Bons suivants », fichier unique de la période", pages.includes("Bons suivants") && pages.includes("page 1 sur 2")
+    && pages.includes("Les 25 bons de la période en un seul PDF"), pages);
+  // un seul bon (bouton « Bon de livraison » d'une commande) : bouton principal, comme le duplicata d'une facture ; pas de période
+  const un = rendu.carte(question("Je voudrais le bon de livraison EP/OUT/190087.").message.ui_actions[0], outils);
+  vrai("un seul bon : bouton principal « Télécharger le bon de livraison (PDF) », pas de petit bouton, pas de période",
+    un.includes("Télécharger le bon de livraison (PDF)") && !/>PDF</.test(un) && !un.includes("un seul PDF") && !un.includes("Sortie de l&#x27;entrepôt le"), un);
+  // téléchargement d'un seul bon : ?n=<rang> ; sans rang : tous
+  const urls = [];
+  const sauve = { fetch: globalThis.fetch, document: globalThis.document, URL: globalThis.URL };
+  globalThis.fetch = async (url) => { urls.push(String(url)); return new Response("%PDF", { status: 200, headers: { "Content-Disposition": 'attachment; filename="x.pdf"' } }); };
+  globalThis.document = { createElement: () => ({ click() {}, remove() {}, style: {} }), body: { appendChild() {} } };
+  globalThis.URL = Object.assign(function (...a) { return new sauve.URL(...a); }, { createObjectURL: () => "blob:x", revokeObjectURL() {} });
+  await api.telecharger({ admin: false }, FICHIERS_FICTIFS.bl, "x.pdf", nomFichier, 2);
+  await api.telecharger({ admin: false }, FICHIERS_FICTIFS.bl, "x.pdf", nomFichier);
+  await api.telecharger({ admin: false }, FICHIERS_FICTIFS.bl, "x.pdf", nomFichier, -1);
+  // quota de fichiers atteint au premier téléchargement d'une liste de bons : message du serveur affiché tel quel
+  globalThis.fetch = async () => new Response(JSON.stringify({ error: "quota", message: "Limite de 20 fichiers par 24 heures atteinte. Réessayez plus tard." }), { status: 429 });
+  const refus = await api.telecharger({ admin: false }, FICHIERS_FICTIFS.bl, "x.pdf", nomFichier, 0).then(() => null, (e) => e);
+  Object.assign(globalThis, sauve);
+  eq("téléchargement refusé (429 quota) : message du serveur", [refus?.code, refus?.message], ["quota", "Limite de 20 fichiers par 24 heures atteinte. Réessayez plus tard."]);
+  eq("téléchargement : rang d'un bon (?n=2), sinon tous ; rang invalide ignoré", urls.map(u => u.replace(/^.*\?/, "")),
+    [`id=${FICHIERS_FICTIFS.bl}&n=2`, `id=${FICHIERS_FICTIFS.bl}`, `id=${FICHIERS_FICTIFS.bl}`]);
+}
 eq("type de carte inconnu : rien", rendu.carte({ type: "lien", url: "https://x" }, outils), "");
 
 const proprietes = { identite: "p-x", auth: { admin: false }, pharmacyName: "PHARMACIE D'ESSAI", acting: null, contexte: null, onClose() {}, onReconnecter() {}, onInfos() {} };
 const bureau = rendu.panneau({ ...proprietes, mobile: false });
 vrai("bureau : <aside aria-label>", /^<aside[^>]*aria-label="Assistant Elixir"/.test(bureau), bureau.slice(0, 200));
 vrai("fil : role=log aria-live=polite", /role="log"[^>]*aria-live="polite"/.test(bureau));
-vrai("en-tête : titre, sous-titre, nouvelle conversation, fermer", ["Assistant Elixir", "Factures · relevés · commandes · retours", 'aria-label="Nouvelle conversation"', 'aria-label="Fermer l&#x27;assistant"'].every(t => bureau.includes(t)), bureau);
+vrai("en-tête : titre, sous-titre, nouvelle conversation, fermer", ["Assistant Elixir", "Factures · relevés · commandes · BL · retours", 'aria-label="Nouvelle conversation"', 'aria-label="Fermer l&#x27;assistant"'].every(t => bureau.includes(t)), bureau);
 vrai("saisie : 2 000 caractères au plus", /<textarea[^>]*maxLength="2000"/i.test(bureau) || /<textarea[^>]*maxlength="2000"/i.test(bureau));
 const mobile = rendu.panneau({ ...proprietes, mobile: true, acting: { name: "PHARMACIE SERVIE" } });
 vrai("mobile : dialog modal", /^<div[^>]*role="dialog"[^>]*aria-modal="true"/.test(mobile), mobile.slice(0, 200));

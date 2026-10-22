@@ -14,8 +14,9 @@ import { pathToFileURL } from "node:url";
 const RELATIONS = {
   "account.move.line": { move_id: "account.move", product_id: "product.product" }, "account.move": { commercial_partner_id: "res.partner", partner_id: "res.partner" },
   "sale.order.line": { order_id: "sale.order", order_partner_id: "res.partner", product_id: "product.product" }, "sale.order": { partner_id: "res.partner" },
-  "stock.picking": { partner_id: "res.partner", sale_id: "sale.order" }, "stock.move.line": { picking_id: "stock.picking", move_id: "stock.move" },
-  "stock.move": { picking_id: "stock.picking", origin_returned_move_id: "stock.move", sale_line_id: "sale.order.line" },
+  "stock.picking": { partner_id: "res.partner", sale_id: "sale.order", location_dest_id: "stock.location" },
+  "stock.move.line": { picking_id: "stock.picking", move_id: "stock.move", product_id: "product.product" },
+  "stock.move": { picking_id: "stock.picking", origin_returned_move_id: "stock.move", sale_line_id: "sale.order.line", product_id: "product.product" },
   "res.partner": { parent_id: "res.partner", commercial_partner_id: "res.partner" },
 };
 const idDe = (v) => (Array.isArray(v) ? v[0] : v);
@@ -104,7 +105,8 @@ export function creerFauxOdoo(donnees) {
 // d'une autre société (3) ; B (200) : autre pharmacie Elixir ; C (300) : sans CIP ; D (400) : autre société ;
 // E (500) : partagée sans vente Elixir ; F (600) : archivée ; G (700) : compte du site non relié (repli CIP).
 const S = "secret-jeton-portail", NOTE = "note interne confidentielle";
-const p = (id, name, cip, company, extra = {}) => ({ id, name, cip, ref: false, city: `Ville ${id}`, company_id: company ? [company, `Société ${company}`] : false,
+const p = (id, name, cip, company, extra = {}) => ({ id, name, cip, ref: false, street: `${id} rue des Essais`, street2: false, zip: "75001", city: `Ville ${id}`,
+  country_id: [75, "France"], company_id: company ? [company, `Société ${company}`] : false,
   parent_id: false, commercial_partner_id: [extra.parent_id?.[0] || id, name], active: true, email: `contact${id}@fiche.test`, phone: "0100000000",
   pharmaml_key: `PML-${id}`, credit: 1234.5, ...extra });
 const pr = (id) => ({ 11: [11, "[3400930000011] DOLIPRANE 1000 mg cp B/8"], 12: [12, "[3400930000028] SPASFON LYOC 80 mg B/10"],
@@ -123,16 +125,18 @@ const lt = (move, tax, balance, base, extra = {}) => ({ id: nl++, move_id: [move
   tax_base_amount: base, product_id: false, quantity: 0, name: `TVA ${tax}`, company_id: [2, "Elixir"], parent_state: "posted", ...extra });
 const so = (id, part, date, extra = {}) => ({ id, name: `S${id}`, partner_id: [part, `Fiche ${part}`], company_id: [2, "Elixir"], state: "sale", date_order: date,
   from_pharmaml: true, delivery_status: "full", invoice_status: "to invoice", x_studio_statut_prparation: "À préparer", x_studio_tourne: "IMPERATIFS",
-  pharmaml_lock_status: "closed", effective_date: false, picking_ids: [], invoice_ids: [], amount_untaxed: 10, note: NOTE, ...extra });
+  pharmaml_lock_status: "closed", effective_date: false, picking_ids: [], invoice_ids: [], amount_untaxed: 10, note: NOTE, client_order_ref: false, ...extra });
 let nsl = 1;
 const sol = (order, part, product, cde, retenu, livre, extra = {}) => ({ id: nsl++, order_id: [order, `S${order}`], order_partner_id: [part, `Fiche ${part}`], company_id: [2, "Elixir"],
   product_id: pr(product), name: libelleLigne(product), pharmaml_ordered_qty: cde, product_uom_qty: retenu, qty_delivered: livre, qty_invoiced: livre, pml_order_ref: "124714",
   display_type: false, purchase_price: 1.23, ...extra });
-const pk = (id, name, sale, part, state, done, extra = {}) => ({ id, name, sale_id: [sale, `S${sale}`], partner_id: [part, `Fiche ${part}`], company_id: [2, "Elixir"], state,
-  date_done: done, picking_type_code: "outgoing", return_id: false, origin: `S${sale}`, ...extra });
+// livraison : sortante vers l'emplacement des clients par défaut (réceptions de retour : vers le stock)
+const pk = (id, name, sale, part, state, done, extra = {}) => ({ id, name, sale_id: sale ? [sale, `S${sale}`] : false, partner_id: [part, `Fiche ${part}`], company_id: [2, "Elixir"], state,
+  date_done: done, picking_type_code: "outgoing", return_id: false, origin: sale ? `S${sale}` : false, location_dest_id: [5, "Partners/Customers"], backorder_ids: [],
+  backorder_id: false, note: NOTE, ...extra });
 let nml = 1;
 const ml = (picking, product, lot, qty, state = "done", exp = "2028-04-29 22:00:00") => ({ id: nml++, picking_id: [picking, `P${picking}`], product_id: pr(product),
-  lot_id: lot ? [lot[0], lot[1]] : false, expiration_date: exp, quantity: qty, state, company_id: [2, "Elixir"] });
+  lot_id: lot ? [lot[0], lot[1]] : false, expiration_date: exp, quantity: qty, state, company_id: [2, "Elixir"], product_uom_id: [1, "Unité(s)"] });
 // mouvement de stock validé : sortie (ligne de commande) ou retour (mouvement d'origine)
 const mv = (id, picking, product, qty, extra = {}) => ({ id, picking_id: [picking, `P${picking}`], product_id: pr(product), product_uom_qty: qty, quantity: qty, state: "done",
   picking_code: "outgoing", origin_returned_move_id: false, sale_line_id: false, date: false, company_id: [2, "Elixir"], ...extra });
@@ -210,11 +214,11 @@ export function jeuOdoo() {
     "stock.picking": [
       pk(5001, "EP/OUT/1001", 300001, 100, "done", "2026-09-02 19:30:00"), pk(5002, "EP/OUT/1002", 300002, 101, "done", "2026-09-02 19:35:00"),
       pk(5003, "EP/OUT/1003", 300003, 100, "done", "2026-09-14 19:40:00"),
-      pk(5004, "EP/IN/2001", 300003, 100, "done", "2026-09-18 09:00:00", { picking_type_code: "incoming", return_id: [5003, "EP/OUT/1003"] }),
+      pk(5004, "EP/IN/2001", 300003, 100, "done", "2026-09-18 09:00:00", { picking_type_code: "incoming", return_id: [5003, "EP/OUT/1003"], location_dest_id: [8, "EP/Stock"] }),
       pk(5005, "EP/OUT/1005", 300005, 100, "assigned", false), pk(5006, "EP/OUT/1006", 300006, 200, "done", "2026-10-17 19:30:00"),
       pk(5008, "EP/OUT/1008", 300008, 100, "done", "2026-10-15 22:30:00"),
       pk(5010, "EP/OUT/1010", 300009, 100, "done", "2026-09-20 19:00:00"),
-      pk(5011, "EP/IN/2011", 300009, 100, "done", "2026-09-25 09:00:00", { picking_type_code: "incoming", origin: "Retour de EP/IN/2010" }),
+      pk(5011, "EP/IN/2011", 300009, 100, "done", "2026-09-25 09:00:00", { picking_type_code: "incoming", origin: "Retour de EP/IN/2010", location_dest_id: [8, "EP/Stock"] }),
       pk(5013, "EP/OUT/1013", 300010, 100, "done", "2026-07-02 17:00:00"), pk(5014, "EP/OUT/1014", 300010, 100, "done", "2026-07-06 17:00:00"),
     ],
     "stock.move.line": [
@@ -237,6 +241,7 @@ export function jeuOdoo() {
       mv(111, 5011, 13, 24, { picking_code: "incoming", origin_returned_move_id: [110, "SMECTA"], date: "2026-09-25 09:00:00" }),
       mv(113, 5013, 15, 6, { sale_line_id: [13, "S300010"], date: "2026-07-02 17:00:00" }), mv(114, 5014, 15, 4, { sale_line_id: [13, "S300010"], date: "2026-07-06 17:00:00" }),
     ],
+    "stock.location": [{ id: 5, name: "Partners/Customers", usage: "customer" }, { id: 8, name: "EP/Stock", usage: "internal" }, { id: 9, name: "Partners/Vendors", usage: "supplier" }],
     "ir.attachment": [pdf(9001, 1001, "facture 40001"), pdf(9002, 1002, "facture 40002"), pdf(9004, 1004, "facture 40003"), pdf(9005, 1005, "autre société"),
       pdf(9007, 1007, "facture 40010"), pdf(9050, 2001, "facture B")],
   };

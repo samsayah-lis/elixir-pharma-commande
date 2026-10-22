@@ -5,3 +5,6 @@ dist/
 *.log
 # Banc d'essai : données figées capturées en production (pharmacies, commandes) — jamais dans git
 dev-fixtures/
+
+# Duplicatas et documents produits par les scripts (données réelles de pharmacies) : jamais dans git
+scripts/**/*.pdf

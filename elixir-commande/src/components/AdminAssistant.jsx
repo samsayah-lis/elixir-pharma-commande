@@ -307,6 +307,7 @@ function resumeCarte(a) {
     case "documents": return `Choix entre documents : ${(a.items || []).map(i => i?.numero).filter(Boolean).join(", ") || "aucun"}`;
     case "releve": return `Relevé du ${jourFr(a.debut)} au ${jourFr(a.fin)} · ${a.nb_factures ?? 0} facture(s), ${a.nb_avoirs ?? 0} avoir(s) · ${fmtEur(a.total_ttc)} TTC`;
     case "commande": return `Commande ${a.reference || "?"} du ${jourFr(a.date)} · ${(a.lignes || []).length} ligne(s)`;
+    case "bons_livraison": return `Bons de livraison : ${(a.items || []).map(i => i?.numero).filter(Boolean).join(", ") || "aucun"}${a.fichier_id ? "" : " · sans téléchargement (quota)"}`;
     case "recap_retour": return `Récapitulatif de retour : document ${a.document?.numero || "?"} · ${(a.lignes || []).length} ligne(s) · ${MOTIFS[a.motif] || a.motif || ""}`;
     case "demande_enregistree": return `Demande enregistrée ${a.numero || ""}${a.simulation ? " (simulation)" : ""}`;
     case "transmission": return `Transmission ${a.numero || ""}`;
@@ -833,7 +834,7 @@ export default function AdminAssistant({ adminFetch, flash, onDirtyChange }) {
           {enLigne?.modele && <span style={{ fontSize: 12, color: T.paperMute }}>{libelleDe(MODELES, enLigne.modele)}{enLigne.effort ? ` · effort ${libelleDe(EFFORTS, enLigne.effort).toLowerCase()}` : ""}</span>}
         </div>
         <div style={{ fontSize: 12, color: T.paperMute, marginTop: 6, lineHeight: 1.5 }}>
-          Assistant automatique des pharmacies : duplicatas de factures, relevés de facturation, suivi des commandes, demandes de retour et transmission à un conseiller,
+          Assistant automatique des pharmacies : duplicatas de factures, relevés de facturation, suivi des commandes, bons de livraison, demandes de retour et transmission à un conseiller,
           avec les seules données Odoo de la pharmacie connectée. Il prépare les retours ; la pharmacie les confirme par un bouton avant tout envoi.
         </div>
       </div>

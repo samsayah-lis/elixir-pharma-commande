@@ -110,13 +110,16 @@ export async function attendreReponse({ auth, tourId, conversationId, signal, su
   return null;
 }
 
-// Téléchargement d'un fichier préparé par l'assistant (duplicata, relevé) : fetch avec le jeton, puis blob: et
-// <a download> (sur iPhone, le PDF s'ouvre dans la visionneuse). Le lien n'est jamais une adresse écrite par le modèle.
-export async function telecharger(auth, fichierId, nomParDefaut, nomDepuis) {
+// Téléchargement d'un fichier préparé par l'assistant (duplicata, relevé, bons de livraison) : fetch avec le jeton, puis
+// blob: et <a download> (sur iPhone, le PDF s'ouvre dans la visionneuse). Le lien n'est jamais une adresse écrite par le
+// modèle. rang : un seul des bons de livraison d'une autorisation (?n=), sinon tous en un seul PDF.
+export async function telecharger(auth, fichierId, nomParDefaut, nomDepuis, rang = null) {
   let r;
-  try { r = await requeteAssistant("chat-fichier", { query: { id: fichierId }, auth, brut: true }); }
+  const query = { id: fichierId, ...(Number.isInteger(rang) && rang >= 0 ? { n: String(rang) } : {}) };
+  try { r = await requeteAssistant("chat-fichier", { query, auth, brut: true }); }
   catch { throw erreur("reseau"); }
-  if (!r.ok) verifie(r);
+  // erreur : corps JSON lu pour reprendre le message du serveur (429 « Limite de … fichiers par 24 heures atteinte »)
+  if (!r.ok) verifie({ ...r, json: await r.reponse.json().catch(() => null) });
   const blob = await r.reponse.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

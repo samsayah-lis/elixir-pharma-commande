@@ -4,15 +4,35 @@
 // et demandes : doublures (aucune écriture, aucun e-mail, aucun appel au modèle). Identité : mode admin « pour une
 // pharmacie » (pour_odoo_id revalidé dans le vrai Odoo).
 // N'imprime que des identifiants, des nombres et des totaux (ni nom, ni e-mail, ni téléphone).
-// Contrôle de non-régression : relevé de la fiche 595 du 01/09/2026 au 30/09/2026 = HT 89 041,89 · TVA 2 488,65 · TTC 91 530,54.
+// Contrôle de non-régression : relevé de la fiche 595 du 01/09/2026 au 30/09/2026, comparé à une empreinte (les totaux d'une
+// pharmacie ne sont pas recopiés dans ce dépôt public).
+// Bons de livraison (22/10/2026) : liste, recherches, duplicata d'un bon et de la période, autorisations forgées (bon d'une
+// autre pharmacie, réception de retour) → 404. CHAT_ESSAI_PDF_DIR=<dossier> : y écrit les duplicatas produits (documents
+// réels d'une pharmacie) ; refusé si le dossier est dans le dépôt.
 import os from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { pathToFileURL } from "node:url";
+import { createHash } from "node:crypto";
+import { pathToFileURL, fileURLToPath } from "node:url";
 import { controlerAppels } from "./test-chat-perimetre.mjs";
 import { identifier, revaliderRetour } from "../netlify/functions/_chat-perimetre.js";
 import { executerOutil } from "../netlify/functions/_chat-outils.js";
 import { traiter } from "../netlify/functions/chat-fichier.js";
+
+// duplicatas réels : jamais écrits dans le dépôt (git les publierait)
+const RACINE_DEPOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const DOSSIER_PDF = process.env.CHAT_ESSAI_PDF_DIR ? path.resolve(process.env.CHAT_ESSAI_PDF_DIR) : null;
+if (DOSSIER_PDF) {
+  const rel = path.relative(RACINE_DEPOT, DOSSIER_PDF);
+  if (!rel || (!rel.startsWith("..") && !path.isAbsolute(rel))) {
+    console.error(`CHAT_ESSAI_PDF_DIR refusé : ${DOSSIER_PDF} est dans le dépôt (${RACINE_DEPOT}). Choisissez un dossier hors du dépôt.`);
+    process.exit(2);
+  }
+}
+// relevé de la fiche 595 pour 09/2026 : empreinte de « HT|TVA|TTC|factures|avoirs » (valeurs attendues hors du dépôt)
+const EMPREINTE_595 = "318712366de6f2648ab96c5070d505638f672e8cb4524af0eb26004d069e985d";
+const empreinte = (rc) => createHash("sha256").update(`${rc.total_ht}|${rc.total_tva}|${rc.total_ttc}|${rc.nb_factures}|${rc.nb_avoirs}`).digest("hex");
 
 // journaux JSON de l'assistant : masqués (ils ne contiennent ni texte ni montant, seulement du bruit ici)
 const log = console.log;
@@ -31,7 +51,7 @@ async function odoo(model, method, args, kwargs = {}, opts = {}) {
 const sb = async () => [];
 function creerFauxStock() {
   const f = new Map();
-  return { fichiers: {
+  return { params: (id) => f.get(id)?.params, fichiers: {
     async creer(o) { const id = randomBytes(16).toString("hex"); f.set(id, { ...o, usages: 0 }); return id; },
     async consommer(id, odooId) { const x = f.get(id); if (!x || x.odoo_id !== Number(odooId) || x.usages >= x.usages_max) return null; x.usages++; return { id, odoo_id: x.odoo_id, type: x.type, params: x.params }; },
   }, compter: { fichiers: async () => 0 } };
@@ -78,8 +98,7 @@ for (const fiche of (process.argv.slice(2).length ? process.argv.slice(2) : ["59
   console.log(`  TVA : ${(rc.tva || []).map(v => `${v.taux} % → base ${v.base}, TVA ${v.montant}`).join(" ; ")}`);
   const sommeBase = Math.round((rc.tva || []).reduce((s, v) => s + v.base, 0) * 100) / 100, sommeTva = Math.round((rc.tva || []).reduce((s, v) => s + v.montant, 0) * 100) / 100;
   verifier(`ventilation cohérente : Σ bases ${sommeBase} = HT, Σ TVA ${sommeTva} = TVA`, sommeBase === rc.total_ht && sommeTva === rc.total_tva);
-  if (fiche === 595) verifier("non-régression 595 : HT 89 041,89 · TVA 2 488,65 · TTC 91 530,54",
-    rc.total_ht === 89041.89 && rc.total_tva === 2488.65 && rc.total_ttc === 91530.54 && rc.nb_factures === 41 && rc.nb_avoirs === 5);
+  if (fiche === 595) verifier("non-régression 595 : totaux et nombre de pièces identiques à l'empreinte de référence", empreinte(rc) === EMPREINTE_595);
   for (const fmt of ["pdf", "xlsx"]) {
     const id = rel.ui_actions[0]?.fichiers?.[fmt];
     if (!id) continue;
@@ -142,6 +161,59 @@ for (const fiche of (process.argv.slice(2).length ? process.argv.slice(2) : ["59
   verifier(`commandes « facturées » : ${fa.contenu.total}, toutes avec une facture (${tFa} ms)`, (fa.contenu.commandes || []).every(c => c.factures.length > 0));
   const [ps, tPs] = await ms(() => outil("rechercher_commandes", { date_debut: null, date_fin: null, etat: "partiellement_servies", recherche: null, page: 1 }));
   verifier(`commandes partiellement servies : ${ps.contenu.total} (${tPs} ms), aucune entièrement non servie`, (ps.contenu.commandes || []).every(c => !/^Non servie/.test(c.etat)));
+
+  // ── bons de livraison ──
+  const [bl, tBl] = await ms(() => outil("bons_de_livraison", { date_debut: null, date_fin: null, recherche: null, page: 1 }));
+  const bons = bl.contenu.bons || [];
+  console.log(`bons de livraison 14 j : ${bl.contenu.total} (${bons.length} sur la page, ${bons.filter(b => b.renvoi).length} renvoi(s), ${bons.filter(b => b.reste_a_livrer).length} avec reste à livrer) (${tBl} ms)`);
+  verifier("bons de livraison : aucune donnée privée vers le modèle (référence client, adresse, id)", !/"id"|client_order_ref|street|"adresse"/.test(JSON.stringify(bl.contenu)));
+  const b0 = bons[0];
+  if (b0) {
+    const [parNum, t1] = await ms(() => outil("bons_de_livraison", { date_debut: null, date_fin: null, recherche: b0.numero, page: 1 }));
+    verifier(`bon cherché par son numéro : retrouvé (${t1} ms)`, (parNum.contenu.bons || []).map(b => b.numero).includes(b0.numero));
+    const court = b0.numero.split("/").pop().replace(/^0+/, "");
+    const [parCourt] = await ms(() => outil("bons_de_livraison", { date_debut: null, date_fin: null, recherche: court, page: 1 }));
+    verifier("bon cherché par le nombre lu sur le papier : retrouvé", (parCourt.contenu.bons || []).map(b => b.numero).includes(b0.numero));
+    if (b0.commande) {
+      const [parCde, t2] = await ms(() => outil("bons_de_livraison", { date_debut: null, date_fin: null, recherche: b0.commande, page: 1 }));
+      verifier(`bons de la commande : ${parCde.contenu.total}, dont celui-ci (${t2} ms)`, (parCde.contenu.bons || []).map(b => b.numero).includes(b0.numero));
+    }
+    const [parJour, t3] = await ms(() => outil("bons_de_livraison", { date_debut: b0.date_sortie, date_fin: b0.date_sortie, page: 1, recherche: null }));
+    verifier(`bons du jour de sortie : ${parJour.contenu.total}, dont celui-ci (${t3} ms)`, (parJour.contenu.bons || []).map(b => b.numero).includes(b0.numero));
+    if (b0.produits?.[0]?.cip) {
+      const [parCip, t4] = await ms(() => outil("bons_de_livraison", { date_debut: null, date_fin: null, recherche: b0.produits[0].cip, page: 1 }));
+      verifier(`bons d'un produit (CIP13) : ${parCip.contenu.total}, dont celui-ci (${t4} ms)`, (parCip.contenu.bons || []).map(b => b.numero).includes(b0.numero));
+    }
+    // duplicata d'un bon (rang 0) et de toute la page
+    const id = bl.ui_actions[0]?.fichier_id;
+    const [r1, tR1] = await ms(() => traiter(evt({ id, n: "0", pour_odoo_id: String(fiche) }), deps));
+    const pdf1 = Buffer.from(r1.body || "", "base64");
+    verifier(`duplicata d'un bon : ${pdf1.length} octets, ${r1.headers?.["Content-Type"]}, début %PDF (${tR1} ms)`, r1.statusCode === 200 && pdf1.subarray(0, 4).toString() === "%PDF");
+    const [rT, tRT] = await ms(() => traiter(evt({ id, pour_odoo_id: String(fiche) }), deps));
+    const pdfT = Buffer.from(rT.body || "", "base64");
+    const { PDFDocument } = await import("pdf-lib");
+    const pagesT = rT.statusCode === 200 ? (await PDFDocument.load(pdfT)).getPageCount() : 0;
+    const nT = stock.params(id)?.picking_ids?.length || bons.length;
+    verifier(`duplicatas en un seul PDF (${nT} bons, ${bons.length} sur la page) : ${pdfT.length} octets, ${pagesT} page(s) (${tRT} ms)`, rT.statusCode === 200 && pagesT >= nT);
+    if (DOSSIER_PDF) {
+      mkdirSync(DOSSIER_PDF, { recursive: true });
+      writeFileSync(path.join(DOSSIER_PDF, `bl-${fiche}-un.pdf`), pdf1);
+      writeFileSync(path.join(DOSSIER_PDF, `bl-${fiche}-page.pdf`), pdfT);
+    }
+    // autorisations forgées : bon validé d'une autre pharmacie, réception de retour de la fiche (lus hors périmètre, ids seuls)
+    const [autre] = await ex("stock.picking", "search_read", [[["company_id", "=", 2], ["picking_type_code", "=", "outgoing"], ["state", "=", "done"],
+      ["partner_id.commercial_partner_id", "!=", fiche]]], { fields: ["id"], limit: 1, order: "id desc", context: { lang: "fr_FR", allowed_company_ids: [2] } });
+    const [retour] = await ex("stock.picking", "search_read", [[["company_id", "=", 2], ["picking_type_code", "=", "incoming"], ["state", "=", "done"],
+      ["partner_id", "child_of", fiche]]], { fields: ["id"], limit: 1, order: "id desc", context: { lang: "fr_FR", allowed_company_ids: [2] } });
+    const idsPage = stock.params(id)?.picking_ids || [];
+    for (const [lib, ids] of [["bon d'une autre pharmacie", autre ? [autre.id] : null], ["page + bon d'une autre pharmacie", autre ? [...idsPage.slice(0, 2), autre.id] : null],
+      ["réception de retour de la fiche", retour ? [retour.id] : null]]) {
+      if (!ids) { log(`autorisation forgée (${lib}) : sans objet`); continue; }
+      const fid = await stock.fichiers.creer({ odoo_id: fiche, type: "bl", params: { picking_ids: ids }, ttl_min: 15, usages_max: 3 });
+      const r = await traiter(evt({ id: fid, pour_odoo_id: String(fiche) }), deps);
+      verifier(`autorisation forgée (${lib}) → ${r.statusCode}`, r.statusCode === 404);
+    }
+  } else log("bons de livraison : aucun sur 14 jours (contrôles du duplicata sans objet)");
 
   // référence d'une autre pharmacie = inconnue (même sortie)
   const inconnu = await outil("detail_commande", { reference: "S000001" });

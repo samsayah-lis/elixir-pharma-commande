@@ -2,7 +2,7 @@
 // Les chiffres qui font foi sont ceux des cartes (lus par le serveur), jamais ceux du texte du modèle. Montants en
 // euros (nombres, signés pour les avoirs), dates AAAA-MM-JJ. Aucun lien, sauf « Appeler » (tel: posé à partir du
 // numéro de la carte de transmission). L'or reste réservé à « Envoyer la commande » : « Confirmer » est pétrole.
-// outils = { telecharger(id, nom), envoyer(texte), preremplir(texte), decider(demandeId, decision, { prevenir }),
+// outils = { telecharger(id, nom, rang), envoyer(texte), preremplir(texte), decider(demandeId, decision, { prevenir }),
 //            etatDemande(demandeId), occupe, apercuFichiers, saisieElixir }
 import React, { useState } from "react";
 import { T, R, ui, fmtEur } from "../../theme.js";
@@ -15,26 +15,28 @@ const encartCarte = (ton) => ({ ...ui.encart(ton), marginTop: 8, display: "flex"
 const nomPiece = (piece, numero) => `${libelle(PIECES, piece) || "Document"} ${numero || ""}`.trim();
 const nomTelechargement = (base) => `${String(base || "document").replace(/[^\w-]+/g, "_").replace(/^_+|_+$/g, "")}`;
 
-// Téléchargements d'une carte : un seul à la fois, erreur affichée sous les boutons
+// Téléchargements d'une carte : un seul à la fois, erreur affichée sous les boutons. rang : un seul des bons de livraison
+// d'une même autorisation (sinon tous, en un seul PDF)
+const cleFichier = (id, rang) => (rang == null ? id : `${id}:${rang}`);
 function useTelechargement(outils) {
   const [enCours, setEnCours] = useState(null);
   const [erreur, setErreur] = useState("");
-  const lance = async (id, nom) => {
+  const lance = async (id, nom, rang = null) => {
     if (enCours) return;
     setErreur("");
     if (outils.apercuFichiers) { setErreur("Aperçu : aucun fichier n'est produit ici."); return; }
-    setEnCours(id);
-    try { await outils.telecharger(id, nom); }
+    setEnCours(cleFichier(id, rang));
+    try { await outils.telecharger(id, nom, rang); }
     catch (e) { setErreur(e.message || "Téléchargement impossible : réessayez."); }
     setEnCours(null);
   };
   return { enCours, erreur, lance };
 }
-function BoutonFichier({ t, id, nom, children, principal = false, aria }) {
-  const occupe = t.enCours === id;
+function BoutonFichier({ t, id, rang = null, nom, children, principal = false, aria, petit = false }) {
+  const occupe = t.enCours === cleFichier(id, rang);
   return (
-    <button type="button" className={`${principal ? "ex-btn-petrole" : "ex-btn-ligne"} ex-assistant__btn${principal ? " ex-assistant__btn--fort" : ""}`}
-      onClick={() => t.lance(id, nom)} disabled={!id || (t.enCours && !occupe)} aria-busy={occupe || undefined} aria-label={aria}>
+    <button type="button" className={`${principal ? "ex-btn-petrole" : "ex-btn-ligne"} ex-assistant__btn${principal ? " ex-assistant__btn--fort" : ""}${petit ? " ex-assistant__btn--petit" : ""}`}
+      onClick={() => t.lance(id, nom, rang)} disabled={!id || (t.enCours && !occupe)} aria-busy={occupe || undefined} aria-label={aria}>
       {occupe ? <span className="ex-roue" aria-hidden="true" /> : <Icone nom="document" taille={16} />}
       {occupe ? "Préparation…" : children}
     </button>
@@ -125,6 +127,7 @@ function CarteCommande({ a, outils }) {
   const lignes = Array.isArray(a.lignes) ? a.lignes : [];
   const lots = Array.isArray(a.lots) ? a.lots : [];
   const factures = Array.isArray(a.factures) ? a.factures : [];
+  const livraisons = (Array.isArray(a.livraisons) ? a.livraisons : []).filter((l) => l && typeof l.numero === "string").slice(0, 5);
   return (
     <div className="ex-assistant__carte">
       <div style={{ ...titreCarte, justifyContent: "space-between", flexWrap: "wrap" }}>
@@ -158,7 +161,10 @@ function CarteCommande({ a, outils }) {
                 <td style={{ color: T.ink }}>{l.produit}{l.cip && <span className="num" style={{ display: "block", fontSize: 11, color: T.inkMute }}>{l.cip}</span>}</td>
                 <td className="num">{qteFr(l.commande)}</td>
                 <td className="num">{qteFr(l.servi)}</td>
-                <td className="num" style={{ color: Number(l.non_servi) > 0 ? T.warn : undefined, fontWeight: Number(l.non_servi) > 0 ? 700 : undefined }}>{qteFr(l.non_servi)}</td>
+                <td className="num" style={{ color: Number(l.non_servi) > 0 ? T.warn : undefined, fontWeight: Number(l.non_servi) > 0 ? 700 : undefined }}>
+                  {qteFr(l.non_servi)}
+                  {Number(l.a_livrer) > 0 && <span style={{ display: "block", fontSize: 11, fontWeight: 600, color: T.teal, whiteSpace: "nowrap" }}>+ {qteFr(l.a_livrer)} à livrer</span>}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -179,11 +185,100 @@ function CarteCommande({ a, outils }) {
       )}
       {factures.length > 0 && <div className="num" style={{ ...meta, marginTop: 10 }}>Facturée : {factures.join(", ")}</div>}
       <div className="ex-assistant__actions">
+        {/* bon de livraison : demandé à l'assistant (carte « Bons de livraison », même téléchargement sécurisé) */}
+        {livraisons.map((l) => (
+          <button key={l.numero} type="button" className="ex-btn-ligne ex-assistant__btn" disabled={outils.occupe}
+            onClick={() => outils.envoyer(`Je voudrais le bon de livraison ${l.numero}.`)}
+            aria-label={`Bon de livraison ${l.numero}${l.date ? `, expédié le ${dateFr(l.date)}` : ""}`}>
+            <Icone nom="camion" taille={16} />{livraisons.length > 1 ? `Bon de livraison ${l.numero}` : "Bon de livraison"}
+          </button>
+        ))}
         <button type="button" className="ex-btn-ligne ex-assistant__btn" disabled={outils.occupe}
           onClick={() => outils.preremplir(`Je signale un problème sur la commande ${a.reference} : `)}>
           <Icone nom="alerte" taille={16} />Signaler un problème sur cette commande
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Bons de livraison : un bouton par bon (rang dans l'autorisation, ?n=<rang>), et plusieurs bons en un seul PDF : toute
+// la période si elle en compte 60 au plus (« ensemble_periode »), sinon ceux de la page. Un seul bon : bouton principal.
+// La date est celle de la sortie de l'entrepôt (« expédié le … à … »), jamais une date de réception chez la pharmacie.
+const HEURE = /^\d{2}:\d{2}$/;
+function CarteBonsLivraison({ a, outils }) {
+  const t = useTelechargement(outils);
+  const items = (Array.isArray(a.items) ? a.items : []).filter((b) => b && typeof b.numero === "string");
+  const id = typeof a.fichier_id === "string" ? a.fichier_id : null;
+  const periode = a.periode?.debut && a.periode?.fin
+    ? (a.periode.debut === a.periode.fin ? `Sortie de l'entrepôt le ${dateFr(a.periode.debut)}` : `Sorties de l'entrepôt du ${dateFr(a.periode.debut)} au ${dateFr(a.periode.fin)}`) : null;
+  const total = Number(a.total) || items.length, page = Number(a.page) || 1, pages = Number(a.pages) || 1;
+  const rangDe = (b, i) => (Number.isInteger(b.rang) && b.rang >= 0 ? b.rang : i);
+  const ensemble = Number.isInteger(a.ensemble) && a.ensemble > 0 ? a.ensemble : items.length;
+  const seul = items.length === 1 && ensemble <= 1;
+  const jours = [...new Set(items.map((b) => b.date).filter(Boolean))].sort();
+  const nomTous = `Duplicatas_BL${jours.length ? `_${jours[0]}${jours.at(-1) !== jours[0] ? `_${jours.at(-1)}` : ""}` : ""}.pdf`;
+  const nomUn = (b) => `Duplicata_BL_${nomTelechargement(b.numero)}.pdf`;
+  return (
+    <div className="ex-assistant__carte">
+      <div style={titreCarte}><Icone nom="camion" taille={18} style={{ color: T.teal }} />{items.length > 1 ? "Bons de livraison" : "Bon de livraison"}</div>
+      <div className="num" style={meta}>
+        {[periode, pages > 1 ? `${pluriel(total, "bon")} · page ${page} sur ${pages}` : items.length > 1 ? pluriel(total, "bon") : null].filter(Boolean).join(" · ")}
+      </div>
+      <ul style={{ listStyle: "none", margin: "8px 0 0", padding: 0 }}>
+        {items.map((b, i) => {
+          const produits = Array.isArray(b.produits) ? b.produits.filter(Boolean) : [];
+          const autres = Math.max(0, (Number(b.nb_produits) || produits.length) - produits.length);
+          const expedie = b.date ? `Expédié le ${dateFr(b.date)}${HEURE.test(b.heure || "") ? ` à ${b.heure}` : ""}` : null;
+          return (
+            <li key={`${b.numero}-${i}`} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: `1px solid ${T.lineSoft}` }}>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                  <b className="num" style={{ fontWeight: 650, color: T.ink }}>{b.numero}</b>
+                  {b.renvoi && <span style={ui.badge("info")}>Renvoi après retour</span>}
+                  {b.reste_a_livrer && <span style={ui.badge("warn")}>Reste à livrer</span>}
+                </span>
+                <span className="num" style={{ display: "block", fontSize: 12, color: T.inkSoft }}>
+                  {[expedie, b.commande && `commande ${b.commande}`, b.nb_produits != null && pluriel(b.nb_produits, "produit")].filter(Boolean).join(" · ")}
+                </span>
+                {produits.length > 0 && (
+                  <span style={{ display: "block", fontSize: 12, color: T.inkMute, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {produits.join(", ")}{autres ? `, + ${autres}` : ""}
+                  </span>
+                )}
+              </span>
+              {!seul && (
+                <BoutonFichier t={t} id={id} rang={rangDe(b, i)} nom={nomUn(b)} petit aria={`Télécharger le bon de livraison ${b.numero} en PDF`}>PDF</BoutonFichier>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {id && seul && (
+        <div className="ex-assistant__actions">
+          <BoutonFichier t={t} id={id} rang={rangDe(items[0], 0)} nom={nomUn(items[0])} principal aria={`Télécharger le bon de livraison ${items[0].numero} en PDF`}>
+            Télécharger le bon de livraison (PDF)
+          </BoutonFichier>
+        </div>
+      )}
+      {id && ensemble > 1 && (
+        <div className="ex-assistant__actions">
+          <BoutonFichier t={t} id={id} nom={nomTous} principal aria={`Télécharger ${a.ensemble_periode ? `les ${ensemble} bons de livraison de la période` : `les ${ensemble} bons de livraison`} en un seul PDF`}>
+            {a.ensemble_periode ? `Les ${ensemble} bons de la période en un seul PDF` : `Les ${ensemble} bons en un seul PDF`}
+          </BoutonFichier>
+        </div>
+      )}
+      {!id && <div style={{ ...meta, marginTop: 8, color: T.inkMute }}>Téléchargement indisponible pour le moment : voir la réponse ci-dessus.</div>}
+      {pages > 1 && page < pages && (
+        <div className="ex-assistant__actions" style={{ marginTop: 8 }}>
+          <button type="button" className="ex-btn-ligne ex-assistant__btn" disabled={outils.occupe}
+            onClick={() => outils.envoyer(`Montrez-moi les bons de livraison suivants (page ${page + 1}).`)}>
+            <Icone nom="suivant" taille={16} />Bons suivants
+          </button>
+        </div>
+      )}
+      <ErreurFichier t={t} />
+      <div style={{ fontSize: 12, color: T.inkMute, marginTop: 10 }}>{a.mention || "Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées."}</div>
     </div>
   );
 }
@@ -296,7 +391,7 @@ const CarteErreur = ({ a }) => (
 );
 
 const CARTES = {
-  document: CarteDocument, documents: CarteDocuments, releve: CarteReleve, commande: CarteCommande,
+  document: CarteDocument, documents: CarteDocuments, releve: CarteReleve, commande: CarteCommande, bons_livraison: CarteBonsLivraison,
   recap_retour: CarteRecap, demande_enregistree: CarteEnregistree, transmission: CarteTransmission, erreur: CarteErreur,
 };
 export const TYPES_CARTES = Object.keys(CARTES);

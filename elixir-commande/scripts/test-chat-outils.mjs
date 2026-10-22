@@ -1,7 +1,8 @@
-// Tests des 7 outils de l'Assistant Elixir et de chat-fichier : node scripts/test-chat-outils.mjs
+// Tests des 8 outils de l'Assistant Elixir et de chat-fichier : node scripts/test-chat-outils.mjs
+// (bons de livraison, outil et fichiers : scripts/test-chat-bl.mjs)
 // Hors ligne : faux Odoo et faux Supabase de test-chat-perimetre.mjs, faux stock (autorisations de fichiers), fausses
 // demandes (brouillons, transmissions). Aucun appel au modèle, aucune écriture réelle.
-//  • définitions : 7 outils dans l'ordre, strict, toutes propriétés requises, additionalProperties false, aucun mot-clé
+//  • définitions : 8 outils dans l'ordre, strict, toutes propriétés requises, additionalProperties false, aucun mot-clé
 //    non pris en charge par le mode strict ; empreinte stable ; texte d'attente pour chaque outil ;
 //  • validation Zod (bornes) → is_error ; fiche sans CIP → seul « transmettre » ;
 //  • référence inconnue = référence d'une autre pharmacie (même sortie, pour chaque outil qui en prend une) ;
@@ -24,8 +25,9 @@ const eq = (label, got, exp) => { if (JSON.stringify(got) === JSON.stringify(exp
 const vrai = (label, cond, detail = "") => { if (cond) ok++; else { ko++; console.log("✗", label, detail); } };
 
 // ── Définitions ─────────────────────────────────────────────────────────
-const NOMS = ["rechercher_factures", "duplicata_facture", "releve_facturation", "rechercher_commandes", "detail_commande", "preparer_demande_retour", "transmettre_a_un_conseiller"];
-eq("7 outils, ordre figé", OUTILS.map(o => o.name), NOMS);
+const NOMS = ["rechercher_factures", "duplicata_facture", "releve_facturation", "rechercher_commandes", "detail_commande", "bons_de_livraison", "preparer_demande_retour",
+  "transmettre_a_un_conseiller"];
+eq("8 outils, ordre figé", OUTILS.map(o => o.name), NOMS);
 eq("strict partout", OUTILS.every(o => o.strict === true), true);
 const CLES_OK = new Set(["type", "properties", "required", "additionalProperties", "items", "enum", "anyOf", "description", "format"]);
 const fautesSchema = [];
@@ -163,12 +165,15 @@ const dc = await outil("detail_commande", { reference: "S300008" });
 eq("détail : frise (sortie le soir = lendemain à Paris)", dc.ui_actions[0].etapes.map(e => [e.cle, e.fait, e.date]),
   [["recue", true, "2026-10-15"], ["preparation", true, null], ["sortie", true, "2026-10-16"], ["facturee", true, "2026-10-14"]]);
 eq("détail : libellé de sortie d'entrepôt", dc.ui_actions[0].etapes[2].libelle, "Sortie de l'entrepôt le 16/10/2026 (Chronopost)");
+eq("détail : bons de livraison de la commande (carte et modèle)", [dc.ui_actions[0].livraisons, dc.contenu.commandes[0].bons_de_livraison],
+  [[{ numero: "EP/OUT/1008", date: "2026-10-16" }], [{ numero: "EP/OUT/1008", date: "2026-10-16" }]]);
 eq("détail : lots et péremptions (livraison validée)", dc.ui_actions[0].lots.map(l => [l.lot, l.peremption, l.quantite]), [["DA1", "2028-04-30", 4], ["DA2", "2028-04-30", 2]]);
 const dz = await outil("detail_commande", { reference: "S300004" });
 eq("commande entièrement à 0 : non servie, aucune étape au-delà de « reçue »", [dz.contenu.commandes[0].etat, dz.ui_actions[0].lignes.map(l => [l.commande, l.servi, l.non_servi]),
   dz.ui_actions[0].etapes.filter(e => e.fait).map(e => e.cle)], ["Non servie (aucun produit disponible)", [[5, 0, 5], [2, 0, 2]], ["recue"]]);
 const dp = await outil("detail_commande", { reference: "S300005" });
 eq("livraison non validée : pas de lots, servi = retenu", [dp.ui_actions[0].lots, dp.ui_actions[0].lignes[0]], [[], { produit: "DOLIPRANE 1000 mg cp B/8", cip: "3400930000011", commande: 10, servi: 6, non_servi: 4 }]);
+eq("livraison non validée : aucun bon de livraison", [dp.ui_actions[0].livraisons, "bons_de_livraison" in dp.contenu.commandes[0]], [[], false]);
 const dcInc = await outil("detail_commande", { reference: "S999999" });
 eq("détail : commande inconnue = commande d'une autre pharmacie", await outil("detail_commande", { reference: "S300006" }), dcInc);
 eq("détail : livraison d'une autre pharmacie = inconnue", await outil("detail_commande", { reference: "EP/OUT/1006" }), dcInc);

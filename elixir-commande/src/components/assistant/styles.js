@@ -58,9 +58,12 @@ export const CSS = `
 .ex-assistant__btn.ex-btn-ligne { color: var(--petrol); box-shadow: inset 0 0 0 1.5px var(--line-field); }
 .ex-assistant__btn:disabled { opacity: .55; cursor: default; }
 .ex-assistant__btn--fort { min-height: 48px; font-size: 14px; padding: 0 22px; }
+/* bouton d'une ligne de liste (bons de livraison) : à droite de la ligne, 44 px de haut sous 768 px */
+.ex-assistant__btn--petit { flex-shrink: 0; min-height: 36px; padding: 0 12px; gap: 6px; }
 @media (max-width: 767px) {
   .ex-assistant__actions { flex-direction: column; align-items: stretch; }
   .ex-assistant__actions > .ex-assistant__btn { width: 100%; min-height: 48px; }
+  .ex-assistant__btn--petit { min-height: 44px; }
 }
 
 .ex-assistant__choix { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 12px; margin-top: 6px;

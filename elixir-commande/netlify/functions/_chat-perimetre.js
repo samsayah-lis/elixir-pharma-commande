@@ -7,6 +7,8 @@
 //   factures (et avoirs) : company_id = 2 ∧ commercial_partner_id = P ∧ state = posted ∧ move_type ∈ (out_invoice, out_refund)
 //   commandes            : company_id = 2 ∧ partner_id child_of P ; lignes, livraisons, lots, retours : le même
 //                          filtre redoublé sur chaque lecture (order_partner_id, picking_id.partner_id…)
+//   bons de livraison    : company_id = 2 ∧ partner_id child_of P ∧ sortante ∧ validée ∧ vers un emplacement client ;
+//                          lignes, reliquats, adresse de livraison (id child_of P), commande : le filtre de la fiche redoublé
 // et toujours context.allowed_company_ids = [2] (sans lui, Odoo ouvre toutes les sociétés de l'utilisateur API :
 // 1 099 factures d'autres sociétés sur les 17 fiches partagées). Jamais read([id]) sur un id venu du modèle :
 // toujours un search_read portant ces domaines. P = fiche commerciale résolue par identifier().
@@ -389,12 +391,26 @@ async function sortiesDe(ctx, lignes, d) {
   return { parLigne, derniere };
 }
 
+// quantités encore à livrer par ligne de commande : mouvements sortants ouverts (reliquat d'une livraison partielle)
+async function restesDe(ctx, lignes, d) {
+  const parLigne = new Map();
+  const ids = lignes.map(l => l.id).filter(Boolean);
+  if (!ids.length) return parLigne;
+  const mv = await lire(d, "stock.move", "search_read", [[...domaineMouvements(ctx), ["sale_line_id", "in", ids], ["state", "not in", ["done", "cancel"]],
+    ["picking_code", "=", "outgoing"], ["origin_returned_move_id", "=", false]]], { fields: ["sale_line_id", "product_uom_qty"], limit: 2000 });
+  for (const m of mv) { const l = m.sale_line_id?.[0]; parLigne.set(l, (parLigne.get(l) || 0) + (Number(m.product_uom_qty) || 0)); }
+  return parLigne;
+}
+
 // quantités d'une ligne de commande : commandé (PharmaML) / servi (sorti de l'entrepôt si la commande est sortie, sinon
-// retenu) / non servi. sorties : quantités sorties par ligne (sortiesDe) ; à défaut, qty_delivered d'Odoo.
-export function quantitesLigne(l, sortie, sorties = null) {
+// retenu) / non servi. sorties : quantités sorties par ligne (sortiesDe) ; à défaut, qty_delivered d'Odoo. restes : quantités
+// d'un reliquat encore ouvert (restesDe) → « a_livrer », qui ne compte pas dans le non servi (le bon de livraison les
+// imprime en « Quantités restantes non encore livrées »).
+export function quantitesLigne(l, sortie, sorties = null, restes = null) {
   const commande = Number(l.pharmaml_ordered_qty) > 0 ? Number(l.pharmaml_ordered_qty) : Number(l.product_uom_qty) || 0;
   const servi = !sortie ? Number(l.product_uom_qty) || 0 : sorties ? Number(sorties.get(l.id)) || 0 : Number(l.qty_delivered) || 0;
-  return { commande, servi, non_servi: Math.max(0, commande - servi), facture: Number(l.qty_invoiced) || 0 };
+  const aLivrer = sortie && restes ? Math.max(0, Math.min(Number(restes.get(l.id)) || 0, commande - servi)) : 0;
+  return { commande, servi, non_servi: Math.max(0, commande - servi - aLivrer), facture: Number(l.qty_invoiced) || 0, ...(aLivrer > 0 ? { a_livrer: aLivrer } : {}) };
 }
 const entierementZero = (lignes) => lignes.length > 0 && lignes.every(l => !(Number(l.product_uom_qty) > 0));
 const refSiteDe = (lignes) => { for (const l of lignes) { const m = String(l.pml_order_ref || "").match(REF_SITE); if (m) return m[1]; } return null; };
@@ -628,7 +644,11 @@ async function detailOdoo(ctx, so, d) {
   const t = tourneeDe(so.x_studio_tourne);
   const prep = so.state !== "cancel" && !zero && (sortieFaite || so.delivery_status === "started" || so.pharmaml_lock_status === "closed"
     || so.x_studio_statut_prparation === "🟡 En cours" || sorties.some(p => p.state === "assigned"));
+  // bons de livraison de la commande (sorties validées) : bouton « Bon de livraison » de la carte, par l'outil bons_de_livraison
+  const livraisonsFaites = faites.slice().sort((a, b) => String(a.date_done).localeCompare(String(b.date_done)))
+    .map(p => ({ numero: p.name, date: p.date_done ? jourOdoo(p.date_done) : null }));
   const partielle = sortieFaite && sorties.some(p => p.state !== "done" && p.state !== "cancel");
+  const restes = partielle ? await restesDe(ctx, lignes, d) : null;   // reliquat ouvert : quantités encore à livrer
   const dt = dateOdoo(so.date_order);
   return {
     reference: so.name, date: dt ? jourParis(dt) : null, heure: dt ? heureParis(dt) : null, origine: origineDe(so, lignes),
@@ -641,14 +661,202 @@ async function detailOdoo(ctx, so, d) {
       { cle: "facturee", libelle: factures.length ? `Facturée (${factures.map(f => f.name).join(", ")})` : "Facturée",
         date: factures[0]?.invoice_date || null, fait: factures.length > 0 },
     ],
-    lignes: lignes.map(l => ({ ...produitSansId(l.product_id), ...quantitesLigne(l, sortieFaite, parLigne) })),
+    lignes: lignes.map(l => ({ ...produitSansId(l.product_id), ...quantitesLigne(l, sortieFaite, parLigne, restes) })),
     lots: lots.filter(l => l.lot_id).map(l => ({ ...produitSansId(l.product_id), lot: tronquer(nomM2o(l.lot_id) || "", 40), peremption: l.expiration_date ? jourOdoo(l.expiration_date) : null,
       quantite: Number(l.quantity) || 0 })),
-    factures: factures.map(f => f.name), avoirs: avoirs.map(f => f.name),
+    factures: factures.map(f => f.name), avoirs: avoirs.map(f => f.name), livraisons: livraisonsFaites,
     retours: retours.map(p => ({ reference: p.name, date: p.date_done ? jourOdoo(p.date_done) : null, etat: p.state === "done" ? "Retour reçu à l'entrepôt" : p.state === "cancel" ? "Retour annulé" : "Retour en cours" })),
   };
 }
 const produitSansId = (m2o) => { const { cip, produit } = produitDe(m2o); return { produit, cip }; };
+
+// ═══ Bons de livraison ═══════════════════════════════════════════════════
+// Bon de livraison (BL) = livraison SORTANTE, VALIDÉE, vers un emplacement CLIENT (stock.picking : picking_type_code =
+// outgoing, state = done, location_dest_id.usage = customer), de la fiche (partner_id child_of P, comme les commandes : une
+// société rattachée à la fiche dans Odoo, parent_id = P, en fait partie). Exclus : réceptions de retour (EP/IN), retours
+// fournisseur (sortants vers « Partners/Vendors », parfois au nom d'une fiche qui a un CIP), livraisons non validées. Inclus
+// et signalés : les renvois après un retour (return_id posé, origine « Retour de EP/IN/… », sans commande le plus souvent).
+// La date d'un BL est sa sortie d'entrepôt (date_done, « Date d'expédition » du BL d'Odoo) à l'heure de Paris, jamais une
+// date de réception chez la pharmacie (la moitié des bons sortent la nuit ou au petit matin du jour de livraison).
+// Odoo ne garde pas le PDF d'un BL (rapport recalculé à chaque impression, calcul interdit par l'API) : chat-fichier sert,
+// pour TOUS les BL, un « Duplicata de bon de livraison » généré par _chat-bl.js avec les données lues ici (une seule
+// présentation ; aucune pièce jointe de transfert n'est lue).
+const domaineBL = (ctx) => [...domaineLivraisons(ctx), ["picking_type_code", "=", "outgoing"], ["state", "=", "done"], ["location_dest_id.usage", "=", "customer"]];
+const CHAMPS_BL = ["name", "date_done", "origin", "sale_id", "backorder_ids", "return_id"];
+export const BL_PAR_PAGE = 20;      // bons d'une page de la liste (un bouton PDF chacun)
+export const BL_MAX_FICHIER = 60;   // bons d'une même autorisation : toute la période si elle en compte 60 au plus (un seul PDF)
+const BL_MAX_MOUVEMENTS = 5000;     // recherche par produit : mouvements lus au plus (les plus récents d'abord)
+// « EP/OUT/4398 » → EP/OUT/04398 (numérotation d'Odoo sur 5 chiffres au moins) ; nombre seul (lu sur le papier)
+const nomsBL = (n) => [...new Set([`EP/OUT/${n}`, `EP/OUT/${cinq(n)}`])];
+// Numéro de bon écrit par la pharmacie : « BL 7001 », « BL n°7001 », « bon de livraison 7001 », « OUT/7001 », « ep out 7001 »
+// → « EP/OUT/7001 » ; un nombre seul reste tel quel (n° de BL lu sur le papier, n° de facture ou référence du logiciel)
+const RE_NUMERO_BL = /^(?:(?:b\.?\s?l\.?|bon(?:\s+de\s+livraison)?|bordereau(?:\s+de\s+livraison)?)\s*(?:n\s*[°o]\.?|num(?:[ée]ro)?\.?)?\s*[:#]?\s*)?(?:(?:ep\s*[/ _-]?\s*)?out\s*[/ _-]?\s*)?(\d{1,7})$/i;
+export function rechercheBL(s) {
+  if (typeof s !== "string") return s;
+  const t = s.trim(), m = t.match(RE_NUMERO_BL);
+  return m && m[1] !== t ? `EP/OUT/${m[1]}` : s;
+}
+// Produit cité → conditions sur un mouvement de stock (ce qui est réellement sorti, pas la ligne de commande)
+function conditionsProduitMouvement(r) {
+  if (r.type === "cip") return r.valeur.length === 13 ? [["product_id.default_code", "=", r.valeur]] : [["product_id.default_code", "=like", `34009${r.valeur}_`]];
+  return [["product_id", "ilike", r.valeur]];
+}
+// commandes de la fiche portant ces noms (S…)
+const idsCommandesNommees = async (ctx, noms, d) => (noms.length ? (await lire(d, "sale.order", "search_read", [[...domaineCommandes(ctx), ["name", "in", noms]]],
+  { fields: ["id"], limit: 200 })).map(x => x.id) : []);
+// commandes d'une facture citée (numéro complet ou court) : ses commandes d'origine
+async function idsCommandesDeFacture(ctx, numero, d) {
+  const c = conditionNumero(numero);
+  if (!c) return [];
+  const ms = await lire(d, "account.move", "search_read", [[...domaineFactures(ctx), c]], { fields: ["invoice_origin"], limit: 5 });
+  return idsCommandesNommees(ctx, [...new Set(ms.flatMap(m => String(m.invoice_origin || "").split(",").map(x => x.trim()).filter(x => /^S\d+$/.test(x))))], d);
+}
+// Recherche citée → conditions supplémentaires sur stock.picking, ou null (rien ne peut correspondre). info.tronque : la
+// recherche par produit a atteint BL_MAX_MOUVEMENTS (les bons les plus anciens de la période peuvent manquer)
+async function filtreLivraisons(ctx, r, debutDt, finDt, d, info) {
+  const ou = (noms, sales, picks = []) => {
+    const t = [...(noms.length ? [["name", "in", noms]] : []), ...(sales.length ? [["sale_id", "in", sales]] : []), ...(picks.length ? [["id", "in", picks]] : [])];
+    return t.length ? [...Array(t.length - 1).fill("|"), ...t] : null;
+  };
+  if (r.type === "livraison") return ou(nomsBL(r.valeur.split("/").pop()), []);
+  if (r.type === "commande") return ou([], await idsCommandesNommees(ctx, [r.valeur], d));
+  if (r.type === "numero") return ou([], await idsCommandesDeFacture(ctx, r.valeur, d));
+  if (r.type === "site") {
+    const l = await lire(d, "sale.order.line", "search_read", [[...domaineLignesCommande(ctx), ["pml_order_ref", "=like", `${r.valeur}%`]]], { fields: ["order_id"], limit: 500 });
+    return ou([], [...new Set(l.map(x => x.order_id?.[0]).filter(Boolean))]);
+  }
+  const ref = refLogiciel(r);   // référence du logiciel de l'officine, recopiée sur les lignes de commande
+  const parRef = ref ? [...new Set((await lire(d, "sale.order.line", "search_read", [[...domaineLignesCommande(ctx), ["pml_order_ref", "in", ref]]],
+    { fields: ["order_id"], limit: 500 })).map(x => x.order_id?.[0]).filter(Boolean))] : [];
+  if (r.type === "numero_court") {   // n° de BL lu sur le papier, n° de facture sans année, ou référence du logiciel
+    return ou(nomsBL(r.valeur), [...new Set([...parRef, ...await idsCommandesDeFacture(ctx, r.valeur, d)])]);
+  }
+  if (r.type === "cip" || r.type === "mot") {   // produit sorti de l'entrepôt sur la période, les mouvements les plus récents d'abord
+    const mv = await lire(d, "stock.move", "search_read", [[...domaineMouvements(ctx), ["state", "=", "done"], ["picking_code", "=", "outgoing"],
+      ["date", ">=", debutDt], ["date", "<", finDt], ...conditionsProduitMouvement(r)]], { fields: ["picking_id"], order: "date desc, id desc", limit: BL_MAX_MOUVEMENTS });
+    if (mv.length >= BL_MAX_MOUVEMENTS && info) info.tronque = true;
+    return ou([], parRef, [...new Set(mv.map(m => m.picking_id?.[0]).filter(Boolean))]);
+  }
+  return null;
+}
+// BL lus → forme interne (produits sortis, reliquat encore ouvert, renvoi). La commande n'est donnée que si elle est relue
+// avec le domaine des commandes de la fiche (jamais le seul nom porté par le transfert).
+async function resumerLivraisons(ctx, rows, d) {
+  if (!rows.length) return [];
+  const ids = rows.map(p => p.id);
+  const mv = await lire(d, "stock.move", "search_read", [[...domaineMouvements(ctx), ["picking_id", "in", ids], ["state", "=", "done"]]],
+    { fields: ["picking_id", "product_id"], order: "id asc", limit: 5000 });
+  const parBl = groupe(mv, m => m.picking_id?.[0]);
+  const bo = [...new Set(rows.flatMap(p => p.backorder_ids || []))];
+  const ouverts = new Set(bo.length ? (await lire(d, "stock.picking", "search_read", [[...domaineLivraisons(ctx), ["id", "in", bo], ["state", "not in", ["done", "cancel"]]]],
+    { fields: ["id"], limit: 500 })).map(p => p.id) : []);
+  const sids = [...new Set(rows.map(p => p.sale_id?.[0]).filter(Boolean))];
+  const cdes = new Map(sids.length ? (await lire(d, "sale.order", "search_read", [[...domaineCommandes(ctx), ["id", "in", sids]]], { fields: ["name"], limit: sids.length }))
+    .map(c => [c.id, c.name]) : []);
+  return rows.map(p => {
+    const produits = [...new Map((parBl.get(p.id) || []).map(m => [m.product_id?.[0], produitSansId(m.product_id)])).values()];
+    const dt = dateOdoo(p.date_done);
+    return { id: p.id, numero: p.name, date: dt ? jourParis(dt) : null, heure: dt ? heureParis(dt) : null, commande: cdes.get(p.sale_id?.[0]) || null,
+      renvoi: !!p.return_id, reste_a_livrer: (p.backorder_ids || []).some(b => ouverts.has(b)), nb_produits: produits.length, produits };
+  });
+}
+// Liste des BL de la période (jours de sortie d'entrepôt, heure de Paris), 20 par page, les plus récents d'abord.
+// ensemble : ids des bons du fichier unique (toute la période si elle en compte BL_MAX_FICHIER au plus, sinon ceux de la page)
+export async function listerLivraisons(ctx, { debut, fin, recherche = null, page = 1, parPage = BL_PAR_PAGE }, deps = {}) {
+  const d = depsParDefaut(deps);
+  if (!jourValide(debut) || !jourValide(fin) || debut > fin) throw new Error("bons de livraison : période invalide");
+  const debutDt = minuitParisOdoo(debut), finDt = minuitParisOdoo(jourPlus(fin, 1));
+  const dom = [...domaineBL(ctx), ["date_done", ">=", debutDt], ["date_done", "<", finDt]];
+  const r = analyserRecherche(rechercheBL(recherche));
+  const info = { tronque: false };
+  if (r) {
+    const f = await filtreLivraisons(ctx, r, debutDt, finDt, d, info);
+    if (!f) return { total: 0, bons: [], ensemble: [], tronque: false };
+    dom.push(...f);
+  }
+  const total = await lire(d, "stock.picking", "search_count", [dom]);
+  if (!total) return { total: 0, bons: [], ensemble: [], tronque: info.tronque };
+  const offset = (Math.max(1, page) - 1) * parPage;
+  const rows = await lire(d, "stock.picking", "search_read", [dom], { fields: CHAMPS_BL, order: "date_done desc, id desc", limit: parPage, offset });
+  const ensemble = total > BL_MAX_FICHIER || (offset === 0 && rows.length >= total) ? rows.map(p => p.id)
+    : await lire(d, "stock.picking", "search", [dom], { order: "date_done desc, id desc", limit: BL_MAX_FICHIER });
+  return { total, bons: await resumerLivraisons(ctx, rows, d), ensemble, tronque: info.tronque };
+}
+// Jours de sortie les plus proches d'un jour sans BL (un avant, un après), dans la profondeur permise
+export async function joursLivraisonProches(ctx, jour, { limite = null } = {}, deps = {}) {
+  const d = depsParDefaut(deps);
+  if (!jourValide(jour)) return [];
+  const avant = await lire(d, "stock.picking", "search_read", [[...domaineBL(ctx), ["date_done", "<", minuitParisOdoo(jour)],
+    ...(limite ? [["date_done", ">=", minuitParisOdoo(limite)]] : [])]], { fields: ["date_done"], order: "date_done desc", limit: 1 });
+  const apres = await lire(d, "stock.picking", "search_read", [[...domaineBL(ctx), ["date_done", ">=", minuitParisOdoo(jourPlus(jour, 1))]]],
+    { fields: ["date_done"], order: "date_done asc", limit: 1 });
+  return [...avant, ...apres].map(p => jourOdoo(p.date_done)).filter(Boolean);
+}
+
+const idsBL = (pickingIds) => {
+  const ids = [...new Set((Array.isArray(pickingIds) ? pickingIds : []).map(Number))];
+  return !ids.length || ids.length > BL_MAX_FICHIER || ids.some(id => !Number.isInteger(id) || id <= 0) ? null : ids;
+};
+// Autorisation de téléchargement (chat-fichier) : TOUS ses BL relus avec le domaine de la fiche avant d'en servir un seul.
+// Un id étranger (autre pharmacie, autre société, retour, non validé, forgé) invalide toute l'autorisation.
+export async function livraisonsDeLaFiche(ctx, pickingIds, deps = {}) {
+  const d = depsParDefaut(deps);
+  const ids = idsBL(pickingIds);
+  if (!ids) return false;
+  return (await lire(d, "stock.picking", "search_count", [[...domaineBL(ctx), ["id", "in", ids]]])) === ids.length;
+}
+
+// Données d'impression des BL autorisés (chat-fichier) : chaque id RELU avec le domaine de la fiche ; un seul absent (autre
+// pharmacie, autre société, non validé, retour, id forgé) → null, même réponse qu'un document inconnu. Ordre : celui de la liste.
+// Adresse et commande relues dans le périmètre de la fiche, comme le bon : adresse introuvable → null (jamais une adresse de
+// remplacement) ; commande hors périmètre → ni son numéro ni l'origine qui le recopie.
+// Jamais lus : téléphone, e-mail, notes du transfert ou de la commande, prix.
+export async function donneesLivraisons(ctx, pickingIds, deps = {}) {
+  const d = depsParDefaut(deps);
+  const P = fiche(ctx);
+  const ids = idsBL(pickingIds);
+  if (!ids) return null;
+  const pk = await lire(d, "stock.picking", "search_read", [[...domaineBL(ctx), ["id", "in", ids]]], { fields: [...CHAMPS_BL, "partner_id"], limit: ids.length + 1 });
+  if (pk.length !== ids.length) return null;
+  const parId = new Map(pk.map(p => [p.id, p]));
+  const pickings = ids.map(id => parId.get(id));
+  if (pickings.some(p => !p)) return null;
+  // adresse de livraison : la fiche, un de ses contacts ou une société rattachée (même périmètre que domaineBL), sans téléphone ni e-mail
+  const pids = [...new Set(pickings.map(p => p.partner_id?.[0]).filter(Boolean))];
+  const adresses = new Map((pids.length ? await lire(d, "res.partner", "search_read", [[["id", "in", pids], ["id", "child_of", P], ["company_id", "in", [COMPANY_ID, false]]]],
+    { fields: ["name", "street", "street2", "zip", "city", "country_id"], limit: pids.length, context: { active_test: false } }) : []).map(a => [a.id, a]));
+  if (pickings.some(p => !adresses.has(p.partner_id?.[0]))) return null;
+  // commandes (référence client : texte libre imprimé dans le PDF, jamais transmis au modèle)
+  const sids = [...new Set(pickings.map(p => p.sale_id?.[0]).filter(Boolean))];
+  const cdes = new Map((sids.length ? await lire(d, "sale.order", "search_read", [[...domaineCommandes(ctx), ["id", "in", sids]]],
+    { fields: ["name", "client_order_ref"], limit: sids.length }) : []).map(c => [c.id, c]));
+  // lignes sorties (une par lot), dans l'ordre d'Odoo (celui du BL imprimé)
+  const lignes = await lireTout(d, "stock.move.line", [...domaineMouvements(ctx), ["picking_id", "in", ids], ["state", "=", "done"]],
+    { fields: ["picking_id", "product_id", "lot_id", "expiration_date", "quantity", "product_uom_id"] }, 2000, 20000);
+  // quantités restant à livrer : reliquats encore ouverts (comme le BL d'Odoo, calculées au moment de l'édition)
+  const bo = [...new Set(pickings.flatMap(p => p.backorder_ids || []))];
+  const ouverts = bo.length ? await lire(d, "stock.picking", "search_read", [[...domaineLivraisons(ctx), ["id", "in", bo], ["state", "not in", ["done", "cancel"]]]],
+    { fields: ["backorder_id"], limit: 500 }) : [];
+  const restes = ouverts.length ? await lire(d, "stock.move", "search_read", [[...domaineMouvements(ctx), ["picking_id", "in", ouverts.map(o => o.id)], ["state", "!=", "cancel"]]],
+    { fields: ["picking_id", "product_id", "product_uom_qty", "product_uom"], order: "id asc", limit: 2000 }) : [];
+  const origineReliquat = new Map(ouverts.map(o => [o.id, o.backorder_id?.[0]]));
+  const lignesPar = groupe(lignes, l => l.picking_id?.[0]);
+  const restesPar = groupe(restes, m => origineReliquat.get(m.picking_id?.[0]));
+  const texte = (s, n = 200) => tronquer(s || "", n) || null;
+  const qte = (x) => Math.round((Number(x) || 0) * 1000) / 1000;
+  return pickings.map(p => {
+    const a = adresses.get(p.partner_id?.[0]);
+    const c = cdes.get(p.sale_id?.[0]);
+    return {
+      id: p.id, numero: p.name, date_done: p.date_done || null, origine: p.sale_id && !c ? null : texte(p.origin, 120), commande: c?.name || null,
+      reference_client: texte(c?.client_order_ref, 120), renvoi: !!p.return_id,
+      adresse: { nom: texte(a.name, 120), rue: texte(a.street), rue2: texte(a.street2), cp: texte(a.zip, 20), ville: texte(a.city, 80), pays: texte(a.country_id?.[1], 60) },
+      lignes: (lignesPar.get(p.id) || []).map(l => ({ produit: texte(l.product_id?.[1], 300), lot: l.lot_id ? texte(nomM2o(l.lot_id), 40) : null,
+        peremption: l.expiration_date ? jourOdoo(l.expiration_date) : null, quantite: qte(l.quantity), unite: texte(l.product_uom_id?.[1], 30) })),
+      restes: (restesPar.get(p.id) || []).map(m => ({ produit: texte(m.product_id?.[1], 300), quantite: qte(m.product_uom_qty), unite: texte(m.product_uom?.[1], 30) })),
+    };
+  });
+}
 
 // ═══ Demandes de retour ═════════════════════════════════════════════════
 // Combinaisons motif → souhaits de l'application de réclamation (entrepot/bundle.js) ; « non_precise » toujours admis

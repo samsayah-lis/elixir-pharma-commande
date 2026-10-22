@@ -17,11 +17,12 @@ import { Icone, CroixElixir } from "../../icons.jsx";
 import FocusFenetre from "../ui/FocusFenetre.jsx";
 import { focusSuivant } from "./presentation.js";
 
-// les quatre demandes des pastilles d'accueil du panneau (AssistantPanel), dans le même ordre
+// quatre des demandes des pastilles d'accueil du panneau (AssistantPanel), dans le même ordre (le bon de livraison, ajouté
+// le 22/10/2026, est cité avec le suivi des commandes : la grille de deux colonnes reste équilibrée)
 const EXEMPLES = [
   ["document", "Duplicata d'une facture", "Retrouvée par sa date ou son numéro, en PDF."],
   ["calendrier", "Relevé de facturation", "Sur la période de votre choix, en PDF et Excel."],
-  ["camion", "Où en est ma commande\u00a0?", "Préparation, sortie d'entrepôt, quantités servies."],
+  ["camion", "Où en est ma commande\u00a0?", "Préparation, sortie d'entrepôt, quantités servies, bon de livraison."],
   ["recommander", "Demande de retour ou réclamation", "Préparée avec vous, envoyée seulement après votre accord."],
 ];
 
@@ -99,7 +100,7 @@ export default function Presentation({ mobile, onEssayer, onPlusTard, onNePlusAf
             <h2 id="presentation-assistant-titre" style={{ margin: 0, fontSize: mobile ? 18 : 22, fontWeight: 640, letterSpacing: "-0.02em", lineHeight: 1.2, color: T.paper }}>
               Nouveau&nbsp;: votre Assistant Elixir
             </h2>
-            <div className="ex-presentation__sous-titre" style={{ fontSize: 12, color: T.paperMute, marginTop: 4 }}>Factures · relevés · commandes · retours</div>
+            <div className="ex-presentation__sous-titre" style={{ fontSize: 12, color: T.paperMute, marginTop: 4 }}>Factures · relevés · commandes · BL · retours</div>
           </div>
           <button type="button" className="ex-icone-entete ex-cible" data-focus-initial onClick={onPlusTard} aria-label="Fermer" title="Fermer"
             style={{ ...ui.rond(mobile ? 44 : 36), color: T.paper, alignSelf: "flex-start" }}><Icone nom="fermer" /></button>

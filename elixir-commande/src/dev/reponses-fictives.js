@@ -79,6 +79,7 @@ export const FICHIERS_FICTIFS = {
   facture: "0000000000000000000000000000a001",
   releve_pdf: "0000000000000000000000000000a002",
   releve_xlsx: "0000000000000000000000000000a003",
+  bl: "0000000000000000000000000000a004",
 };
 
 // AAAA-MM-JJ à Paris, décalé de n jours
@@ -153,7 +154,7 @@ const carteCommande = (commandeSiteId = null) => ({
     { cle: "facturee", libelle: "Facturée", date: null, fait: false },
   ],
   lignes: [
-    { produit: "Paracétamol 1000 mg comprimés B/8 (fictif)", cip: "3400900000011", commande: 10, servi: 6, non_servi: 4 },
+    { produit: "Paracétamol 1000 mg comprimés B/8 (fictif)", cip: "3400900000011", commande: 10, servi: 6, non_servi: 0, a_livrer: 4 },
     { produit: "Phloroglucinol 80 mg lyophilisat B/10 (fictif)", cip: "3400900000028", commande: 3, servi: 3, non_servi: 0 },
   ],
   lots: [
@@ -161,8 +162,34 @@ const carteCommande = (commandeSiteId = null) => ({
     { produit: "Phloroglucinol 80 mg lyophilisat B/10 (fictif)", lot: "CD456", peremption: "2027-11-30", quantite: 3 },
   ],
   factures: [],
+  livraisons: [{ numero: "EP/OUT/190123", date: jourParis(-1) }],
   commande_site_id: commandeSiteId,
 });
+// Bons de livraison fictifs (sorties de l'entrepôt) : la carte en montre le résumé ; le banc local en fait un vrai
+// duplicata (scripts/banc/plugin.mjs, _chat-bl.js) avec les lignes, lots et quantités restantes ci-dessous
+const P1 = "[3400900000011] Paracétamol 1000 mg comprimés B/8 (fictif)", P2 = "[3400900000028] Phloroglucinol 80 mg lyophilisat B/10 (fictif)";
+const P3 = "[3400900000035] Ibuprofène 400 mg comprimés B/30 (fictif)";
+export const BONS_FICTIFS = () => [
+  { numero: "EP/OUT/190123", date: jourParis(-1), heure: "19:42", commande: "S900123", renvoi: false, reste_a_livrer: true,
+    lignes: [{ produit: P1, lot: "AB123", peremption: "2028-04-30", quantite: 6 }, { produit: P2, lot: "CD456", peremption: "2027-11-30", quantite: 3 }],
+    restes: [{ produit: P1, quantite: 4 }] },
+  { numero: "EP/OUT/190087", date: jourParis(-3), heure: "18:05", commande: "S900098", renvoi: false, reste_a_livrer: false,
+    lignes: [{ produit: P3, lot: "EF789", peremption: "2029-01-31", quantite: 12 }], restes: [] },
+  { numero: "EP/OUT/189950", date: jourParis(-6), heure: "11:20", commande: null, renvoi: true, reste_a_livrer: false,
+    lignes: [{ produit: P2, lot: "CD457", peremption: "2027-12-31", quantite: 2 }], restes: [] },
+];
+const sansCip = (p) => p.replace(/^\[[^\]]*\]\s*/, "");
+// autorisation fictive : FICHIERS_FICTIFS.bl pour les trois bons, « …b00<rang> » pour un seul (numéro cité)
+export const idBonFictif = (rang) => `0000000000000000000000000000b00${rang}`;
+// comme le serveur : un numéro cherché sans date → pas de période sur la carte ; rang = place du bon dans l'autorisation
+const carteBonsLivraison = (numero = null) => {
+  const tous = BONS_FICTIFS(), rang = tous.findIndex((b) => b.numero === numero);
+  const items = (rang >= 0 ? [tous[rang]] : tous).map((b, i) => ({ numero: b.numero, date: b.date, heure: b.heure, commande: b.commande,
+    nb_produits: b.lignes.length, produits: b.lignes.map((l) => sansCip(l.produit)), renvoi: b.renvoi, reste_a_livrer: b.reste_a_livrer, rang: i }));
+  return { type: "bons_livraison", periode: rang >= 0 ? null : { debut: jourParis(-14), fin: jourParis(0) },
+    total: items.length, page: 1, pages: 1, items, fichier_id: rang >= 0 ? idBonFictif(rang) : FICHIERS_FICTIFS.bl, ensemble: items.length, ensemble_periode: false,
+    mention: "Duplicata établi par Elixir Pharma à partir des données de livraison enregistrées à la date d'édition : produits, lots, péremptions et quantités livrées." };
+};
 const carteRecap = () => {
   const limite = jourParis(7).split("-").reverse().slice(0, 2).join("/");
   return {
@@ -181,9 +208,9 @@ function reponseFictiveA(texte, contexte) {
   const q = sansAccents(texte);
   const numero = String(texte ?? "").match(/\b(?:R?INV)\/\d{4}\/\d+/i)?.[0]?.toUpperCase();
   if (/toutes les cartes|demonstration/.test(q)) return messageFictif(
-    "Aperçu de **toutes les cartes** de l'assistant :\n- duplicata, choix d'un document, relevé ;\n- commande, retour à confirmer, transmission ;\n- carte d'erreur.\n\nAffichage sûr : <a href=\"javascript:alert(1)\">lien</a>, <img src=x onerror=alert(1)> et https://exemple.fr restent du texte.",
+    "Aperçu de **toutes les cartes** de l'assistant :\n- duplicata, choix d'un document, relevé ;\n- commande, bons de livraison, retour à confirmer, transmission ;\n- carte d'erreur.\n\nAffichage sûr : <a href=\"javascript:alert(1)\">lien</a>, <img src=x onerror=alert(1)> et https://exemple.fr restent du texte.",
     [carteDocument("INV/2026/90412"), carteDocument("RINV/2026/09021"), { type: "documents", items: DOCUMENTS_FICTIFS() }, carteReleve(),
-      carteCommande(contexte?.commande_site_id || null), carteRecap(), carteTransmission(),
+      carteCommande(contexte?.commande_site_id || null), carteBonsLivraison(), carteRecap(), carteTransmission(),
       { type: "erreur", texte: "Aperçu : exemple de carte d'erreur." }]);
   if (/^le document /.test(q) || (numero && /duplicata|facture|avoir|document/.test(q))) {
     const c = carteDocument(numero);
@@ -191,17 +218,25 @@ function reponseFictiveA(texte, contexte) {
       ? `Voici votre ${c.piece} ${c.numero}. Vous pouvez la télécharger ci-dessous.`
       : `Cet avoir n'a pas encore été émis au format PDF. Je peux demander à l'équipe de vous l'envoyer : je transmets ?`, [c]);
   }
+  // bons de livraison (avant « commande » : « livraison » contient « livr ») ; « EP/OUT/… » cité : ce bon seul
+  const bl = String(texte ?? "").match(/\bEP\/OUT\/\d+/i)?.[0]?.toUpperCase();
+  if (/bons? de livraison|bordereau|\bbl\b/.test(q) || bl) {
+    const c = carteBonsLivraison(bl);
+    return messageFictif(c.items.length > 1
+      ? "Voici vos bons de livraison des 14 derniers jours, par date de sortie de l'entrepôt. Vous pouvez télécharger chacun, ou tous ensemble en un seul fichier."
+      : `Voici le bon de livraison ${c.items[0].numero}, sorti de l'entrepôt le ${c.items[0].date.split("-").reverse().join("/")}. Il est disponible ci-dessous.`, [c]);
+  }
   if (/relev/.test(q)) return messageFictif("Votre relevé du mois dernier est prêt : il liste les documents émis, sans les règlements.", [carteReleve()]);
   if (/retour|reclamation|retourner|probleme|signale/.test(q)) return messageFictif(
     "Voici le récapitulatif. Il ne sera envoyé que si vous confirmez.", [carteRecap()]);
   if (/conseiller|parler|quelqu.un|humain|rappel/.test(q)) return messageFictif(
     "Je transmets votre demande à l'équipe Elixir.", [carteTransmission()]);
   if (contexte?.commande_site_id || /commande|livr|colis/.test(q)) return messageFictif(
-    "Votre commande S900123 est sortie de l'entrepôt hier. Pour le paracétamol : **10 commandés, 6 servis** ; les 4 autres n'ont pas été servis et ne seront pas facturés.",
+    "Votre commande S900123 est sortie de l'entrepôt hier. Pour le paracétamol : **10 commandés, 6 servis** ; les 4 autres restent à livrer (reliquat pas encore sorti de l'entrepôt).",
     [carteCommande(contexte?.commande_site_id ? String(contexte.commande_site_id) : null)]);
   if (/duplicata|facture|avoir/.test(q)) return messageFictif(
     "Plusieurs documents correspondent. Lequel voulez-vous ?", [{ type: "documents", items: DOCUMENTS_FICTIFS() }]);
-  return messageFictif("Ceci est un **aperçu** : les réponses sont écrites d'avance. Essayez par exemple :\n- « Duplicata d'une facture »\n- « Relevé de facturation »\n- « Où en est ma commande ? »\n- « Demande de retour »\n- « Parler à un conseiller »\n- « Toutes les cartes »");
+  return messageFictif("Ceci est un **aperçu** : les réponses sont écrites d'avance. Essayez par exemple :\n- « Duplicata d'une facture »\n- « Relevé de facturation »\n- « Où en est ma commande ? »\n- « Bon de livraison »\n- « Demande de retour »\n- « Parler à un conseiller »\n- « Toutes les cartes »");
 }
 
 export function reponseChatFictive(b = {}, pharmacie = PHARMACIE_FICTIVE) {

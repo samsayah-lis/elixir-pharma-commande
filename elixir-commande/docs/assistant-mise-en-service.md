@@ -23,6 +23,7 @@ Ce que fait l'assistant, à partir d'Odoo, pour la pharmacie connectée et elle 
 | Duplicata | Le **PDF d'origine d'Odoo, tel quel** (sans tampon), téléchargé dans l'application. Recherche par numéro ou par date. |
 | Relevé de facturation | Factures et avoirs d'une période de 12 mois au plus : totaux HT, TVA par taux et TTC, en PDF et en Excel. **Aucun solde ni état de paiement.** |
 | Commande passée | Commandes du site, du logiciel de l'officine ou saisies par Elixir : étapes, quantités servies et non servies, lots et péremptions, factures liées. |
+| Bon de livraison (ajout du 22/10/2026) | Liste des bons par jour et heure de sortie de l'entrepôt (« la livraison reçue hier » : ce jour-là et les trois d'avant, car la moitié des bons sortent la nuit ou le matin même), numéro EP/OUT (« BL 1003 », « OUT/1003 » ou le nombre lu sur le papier), commande, facture ou produit ; un **« Duplicata de bon de livraison »** en PDF généré par le site (Odoo ne garde pas ce PDF et refuse de le calculer par l'API), établi avec les données d'Odoo à la date d'édition : produits, CIP, lots, péremptions, quantités livrées et restant à livrer. Un bon, ou tous ceux de la période en un seul fichier (jusqu'à 60 bons). Bouton « Bon de livraison » aussi sur la carte d'une commande sortie. Pas d'envoi par e-mail. Aucune écriture dans Odoo, rien à installer (ni table, ni variable). |
 | Retour ou réclamation | L'assistant **prépare** un récapitulatif. Rien ne part tant que la pharmacie n'a pas cliqué sur « Confirmer la demande ». Aucun refus automatique au-delà de 10 jours : la pharmacie est informée et le Pharmacien Responsable décide. |
 | Parler à un conseiller | Transmission à l'équipe avec un résumé et un numéro T-… Une alerte qualité est transmise tout de suite, en « URGENT ». |
 
@@ -107,7 +108,8 @@ Les changements du **lot 0** (§ 5) sont **déjà en ligne** : ils sont partis a
    3. **Commande.** Demandez « Où en est ma dernière commande ? ».
    4. **Retour.** Demandez un retour d'une boîte, puis cliquez sur « Confirmer la demande » en **décochant** « Prévenir la pharmacie par e-mail ». Vous devez recevoir un e-mail « **[SIMULATION]** Demande de retour R-… » sur `pharmacien@elixirpharma.fr`, et la demande doit apparaître dans **Demandes**. Passez-la ensuite en « traitée » ou en « rejetée ».
    5. **Conseiller.** Écrivez « Je veux parler à un conseiller » : un n° T-… s'affiche et un e-mail [SIMULATION] arrive.
-   6. **Coûts.** Ouvrez l'onglet **Coûts** : quelques centimes.
+   6. **Bons de livraison.** Demandez « les BL de la livraison reçue ce matin », puis « le BL de la commande S… » (une commande sortie). Téléchargez un bon (bouton « Télécharger le bon de livraison (PDF) ») et l'ensemble (« Les N bons … en un seul PDF ») : chaque page porte « BON DE LIVRAISON », le bandeau « DUPLICATA », la date d'édition, l'adresse de livraison, les lots et les péremptions.
+   7. **Coûts.** Ouvrez l'onglet **Coûts** : quelques centimes.
 
 ### Étape 5 : pilote de 5 à 10 pharmacies, en simulation, pendant 2 semaines
 
@@ -261,7 +263,8 @@ Le suivi se fait dans l'onglet **Coûts**.
 5. **Retours.** Le délai de 10 jours compte à partir du lendemain de la sortie d'entrepôt : à confirmer. La phrase « attendez l'accord d'Elixir avant tout renvoi » est à valider.
 6. **Questions de règlement.** Elles partent à l'e-mail de l'équipe avec « [Règlement] » : faut-il une autre personne ?
 7. **RGPD.** Il faut citer Anthropic comme sous-traitant dans les mentions et les CGU de l'espace (le panneau le dit déjà dans « Vos données »). Vérifiez aussi l'accord de traitement des données du compte Anthropic.
-8. **Petites limites de la v1.**
+8. **Bons de livraison (22/10/2026).** Construits par défaut : duplicata généré par le site pour tous les bons, sans téléphone, recherche par jour de sortie de l'entrepôt, renvois après retour signalés, toute la période en un seul PDF jusqu'à 60 bons (au-delà, l'assistant propose des périodes plus courtes, par exemple une semaine). Le duplicata dit qu'il est établi avec les données d'Odoo à la date d'édition : il n'affirme pas être identique à un papier remis à la livraison. À trancher : voulez-vous le PDF d'Odoo à l'identique ? Il faut alors créer une seule action cachée dans Odoo (par vous, Healthsoft, ou nous avec votre accord) ; le duplicata resterait le secours. Faut-il imprimer le téléphone de livraison ? Chercher par jour de livraison plutôt que de sortie ? Servir les PDF joints aux transferts au printemps 2026 (déconseillé : deux présentations) ? Une société rattachée à une fiche dans Odoo (même nom, même adresse, fiche « enfant ») : ses bons sont visibles depuis la fiche parente, comme ses commandes ; faut-il les limiter à sa seule fiche, comme les factures ?
+9. **Petites limites de la v1.**
    - Le duplicata se télécharge seulement : l'envoi par e-mail n'est pas proposé.
    - Le PDF du relevé est en Helvetica, pas en Inter.
    - Une adresse e-mail partagée par plusieurs officines ne voit qu'une officine.

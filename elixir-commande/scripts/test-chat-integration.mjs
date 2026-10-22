@@ -63,8 +63,12 @@ function fauxPostgrest() {
   const SPECIAUX = new Set(["select", "order", "limit", "offset", "on_conflict"]);
   const correspond = (r, params) => [...params].every(([k, v]) => {
     if (SPECIAUX.has(k)) return true;
+    // or=(col.op.val,col.op.val) : un seul niveau (comptage des fichiers : type.neq.bl, usages.gt.0)
+    if (k === "or") return v.replace(/^\(|\)$/g, "").split(",").some(t => { const [c, ...x] = t.split("."); return correspond(r, [[c, x.join(".")]]); });
     const [op, ...reste] = v.split("."); const val = reste.join(".");
     if (op === "eq") return cmp(r[k], val) === 0;
+    if (op === "neq") return cmp(r[k], val) !== 0;
+    if (op === "gt") return cmp(r[k], val) > 0;
     if (op === "gte") return cmp(r[k], val) >= 0;
     if (op === "lt") return cmp(r[k], val) < 0;
     if (op === "is") return val === "null" ? r[k] === null || r[k] === undefined : String(r[k]) === val;
