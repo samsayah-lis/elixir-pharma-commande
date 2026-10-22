@@ -4,9 +4,11 @@ import { getCors } from "./cors.js";
 // LECTURE SEULE. Les changements passent par products-upsert (jeton admin, seules les lignes concernées, historique).
 //  GET ?section=<clé>       → produits retirés de cette section (elixir_products.active = false), du plus récent au plus
 //                             ancien : nom, CIP, photo, date et auteur du retrait (dernière entrée d'historique), prix et
-//                             stock Odoo (odoo_catalog), prix enregistré (repli quand le produit n'est plus dans Odoo).
-//  GET ?cips=<cip,cip…>     → état de ces CIP sur le site (actif ou retiré, section, nom ; absents : aucune ligne) et leur
-//                             stock Odoo (quantité libre « available », écrite par odoo-stock-sync) — 200 CIP au plus.
+//                             stock Odoo (odoo_catalog), prix enregistré (repli quand le produit n'est plus dans Odoo),
+//                             colis et prix carton enregistrés (Sélection Stratège).
+//  GET ?cips=<cip,cip…>     → état de ces CIP sur le site (actif ou retiré, section, nom, prix enregistrés, colis et carton,
+//                             dernière entrée d'historique ; absents : aucune ligne) et leur stock Odoo (quantité libre
+//                             « available », écrite par odoo-stock-sync) — 200 CIP au plus.
 // products-get ne renvoie que les produits actifs : sans cette lecture, l'admin ne voit ni les produits retirés ni un CIP
 // retiré d'une autre section (un CIP n'a qu'une ligne, donc qu'une section : la clé de la table est le CIP).
 // Réservé à l'admin (verifyAdmin) : les produits retirés et les quantités en stock ne sont pas publics.
@@ -67,11 +69,12 @@ export function creerHandler({
         const section = String(q.section);
         if (!SECTION.test(section)) return repond(400, { error: "section invalide" });
         const lignes = await lire(`elixir_products?section=eq.${encodeURIComponent(section)}&active=eq.false`
-          + `&select=cip,name,section,pv,pn,image_url,updated_at,history&order=updated_at.desc&limit=${MAX_RETIRES}`);
+          + `&select=cip,name,section,pv,pn,remise_eur,colis,carton,image_url,updated_at,history&order=updated_at.desc&limit=${MAX_RETIRES}`);
         const odoo = await odooDe(lignes.map(l => l.cip).filter(c => CIP.test(String(c))));
         const retires = lignes.map(l => ({
           cip: l.cip, name: l.name, section: l.section, image_url: l.image_url || null, updated_at: l.updated_at || null,
-          pv: nombre(l.pv), pn: nombre(l.pn), retrait: derniereEntree(l.history), odoo: odoo[l.cip] || null,
+          pv: nombre(l.pv), pn: nombre(l.pn), remise_eur: nombre(l.remise_eur), colis: nombre(l.colis), carton: nombre(l.carton),
+          retrait: derniereEntree(l.history), odoo: odoo[l.cip] || null,
         }));
         return repond(200, { section, retires, plafond: lignes.length >= MAX_RETIRES });
       }
@@ -82,8 +85,9 @@ export function creerHandler({
         const produits = {};
         for (let i = 0; i < cips.length; i += 100) {
           const lot = cips.slice(i, i + 100).map(encodeURIComponent).join(",");
-          for (const l of await lire(`elixir_products?cip=in.(${lot})&select=cip,name,section,active,image_url,updated_at,history`)) {
+          for (const l of await lire(`elixir_products?cip=in.(${lot})&select=cip,name,section,active,pv,pn,remise_eur,colis,carton,image_url,updated_at,history`)) {
             produits[l.cip] = { active: l.active !== false, section: l.section ?? null, name: l.name ?? null, image_url: l.image_url || null,
+              pv: nombre(l.pv), pn: nombre(l.pn), remise_eur: nombre(l.remise_eur), colis: nombre(l.colis), carton: nombre(l.carton),
               updated_at: l.updated_at || null, derniere: derniereEntree(l.history) };
           }
         }

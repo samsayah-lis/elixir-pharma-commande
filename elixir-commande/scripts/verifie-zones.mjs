@@ -282,6 +282,9 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/_odoo-rpc.js": { empreinte: "c405c5a8fadd", motif: "délai facultatif des lectures (5e argument), lectures de l'assistant coupées à 6 s" },
   // Péremption courte, règle panier (21/10/2026) : seule fonction serveur existante modifiée par le lot (reprise de 3774a17)
   "netlify/functions/_relais.js": { empreinte: "07965174f91d", motif: "péremption courte, règle panier (21/10/2026) : empreinte anti-doublon d'envoiAuto, ligne péremption marquée « :per » — la commande « à part » (même produit, même quantité que la ligne du menu de la commande voisine) n'est plus classée « POSSIBLE DOUBLON » ni écartée de l'envoi automatique ; sans ligne péremption, empreinte inchangée" },
+  // Sections du catalogue (22/10/2026, docs/sections-admin.md) : contrôle serveur des seules actions section_* (ajout,
+  // déplacement, remise, retrait depuis l'onglet ✏️ Modifier) ; les autres actions (update, create, delete) sont inchangées
+  "netlify/functions/products-upsert.js": { empreinte: "f18d186674d1", motif: "sections du catalogue (22/10/2026) : actions section_* contrôlées par refusActionSection (src/components/sections-produits.js) après lecture de la ligne et des campagnes actives — refus 400 menu promo, outil, clé invalide, U-Labs ou campagne active (arrivée ou origine), Stratège sans colis ; 409 CIP déjà présent ; 503 si la lecture échoue, rien d'écrit ; les autres actions sont inchangées" },
 };
 // Projet « Assistant Elixir » (branche assistant-elixir, docs/assistant-contrat.md), en attente de fusion dans master :
 // fonctions ajoutées sous netlify/functions (chat*.js, _chat-*.js), admises tant qu'elles n'existent pas dans la référence.
@@ -306,7 +309,8 @@ const FICHIERS_AUTORISES = {
 // de repli à la page).
 // Sections du catalogue (admin, onglet ✏️ Modifier : ajouter et retirer des produits d'une section existante, 22/10/2026,
 // src/components/sections-produits.js) : fonction NOUVELLE products-sections.js, en LECTURE SEULE (produits retirés d'une
-// section, état et stock de CIP ; réservée à l'admin) ; les écritures passent par products-upsert.js, inchangé.
+// section, état et stock de CIP ; réservée à l'admin) ; les écritures passent par products-upsert.js, qui contrôle aussi
+// les actions section_* (FICHIERS_AUTORISES, empreinte), les autres actions inchangées.
 const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {

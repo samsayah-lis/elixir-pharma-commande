@@ -8,12 +8,18 @@
 //     ailleurs), retrait d'un produit, retrait groupé, historique (auteur, avant / après, entrées précédentes gardées),
 //     seules les lignes concernées écrites, aucune écriture de la configuration (ec_config), plan périmé, jeton refusé ;
 //  4. photos Medipim après un ajout (trouvée, introuvable, saturation, plafond) ;
-//  5. banc d'essai (scripts/banc/sections-banc.mjs) : mêmes lignes que le vrai products-upsert pour la même suite d'opérations.
+//  5. banc d'essai (scripts/banc/sections-banc.mjs) : mêmes lignes que le vrai products-upsert pour la même suite d'opérations ;
+//  6. correctifs de la revue : Sélection Stratège (colis requis, prix carton), remise (prix Odoo, nom, désactivé à la main,
+//     section d'origine exclue, section changée entre-temps), campagnes non lues, contrôle serveur des actions section_*
+//     (menus promo, outils, clé invalide, U-Labs, campagne active, CIP déjà présent), Sélection Expert sans remise,
+//     bilans (produit et section nommés, ⚠ dès qu'un produit n'est pas fait), avertissement panier, recherche Odoo à
+//     plusieurs mots ou accents.
 process.env.SUPABASE_URL = "https://supabase.faux";
 process.env.SUPABASE_KEY = "cle-service";
 const { fauxSupabase } = await import("./peremption-faux.mjs");
 const S0 = await import("../src/components/sections-produits.js");
-const { nomSection, sectionBloquee, prixOdoo, nomProvisoire, etatCip, verdictAjout, operation, verifierPlan, appliquer, photosMedipim, bilanTexte, ACTIONS } = S0;
+const { nomSection, sectionBloquee, prixOdoo, nomProvisoire, etatCip, verdictAjout, operation, verifierPlan, appliquer, photosMedipim, bilanTexte, ACTIONS,
+  prixAffiche, refusRemise, refusActionSection, rechercheOdoo, planRecherche, sectionsTouchees, panierTexte, desactiveAlaMain, colisRequis } = S0;
 
 let ok = 0, ko = 0;
 // textes de l'admin : espaces insécables des guillemets français lues comme des espaces
@@ -114,7 +120,8 @@ eq("prixOdoo : sans prix remisé → prix de vente, remise 0", prixOdoo({ list_p
 eq("prixOdoo : remise calculée si discount_pct absent", prixOdoo({ list_price: 10, discounted_price: 8 }), { pv: 10, pn: 8, pct: 20, remise_eur: 2 });
 eq("prixOdoo : sans prix de vente → null", [prixOdoo({ list_price: 0, discounted_price: 0 }), prixOdoo({}), prixOdoo(null)], [null, null, null]);
 eq("nomProvisoire", ["Nom à préciser : 34009", "  nom à préciser", "", null, "DOLIPRANE 1000"].map(nomProvisoire), [true, true, true, true, false]);
-const produitsEtat = { [A]: { active: true, section: "covid" }, [C]: { active: true, section: "otc" }, [U]: { active: true, section: "ulabs" }, [R2]: { active: false, section: "otc" } };
+const produitsEtat = { [A]: { active: true, section: "covid", name: "Autotest" }, [C]: { active: true, section: "otc", name: "Spray nasal" }, [U]: { active: true, section: "ulabs", name: "Dentifrice" },
+  [R2]: { active: false, section: "otc", name: "Gel hydroalcoolique 500 ml", pn: 3.1 } };
 eq("etatCip : ici, ailleurs, retiré, nouveau", [A, C, R2, N].map(c => etatCip(c, "covid", produitsEtat).type), ["ici", "ailleurs", "retire", "nouveau"]);
 const verdict = (cip, sec = "covid", extra = {}) => verdictAjout({ ligne: odoo(cip) || { cip, name: "x", list_price: 1 }, etat: etatCip(cip, sec, produitsEtat), section: sec, sections: SECTIONS, ...extra });
 eq("verdict : nouveau → ajouter ; ailleurs → déplacer ; retiré → remettre", [verdict(N).type, verdict(C).type, verdict(R2).type], ["ajouter", "deplacer", "remettre"]);
@@ -320,6 +327,214 @@ const inchangees = (avant, cips) => JSON.stringify(avant.filter(sauf(cips))) ===
   const r = await repondreSections({ methode: "GET", fn: "products-sections", query: { section: "covid" }, entetes, produits: PRODUITS, catalogue: ODOO });
   eq("banc : products-sections (vrai code) voit le retrait", [r.statut, r.corps.retires.map(x => x.cip).sort()], [200, [A, R].sort()]);
   eq("banc : sans jeton → 403", (await repondreSections({ methode: "GET", fn: "products-sections", query: { section: "covid" }, entetes: {}, produits: PRODUITS, catalogue: ODOO })).statut, 403);
+}
+
+// ═══ 6. correctifs de la revue ═══
+const ST = "3400933640620", ST2 = "3400931499787", XP = "3400930000020", CAMP = "3400930000030", RU = "3400930000040", RC = "3400930000041", RS = "3400930000042", RN = "3400930000043";
+const PRODUITS6 = () => [
+  ...PRODUITS(),
+  { cip: ST, name: "Sérum physiologique 5 ml B/40", section: "stratege", pv: 2.38, pct: 9.7, pn: 2.16, remise_eur: 0.22, colis: 24, carton: 51.84, note: null, active: true, source: "catalog",
+    image_url: null, labo: null, history: "[]", created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-03-09T21:22:45.380Z" },
+  { cip: ST2, name: "Compresses stériles 10x10cm BT50", section: "stratege", pv: 1.66, pct: 13.9, pn: 1.43, remise_eur: 0.23, colis: 60, carton: 84.6, note: null, active: false, source: "catalog",
+    image_url: null, labo: null, history: H({ action: "section_retrait", date: "2026-10-20T08:00:00.000Z", author: "admin", changes: { active: { avant: true, apres: false }, section: "stratege" } }),
+    created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-10-20T08:00:00.000Z" },
+  { cip: XP, name: "Eylea 40 mg/ml", section: "expert", pv: 800, pct: 3.75, pn: 770, remise_eur: 30, colis: null, carton: null, note: null, active: true, source: "catalog",
+    image_url: null, labo: null, history: "[]", created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-03-09T21:22:45.380Z" },
+  { cip: CAMP, name: "Pansement Mepilex Border", section: "molnlycke", pv: 9, pct: 10, pn: 8.1, remise_eur: 0.9, colis: null, carton: null, note: null, active: true, source: "catalog",
+    image_url: null, labo: null, history: "[]", created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-03-09T21:22:45.380Z" },
+  // retiré d'U-Labs ; retiré d'une campagne active ; retiré mais plus dans Odoo ; retiré avec un nom provisoire
+  { cip: RU, name: "Brosse à dents U-Labs", section: "ulabs", pv: 2, pct: 0, pn: 2, remise_eur: 0, colis: 6, carton: null, note: null, active: false, source: "catalog",
+    image_url: null, labo: null, history: H({ action: "section_retrait", date: "2026-10-20T08:00:00.000Z", author: "admin" }), created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-10-20T08:00:00.000Z" },
+  { cip: RC, name: "Mepilex Ag", section: "molnlycke", pv: 12, pct: 10, pn: 10.8, remise_eur: 1.2, colis: null, carton: null, note: null, active: false, source: "catalog",
+    image_url: null, labo: null, history: H({ action: "section_retrait", date: "2026-10-20T08:00:00.000Z", author: "admin" }), created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-10-20T08:00:00.000Z" },
+  { cip: RS, name: "Ancien produit hors Odoo", section: "covid", pv: 5, pct: 10, pn: 4.5, remise_eur: 0.5, colis: null, carton: null, note: null, active: false, source: "catalog",
+    image_url: null, labo: null, history: H({ action: "section_retrait", date: "2026-10-20T08:00:00.000Z", author: "admin" }), created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-10-20T08:00:00.000Z" },
+  { cip: RN, name: "Nom à préciser : 3400930000043", section: "covid", pv: 5, pct: 10, pn: 4.5, remise_eur: 0.5, colis: null, carton: null, note: null, active: false, source: "admin",
+    image_url: null, labo: null, history: H({ action: "delete", date: "2026-09-20T08:00:00.000Z", author: "admin" }), created_at: "2026-03-09T21:22:45.380Z", updated_at: "2026-09-20T08:00:00.000Z" },
+];
+const ODOO6 = () => [
+  ...ODOO(),
+  { cip: ST, barcode: ST, name: "SERUM PHYSIOLOGIQUE 5ML B/40", list_price: 2.38, discounted_price: 2.15, discount_pct: 9.7, in_stock: true, available: 900 },
+  { cip: ST2, barcode: ST2, name: "COMPRESSES STERILES 10X10CM BT50", list_price: 1.66, discounted_price: 1.43, discount_pct: 13.9, in_stock: true, available: 300 },
+  { cip: XP, barcode: XP, name: "EYLEA 40MG/ML", list_price: 800, discounted_price: 770, discount_pct: 3.75, in_stock: true, available: 4 },
+  { cip: CAMP, barcode: CAMP, name: "MEPILEX BORDER", list_price: 9, discounted_price: 8.1, discount_pct: 10, in_stock: true, available: 12 },
+  { cip: RU, barcode: RU, name: "BROSSE A DENTS", list_price: 2, discounted_price: 2, discount_pct: 0, in_stock: true, available: 50 },
+  { cip: RC, barcode: RC, name: "MEPILEX AG", list_price: 12, discounted_price: 10.8, discount_pct: 10, in_stock: true, available: 8 },
+  { cip: RN, barcode: RN, name: "Nom à préciser : 3400930000043", list_price: 5, discounted_price: 4.5, discount_pct: 10, in_stock: true, available: 2 },
+];
+const odoo6 = (cip) => ODOO6().find(o => o.cip === cip);
+const CAMPAGNES = () => [{ id: "molnlycke", active: true, label: "Offre Mölnlycke" }, { id: "ancienne", active: false }];
+S = fauxSupabase({ tables: { elixir_products: PRODUITS6(), odoo_catalog: ODOO6(), ec_config: CONFIG(), elixir_campaigns: CAMPAGNES() } });
+const SECTIONS6 = [...SECTIONS, { key: "stratege", label: "📦 Sélection Stratège" }, { key: "molnlycke", label: "🩹 Offre Mölnlycke" }];
+const ecrituresDepuis = (n0) => S.etat.requetes.slice(n0).filter(q => q.methode !== "GET");
+const poste = async (corps) => { const r = await upsert({ httpMethod: "POST", headers: { authorization: "Bearer jeton-admin" }, body: JSON.stringify(corps) }); return { statut: r.statusCode, corps: JSON.parse(r.body) }; };
+
+// 6a. Sélection Stratège : colis requis, prix carton = colis × prix net affiché
+{
+  eq("6a. règles : Stratège au colis, pas les autres", [colisRequis("stratege"), colisRequis("covid"), colisRequis("expert")], [true, false, false]);
+  const sans = operation("ajouter", { cip: N, section: "stratege", ligne: odoo(N), etat: { type: "nouveau" } });
+  eq("6a. ajout à Stratège sans colis : incomplet, pas de colis envoyé", [sans.incomplet, "colis" in sans.corps.product], ["colis", false]);
+  vrai("6a. plan : opération incomplète écartée (rien d'écrit)", verifierPlan([sans], {}).perimes[0]?.raison === "quantité minimale (colis) manquante");
+  for (const v of ["0", "-3", "2.5", "abc", ""]) vrai(`6a. colis « ${v} » refusé`, operation("ajouter", { cip: N, section: "stratege", ligne: odoo(N), etat: { type: "nouveau" }, colis: v }).incomplet === "colis");
+  const avec = operation("ajouter", { cip: N, section: "stratege", ligne: odoo(N), etat: { type: "nouveau" }, colis: "16" });
+  eq("6a. ajout à Stratège avec colis 16 : colis et carton (16 × 0,83) envoyés, avant / après", [avec.incomplet, avec.corps.product.colis, avec.corps.product.carton, avec.corps.product._changes.colis, avec.corps.product._changes.carton],
+    [null, 16, 13.28, { avant: null, apres: 16 }, { avant: null, apres: 13.28 }]);
+  const e = etatCip(C, "stratege", await etats([C]));
+  eq("6a. état d'un CIP : prix, colis et carton enregistrés relus", [e.type, e.stocke.colis, e.stocke.carton, e.stocke.pn], ["ailleurs", 12, 48, 3.78]);
+  const dep = operation("deplacer", { cip: C, section: "stratege", ligne: odoo(C), etat: e });
+  eq("6a. déplacement vers Stratège : colis actuel prérempli (12), carton = 12 × 3,78", [dep.incomplet, dep.corps.product.colis, dep.corps.product.carton, dep.corps.product._changes.carton], [null, 12, 45.36, { avant: 48, apres: 45.36 }]);
+  const depVide = operation("deplacer", { cip: B, section: "stratege", ligne: { cip: B, name: "x", list_price: 7.5, discounted_price: 5.99 }, etat: { type: "ailleurs", section: "covid", stocke: { colis: null } } });
+  eq("6a. déplacement vers Stratège d'un produit sans colis (cas OTC) : incomplet", depVide.incomplet, "colis");
+  eq("6a. déplacement vers une autre section : ni colis ni carton", Object.keys(operation("deplacer", { cip: C, section: "covid", ligne: odoo(C), etat: e }).corps.product).sort(), ["_changes", "cip", "section"]);
+  // bout à bout : déplacement vers Stratège (vrai products-upsert)
+  const n0 = S.etat.requetes.length;
+  const r = await executer([dep]);
+  eq("6a. déplacement vers Stratège : fait", [r.faits.length, r.echecs.length], [1, 0]);
+  eq("6a. ligne : section, colis, carton", [ligne(C).section, ligne(C).colis, ligne(C).carton], ["stratege", 12, 45.36]);
+  eq("6a. historique : colis et carton avant / après", [hist(C).at(-1).changes.colis, hist(C).at(-1).changes.carton], [{ avant: 12, apres: 12 }, { avant: 48, apres: 45.36 }]);
+  eq("6a. une seule écriture (ce CIP)", ecrituresDepuis(n0).map(q => [q.methode, new URL(q.url).searchParams.get("cip")]), [["PATCH", `eq.${C}`]]);
+  // remise d'un produit retiré de Stratège (liste des retirés) : colis prérempli
+  const ret = (await lire({ section: "stratege" })).corps.retires.find(x => x.cip === ST2);
+  eq("6a. retirés de Stratège : colis et carton enregistrés", [ret?.colis, ret?.carton, ret?.remise_eur], [60, 84.6, 0.23]);
+  const rem = operation("remettre", { cip: ST2, section: "stratege", produit: ret });
+  eq("6a. remise dans Stratège : colis 60, carton 60 × 1,43 (Odoo)", [rem.incomplet, rem.corps.product.colis, rem.corps.product.carton, rem.prix.source], [null, 60, 85.8, "odoo"]);
+  eq("6a. annulation d'un retrait : remise telle qu'avant, sans colis", Object.keys(operation("remettre", { cip: ST, section: "stratege", produit: { section: "stratege" }, annulation: true }).corps.product).sort(), ["_changes", "active", "cip"]);
+  // serveur : un produit qui arrive dans Stratège sans colis est refusé
+  const n1 = S.etat.requetes.length;
+  const sv = await poste(operation("deplacer", { cip: A, section: "stratege", etat: { type: "ailleurs", section: "covid", stocke: { colis: null } }, colis: "" }).corps);
+  vrai("6a. serveur : déplacement vers Stratège sans colis → 400, rien d'écrit", sv.statut === 400 && /colis/.test(sv.corps.error) && !ecrituresDepuis(n1).length, JSON.stringify(sv));
+}
+
+// 6b. remise : prix Odoo, nom, désactivé à la main, section d'origine exclue, section changée entre-temps
+{
+  const etatsR = await etats([RU, RC, RS, RN, R2]);
+  const v = (cip, sec = "covid", campagnes = ["molnlycke"]) => verdictAjout({ ligne: odoo6(cip) || { cip, name: "LIGNE ODOO", list_price: 0 }, etat: etatCip(cip, sec, etatsR), section: sec, campagnes, sections: SECTIONS6 });
+  vrai("6b. retiré d'U-Labs, remis ailleurs → refusé (campagne)", v(RU).type === null && /U-Labs.*campagne/.test(sp(v(RU).raison)), v(RU).raison);
+  vrai("6b. retiré d'une campagne active, remis ailleurs → refusé", v(RC).type === null && /Mölnlycke.*campagne/.test(sp(v(RC).raison)), v(RC).raison);
+  vrai("6b. retiré, plus de prix dans Odoo → refusé (prix figé)", v(RS).type === null && /Plus dans Odoo/.test(v(RS).raison), v(RS).raison);
+  vrai("6b. retiré avec un nom provisoire → refusé", v(RN).type === null && /Nom provisoire/.test(v(RN).raison), v(RN).raison);
+  eq("6b. retiré d'otc (désactivé à la main), Odoo a un prix → « remettre »",
+    verdictAjout({ ligne: { cip: R2, name: "GEL HYDRO 500ML", list_price: 3.5, discounted_price: 3.2 }, etat: etatCip(R2, "covid", etatsR), section: "covid", sections: SECTIONS6 }).type, "remettre");
+  eq("6b. retiré, AUCUNE ligne Odoo → refusé", v(R2).type, null);
+  eq("6b. refusRemise sans ligne Odoo / sans prix", [!!refusRemise({ odoo: null, nom: "x" }), !!refusRemise({ odoo: { list_price: 0 }, nom: "x" }), refusRemise({ odoo: odoo6(RC), nom: "Mepilex Ag", section: "covid" })], [true, true, null]);
+  eq("6b. désactivé à la main : toute autre dernière action que section_retrait", [desactiveAlaMain({ action: "delete" }), desactiveAlaMain(null), desactiveAlaMain({ action: "section_retrait" })], [true, true, false]);
+  const op1 = operation("remettre", { cip: R2, section: "covid", ligne: { cip: R2, name: "GEL", list_price: 3.5, discounted_price: 3.2 }, etat: etatCip(R2, "covid", etatsR) });
+  eq("6b. remise d'un désactivé : marquée (case de confirmation), prix Odoo montré", [op1.desactive, op1.prix.pn, op1.prix.source], [true, 3.2, "odoo"]);
+  const retR = (await lire({ section: "covid" })).corps.retires;
+  eq("6b. liste des retirés : remise refusée sans prix Odoo ou avec un nom provisoire", retR.filter(x => [RS, RN].includes(x.cip)).map(x => [x.cip, !!refusRemise({ odoo: x.odoo, nom: x.name, section: "covid", stocke: x })]).sort(),
+    [[RS, true], [RN, true]]);
+  eq("6b. liste des retirés : « Retiré » (admin) / « Désactivé » (🗑️)", retR.filter(x => [RS, RN].includes(x.cip)).map(x => [x.cip, desactiveAlaMain(x.retrait)]).sort(), [[RS, false], [RN, true]]);
+  // section changée entre la lecture et l'écriture : remise périmée, rien d'écrit
+  const opR = operation("remettre", { cip: RS, section: "covid", produit: retR.find(x => x.cip === RS) });
+  const perime = verifierPlan([opR], { [RS]: { active: false, section: "otc" } }, SECTIONS6);
+  eq("6b. remise : produit passé dans une autre section entre-temps → périmé", perime.perimes.map(p => sp(p.raison)), ["est passé dans « Centrale OTC / Para » entre-temps"]);
+  // serveur : remise ailleurs d'un produit retiré d'une campagne → 400 ; remise d'un produit déjà en ligne → 409
+  const n0 = S.etat.requetes.length;
+  const s1 = await poste({ product: { cip: RC, active: true, section: "covid", _changes: {} }, action: "section_remise", author: "admin" });
+  const s2 = await poste({ product: { cip: RU, active: true, section: "covid", _changes: {} }, action: "section_remise", author: "admin" });
+  const s3 = await poste({ product: { cip: ST, active: true, _changes: {} }, action: "section_remise", author: "admin" });
+  eq("6b. serveur : remise hors campagne active / U-Labs → 400, déjà en ligne → 409", [s1.statut, s2.statut, s3.statut], [400, 400, 409]);
+  vrai("6b. serveur : aucune écriture", !ecrituresDepuis(n0).length);
+}
+
+// 6c. campagnes non lues : rien n'est permis ; contrôle serveur des actions section_*
+{
+  eq("6c. campagnes non lues : toute section exclue (raison « campagnes »)", ["covid", "otc", "stratege"].map(k => sectionBloquee(k, { campagnes: null })?.raison), ["campagnes", "campagnes", "campagnes"]);
+  eq("6c. campagnes non lues : « Toutes sections » reste neutre", sectionBloquee("all", { campagnes: null }), null);
+  eq("6c. campagnes non lues : déplacement refusé", verdictAjout({ ligne: odoo(C), etat: { type: "ailleurs", section: "otc" }, section: "covid", campagnes: null }).type, null);
+  vrai("6c. texte U-Labs court, ce qui reste possible", /est une campagne : ses produits ne s'ajoutent ni ne se retirent ici.*✏️ Modifier/.test(sp(sectionBloquee("ulabs", { sections: SECTIONS }).texte)));
+  const n0 = S.etat.requetes.length;
+  const corps = (cip, section, action = "section_ajout") => ({ product: { cip, name: "Produit essai", section, pv: 2, pn: 1.5, active: true, _changes: {} }, action, author: "admin" });
+  const r = [
+    await poste(corps("3400930000090", "promo_1790245367017")),
+    await poste(corps("3400930000091", "peremption")),
+    await poste(corps("3400930000092", "Covid-19")),
+    await poste(corps("3400930000093", "ulabs")),
+    await poste(corps("3400930000094", "molnlycke")),
+    await poste(corps(A, "otc")),
+    await poste({ product: { cip: CAMP, active: false, _changes: {} }, action: "section_retrait", author: "admin" }),
+    await poste({ product: { cip: U, active: false, _changes: {} }, action: "section_retrait", author: "admin" }),
+    await poste({ product: { cip: C, section: "ulabs", _changes: {} }, action: "section_deplacement", author: "admin" }),
+    await poste({ product: { cip: CAMP, section: "covid", _changes: {} }, action: "section_deplacement", author: "admin" }),
+    await poste({ product: { cip: A, active: false, section: "otc", _changes: {} }, action: "section_retrait", author: "admin" }),
+    await poste({ product: { cip: A, active: false, _changes: {} }, action: "section_inconnue", author: "admin" }),
+  ];
+  eq("6c. serveur : menu promo, outil, clé invalide, U-Labs, campagne active, CIP déjà là, retrait en campagne / U-Labs, déplacement vers / depuis une campagne, retrait qui change la section, action inconnue",
+    r.map(x => x.statut), [400, 400, 400, 400, 400, 409, 400, 400, 400, 400, 400, 400]);
+  vrai("6c. serveur : refus expliqués", /menu promo/.test(r[0].corps.error) && /outil/.test(r[1].corps.error) && /invalide/.test(r[2].corps.error) && /campagne/.test(r[4].corps.error) && /déjà sur le site/.test(r[5].corps.error), JSON.stringify(r.map(x => x.corps.error)));
+  vrai("6c. serveur : aucune écriture pour ces refus", !ecrituresDepuis(n0).length, JSON.stringify(ecrituresDepuis(n0)));
+  // campagnes illisibles → 503, rien d'écrit ; les autres actions (✏️ Modifier) ne lisent pas les campagnes
+  S.etat.panne = (table) => table === "elixir_campaigns";
+  const n1 = S.etat.requetes.length;
+  const p1 = await poste({ product: { cip: B, active: false, _changes: {} }, action: "section_retrait", author: "admin" });
+  const p2 = await poste({ product: { cip: B, name: "Masques FFP2 NR Boîte/20", section: "covid", note: "essai" }, action: "update", author: "admin" });
+  S.etat.panne = null;
+  eq("6c. campagnes illisibles : section_* → 503 ; ✏️ Modifier inchangé → 200", [p1.statut, p2.statut], [503, 200]);
+  eq("6c. campagnes illisibles : seule l'écriture de ✏️ Modifier a eu lieu", ecrituresDepuis(n1).map(q => [q.methode, new URL(q.url).searchParams.get("cip")]), [["PATCH", `eq.${B}`]]);
+  eq("6c. refusActionSection (pur) : retrait permis d'une section ordinaire", refusActionSection({ action: "section_retrait", product: { cip: A, active: false }, actuelle: { section: "covid", active: true }, campagnes: [] }), null);
+  eq("6c. refusActionSection : changement de CIP refusé", refusActionSection({ action: "section_deplacement", product: { cip: A, old_cip: "x", section: "otc" }, actuelle: { section: "covid", active: true } })?.statut, 400);
+  // banc : même contrôle que le serveur
+  const { repondreSections } = await import("./banc/sections-banc.mjs");
+  const banc = await repondreSections({ methode: "POST", fn: "products-upsert", corps: corps("3400930000093", "ulabs"), entetes: { authorization: "Bearer x" }, produits: PRODUITS, catalogue: ODOO, campagnes: () => [] });
+  eq("6c. banc : ajout à U-Labs refusé comme en ligne", banc.statut, 400);
+}
+
+// 6d. Sélection Expert : une remise nulle s'afficherait « 30,00 € »
+{
+  const vx = (ligne, etat) => verdictAjout({ ligne, etat, section: "expert", sections: SECTIONS6 });
+  vrai("6d. ajout à Expert sans remise dans Odoo → refusé (30 € affichés)", vx(odoo(N2), { type: "nouveau" }).type === null && /30 €/.test(vx(odoo(N2), { type: "nouveau" }).raison));
+  eq("6d. ajout à Expert avec une remise → permis", vx(odoo(N), { type: "nouveau" }).type, "ajouter");
+  eq("6d. déplacement vers Expert sans remise (Odoo : liste n° 5 = prix) → refusé", vx({ cip: C, name: "x", list_price: 4.2, discounted_price: 4.2 }, { type: "ailleurs", section: "otc", stocke: {} }).type, null);
+  eq("6d. remise dans Expert sans remise → refusée", vx({ cip: R2, name: "x", list_price: 3.1, discounted_price: 3.1 }, { type: "retire", section: "expert", name: "Gel", stocke: {} }).type, null);
+  eq("6d. prixAffiche : Odoo (prix et liste n° 5), sinon prix enregistré", [prixAffiche({ list_price: 10, discounted_price: 8 }, null), prixAffiche({ list_price: 10 }, { pv: 9, pn: 7, remise_eur: 2 })],
+    [{ pv: 10, pn: 8, remise_eur: 2, source: "odoo" }, { pv: 9, pn: 7, remise_eur: 2, source: "enregistre" }]);
+}
+
+// 6e. bilans et avertissement panier
+{
+  const o1 = operation("retirer", { cip: A, section: "covid", produit: { name: "Autotest COVID" } });
+  const o2 = operation("retirer", { cip: C, section: "otc", produit: { name: "Spray" } });
+  const o3 = operation("retirer", { cip: B, section: "covid", produit: { name: "Masques" } });
+  eq("6e. bilan d'une opération : produit et section nommés", sp(bilanTexte({ faits: [o1] }, "all", SECTIONS)), "✅ « Autotest COVID » retiré de « Diagnostic & Covid »");
+  eq("6e. bilan « Toutes sections » : regroupé par section", sp(bilanTexte({ faits: [o1, o2, o3] }, "all", SECTIONS)), "✅ « Diagnostic & Covid » : 2 retirés · « Centrale OTC / Para » : 1 retiré");
+  eq("6e. bilan en partie fait : ⚠ dès le premier produit non fait", sp(bilanTexte({ faits: [o1], echecs: [{ op: o3, erreur: "erreur 500" }] }, "covid", SECTIONS)), "⚠ « Diagnostic & Covid » : 1 retiré · 1 non fait");
+  eq("6e. bilan sans rien de fait", sp(bilanTexte({ perimes: [{ op: o1, raison: "x" }] }, "covid", SECTIONS)), "⚠ « Diagnostic & Covid » : aucun changement · 1 non fait");
+  const dep = operation("deplacer", { cip: C, section: "covid", etat: { type: "ailleurs", section: "otc" } });
+  eq("6e. déplacement : les deux sections touchées", sectionsTouchees([dep, o1]), ["covid", "otc"]);
+  vrai("6e. avertissement panier : les deux sections nommées", /de « Diagnostic & Covid » ou de « Centrale OTC \/ Para » dans son panier/.test(sp(panierTexte(sectionsTouchees([dep]), SECTIONS))), panierTexte(sectionsTouchees([dep]), SECTIONS));
+}
+
+// 6f. recherche Odoo : plusieurs mots, accents (odoo-catalog cherche une sous-chaîne, ilike : majuscules ignorées, accents NON)
+{
+  const CAT = [
+    { cip: "1", name: "Autotest COVID-19 Antigénique unitaire", in_stock: false },
+    { cip: "2", name: "AUTOTEST COVID ANTIGENIQUE B/5", in_stock: true },
+    { cip: "3", name: "Compresses stériles 10x10cm BT50", in_stock: true },
+    { cip: "4", name: "COMPRESSES NON STERILES 7,5X7,5", in_stock: true },
+    { cip: "5", name: "Test antigénique grippe", in_stock: true },
+    ...Array.from({ length: 40 }, (_, i) => ({ cip: String(100 + i), name: `SPRAY NASAL ${i}`, in_stock: i % 2 === 0 })),
+  ];
+  const adresses = [];
+  const lire = async (adresse) => {
+    adresses.push(adresse);
+    const u = new URL(adresse, "http://x"), t = String(u.searchParams.get("q")).toLowerCase(), lim = Number(u.searchParams.get("limit"));
+    return CAT.filter(p => p.name.toLowerCase().includes(t)).slice(0, lim);
+  };
+  const noms = async (q) => (await rechercheOdoo(q, { lire })).lignes.map(p => p.cip);
+  eq("6f. « autotest covid » (ordre du nom)", await noms("autotest covid"), ["2", "1"]);
+  eq("6f. « covid autotest » (ordre inversé) : mêmes produits, en stock d'abord", await noms("covid autotest"), ["2", "1"]);
+  eq("6f. « antigénique » (accent) : avec et sans accent", (await noms("antigénique")).sort(), ["1", "2", "5"]);
+  eq("6f. « compresse sterile » : accents et pluriel", (await noms("compresse sterile")).sort(), ["3", "4"]);
+  eq("6f. « compresses stériles 10x10 »", await noms("compresses stériles 10x10"), ["3"]);
+  eq("6f. un mot sans accent : une requête, limite d'origine", [planRecherche("spray").simple, (await noms("spray")).length], [true, 30]);
+  adresses.length = 0;
+  await noms("covid autotest");
+  vrai("6f. plusieurs mots : le mot le plus long, 200 résultats", adresses.length === 1 && /q=autotest&limit=200/.test(adresses[0]), JSON.stringify(adresses));
+  adresses.length = 0;
+  await noms("antigénique");
+  eq("6f. accent : deux requêtes (telle quelle, sans accent)", adresses.map(a => new URL(a, "http://x").searchParams.get("q")), ["antigénique", "antigenique"]);
+  eq("6f. CIP / EAN : requête simple", planRecherche("3400930000010").requetes, ["3400930000010"]);
+  eq("6f. plusieurs mots sans résultat : signalé", (await rechercheOdoo("xyz abc", { lire })).plusieursMots, true);
 }
 
 console.log(`${ok} OK, ${ko} échec(s)`);

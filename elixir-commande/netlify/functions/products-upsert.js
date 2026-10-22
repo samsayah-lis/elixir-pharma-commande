@@ -1,5 +1,6 @@
 import { verifyAdmin } from "./auth.js";
 import { getCors } from "./cors.js";
+import { refusActionSection } from "../../src/components/sections-produits.js";
 // Crée ou met à jour un produit dans Supabase avec historique
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -18,6 +19,24 @@ export const handler = async (event) => {
 
   const { product, action, author } = body;
   if (!product?.cip) return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "cip manquant" }) };
+
+  // Ajout / retrait de produits d'une section (admin, onglet ✏️ Modifier, actions section_* : docs/sections-admin.md) :
+  // garde-fous de l'admin vérifiés ici aussi (page restée ouverte, campagne activée depuis) — sections exclues (menus promo,
+  // campagnes actives, outils), un CIP = une section, colis de la Sélection Stratège. Les autres actions sont inchangées.
+  if (typeof action === "string" && action.startsWith("section_")) {
+    const H = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}` };
+    const [rp, rc] = await Promise.all([
+      fetch(`${SUPABASE_URL}/rest/v1/elixir_products?cip=eq.${encodeURIComponent(product.cip)}&select=section,active`, { headers: H }),
+      fetch(`${SUPABASE_URL}/rest/v1/elixir_campaigns?active=eq.true&select=id`, { headers: H }),
+    ]);
+    if (!rp.ok || !rc.ok) return { statusCode: 503, headers: cors, body: JSON.stringify({ error: "Produit ou campagnes illisibles : rien n'a été modifié, réessayez" }) };
+    const [lp, lc] = [await rp.json().catch(() => null), await rc.json().catch(() => null)];
+    if (!Array.isArray(lp) || !Array.isArray(lc)) return { statusCode: 503, headers: cors, body: JSON.stringify({ error: "Produit ou campagnes illisibles : rien n'a été modifié, réessayez" }) };
+    const actuelle = lp[0] || null;
+    const campagnes = lc.map(c => String(c?.id));
+    const refus = refusActionSection({ action, product, actuelle, campagnes });
+    if (refus) return { statusCode: refus.statut, headers: cors, body: JSON.stringify({ error: refus.error }) };
+  }
 
   const now = new Date().toISOString();
   const oldCip = product.old_cip; // si changement de CIP

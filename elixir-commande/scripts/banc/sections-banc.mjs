@@ -3,13 +3,15 @@
 // redémarrage) les produits figés de products-get dans un faux Supabase (scripts/peremption-faux.mjs), avec le catalogue
 // local (recherche du banc) comme odoo_catalog :
 //  • products-sections : VRAI code (netlify/functions/products-sections.js, lecture seule) sur ce faux Supabase ;
-//  • products-upsert : même règle que la fonction (seules les colonnes envoyées, entrée d'historique ajoutée, ligne absente
+//  • products-upsert : même règle que la fonction (contrôle des actions section_* par refusActionSection, campagnes du banc ;
+//    seules les colonnes envoyées, entrée d'historique ajoutée, ligne absente
 //    créée si le nom est fourni, changement de CIP refusé si le nouveau existe) — le VRAI code est essayé par
 //    scripts/test-admin-sections.mjs ; s'applique aussi aux autres écritures de l'admin (✏️ Modifier, ➕ Ajouter, labos) ;
 //  • products-get : produits actifs de la mémoire, triés par section puis nom (le site du banc suit l'admin, comme en ligne).
 // Rien ne part vers Supabase ni Odoo.
 import { fauxSupabase } from "../peremption-faux.mjs";
 import { creerHandler } from "../../netlify/functions/products-sections.js";
+import { refusActionSection } from "../../src/components/sections-produits.js";
 
 const CHAMPS = ["name", "section", "pv", "pct", "pn", "remise_eur", "colis", "carton", "note", "active", "source"];
 let monde = null;
@@ -29,10 +31,16 @@ function mondeSections({ produits, catalogue }) {
 
 const ok = (corps, statut = 200) => ({ statut, corps, source: "banc sections (mémoire)" });
 
-function upsertBanc(corps) {
+function upsertBanc(corps, campagnes = []) {
   const { product, action, author } = corps && typeof corps === "object" ? corps : {};
   if (!product?.cip) return ok({ error: "cip manquant" }, 400);
   const lignes = monde.S.table("elixir_products");
+  if (typeof action === "string" && action.startsWith("section_")) {
+    const l = lignes.find(r => r.cip === product.cip);
+    const refus = refusActionSection({ action, product, actuelle: l ? { section: l.section, active: l.active } : null,
+      campagnes: (Array.isArray(campagnes) ? campagnes : []).filter(c => c?.active && c.id).map(c => String(c.id)) });
+    if (refus) return ok({ error: refus.error }, refus.statut);
+  }
   const t = new Date().toISOString();
   const ancien = product.old_cip && product.old_cip !== product.cip ? product.old_cip : null;
   const ligne = lignes.find(r => r.cip === (ancien || product.cip));
@@ -60,7 +68,7 @@ function upsertBanc(corps) {
 }
 
 // → réponse { statut, corps, source } ou null (le banc répond comme d'habitude)
-export async function repondreSections({ methode, fn, query = {}, corps = null, entetes = {}, produits, catalogue }) {
+export async function repondreSections({ methode, fn, query = {}, corps = null, entetes = {}, produits, catalogue, campagnes = () => [] }) {
   if (fn === "products-get" && methode === "GET") {
     if (!monde) return null;   // rien de changé : données figées
     const actifs = monde.S.table("elixir_products").filter(p => p.active !== false)
@@ -74,7 +82,7 @@ export async function repondreSections({ methode, fn, query = {}, corps = null, 
   }
   if (fn === "products-upsert" && methode === "POST") {
     mondeSections({ produits, catalogue });
-    return upsertBanc(corps);
+    return upsertBanc(corps, campagnes());
   }
   return null;
 }

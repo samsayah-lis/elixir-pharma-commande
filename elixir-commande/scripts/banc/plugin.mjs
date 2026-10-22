@@ -789,7 +789,7 @@ export default function bancEssai() {
             if (rp) { log(`${methode} peremption (${corps?.action || "?"}) → ${rp.statut} (vrai code, faux Odoo), journal ${fichier}`); return envoie(rp.statut, rp.corps, rp.source); }
           }
           if (fn === "products-upsert") {
-            const rs = await repondreSections({ methode, fn, corps, entetes: req.headers, produits, catalogue: catalogueLocal });
+            const rs = await repondreSections({ methode, fn, corps, entetes: req.headers, produits, catalogue: catalogueLocal, campagnes: () => fige("campaign-get") || [] });
             if (rs) { log(`${methode} products-upsert (${corps?.action || "?"}) ${corps?.product?.cip || ""} → ${rs.statut} (mémoire du banc), journal ${fichier}`); return envoie(rs.statut, rs.corps, rs.source); }
           }
           const r = reponsePost({ fn, methode, corps });
