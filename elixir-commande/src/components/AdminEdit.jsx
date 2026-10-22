@@ -3,6 +3,9 @@ import { T, tone, adm } from "../theme.js";
 // Outil « laboratoires » de la Centrale OTC (docs/labo-otc.md) : dans le module de l'admin, lui-même chargé à la
 // demande (App.jsx), donc hors du bundle des pharmacies
 import AdminLabos from "./AdminLabos.jsx";
+import { sectionBloquee, nomSection, guillemets } from "./sections-produits.js";
+// Ajout et retrait de produits d'une section (recherche Odoo, produits retirés, confirmations) : chargé à la demande
+const AdminSections = React.lazy(() => import("./AdminSections.jsx"));
 
 // atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
 const LS=adm.label, IS=adm.input, PB=adm.btn;
@@ -12,8 +15,36 @@ export default function AdminEdit({
   editingKey, setEditingKey, editForm, setEditForm,
   uploadingImg, setUploadingImg, uploadedImgs, setUploadedImgs,
   medipimLookup, setMedipimLookup, adminFetch, flash, fetchProducts,
-  allProducts, sectionMeta, allSectionsList,
+  allProducts, sectionMeta, allSectionsList, promos,
 }) {
+  // ── sections : cases à cocher des cartes, retrait demandé (une carte ou la sélection), campagnes actives (sections gérées
+  // par une campagne : ni ajout ni retrait ici, sections-produits.js) ──
+  const [selection, setSelection] = React.useState(() => new Set());
+  const [retraitDemande, setRetraitDemande] = React.useState(null);
+  // campagnes actives : tant qu'elles ne sont pas lues (attente, erreur), aucune section n'est modifiable (campagnes = null)
+  const [campagnesLues, setCampagnesLues] = React.useState({ etat: "attente", ids: null });
+  const [lectureCampagnes, setLectureCampagnes] = React.useState(0);
+  React.useEffect(() => {
+    let vivant = true;
+    setCampagnesLues({ etat: "attente", ids: null });
+    adminFetch("/.netlify/functions/campaign-get").then(async r => {
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !Array.isArray(d)) throw new Error(`campagnes : erreur ${r.status}`);
+      if (vivant) setCampagnesLues({ etat: "ok", ids: d.filter(c => c?.active && c.id).map(c => String(c.id)) });
+    }).catch(() => { if (vivant) setCampagnesLues({ etat: "erreur", ids: null }); });
+    return () => { vivant = false; };
+  }, [adminFetch, lectureCampagnes]);
+  const campagnes = campagnesLues.etat === "ok" ? campagnesLues.ids : null;
+  // état d'AdminSections : écriture en cours (boutons « Retirer » des cartes inactifs), produits choisis pas encore ajoutés
+  // (confirmation avant de changer de section), barre en bas de l'écran (espace en fin de liste)
+  const [etatSections, setEtatSections] = React.useState({ occupe: false, nbChoix: 0, barre: false });
+  const [demandeAjout, setDemandeAjout] = React.useState(null);
+  React.useEffect(() => { setSelection(new Set()); }, [filterSection]);
+  const changerSection = (v) => {
+    const n = etatSections.nbChoix;
+    if (n > 0 && !window.confirm(n > 1 ? `${n} produits choisis ne sont pas encore ajoutés : les abandonner ?` : "1 produit choisi n'est pas encore ajouté : l'abandonner ?")) return;
+    setFilterSection(v);
+  };
   const fmt = (n) => n!=null&&!isNaN(n) ? Number(n).toFixed(2)+" €" : "—";
 
   function CipCopy({ cip }) {
@@ -169,17 +200,39 @@ export default function AdminEdit({
     const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search) || p.labo?.toLowerCase().includes(search.toLowerCase());
     return ms && mq;
   });
+  const affiches = filtered.slice(0, 80);
+  // actions de section d'une carte : section ordinaire (ni menu promo, ni campagne, ni outil du site) et CIP connu
+  const enSection = filterSection !== "all" && !sectionBloquee(filterSection, { campagnes, sections: allSectionsList });
+  const retirable = (p) => !!p.cip && p.cip !== "–" && !sectionBloquee(p._section ?? p.section, { campagnes, sections: allSectionsList });
+  // recherche de l'onglet → recherche dans le catalogue Odoo pour ajouter à la section (panneau d'AdminSections)
+  const termeOdoo = String(search ?? "").trim();
+  const chercherOdoo = enSection && termeOdoo.length >= 2 ? (
+    <div style={{textAlign:"center",padding:"6px 0 10px"}}>
+      <button type="button" onClick={()=>{ setDemandeAjout({ q: termeOdoo, n: Date.now() }); }}
+        style={{background:T.mint,color:T.petrol,border:"none",borderRadius:999,padding:"8px 16px",cursor:"pointer",fontSize:12,fontWeight:700,whiteSpace:"normal",lineHeight:1.3,maxWidth:"100%"}}>
+        🔍 Chercher {guillemets(termeOdoo)} dans le catalogue Odoo pour l'ajouter à {guillemets(nomSection(filterSection, allSectionsList))}
+      </button>
+    </div>
+  ) : null;
 
   return (
           <>
-            <div style={{display:"flex",gap:10,marginBottom:14}}>
+            {/* téléphone : recherche et section l'une sous l'autre (le nom de la section reste lisible) */}
+            <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:14}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
-                placeholder="🔍 Rechercher par nom ou CIP..." style={{...IS,flex:2}}/>
-              <select value={filterSection} onChange={e=>setFilterSection(e.target.value)} style={{...IS,flex:1}}>
+                placeholder="🔍 Rechercher par nom ou CIP..." style={{...IS,flex:"2 1 220px",width:"auto",minWidth:0}}/>
+              <select value={filterSection} onChange={e=>changerSection(e.target.value)} aria-label="Section" style={{...IS,flex:"1 1 160px",width:"auto",minWidth:0}}>
                 <option value="all">Toutes sections</option>
                 {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
+            <React.Suspense fallback={null}>
+              <AdminSections section={filterSection} sections={allSectionsList} products={base} affiches={affiches}
+                selection={selection} setSelection={setSelection} retraitDemande={retraitDemande} setRetraitDemande={setRetraitDemande}
+                campagnes={campagnes} campagnesEtat={campagnesLues.etat} relireCampagnes={()=>setLectureCampagnes(x=>x+1)}
+                recherche={search} demandeAjout={demandeAjout} surEtat={setEtatSections}
+                promos={promos} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
+            </React.Suspense>
             {(filterSection === "all" || filterSection === "otc") && (
               <AdminLabos products={products} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
             )}
@@ -195,7 +248,7 @@ export default function AdminEdit({
               )}
             </div>
 
-            {filtered.slice(0,80).map(p=>{
+            {affiches.map(p=>{
               const ov={};
               const isEditing=editingKey===p._key;
               const hasOv=!!ov;
@@ -205,8 +258,16 @@ export default function AdminEdit({
                   border:hasOv?"2px solid #fbbf24":"1px solid var(--line)",
                   background:hasOv?"#fffbeb":T.paper,overflow:"hidden"
                 }}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px"}}>
-                    <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:"8px 10px",padding:"10px 14px"}}>
+                    {enSection && retirable(p) && (
+                      // cible de 44 px au doigt (iPhone) autour de la case de 20 px, sans grandir la carte
+                      <label style={{display:"inline-flex",alignItems:"center",justifyContent:"center",minWidth:44,minHeight:44,margin:"-13px -6px -13px -13px",cursor:"pointer",flexShrink:0}}>
+                        <input type="checkbox" checked={selection.has(p.cip)} aria-label={`Sélectionner ${p.name}`}
+                          onChange={e=>{ const on=e.target.checked; setSelection(s=>{ const n=new Set(s); if(on) n.add(p.cip); else n.delete(p.cip); return n; }); }}
+                          style={{width:20,height:20,margin:0,accentColor:"var(--petrol)",cursor:"pointer"}}/>
+                      </label>
+                    )}
+                    <div style={{flex:"1 1 180px",minWidth:0}}>
                       <div style={{fontWeight:700,fontSize:13,color:T.petrol,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         {hasOv&&<span style={{background:"#fbbf24",color:"#78350f",fontSize:11,fontWeight:700,padding:"1px 5px",borderRadius:4}}>MODIFIÉ</span>}
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
@@ -221,7 +282,7 @@ export default function AdminEdit({
                         {hasOv&&<span style={{color:T.inkMute,marginLeft:4}}>(orig: {fmt(p.pn)})</span>}
                       </div>
                     </div>
-                    <div style={{display:"flex",gap:6,marginLeft:10,flexShrink:0}}>
+                    <div style={{display:"flex",flexWrap:"wrap",justifyContent:"flex-end",gap:6,marginLeft:"auto",flexShrink:0}}>
                       {hasOv&&(
                         <button onClick={()=>clearEdit(p._key)} title="Réinitialiser" style={{background:T.warnBg,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:T.warn,fontWeight:700}}>↩</button>
                       )}
@@ -230,6 +291,12 @@ export default function AdminEdit({
                         padding:"5px 12px",cursor:"pointer",fontSize:12,
                         color:isEditing?T.inkSoft:"white",fontWeight:700
                       }}>{isEditing?"Annuler":"✏️ Modifier"}</button>
+                      {retirable(p) && (
+                        <button type="button" onClick={()=>setRetraitDemande([p])} disabled={etatSections.occupe} title={`Retirer de la section « ${nomSection(p._section ?? p.section, allSectionsList)} »`}
+                          style={{background:T.dangerBg,border:"none",borderRadius:8,padding:"5px 10px",cursor:etatSections.occupe?"default":"pointer",opacity:etatSections.occupe?0.5:1,fontSize:12,color:T.danger,fontWeight:700}}>
+                          Retirer<span className="ex-admin-libelle"> de la section</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
@@ -360,6 +427,7 @@ export default function AdminEdit({
               );
             })}
             {filtered.length>80&&<div style={{textAlign:"center",fontSize:12,color:T.inkMute,padding:10}}>Affichage limité à 80 résultats – affinez la recherche.</div>}
+            {filtered.length>0&&chercherOdoo}
             {filtered.length>0&&(
               <div style={{textAlign:"center",padding:"10px 0 4px"}}>
                 <button onClick={async()=>{
@@ -407,6 +475,9 @@ export default function AdminEdit({
               </div>
             )}
             {filtered.length===0&&search&&<div style={{textAlign:"center",fontSize:13,color:T.inkMute,padding:24}}>Aucun produit trouvé pour « {search} »</div>}
+            {filtered.length===0&&chercherOdoo}
+            {/* barre « à ajouter » ou « Retirer la sélection » en bas de l'écran : la fin de liste reste atteignable */}
+            {etatSections.barre && <div aria-hidden="true" style={{height:150}}/>}
           </>
   );
 }
