@@ -128,6 +128,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
    (onMouseEnter / onMouseLeave effaçaient le fond « rupture ») */
 .ex-tr { background: var(--surface); transition: background-color .15s var(--ease); }
 .ex-tr:nth-child(even) { background: var(--paper); }
+/* tableaux des menus : zébrure posée par data-zebre (rang du produit), la ligne de la jauge des paliers (ex-tr-palier,
+   src/components/JaugePaliers.jsx) a le fond de son produit ; avant les règles rupture et survol, qui l'emportent toujours */
+.ex-tr[data-zebre="0"], .ex-tr-palier { background: var(--surface); }
+.ex-tr[data-zebre="1"], .ex-tr-palier[data-zebre="1"] { background: var(--paper); }
+.ex-tr[data-rupture] + .ex-tr-palier { background: #fcf1f0; }
 .ex-tr[data-rupture] { background: #fcf1f0; }   /* --danger-bg éclairci : CIP en --ink-mute à 4,9:1 */
 @media (hover: hover) {
   .ex-tr:hover { background: var(--surface-2); }
@@ -386,3 +391,61 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }
 ::-webkit-scrollbar-thumb { background: var(--ink-faint); border-radius: 3px; }
+
+/* ── Jauge des paliers (src/components/JaugePaliers.jsx ; 22/10/2026) : piste sable remplie en sarcelle, or une fois un palier
+   atteint (comme la piste U-Labs) ; palier suivant en or + encre (couleur des remises), les autres neutres ; hauteur fixe
+   d'un état à l'autre. Zone de 54 px : seuil (haut), piste et point (centre à 26 px), remise (bas) */
+.ex-lecteur { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ex-jauge { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-s); padding: 8px 14px 6px; font-variant-numeric: tabular-nums; text-align: left; }
+.ex-jauge__tete, .ex-jauge__corps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.ex-jauge__tete { min-height: 28px; }
+.ex-jauge__titre { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--petrol); }
+.ex-jauge__incitation { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; line-height: 1.2; color: var(--ink); white-space: nowrap;
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); border-radius: 999px; padding: 3px 4px 3px 10px; }
+.ex-jauge__incitation svg { color: var(--ok); }
+.ex-jauge__n { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--petrol); color: var(--paper); font-size: 12px; }
+.ex-jauge__pct { padding: 3px 8px; border-radius: 999px; background: var(--or); color: var(--ink); font-size: 12px; }
+.ex-jauge__detail { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; margin-left: auto; border: none; border-radius: 999px;
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-field); color: var(--ink); font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+@media (hover: hover) { .ex-jauge__detail:hover { background: var(--surface-2); } }
+.ex-jauge__zone { position: relative; flex: 1 1 240px; max-width: 560px; height: 54px; margin: 2px 26px 0 8px; }
+.ex-jauge__piste { position: absolute; left: 0; right: 0; top: 23px; height: 6px; border-radius: 999px; background: var(--sand); }
+.ex-jauge__plein { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--teal-2); }
+.ex-jauge__tirets { position: absolute; top: 2px; border-top: 2px dashed var(--teal-2); }
+.ex-jauge__curseur { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 999px; background: var(--surface);
+  border: 3px solid var(--teal-2); box-shadow: var(--shadow-1); z-index: 1; }
+.ex-jauge[data-atteint] .ex-jauge__plein { background: var(--or); }
+.ex-jauge[data-atteint] .ex-jauge__curseur { border-color: var(--or); }
+.ex-jauge__zero, .ex-jauge__q { font-size: 11.5px; font-weight: 700; line-height: 15px; }
+.ex-jauge__zero { position: absolute; left: 0; top: 0; transform: translateX(-50%); color: var(--ink-mute); }
+.ex-jauge__etape { position: absolute; top: 0; height: 54px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center;
+  min-width: 36px; padding: 0 2px; border: none; border-radius: 8px; background: none; color: var(--ink); font-family: inherit; cursor: pointer; }
+span.ex-jauge__etape { cursor: default; }
+.ex-jauge__point { width: 12px; height: 12px; margin-top: 5px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--line-field); }
+.ex-jauge__remise { margin-top: 3px; padding: 0 5px; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 16px; white-space: nowrap;
+  background: var(--surface); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); }
+.ex-jauge__etape[data-etat="suite"] .ex-jauge__q { color: var(--ink-mute); }
+.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__point { box-shadow: inset 0 0 0 3px var(--or); }
+.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { background: var(--or); color: var(--ink); box-shadow: none; }
+.ex-jauge__etape[data-etat="atteinte"] .ex-jauge__point { background: var(--or); box-shadow: none; }
+.ex-jauge__etape[data-etat="atteinte"] .ex-jauge__remise { background: var(--tier-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--or); }
+@media (hover: hover) { button.ex-jauge__etape:hover .ex-jauge__q { text-decoration: underline; text-underline-offset: 2px; } }
+.ex-jauge__table { width: 100%; max-width: 520px; margin-top: 8px; border-collapse: collapse; font-size: 12.5px; background: var(--surface);
+  border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-soft); }
+.ex-jauge__table th, .ex-jauge__table td { padding: 5px 10px; text-align: right; white-space: nowrap; border-top: 1px solid var(--line-soft); }
+.ex-jauge__table thead th { border-top: 0; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-mute); }
+.ex-jauge__table th:first-child { text-align: left; }
+.ex-jauge__table tbody th { font-weight: 600; }
+.ex-jauge__table tr[data-actuel] > * { background: var(--tier-bg); font-weight: 700; }
+.ex-jauge__note { margin: 6px 0 2px; font-size: 11.5px; line-height: 1.4; color: var(--ink-soft); }
+.ex-tr-palier .ex-jauge__zone { max-width: 440px; }   /* tableaux des menus : bloc de 660 px au plus */
+@media (hover: hover) { .ex-tr:hover + .ex-tr-palier { background: var(--surface-2); } }   /* survol de la ligne : jauge comprise */
+/* complète, ordinateur : « Voir le détail » juste après la piste (sous la piste quand la ligne est trop étroite) */
+@media (min-width: 768px) { .ex-jauge[data-variante="complete"] .ex-jauge__detail { margin-left: 0; } }
+/* compacte (panier, liste mobile) et mini (cartes) : sans titre ; mini : incitation sans pastille, sans « Détail » */
+.ex-jauge[data-variante="compacte"] .ex-jauge__zone { flex-basis: 170px; margin-right: 24px; }
+.ex-jauge[data-variante="mini"] { padding: 6px 8px 4px; }
+.ex-jauge[data-variante="mini"] .ex-jauge__tete { min-height: 24px; justify-content: center; }
+.ex-jauge[data-variante="mini"] .ex-jauge__incitation { padding: 0; box-shadow: none; background: none; font-size: 11.5px; gap: 4px; }
+.ex-jauge[data-variante="mini"] .ex-jauge__zone { margin: 0 20px 0 8px; flex-basis: 100%; }

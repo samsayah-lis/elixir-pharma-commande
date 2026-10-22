@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from "react";
-import { applyTiers, TierBadge } from "./tiers.jsx";
+import { applyTiers, TierBadge, jaugePaliers } from "./tiers.jsx";
+import JaugePaliers from "./components/JaugePaliers.jsx";
 import { CrossSellBanner, ReorderSuggestion } from "./components/MLRecommendations";
 import OrderEntry from "./components/OrderEntry";
 import ShortExpiry from "./components/ShortExpiry";
@@ -287,16 +288,17 @@ const dateFin = (d) => {
 // Quantité d'un tableau à colis (lot E1) : la frappe reste libre (taper 12 avec un colis de 6 donne 12) ;
 // l'arrondi au colis (onValider → setQty) se fait à la sortie du champ ou sur Entrée, plus à chaque touche.
 // Le texte en cours de frappe reste dans le champ : le panier ne reçoit que des quantités arrondies.
-function ChampQteColis({ valeur, onValider, ...attributs }) {
+// onFrappe (jauge des paliers, 22/10/2026) : quantité en cours de frappe, null une fois validée — affichage seulement
+function ChampQteColis({ valeur, onValider, onFrappe, ...attributs }) {
   const [brouillon, setBrouillon] = useState(null);
-  const valider = (v) => { setBrouillon(null); onValider(v); };
+  const valider = (v) => { setBrouillon(null); onFrappe?.(null); onValider(v); };
   // Revue (§ 11) : une quantité changée de l'extérieur pendant la frappe (« − » / « + » touchés sans que le champ perde
   // le focus, comme sur iPad ; panier) l'emporte sur le brouillon : champ et panier restent alignés. La frappe ne change
   // pas « valeur » : l'arrondi en sortie de champ (E1) est inchangé.
   useEffect(() => { setBrouillon(null); }, [valeur]);
   return (
     <input {...attributs} type="number" value={brouillon ?? (valeur || "")}
-      onChange={e => setBrouillon(e.target.value)}
+      onChange={e => { setBrouillon(e.target.value); onFrappe?.(e.target.value); }}
       onBlur={e => valider(e.target.value)}
       onKeyDown={e => { if (e.key === "Enter") valider(e.currentTarget.value); }} />
   );
@@ -673,6 +675,10 @@ export default function App() {
   }, [activeTab, fetchGroupOrders, appelAuthentifie]);
 
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
+  // Jauge des paliers des tableaux de menu : quantité en cours de frappe dans le champ d'une ligne ({ key, q, base }),
+  // affichée par la jauge tant que la quantité enregistrée vaut encore « base » (affichage seulement : le panier ne
+  // change qu'à la validation du champ, comme avant)
+  const [frappe, setFrappe] = useState(null);
   // Hauteur de l'en-tête pétrole collant : la barre A–Z se colle juste dessous (et le bloc de marque de la barre latérale s'y aligne)
   const [hauteurEntete, setHauteurEntete] = useState(64);
   const obsEntete = useRef(null);
@@ -3145,6 +3151,12 @@ export default function App() {
                               setQuantities(prev=>({...prev,[key]:v})); syncGroup(v);
                             };
                             return (<>
+                              {/* jauge des paliers (mini : incitation et piste) au-dessus de la quantité ; hors campagne (le panier
+                                  n'y applique pas les paliers) ; un palier touché passe par applyQty (colis, minimum) */}
+                              {!getCampaign(activeTab) && p.pn != null && (
+                                <JaugePaliers variante="mini" style={{ alignSelf: "stretch" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty}
+                                  pas={m > 1 ? m : step} min={stepMin} nom={p.name} onChoisir={applyQty} />
+                              )}
                               {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité ;
                                   sous 768 px (lot 9) : 40 px au doigt (classes ex-qte-* / ex-qte-champ), écart de 4 px pour
                                   tenir dans une carte de 172 px (deux colonnes à 375 px). Revue (§ 20) : « − » / « + » dessinés
@@ -3171,7 +3183,7 @@ export default function App() {
                               )}
                               {qty > 0 && p.pn != null && (
                                 <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.surface2, borderRadius: R.s, padding: "2px 10px" }}>
-                                  = {fmt((pnAffiche ?? p.pn) * qty)}
+                                  = {fmt((getCampaign(activeTab) ? (pnAffiche ?? p.pn) : applyTiers(p.pn, p.price_tiers, qty).pn) * qty)}
                                   {livrées6plus2 > 0 && <span style={{ color: T.ok, fontWeight: 700, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
                                 </div>
                               )}
@@ -3205,10 +3217,15 @@ export default function App() {
                   const qty = quantities[key] || 0;
                   const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                   const step = getStep(activeTab, p);
+                  // jauge des paliers (compacte) sous le nom et les quantités, prix du panier (hors campagne)
+                  const jauge = !getCampaign(activeTab) && p.pn != null && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qty, pas: step }) ? (
+                    <JaugePaliers variante="compacte" style={{ flexBasis: "100%" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty} pas={step} nom={p.name}
+                      onChoisir={(n) => setQty(key, n, step)} />
+                  ) : null;
                   return (
                     <div key={key} className="ex-tr" data-rupture={isRupture ? "" : undefined} style={{
                       padding: "10px 14px", borderBottom: `1px solid ${T.lineSoft}`,
-                      display: "flex", alignItems: "center", gap: 10
+                      display: "flex", alignItems: "center", gap: 10, flexWrap: jauge ? "wrap" : undefined
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.3 }}>
@@ -3216,7 +3233,7 @@ export default function App() {
                           {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 5, whiteSpace: "normal" }}>{p.note}</span>}
                           {isRupture && <span style={{ ...ui.badge("danger"), marginLeft: 5 }}><Icone nom="alerte" taille={11} />Rupture</span>}
                         </div>
-                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{fmt(p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}<TierBadge tiers={p.price_tiers} pn={p.pn} compact /></div>
+                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{fmt(p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact />}</div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <button className="ex-qte-moins" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
@@ -3225,6 +3242,7 @@ export default function App() {
                         <button className="ex-qte-plus" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
                           style={qtyBtnStyle("plus", 30)}><Icone nom="plus" taille={15} epaisseur={2.4} /></button>
                       </div>
+                      {jauge}
                     </div>
                   );
                 })}
@@ -3252,14 +3270,25 @@ export default function App() {
                     const realIdx = cat.products.indexOf(p);
                     const key = `${activeTab}-${realIdx}`;
                     const qty = quantities[key] || 0;
-                    const subtotal = p.pn != null ? p.pn * qty : null;
+                    // paliers de quantité : prix du panier (cartItems : applyTiers hors campagne) pour le sous-total et la jauge
+                    // (avant : sous-total au prix sans palier, alors que le panier facturait le prix palier)
+                    const avecPaliers = !getCampaign(activeTab) && p.pn != null;
+                    const subtotal = p.pn != null ? (avecPaliers ? applyTiers(p.pn, p.price_tiers, qty).pn : p.pn) * qty : null;
+                    const pasLigne = getStep(activeTab, p);
+                    const qteVue = frappe?.key === key && frappe.base === qty ? frappe.q : qty;   // quantité en cours de frappe
+                    const jauge = avecPaliers && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qteVue, pas: pasLigne }) ? (
+                      <JaugePaliers base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qteVue} pas={pasLigne} nom={p.name}
+                        onChoisir={(n) => { setFrappe(null); setQty(key, n, pasLigne); }} />
+                    ) : null;
 
                     const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const ruptureBadge = isRupture ? <span style={{ ...ui.badge("danger"), marginLeft: 6, verticalAlign: "middle" }}><Icone nom="alerte" taille={11} />Rupture</span> : null;
-                    // zébrure, survol et fond rupture : classe ex-tr + data-rupture (tokens.css) — le survol ne l'efface plus
+                    // zébrure (data-zebre : rang du produit, comme l'ancien nth-child), survol et fond rupture : classe ex-tr +
+                    // data-rupture (tokens.css) — le survol ne l'efface plus. Produit à paliers : ligne de la jauge dessous (ex-tr-palier)
                     return (
-                      <tr key={key} className="ex-tr" data-rupture={isRupture ? "" : undefined} style={{
-                        borderBottom: `1px solid ${T.lineSoft}`
+                      <React.Fragment key={key}>
+                      <tr className="ex-tr" data-zebre={idx % 2} data-rupture={isRupture ? "" : undefined} style={{
+                        borderBottom: jauge ? "none" : `1px solid ${T.lineSoft}`
                       }}>
                         {/* Favori (reste un td cliquable : pas d'arrêt de tabulation en plus) */}
                         <td style={{ ...tdStyle, width:28, padding:"6px 2px 6px 10px", cursor:"pointer" }}
@@ -3279,7 +3308,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : fmt(30)}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3290,7 +3319,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft }}>{fmt(p.carton)}</td>
                         </>}
                         {activeTab === "master" && <>
@@ -3301,7 +3330,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "obeso" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3314,7 +3343,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "nr" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3324,33 +3353,33 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "molnlycke" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "blanche" && <>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "covid" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {activeTab === "otc" && <>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
                         {cat.isPromo && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3361,7 +3390,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}<TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc /></td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
                         </>}
 
                         {/* Qty input : « − » sable, « + » pétrole (24 px), champ à filet --line-field puis 2 px sarcelle ;
@@ -3376,6 +3405,7 @@ export default function App() {
                                   <ChampQteColis
                                     min="0" step={step} valeur={quantities[key]}
                                     onValider={v => setQty(key, v, step)}
+                                    onFrappe={jauge ? (v => setFrappe(v == null ? null : { key, q: Math.max(0, parseInt(v) || 0), base: qty })) : undefined}
                                     placeholder="0"
                                     aria-label={`Quantité ${p.name}`}
                                     style={{ ...ui.qtyInput(qty > 0), height: 26 }}
@@ -3395,6 +3425,16 @@ export default function App() {
                           }
                         </td>
                       </tr>
+                      {/* jauge des paliers sur toute la largeur, sous la désignation (même fond que le produit) */}
+                      {jauge && (
+                        <tr className="ex-tr-palier" data-zebre={idx % 2}>
+                          <td colSpan={cat.columns.length + 3} style={{ padding: "0 14px 10px 38px", borderBottom: `1px solid ${T.lineSoft}` }}>
+                            {/* 660 px au plus : tient dans le cadre du tableau à 1 024 px (barre latérale ouverte, tableau qui défile) */}
+                            <div style={{ maxWidth: 660 }}>{jauge}</div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -3693,15 +3733,23 @@ export default function App() {
                         </div>
                         <span className="num" style={{ fontWeight: 700, color: T.ink, fontSize: 14, whiteSpace: "nowrap" }}>{fmt(item.total)}</span>
                       </div>
-                      {/* Palier de quantité : appliqué (ton palier), ou à viser (ton avertissement) */}
-                      {(item.tier || item.nextTier) && (
+                      {/* Palier de quantité : jauge compacte (src/components/JaugePaliers.jsx) aux paliers de la ligne — catalogue : ceux du produit du
+                          menu, hors catalogue et péremption : ceux de la ligne (specialItems) ; mêmes prix que cartItems (applyTiers
+                          sur basePn). Un palier touché passe par setItemQty (pas du colis ; ligne péremption : au plus son plafond) */}
+                      {(() => {
+                        if (item.isCampaign || item.basePn == null) return null;
+                        const src = item.isSpecial ? specialItems.find(l => idSpecial(l) === item.specialId)
+                          : CATALOG_WITH_ADMIN[item.catKey]?.products?.[Number(item.key.slice(item.key.lastIndexOf("-") + 1))];
+                        const reglage = { base: item.basePn, pv: src?.pv, tiers: item.isSpecial ? src?.tiers : src?.price_tiers, qte: item.qty, pas: item.step, max: item.plafond ?? null };
+                        return jaugePaliers(reglage) && <JaugePaliers variante="compacte" style={{ marginTop: 8 }} {...reglage} nom={item.name} onChoisir={(n) => setItemQty(item, n)} />;
+                      })() || ((item.tier || item.nextTier) && (
                         <div style={encart(item.tier ? "tier" : "warn")}>
                           {item.tier && (<div style={ligneEncart}><Icone nom="coche" taille={14} epaisseur={2.4} style={iconeEncart} />
                             <span>Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</span></div>)}
                           {item.nextTier && (<div style={{ ...ligneEncart, marginTop: item.tier ? 2 : 0 }}><Icone nom="cible" taille={14} style={iconeEncart} />
                             <span>Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></span></div>)}
                         </div>
-                      )}
+                      ))}
                       {/* Contingentement : quota de la période, déjà commandé, reste */}
                       {item.cip && quotaCheck.P[item.cip] && (() => {
                         const q = quotaCheck.P[item.cip];

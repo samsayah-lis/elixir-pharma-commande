@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 
 import { applyTiers, TierBadge } from "../tiers.jsx";
+import JaugePaliers from "./JaugePaliers.jsx";
 import { loadGroups, collapseGroups } from "../product-groups.js";
 import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
@@ -299,7 +300,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     )}
                     <div className="num" style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(displayPrice)}</div>
                     <div style={{ fontSize: 11, color: T.inkMute }}>Prix HT</div>
-                    <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />
+                    {/* palier : jauge sous la ligne (produit commandable) ; petit badge pour un produit en rupture */}
+                    {!orderable && <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />}
                     {regle && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>Se commande par {regle.multiple} · {regle.rayon}</div>}
                   </div>
 
@@ -328,6 +330,14 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       </button>
                     )}
                   </div>
+
+                  {/* Jauge des paliers (src/components/JaugePaliers.jsx) sur toute la largeur de la ligne : prix d'applyTiers pour la quantité tapée
+                      (celui du panier) ; un clic sur un palier pose sa quantité, au pas du colis et au minimum de la règle du
+                      catalogue (regle), au plus le maximum du justificatif — « Ajouter » l'arrondit encore comme avant */}
+                  {orderable && (
+                    <JaugePaliers style={{ gridColumn: "1 / -1" }} base={displayPrice} pv={p.list_price} tiers={p.price_tiers} qte={qty} pas={pas}
+                      min={regle?.min || 0} max={jr?.maxCommande || null} nom={p.name} onChoisir={(n) => setQuantities(prev => ({ ...prev, [p.cip]: n }))} />
+                  )}
                 </div>
               );
             })}
