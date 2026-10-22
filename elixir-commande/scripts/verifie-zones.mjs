@@ -304,7 +304,10 @@ const FICHIERS_AUTORISES = {
 // (21/10/2026) : _relais.js modifié (empreinte « :per », FICHIERS_AUTORISES) ; peremption.js, _peremption.js et
 // _accueil-outils.js complétés (remise affichée, écarts) ; restock-alert.js inchangé (sa lecture publique des remises sert
 // de repli à la page).
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption)\.js$/;
+// Sections du catalogue (admin, onglet ✏️ Modifier : ajouter et retirer des produits d'une section existante, 22/10/2026,
+// src/components/sections-produits.js) : fonction NOUVELLE products-sections.js, en LECTURE SEULE (produits retirés d'une
+// section, état et stock de CIP ; réservée à l'admin) ; les écritures passent par products-upsert.js, inchangé.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -426,7 +429,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : /peremption/.test(chemin) ? "de la Péremption courte" : "de l'Assistant Elixir"})`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : /peremption/.test(chemin) ? "de la Péremption courte" : /products-sections/.test(chemin) ? "des sections du catalogue" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
@@ -446,7 +449,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue)` : ""}`);
 }
 
 // 3. clés de stockage

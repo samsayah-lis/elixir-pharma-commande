@@ -3,6 +3,9 @@ import { T, tone, adm } from "../theme.js";
 // Outil « laboratoires » de la Centrale OTC (docs/labo-otc.md) : dans le module de l'admin, lui-même chargé à la
 // demande (App.jsx), donc hors du bundle des pharmacies
 import AdminLabos from "./AdminLabos.jsx";
+import { sectionBloquee, nomSection } from "./sections-produits.js";
+// Ajout et retrait de produits d'une section (recherche Odoo, produits retirés, confirmations) : chargé à la demande
+const AdminSections = React.lazy(() => import("./AdminSections.jsx"));
 
 // atomes communs de l'admin (lot 10, src/theme.js) : libellé, champ, bouton principal pétrole
 const LS=adm.label, IS=adm.input, PB=adm.btn;
@@ -12,8 +15,21 @@ export default function AdminEdit({
   editingKey, setEditingKey, editForm, setEditForm,
   uploadingImg, setUploadingImg, uploadedImgs, setUploadedImgs,
   medipimLookup, setMedipimLookup, adminFetch, flash, fetchProducts,
-  allProducts, sectionMeta, allSectionsList,
+  allProducts, sectionMeta, allSectionsList, promos,
 }) {
+  // ── sections : cases à cocher des cartes, retrait demandé (une carte ou la sélection), campagnes actives (sections gérées
+  // par une campagne : ni ajout ni retrait ici, sections-produits.js) ──
+  const [selection, setSelection] = React.useState(() => new Set());
+  const [retraitDemande, setRetraitDemande] = React.useState(null);
+  const [campagnes, setCampagnes] = React.useState([]);
+  React.useEffect(() => {
+    let vivant = true;
+    adminFetch("/.netlify/functions/campaign-get").then(r => (r.ok ? r.json() : [])).then(d => {
+      if (vivant) setCampagnes((Array.isArray(d) ? d : []).filter(c => c?.active && c.id).map(c => String(c.id)));
+    }).catch(() => {});
+    return () => { vivant = false; };
+  }, [adminFetch]);
+  React.useEffect(() => { setSelection(new Set()); }, [filterSection]);
   const fmt = (n) => n!=null&&!isNaN(n) ? Number(n).toFixed(2)+" €" : "—";
 
   function CipCopy({ cip }) {
@@ -169,17 +185,27 @@ export default function AdminEdit({
     const mq = !search || p.name?.toLowerCase().includes(search.toLowerCase()) || p.cip?.includes(search) || p.labo?.toLowerCase().includes(search.toLowerCase());
     return ms && mq;
   });
+  const affiches = filtered.slice(0, 80);
+  // actions de section d'une carte : section ordinaire (ni menu promo, ni campagne, ni outil du site) et CIP connu
+  const enSection = filterSection !== "all" && !sectionBloquee(filterSection, { campagnes, sections: allSectionsList });
+  const retirable = (p) => !!p.cip && p.cip !== "–" && !sectionBloquee(p._section ?? p.section, { campagnes, sections: allSectionsList });
 
   return (
           <>
-            <div style={{display:"flex",gap:10,marginBottom:14}}>
+            {/* téléphone : recherche et section l'une sous l'autre (le nom de la section reste lisible) */}
+            <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:14}}>
               <input value={search} onChange={e=>setSearch(e.target.value)}
-                placeholder="🔍 Rechercher par nom ou CIP..." style={{...IS,flex:2}}/>
-              <select value={filterSection} onChange={e=>setFilterSection(e.target.value)} style={{...IS,flex:1}}>
+                placeholder="🔍 Rechercher par nom ou CIP..." style={{...IS,flex:"2 1 220px",width:"auto",minWidth:0}}/>
+              <select value={filterSection} onChange={e=>setFilterSection(e.target.value)} aria-label="Section" style={{...IS,flex:"1 1 160px",width:"auto",minWidth:0}}>
                 <option value="all">Toutes sections</option>
                 {allSectionsList.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
               </select>
             </div>
+            <React.Suspense fallback={null}>
+              <AdminSections section={filterSection} sections={allSectionsList} products={base} affiches={affiches}
+                selection={selection} setSelection={setSelection} retraitDemande={retraitDemande} setRetraitDemande={setRetraitDemande}
+                campagnes={campagnes} promos={promos} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
+            </React.Suspense>
             {(filterSection === "all" || filterSection === "otc") && (
               <AdminLabos products={products} adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts} />
             )}
@@ -195,7 +221,7 @@ export default function AdminEdit({
               )}
             </div>
 
-            {filtered.slice(0,80).map(p=>{
+            {affiches.map(p=>{
               const ov={};
               const isEditing=editingKey===p._key;
               const hasOv=!!ov;
@@ -205,8 +231,13 @@ export default function AdminEdit({
                   border:hasOv?"2px solid #fbbf24":"1px solid var(--line)",
                   background:hasOv?"#fffbeb":T.paper,overflow:"hidden"
                 }}>
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px"}}>
-                    <div style={{flex:1,minWidth:0}}>
+                  <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:"8px 10px",padding:"10px 14px"}}>
+                    {enSection && retirable(p) && (
+                      <input type="checkbox" checked={selection.has(p.cip)} aria-label={`Sélectionner ${p.name}`}
+                        onChange={e=>{ const on=e.target.checked; setSelection(s=>{ const n=new Set(s); if(on) n.add(p.cip); else n.delete(p.cip); return n; }); }}
+                        style={{width:18,height:18,flexShrink:0,margin:0,accentColor:"var(--petrol)",cursor:"pointer"}}/>
+                    )}
+                    <div style={{flex:"1 1 180px",minWidth:0}}>
                       <div style={{fontWeight:700,fontSize:13,color:T.petrol,display:"flex",alignItems:"center",gap:6,flexWrap:"wrap"}}>
                         {hasOv&&<span style={{background:"#fbbf24",color:"#78350f",fontSize:11,fontWeight:700,padding:"1px 5px",borderRadius:4}}>MODIFIÉ</span>}
                         <span style={{wordBreak:"break-word"}}>{p.name}</span>
@@ -221,7 +252,7 @@ export default function AdminEdit({
                         {hasOv&&<span style={{color:T.inkMute,marginLeft:4}}>(orig: {fmt(p.pn)})</span>}
                       </div>
                     </div>
-                    <div style={{display:"flex",gap:6,marginLeft:10,flexShrink:0}}>
+                    <div style={{display:"flex",flexWrap:"wrap",justifyContent:"flex-end",gap:6,marginLeft:"auto",flexShrink:0}}>
                       {hasOv&&(
                         <button onClick={()=>clearEdit(p._key)} title="Réinitialiser" style={{background:T.warnBg,border:"none",borderRadius:8,padding:"5px 9px",cursor:"pointer",fontSize:13,color:T.warn,fontWeight:700}}>↩</button>
                       )}
@@ -230,6 +261,12 @@ export default function AdminEdit({
                         padding:"5px 12px",cursor:"pointer",fontSize:12,
                         color:isEditing?T.inkSoft:"white",fontWeight:700
                       }}>{isEditing?"Annuler":"✏️ Modifier"}</button>
+                      {retirable(p) && (
+                        <button type="button" onClick={()=>setRetraitDemande([p])} title={`Retirer de la section « ${nomSection(p._section ?? p.section, allSectionsList)} »`}
+                          style={{background:T.dangerBg,border:"none",borderRadius:8,padding:"5px 10px",cursor:"pointer",fontSize:12,color:T.danger,fontWeight:700}}>
+                          Retirer<span className="ex-admin-libelle"> de la section</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 

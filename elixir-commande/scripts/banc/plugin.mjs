@@ -30,6 +30,9 @@
 //           un faux Odoo et un faux Supabase en mémoire (scripts/banc/peremption-banc.mjs, relevé Odoo du 20/10/2026) ;
 //           odoo-catalog?expiry_months=4 et la carte Péremption de l'accueil suivent ce monde (prix du site à jour).
 //           BANC_PEREMPTION_MODE, BANC_PEREMPTION_ECRITURE=1, BANC_PEREMPTION_ESSAI=1 : voir peremption-banc.mjs.
+//  • sections du catalogue (admin, onglet ✏️ Modifier : ajout et retrait de produits) : products-upsert écrit en mémoire
+//           (jusqu'au redémarrage), products-get relit ces produits, products-sections est le VRAI code (lecture seule) sur
+//           un faux Supabase : voir sections-banc.mjs.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>, BANC_PHOTOS=prive,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
@@ -46,6 +49,7 @@ import { categoriesAffichees, filtrerCategories, verifierReglages, fusionnerRegl
 import { verifierModele } from "../../src/notifications/modeles.js";
 import { lirePeremption, evaluerOutil, oublierMemo } from "../../netlify/functions/_accueil-outils.js";
 import { mondePeremption, repondrePeremption, cataloguePeremption } from "./peremption-banc.mjs";
+import { repondreSections } from "./sections-banc.mjs";
 
 // Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
 const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
@@ -756,6 +760,10 @@ export default function bancEssai() {
             const { fn: f, query: q } = decoupe(url);
             if (f === "chat-fichier") return envoieFichier(res, await fichierFictif(q), log);
             if (f === "peremption") { const r = await repondrePeremption({ methode: "GET", url, corps: null }); if (r) return envoie(r.statut, r.corps, r.source); }
+            if (f === "products-get" || f === "products-sections") {
+              const r = await repondreSections({ methode: "GET", fn: f, query: q, entetes: req.headers, produits, catalogue: catalogueLocal });
+              if (r) return envoie(r.statut, r.corps, r.source);
+            }
             if (f === "odoo-catalog" && q.expiry_months) { const c = await cataloguePeremption(); if (c) return envoie(200, c, "banc péremption (prix du site à jour)"); }
             if (f === "accueil-offres" && !q.verifier && mondePeremption()) {
               // carte « Péremption courte » : règle du serveur sur la page du monde du banc (remises facturées seulement)
@@ -779,6 +787,10 @@ export default function bancEssai() {
           if (fn === "peremption") {
             const rp = await repondrePeremption({ methode, url, corps });
             if (rp) { log(`${methode} peremption (${corps?.action || "?"}) → ${rp.statut} (vrai code, faux Odoo), journal ${fichier}`); return envoie(rp.statut, rp.corps, rp.source); }
+          }
+          if (fn === "products-upsert") {
+            const rs = await repondreSections({ methode, fn, corps, entetes: req.headers, produits, catalogue: catalogueLocal });
+            if (rs) { log(`${methode} products-upsert (${corps?.action || "?"}) ${corps?.product?.cip || ""} → ${rs.statut} (mémoire du banc), journal ${fichier}`); return envoie(rs.statut, rs.corps, rs.source); }
           }
           const r = reponsePost({ fn, methode, corps });
           log(`${methode} ${fn}${corps?.action ? ` (${corps.action})` : ""} → rien n'est parti, journal ${fichier}`);

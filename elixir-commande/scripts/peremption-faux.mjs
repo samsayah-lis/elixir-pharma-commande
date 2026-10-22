@@ -259,6 +259,8 @@ const UNIQUES = {
   odoo_catalog: [{ cols: ["cip"] }],
   kv_store: [{ cols: ["key"] }],
   ec_config: [{ cols: ["key"] }],
+  // clé de la table : le CIP (un produit = une ligne = une section ; products-upsert insère avec merge-duplicates)
+  elixir_products: [{ cols: ["cip"] }],
 };
 const DEFAUTS = {
   peremption_reglages: () => ({ id: 1, mode: "simulation", listes: [5, 15, 1110, 1112, 1114, 25], base_remise: "prix_base", remise_auto_pct: null, remise_max_pct: 90, sous_cout: "confirmation",
