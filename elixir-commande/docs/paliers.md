@@ -70,6 +70,8 @@ changé (il appliquait déjà le palier avant la jauge).
   déjà au panier, campagne, hors catalogue), textes, étapes montrées, accessibilité, clic → quantité.
 - `node scripts/banc/controle-paliers.mjs http://localhost:<port>/` (banc lancé) : hauteurs stables, aucun défilement,
   tableau du détail dans la jauge (320, 375 px, tiroir du panier), Saisie avec une quantité déjà au panier, tableau (modes,
-  prix × quantité, frappe), et paliers multiples injectés dans le navigateur : aucune étiquette sur une autre.
+  prix × quantité, frappe), et paliers multiples injectés dans le navigateur : aucune étiquette sur une autre. Produits
+  de la Saisie repérés par leur CIP : le contrôle passe avec ou sans `dev-fixtures/_capture.json` (avec, la recherche du
+  banc affiche les noms Odoo capturés), donc sur le même banc que `controle-sections.mjs`.
 - Accessibilité : palier « Mettre la quantité à 20 : 0,81 € HT l'unité, −23,6 % », annonce (zone `aria-live` masquée)
   seulement quand le palier visé ou atteint change, légende du tableau, tracés en `--or-fonce` (3:1 au moins).
