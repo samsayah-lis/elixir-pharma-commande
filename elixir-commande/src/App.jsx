@@ -285,20 +285,30 @@ const dateFin = (d) => {
 
 // Copie du CIP : composant partagé src/components/ui/CipCell.jsx (catalogue, Saisie, recherche globale ; revue, § 20)
 
+// Prix unitaire d'une ligne de menu (revue du 22/10/2026) : prix palier appliqué (celui du panier, applyTiers) en ton palier,
+// le prix sans palier en infobulle — prix × quantité = sous-total affiché. Affichage seulement.
+const prixUnitaire = (pn, base) => pn < base ? <span className="ex-prix-palier" title={`Prix palier, au lieu de ${fmt(base)}`}>{fmt(pn)}</span> : fmt(base);
+
 // Quantité d'un tableau à colis (lot E1) : la frappe reste libre (taper 12 avec un colis de 6 donne 12) ;
 // l'arrondi au colis (onValider → setQty) se fait à la sortie du champ ou sur Entrée, plus à chaque touche.
 // Le texte en cours de frappe reste dans le champ : le panier ne reçoit que des quantités arrondies.
 // onFrappe (jauge des paliers, 22/10/2026) : quantité en cours de frappe, null une fois validée — affichage seulement
 function ChampQteColis({ valeur, onValider, onFrappe, ...attributs }) {
   const [brouillon, setBrouillon] = useState(null);
-  const valider = (v) => { setBrouillon(null); onFrappe?.(null); onValider(v); };
+  // frappe annoncée à la jauge (en cours, dernier onFrappe) : retirée avec le brouillon, aussi quand la quantité change de
+  // l'extérieur ou que le champ disparaît sans en sortir (revue du 22/10 : jauge restée sur la frappe après « + » puis « − »)
+  const frappe = useRef({});
+  frappe.current.f = onFrappe;
+  const fin = (r) => { if (r.en) { r.en = false; r.f?.(null); } };
+  const valider = (v) => { setBrouillon(null); fin(frappe.current); onValider(v); };
   // Revue (§ 11) : une quantité changée de l'extérieur pendant la frappe (« − » / « + » touchés sans que le champ perde
   // le focus, comme sur iPad ; panier) l'emporte sur le brouillon : champ et panier restent alignés. La frappe ne change
   // pas « valeur » : l'arrondi en sortie de champ (E1) est inchangé.
-  useEffect(() => { setBrouillon(null); }, [valeur]);
+  useEffect(() => { setBrouillon(null); fin(frappe.current); }, [valeur]);
+  useEffect(() => { const r = frappe.current; return () => fin(r); }, []);
   return (
     <input {...attributs} type="number" value={brouillon ?? (valeur || "")}
-      onChange={e => { setBrouillon(e.target.value); onFrappe?.(e.target.value); }}
+      onChange={e => { setBrouillon(e.target.value); frappe.current.en = true; onFrappe?.(e.target.value); }}
       onBlur={e => valider(e.target.value)}
       onKeyDown={e => { if (e.key === "Enter") valider(e.currentTarget.value); }} />
   );
@@ -1364,6 +1374,18 @@ export default function App() {
   const arrondiSaisie = (qty, r) => {
     const arrondi = Math.round(qty / r.multiple) * r.multiple;
     return arrondi > 0 && r.min > 0 ? Math.max(r.min, arrondi) : arrondi;
+  };
+  // Jauge des paliers de la Saisie (revue du 22/10/2026) : ligne du panier où addItemToCart rangera le produit (même recherche :
+  // premier menu qui contient le CIP, sinon sa ligne hors catalogue, jamais la ligne péremption), quantité déjà au panier et tarif
+  // que cartItems y applique (prix et paliers du menu ; campagne : ni palier ni prix, la Saisie affiche son prix comme avant).
+  // null : nouvelle ligne hors catalogue, au prix de la Saisie.
+  const panierSaisie = (cip) => {
+    for (const [catKey, c] of Object.entries(CATALOG_WITH_ADMIN)) {
+      const i = (c.products || []).findIndex(x => x.cip === cip), p = c.products?.[i], camp = getCampaign(catKey);
+      if (p) return { deja: parseInt(quantities[`${catKey}-${i}`]) || 0, base: camp ? null : p.pn, pv: p.pv, tiers: camp ? null : p.price_tiers };
+    }
+    const s = specialItems.find(x => idSpecial(x) === cip);
+    return s ? { deja: s.qty || 0, base: s.pn, pv: s.pv, tiers: s.tiers } : null;
   };
 
   // ouvrirPanier : Péremption courte ouvre le panier, comme avant ; Saisie et accueil ne l'ouvrent pas. Ligne péremption
@@ -2704,6 +2726,8 @@ export default function App() {
               pharmacyEmail={pharmacyEmail}
               onAddToCart={ajouterDepuisSaisie}
               regleQuantite={regleSaisie}
+              panierSaisie={panierSaisie}
+              arrondiQuantite={arrondiSaisie}
               fetchAuth={appelAuthentifie}
               initialQuery={initialProductQuery}
               icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
@@ -3150,10 +3174,12 @@ export default function App() {
                               }
                               setQuantities(prev=>({...prev,[key]:v})); syncGroup(v);
                             };
+                            // prix unitaire du panier (cartItems : applyTiers hors campagne) pour le total de la carte
+                            const pnCarte = getCampaign(activeTab) ? (pnAffiche ?? p.pn) : applyTiers(p.pn, p.price_tiers, qty).pn;
                             return (<>
                               {/* jauge des paliers (mini : incitation et piste) au-dessus de la quantité ; hors campagne (le panier
-                                  n'y applique pas les paliers) ; un palier touché passe par applyQty (colis, minimum) */}
-                              {!getCampaign(activeTab) && p.pn != null && (
+                                  n'y applique pas les paliers) et hors rupture ; un palier touché passe par applyQty (colis, minimum) */}
+                              {!getCampaign(activeTab) && !isRupture && p.pn != null && (
                                 <JaugePaliers variante="mini" style={{ alignSelf: "stretch" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty}
                                   pas={m > 1 ? m : step} min={stepMin} nom={p.name} onChoisir={applyQty} />
                               )}
@@ -3183,7 +3209,7 @@ export default function App() {
                               )}
                               {qty > 0 && p.pn != null && (
                                 <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, background: T.surface2, borderRadius: R.s, padding: "2px 10px" }}>
-                                  = {fmt((getCampaign(activeTab) ? (pnAffiche ?? p.pn) : applyTiers(p.pn, p.price_tiers, qty).pn) * qty)}
+                                  = {fmt(pnCarte * qty)}{pnCarte < p.pn && !getCampaign(activeTab) && <span style={{ fontWeight: 500, color: T.inkSoft }}> ({fmt(pnCarte)}/u)</span>}
                                   {livrées6plus2 > 0 && <span style={{ color: T.ok, fontWeight: 700, marginLeft: 6 }}> → {qty} u. + {livrées6plus2} UG livrées ({fmt(pnEffectif)}/u)</span>}
                                 </div>
                               )}
@@ -3217,9 +3243,12 @@ export default function App() {
                   const qty = quantities[key] || 0;
                   const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                   const step = getStep(activeTab, p);
-                  // jauge des paliers (compacte) sous le nom et les quantités, prix du panier (hors campagne)
-                  const jauge = !getCampaign(activeTab) && p.pn != null && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qty, pas: step }) ? (
-                    <JaugePaliers variante="compacte" style={{ flexBasis: "100%" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty} pas={step} nom={p.name}
+                  // jauge des paliers sous le nom et les quantités, prix du panier (hors campagne, hors rupture : petit badge) ; revue du
+                  // 22/10 : compacte avec une quantité et un palier à viser, une ligne sinon (à 0, au meilleur prix)
+                  const camp = getCampaign(activeTab), pnLigne = camp ? p.pn : applyTiers(p.pn, p.price_tiers, qty).pn;
+                  const jl = !camp && !isRupture && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qty, pas: step });
+                  const jauge = jl ? (
+                    <JaugePaliers variante={qty > 0 && jl.prochaine ? "compacte" : "ligne"} style={{ flexBasis: "100%" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty} pas={step} nom={p.name}
                       onChoisir={(n) => setQty(key, n, step)} />
                   ) : null;
                   return (
@@ -3233,7 +3262,7 @@ export default function App() {
                           {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 5, whiteSpace: "normal" }}>{p.note}</span>}
                           {isRupture && <span style={{ ...ui.badge("danger"), marginLeft: 5 }}><Icone nom="alerte" taille={11} />Rupture</span>}
                         </div>
-                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{fmt(p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact />}</div>
+                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{prixUnitaire(pnLigne, p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact />}</div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <button className="ex-qte-moins" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
@@ -3273,15 +3302,21 @@ export default function App() {
                     // paliers de quantité : prix du panier (cartItems : applyTiers hors campagne) pour le sous-total et la jauge
                     // (avant : sous-total au prix sans palier, alors que le panier facturait le prix palier)
                     const avecPaliers = !getCampaign(activeTab) && p.pn != null;
-                    const subtotal = p.pn != null ? (avecPaliers ? applyTiers(p.pn, p.price_tiers, qty).pn : p.pn) * qty : null;
+                    const pnLigne = avecPaliers ? applyTiers(p.pn, p.price_tiers, qty).pn : p.pn;
+                    const subtotal = p.pn != null ? pnLigne * qty : null;
                     const pasLigne = getStep(activeTab, p);
-                    const qteVue = frappe?.key === key && frappe.base === qty ? frappe.q : qty;   // quantité en cours de frappe
-                    const jauge = avecPaliers && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qteVue, pas: pasLigne }) ? (
-                      <JaugePaliers base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qteVue} pas={pasLigne} nom={p.name}
+                    const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
+                    // quantité en cours de frappe, arrondie au pas comme à la validation (setQty) ; jauge hors rupture (petit badge).
+                    // Revue du 22/10 : complète une fois une quantité enregistrée avec un palier à viser, une ligne sinon (à 0, au
+                    // meilleur prix) — le passage de l'une à l'autre se fait à la validation, jamais pendant la frappe
+                    const qteVue = frappe?.key === key && frappe.base === qty ? (pasLigne > 1 ? Math.round(frappe.q / pasLigne) * pasLigne : frappe.q) : qty;
+                    const reglage = { base: p.pn, pv: p.pv, tiers: p.price_tiers, pas: pasLigne };
+                    const jauge = avecPaliers && !isRupture && jaugePaliers({ ...reglage, qte: qteVue }) ? (
+                      <JaugePaliers {...reglage} qte={qteVue} nom={p.name} variante={qty > 0 && jaugePaliers({ ...reglage, qte: qty })?.prochaine ? "complete" : "ligne"}
                         onChoisir={(n) => { setFrappe(null); setQty(key, n, pasLigne); }} />
                     ) : null;
+                    const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</>;
 
-                    const isRupture = !cat?.sansStock && p.cip && (stockData[p.cip]?.dispo === 0 || stockData[p.cip]?.dispo === false);
                     const ruptureBadge = isRupture ? <span style={{ ...ui.badge("danger"), marginLeft: 6, verticalAlign: "middle" }}><Icone nom="alerte" taille={11} />Rupture</span> : null;
                     // zébrure (data-zebre : rang du produit, comme l'ancien nth-child), survol et fond rupture : classe ex-tr +
                     // data-rupture (tokens.css) — le survol ne l'efface plus. Produit à paliers : ligne de la jauge dessous (ex-tr-palier)
@@ -3308,7 +3343,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : fmt(30)}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3319,7 +3354,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pv && p.pct ? fmt(parseFloat(p.pv)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft }}>{fmt(p.carton)}</td>
                         </>}
                         {activeTab === "master" && <>
@@ -3330,7 +3365,7 @@ export default function App() {
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
                             {p.remise_eur ? fmt(p.remise_eur) : (p.pb && p.pct ? fmt(parseFloat(p.pb)*parseFloat(p.pct)/100) : "—")}
                           </td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "obeso" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3343,7 +3378,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "nr" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3353,33 +3388,33 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "molnlycke" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{fmt(p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "blanche" && <>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "covid" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "otc" && <>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {cat.isPromo && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
@@ -3390,7 +3425,7 @@ export default function App() {
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
-                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{p.pn != null ? fmt(p.pn) : "–"}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</td>
+                          <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
 
                         {/* Qty input : « − » sable, « + » pétrole (24 px), champ à filet --line-field puis 2 px sarcelle ;
@@ -3737,19 +3772,25 @@ export default function App() {
                           menu, hors catalogue et péremption : ceux de la ligne (specialItems) ; mêmes prix que cartItems (applyTiers
                           sur basePn). Un palier touché passe par setItemQty (pas du colis ; ligne péremption : au plus son plafond) */}
                       {(() => {
-                        if (item.isCampaign || item.basePn == null) return null;
-                        const src = item.isSpecial ? specialItems.find(l => idSpecial(l) === item.specialId)
-                          : CATALOG_WITH_ADMIN[item.catKey]?.products?.[Number(item.key.slice(item.key.lastIndexOf("-") + 1))];
-                        const reglage = { base: item.basePn, pv: src?.pv, tiers: item.isSpecial ? src?.tiers : src?.price_tiers, qte: item.qty, pas: item.step, max: item.plafond ?? null };
-                        return jaugePaliers(reglage) && <JaugePaliers variante="compacte" style={{ marginTop: 8 }} {...reglage} nom={item.name} onChoisir={(n) => setItemQty(item, n)} />;
-                      })() || ((item.tier || item.nextTier) && (
-                        <div style={encart(item.tier ? "tier" : "warn")}>
-                          {item.tier && (<div style={ligneEncart}><Icone nom="coche" taille={14} epaisseur={2.4} style={iconeEncart} />
-                            <span>Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</span></div>)}
-                          {item.nextTier && (<div style={{ ...ligneEncart, marginTop: item.tier ? 2 : 0 }}><Icone nom="cible" taille={14} style={iconeEncart} />
-                            <span>Encore <strong>{item.nextTier.min_qty - item.qty}</strong> unité{item.nextTier.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(item.nextTier.price)}</strong></span></div>)}
-                        </div>
-                      ))}
+                        // revue du 22/10 : jauge tant qu'il reste un palier à viser ; au meilleur prix (ou palier atteint dès le premier colis),
+                        // l'encart d'une ligne « au lieu de ». Article multi-CIP (supplierCode) : encart seul (répartition par CIP à l'envoi)
+                        if (!item.isCampaign && item.basePn != null && !item.supplierCode) {
+                          const src = item.isSpecial ? specialItems.find(l => idSpecial(l) === item.specialId)
+                            : CATALOG_WITH_ADMIN[item.catKey]?.products?.[Number(item.key.slice(item.key.lastIndexOf("-") + 1))];
+                          const reglage = { base: item.basePn, pv: src?.pv, tiers: item.isSpecial ? src?.tiers : src?.price_tiers, qte: item.qty, pas: item.step, max: item.plafond ?? null };
+                          if (jaugePaliers(reglage)?.prochaine) return <JaugePaliers variante="compacte" style={{ marginTop: 8 }} {...reglage} nom={item.name} onChoisir={(n) => setItemQty(item, n)} />;
+                        }
+                        // palier suivant au-delà du plafond (ligne péremption) : jamais proposé, « + » ne permet pas de l'atteindre
+                        const suivant = item.nextTier && !(item.plafond != null && item.nextTier.min_qty > item.plafond) ? item.nextTier : null;
+                        return (item.tier || suivant) && (
+                          <div style={encart(item.tier ? "tier" : "warn")}>
+                            {item.tier && (<div style={ligneEncart}><Icone nom="coche" taille={14} epaisseur={2.4} style={iconeEncart} />
+                              <span>Prix palier <strong>{fmt(item.pn)}</strong> appliqué dès {item.tier.min_qty} unités{item.basePn != null && item.basePn > item.pn ? ` (au lieu de ${fmt(item.basePn)})` : ""}</span></div>)}
+                            {suivant && (<div style={{ ...ligneEncart, marginTop: item.tier ? 2 : 0 }}><Icone nom="cible" taille={14} style={iconeEncart} />
+                              <span>Encore <strong>{suivant.min_qty - item.qty}</strong> unité{suivant.min_qty - item.qty > 1 ? "s" : ""} pour passer à <strong>{fmt(suivant.price)}</strong></span></div>)}
+                          </div>
+                        );
+                      })()}
                       {/* Contingentement : quota de la période, déjà commandé, reste */}
                       {item.cip && quotaCheck.P[item.cip] && (() => {
                         const q = quotaCheck.P[item.cip];
