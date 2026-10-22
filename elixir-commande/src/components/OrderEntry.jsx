@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 
-import { applyTiers, TierBadge } from "../tiers.jsx";
+import { applyTiers, TierBadge, jaugePaliers } from "../tiers.jsx";
+import JaugePaliers from "./JaugePaliers.jsx";
 import { loadGroups, collapseGroups } from "../product-groups.js";
 import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
@@ -21,7 +22,7 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 // (src/styles/tokens.css, « Saisie de commande ») : sous 768 px, la ligne passe en pile par @media — le composant
 // ne reçoit pas isMobile. Atomes en bas de fichier.
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur }) {
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, panierSaisie, arrondiQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
   const [results, setResults] = useState([]);
   // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
@@ -256,13 +257,22 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               const isAlert = alerts[p.cip];
               const hasDiscount = p.discounted_price && p.discount_pct > 0;
               const displayPrice = hasDiscount ? p.discounted_price : p.list_price;
-              const tiered = applyTiers(displayPrice, p.price_tiers, qty); // prix effectif selon la quantité saisie
               // produit livré par le labo sur justificatif de commande : commandable même en rupture
               const jr = !p.in_stock ? justifProducts[p.cip] : null;
               const orderable = p.in_stock || !!jr;
               // règle de quantité du catalogue (colis, palier, campagne) : boutons au pas du colis, arrondi à l'ajout (App)
               const regle = p.supplier_code ? null : regleQuantite?.(p.cip);
               const pas = regle?.multiple || 1;
+              // Paliers (revue du 22/10/2026) : ligne du panier de destination (App, panierSaisie : quantité déjà au panier, prix et paliers
+              // que cartItems y appliquera), quantité qui partira (arrondie au colis comme à l'ajout) ; prix affiché, montant d'« Ajouter »
+              // et jauge à ce prix-là. Articles multi-CIP (supplier_code) : sans jauge (répartition par CIP à l'envoi, docs/paliers.md)
+              const dest = p.supplier_code ? null : panierSaisie?.(p.cip);
+              const deja = dest?.deja || 0, qAjout = regle && arrondiQuantite ? arrondiQuantite(qty, regle) : qty;
+              const tarif = dest || { base: displayPrice, pv: p.list_price, tiers: p.price_tiers };
+              const reglage = { base: tarif.base, pv: tarif.pv, tiers: tarif.tiers, qte: deja + qAjout, pas, min: regle?.min || 0, max: jr?.maxCommande || null };
+              const jauge = orderable && !p.supplier_code && jaugePaliers(reglage);
+              const pnPanier = applyTiers(tarif.base, tarif.tiers, deja + qAjout).pn ?? displayPrice;
+              const palier = pnPanier < tarif.base;   // prix palier appliqué à la ligne du panier
 
               return (
                 <div key={p.cip} className="ex-saisie-ligne" data-rupture={orderable ? undefined : ""} data-choisi={qty > 0 ? "" : undefined}>
@@ -294,12 +304,14 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     {hasDiscount && (
                       <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                         <span className="num" style={{ fontSize: 12, color: T.inkMute, textDecoration: "line-through" }}>{fmt(p.list_price)}</span>
-                        <span className="num" style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{fmtPct(p.discount_pct)}</span>
+                        <span className="num" style={{ ...ui.badge("promo"), padding: "1px 6px" }}>{fmtPct(palier ? Math.round((1 - pnPanier / p.list_price) * 1000) / 10 : p.discount_pct)}</span>
                       </div>
                     )}
-                    <div className="num" style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(displayPrice)}</div>
-                    <div style={{ fontSize: 11, color: T.inkMute }}>Prix HT</div>
-                    <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />
+                    {/* prix palier appliqué (quantité saisie + déjà au panier) : à sa place, « Prix palier HT » (même hauteur) */}
+                    <div className="num" title={palier ? `Prix palier, au lieu de ${fmt(tarif.base)} HT` : undefined} style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(palier ? pnPanier : displayPrice)}</div>
+                    <div style={{ fontSize: 11, color: T.inkMute }}>{palier ? "Prix palier HT" : "Prix HT"}</div>
+                    {/* palier : jauge sous la ligne ; petit badge sans jauge (rupture, palier atteint dès le premier colis, multi-CIP) */}
+                    {!jauge && <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />}
                     {regle && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>Se commande par {regle.multiple} · {regle.rayon}</div>}
                   </div>
 
@@ -318,7 +330,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       </div>
                       <button className="ex-btn-petrole ex-saisie-ajouter" onClick={() => handleAdd(p)}
                         style={{ ...ajouterStyle, visibility: qty > 0 ? "visible" : "hidden" }}>
-                        <Icone nom="panier" taille={15} />Ajouter {fmt(tiered.pn * qty)}{tiered.tier ? " ★" : ""}
+                        <Icone nom="panier" taille={15} />Ajouter {fmt(pnPanier * (qAjout || qty))}{palier ? " ★" : ""}
                       </button>
                     </>) : (
                       <button className={isAlert ? "ex-saisie-alerte" : "ex-btn-ligne ex-saisie-alerte"} onClick={() => toggleAlert(p)} disabled={alertSaving[p.cip]}
@@ -328,6 +340,14 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                       </button>
                     )}
                   </div>
+
+                  {/* Jauge des paliers (src/components/JaugePaliers.jsx) sur toute la largeur de la ligne, sur la quantité totale de la ligne du
+                      panier (déjà au panier + saisie arrondie) ; un clic sur un palier pose la quantité qui manque, au pas du colis et au
+                      minimum de la règle du catalogue, au plus le maximum du justificatif — « Ajouter » l'arrondit encore comme avant */}
+                  {jauge && (
+                    <JaugePaliers style={{ gridColumn: "1 / -1" }} {...reglage} deja={deja} nom={p.name}
+                      onChoisir={(n) => setQuantities(prev => ({ ...prev, [p.cip]: Math.max(0, n - deja) }))} />
+                  )}
                 </div>
               );
             })}

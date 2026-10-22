@@ -22,6 +22,7 @@
   --paper-mute: rgba(251,248,242,.72);            /* texte secondaire sur pétrole (≥ 7:1) */
   --ok: #065f46; --ok-bg: #dce9e5; --danger: #b91c1c; --danger-bg: #f7e4e4;
   --warn: #92400e; --warn-bg: #f4e7dd; --tier-bg: #f0e9da; --orange-acting: #9a3412;
+  --or-fonce: #93733a;                             /* or des tracés de la jauge des paliers : 3,55:1 sur --sand, 4,17:1 sur --paper */
   --scrim: rgba(10,29,34,.55);
   --shadow-1: 0 4px 14px -6px rgba(15,45,61,.25);
   --shadow-2: 0 12px 40px -12px rgba(15,45,61,.28);
@@ -128,6 +129,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
    (onMouseEnter / onMouseLeave effaçaient le fond « rupture ») */
 .ex-tr { background: var(--surface); transition: background-color .15s var(--ease); }
 .ex-tr:nth-child(even) { background: var(--paper); }
+/* tableaux des menus : zébrure posée par data-zebre (rang du produit), la ligne de la jauge des paliers (ex-tr-palier,
+   src/components/JaugePaliers.jsx) a le fond de son produit ; avant les règles rupture et survol, qui l'emportent toujours */
+.ex-tr[data-zebre="0"], .ex-tr-palier { background: var(--surface); }
+.ex-tr[data-zebre="1"], .ex-tr-palier[data-zebre="1"] { background: var(--paper); }
+.ex-tr[data-rupture] + .ex-tr-palier { background: #fcf1f0; }
 .ex-tr[data-rupture] { background: #fcf1f0; }   /* --danger-bg éclairci : CIP en --ink-mute à 4,9:1 */
 @media (hover: hover) {
   .ex-tr:hover { background: var(--surface-2); }
@@ -386,3 +392,90 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface-2); }
 ::-webkit-scrollbar-thumb { background: var(--ink-faint); border-radius: 3px; }
+
+/* ── Jauge des paliers (src/components/JaugePaliers.jsx ; 22/10/2026, corrigée après revue) : piste sable remplie en sarcelle, en
+   or foncé une fois un palier atteint (--or-fonce : tracés à 3:1 au moins) ; prochain palier en or + encre (couleur des remises),
+   les autres neutres ; hauteur fixe d'un état à l'autre. Zone de 54 px : quantité (haut), piste et point (centre à 26 px), prix */
+.ex-lecteur { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ex-jauge { background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-s); padding: 8px 14px 6px; font-variant-numeric: tabular-nums; text-align: left; min-width: 0; }
+.ex-jauge__tete, .ex-jauge__corps { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+.ex-jauge__tete { min-height: 28px; }
+.ex-jauge__titre { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--petrol); }
+/* incitation : passe à la ligne plutôt que de déborder (320 px, texte agrandi) ; pastilles jamais coupées */
+.ex-jauge__incitation { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 2px 5px; max-width: 100%; font-size: 12.5px; line-height: 22px; color: var(--ink);
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); border-radius: 14px; padding: 3px 8px 3px 10px; }
+.ex-jauge__incitation svg { color: var(--ok); flex-shrink: 0; }
+.ex-jauge__n { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
+  background: var(--petrol); color: var(--paper); font-size: 12px; white-space: nowrap; }
+.ex-jauge__prix { padding: 2px 8px; border-radius: 999px; background: var(--or); color: var(--ink); font-size: 12px; white-space: nowrap; }
+.ex-jauge__deja { font-size: 12px; color: var(--ink-soft); }
+.ex-jauge__br { display: none; flex-basis: 100%; height: 0; }
+.ex-jauge:is([data-variante="compacte"], [data-variante="mini"]) .ex-jauge__br { display: block; }
+@media (max-width: 480px) { .ex-jauge[data-variante="complete"] .ex-jauge__br { display: block; } }
+.ex-jauge__detail { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; margin-left: auto; border: none; border-radius: 999px;
+  background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-field); color: var(--ink); font-size: 12.5px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+@media (hover: hover) { .ex-jauge__detail:hover { background: var(--surface-2); } }
+.ex-jauge__zone { position: relative; flex: 1 1 240px; max-width: 560px; height: 54px; margin: 2px 26px 0 8px; }
+.ex-jauge__piste { position: absolute; left: 0; right: 0; top: 23px; height: 6px; border-radius: 999px; background: var(--sand); }
+.ex-jauge__plein { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--teal-2); }
+.ex-jauge__tirets { position: absolute; top: 2px; border-top: 2px dashed var(--teal-2); }
+.ex-jauge__curseur { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 999px; background: var(--surface);
+  border: 3px solid var(--teal-2); box-shadow: var(--shadow-1); z-index: 1; }
+.ex-jauge[data-atteint] .ex-jauge__plein { background: var(--or-fonce); }
+.ex-jauge[data-atteint] .ex-jauge__curseur { border-color: var(--or-fonce); }
+.ex-jauge__zero, .ex-jauge__q { font-size: 11.5px; font-weight: 700; line-height: 15px; }
+.ex-jauge__zero { position: absolute; left: 0; top: 0; transform: translateX(-50%); color: var(--ink-mute); }
+.ex-jauge__etape { position: absolute; top: 0; height: 54px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center;
+  min-width: 36px; padding: 0 2px; border: none; border-radius: 8px; background: none; color: var(--ink); font-family: inherit; cursor: pointer; }
+span.ex-jauge__etape { cursor: default; }
+.ex-jauge__point { width: 12px; height: 12px; margin-top: 5px; border-radius: 999px; background: var(--surface); box-shadow: inset 0 0 0 2px var(--line-field); }
+.ex-jauge__remise { margin-top: 3px; padding: 0 5px; border-radius: 5px; font-size: 11px; font-weight: 700; line-height: 16px; white-space: nowrap;
+  background: var(--surface); color: var(--ink-soft); box-shadow: inset 0 0 0 1px var(--line); }
+.ex-jauge__rp { display: none; }   /* « · −23,6 % » : jauge complète sur ordinateur seulement (place) */
+.ex-jauge__etape[data-etat="suite"] .ex-jauge__q { color: var(--ink-mute); }
+.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__point { box-shadow: inset 0 0 0 3px var(--or-fonce); }
+.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { background: var(--or); color: var(--ink); box-shadow: none; }
+.ex-jauge__etape[data-etat="atteinte"] .ex-jauge__point { background: var(--or-fonce); box-shadow: none; }
+.ex-jauge__etape[data-etat="atteinte"] .ex-jauge__remise { background: var(--tier-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--or); }
+/* palier cliquable : soulignement et anneau au survol (et le prochain toujours en relief de bouton) */
+button.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { box-shadow: 0 1px 0 var(--or-fonce); }
+@media (hover: hover) { button.ex-jauge__etape:hover .ex-jauge__q { text-decoration: underline; text-underline-offset: 2px; }
+  button.ex-jauge__etape:hover .ex-jauge__remise { box-shadow: 0 0 0 2px var(--or-fonce); } }
+.ex-jauge__defile { overflow-x: auto; max-width: 100%; }
+.ex-jauge__table { width: 100%; max-width: 520px; margin-top: 8px; border-collapse: collapse; font-size: 12.5px; background: var(--surface);
+  border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-soft); }
+.ex-jauge__table th, .ex-jauge__table td { padding: 5px 10px; text-align: right; white-space: nowrap; border-top: 1px solid var(--line-soft); }
+.ex-jauge__table thead th { border-top: 0; font-size: 10.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-mute);
+  white-space: normal; line-height: 1.2; vertical-align: bottom; }
+.ex-jauge__table th:first-child { text-align: left; }
+.ex-jauge__table tbody th { font-weight: 600; }
+.ex-jauge__table tr[data-actuel] > * { background: var(--tier-bg); font-weight: 700; }
+.ex-jauge__note { margin: 6px 0 2px; font-size: 11.5px; line-height: 1.4; color: var(--ink-soft); }
+.ex-tr-palier .ex-jauge__zone { max-width: 440px; }   /* tableaux des menus : bloc de 660 px au plus */
+@media (hover: hover) { .ex-tr:hover + .ex-tr-palier { background: var(--surface-2); } }   /* survol de la ligne : jauge comprise */
+/* complète, ordinateur : « Voir le détail » juste après la piste, remise écrite à côté du prix de chaque palier */
+@media (min-width: 768px) { .ex-jauge[data-variante="complete"] .ex-jauge__detail { margin-left: 0; }
+  .ex-jauge[data-variante="complete"] .ex-jauge__rp { display: inline; } }
+/* téléphone : « l'unité » masqué, tableau du détail resserré */
+@media (max-width: 480px) { .ex-jauge { padding-left: 10px; padding-right: 10px; } .ex-jauge__u { display: none; } .ex-jauge__table { font-size: 12px; } .ex-jauge__table :is(th, td) { padding: 5px 4px; }
+  .ex-jauge__table thead th { letter-spacing: .02em; } }
+/* compacte (panier, liste mobile) et mini (cartes) : sans titre ; mini : incitation sans pastille, sans « Détail » ; prix du palier
+   d'après (« suite ») masqué, faute de place */
+.ex-jauge[data-variante="compacte"] .ex-jauge__zone { flex-basis: 170px; margin-right: 24px; }
+.ex-jauge[data-variante="compacte"] .ex-jauge__table { font-size: 12px; }
+.ex-jauge[data-variante="compacte"] .ex-jauge__table :is(th, td) { padding: 5px 4px; }
+.ex-jauge[data-variante="compacte"] .ex-jauge__table thead th { letter-spacing: .02em; }
+.ex-jauge:is([data-variante="compacte"], [data-variante="mini"]) .ex-jauge__etape[data-etat="suite"] .ex-jauge__remise { visibility: hidden; }
+.ex-jauge[data-variante="mini"] { padding: 6px 8px 4px; }
+.ex-jauge[data-variante="mini"] .ex-jauge__tete { min-height: 24px; justify-content: center; }
+.ex-jauge[data-variante="mini"] .ex-jauge__incitation { justify-content: center; padding: 0; box-shadow: none; background: none; font-size: 11.5px; gap: 2px 4px; }
+.ex-jauge[data-variante="mini"] .ex-jauge__zone { margin: 0 20px 0 8px; flex-basis: 100%; }
+/* ligne (tableaux et liste mobile à 0 ou au meilleur prix) : une ligne de texte, « Passer à N » en bouton */
+.ex-jauge[data-variante="ligne"] { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 0; border: 0; background: none; }
+.ex-jauge[data-variante="ligne"] .ex-jauge__incitation { padding: 0; box-shadow: none; background: none; }
+.ex-jauge[data-variante="ligne"] .ex-jauge__incitation > svg:first-child { color: var(--or-fonce); }
+.ex-jauge__passer { height: 26px; padding: 0 10px; border: none; border-radius: 999px; background: var(--tier-bg); box-shadow: inset 0 0 0 1px var(--or-fonce);
+  color: var(--ink); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
+@media (hover: hover) { .ex-jauge__passer:hover { background: var(--or-clair); } }
+/* prix unitaire d'une ligne de menu quand le palier s'applique (prixUnitaire, src/App.jsx) : ton palier, même hauteur de ligne */
+.ex-prix-palier { padding: 0 4px; border-radius: 5px; background: var(--tier-bg); box-shadow: inset 0 0 0 1px var(--or); white-space: nowrap; }

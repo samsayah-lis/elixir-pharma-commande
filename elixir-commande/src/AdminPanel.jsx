@@ -1520,7 +1520,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             medipimLookup={medipimLookup} setMedipimLookup={setMedipimLookup}
             adminFetch={adminFetch} flash={flash} fetchProducts={fetchProducts}
             allProducts={allProducts} sectionMeta={sectionMeta}
-            allSectionsList={allSectionsList}
+            allSectionsList={allSectionsList} promos={promos}
           />
         )}
         {tab==="grouporders"&&(
