@@ -214,7 +214,8 @@ export function produitDe(m2o) {
 const nomM2o = (m2o) => String(m2o?.[1] || "").replace(/\s*\(.*\)\s*$/, "").trim() || null;   // « INV/2026/51300 (réf.) » → numéro
 
 // Références citées : facture/avoir, commande de vente, livraison, commande du site (13 chiffres), CIP13
-export const REF_SITE = /^(17\d{11})(P\d{1,2})?$/;
+// Commande du site = Date.now() à la création : « 17… » jusqu'au 15/01/2027 08:00 UTC, puis « 18… », « 19… » (jusqu'en 2033)
+export const REF_SITE = /^(1[7-9]\d{11})(P\d{1,2})?$/;
 // Numéros de pièces d'Odoo : R?INV/AAAA/NNNNN, partie numérique sur 5 chiffres complétée par des zéros
 const cinq = (n) => String(n).replace(/^0+(?=\d)/, "").padStart(5, "0");
 export function normaliserReference(s) {

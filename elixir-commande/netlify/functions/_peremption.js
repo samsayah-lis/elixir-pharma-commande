@@ -179,8 +179,9 @@ export function classerStock(quants, lotsParId, exclus, fen) {
   return r;
 }
 
-// Canal d'une ligne de vente : site (référence PharmaML du site, 13 chiffres « 17… »), LGO (autre référence PharmaML), autre
-export const canalVente = (ref) => (/^17\d{11}(P\d+)?$/.test(String(ref || "")) ? "site" : ref ? "lgo" : "autre");
+// Canal d'une ligne de vente : site (référence PharmaML du site, 13 chiffres = Date.now() : « 17… », « 18… » dès le
+// 15/01/2027 08:00 UTC, « 19… »), LGO (autre référence PharmaML), autre
+export const canalVente = (ref) => (/^1[7-9]\d{11}(P\d+)?$/.test(String(ref || "")) ? "site" : ref ? "lgo" : "autre");
 
 // Demi-centime : prix de base × (1 − pct) tombe exactement sur x,xx5 €. Odoo arrondit au demi supérieur (float_round :
 // 6,35 × 0,7 = 4,445 → 4,45 €) ; la synchro « Prix remisés » du site (applyRule d'odoo-price-sync.js, Math.round en
