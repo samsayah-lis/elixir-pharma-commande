@@ -4,7 +4,7 @@ import { T, R, ui, fmtEur } from "../theme.js";
 // ── Admin : onglet « 🔌 API » (API des pharmacies, /api/v1) — chargé à la demande par AdminPanel ──
 // État du service (« Tout couper »), interrupteur « Commandes par API » et sa liste de prérequis, accès des pharmacies
 // (ouverture, réglages, suspension), clés SANS secret (révocation ; variante admin tracée pour une pharmacie sans compte),
-// usage et journal des appels. API : netlify/functions/api-admin.js (verifyAdmin). Les secrets ne sont jamais lus : seule
+// état du calcul des prix de chaque liste (phase 2, sans aucun prix), usage et journal des appels. API : netlify/functions/api-admin.js (verifyAdmin). Les secrets ne sont jamais lus : seule
 // une clé créée ici par l'admin est montrée, UNE fois.
 const API = "/.netlify/functions/api-admin";
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
@@ -79,6 +79,41 @@ function EtatService({ t, poster }) {
           ? <button style={ui.btn("ligne")} onClick={() => basculer({ action: "reglages", commandes_live: false }, "Fermer les commandes par API (production) ?")}>Fermer les commandes par API</button>
           : <button style={{ ...ui.btn("primaire"), ...off(!t.ouvrable.ok || !r.actif) }} disabled={!t.ouvrable.ok || !r.actif} title={t.ouvrable.ok ? "" : `Prérequis manquants : ${t.ouvrable.manquants.join(", ")}`}
               onClick={() => basculer({ action: "reglages", commandes_live: true }, "Ouvrir les commandes par API en production ?\n\nLes pharmacies dont l'accès est en mode automatique pourront passer des commandes réelles.")}>Ouvrir les commandes par API</button>}
+      </div>
+    </section>
+  );
+}
+
+// ── Prix des listes (phase 2) : calculés par Odoo la nuit, liste par liste ; aucun prix n'est affiché ici ──
+const ETATS_PRIX = { pret: ["À jour", "ok"], en_cours: ["Calcul en cours", "info"], a_calculer: ["Demandé", "warn"], erreur: ["Erreur", "danger"], jamais: ["Jamais calculée", "neutral"] };
+function PrixListes({ t, poster }) {
+  const listes = t.prix || [];
+  return (
+    <section style={carte} aria-labelledby="api-prix">
+      <h2 id="api-prix" style={ui.h2}>Prix des listes</h2>
+      <p style={{ fontSize: 12, color: T.inkMute, marginTop: 0 }}>Chaque pharmacie voit les prix HT de SA liste de prix, calculés par Odoo comme sur la facture (le plus bas des règles applicables), hors offres du site. Calcul la nuit (une liste par quart d'heure), dès qu'une liste nouvelle apparaît, ou avec « Recalculer ».</p>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead><tr>{["Liste", "Accès actifs", "État", "Dernier calcul", "Produits", "Charge", ""].map(h => <th key={h} style={ui.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {listes.length === 0 && <tr><td colSpan={7} style={{ ...ui.td, color: T.inkMute }}>Aucune liste : elle apparaît à l'ouverture du premier accès.</td></tr>}
+            {listes.map(l => {
+              const [lib, ton] = ETATS_PRIX[l.etat] || [l.etat, "neutral"];
+              return (
+                <tr key={l.liste_id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                  <td style={{ ...ui.td, minWidth: 150 }}><b>{l.nom}</b></td>
+                  <td style={ui.td}>{l.acces_actifs}</td>
+                  <td style={ui.td}><Badge ton={ton}>{lib}</Badge>{l.erreur && <div style={{ fontSize: 11, color: T.danger }}>{l.erreur}</div>}</td>
+                  <td style={ui.td}>{dt(l.fin_le)}</td>
+                  <td style={ui.td}>{l.produits != null ? `${Number(l.produits).toLocaleString("fr-FR")}${l.sans_prix ? ` · ${Number(l.sans_prix).toLocaleString("fr-FR")} sans prix` : ""}` : "–"}</td>
+                  <td style={ui.td}>{l.appels != null ? `${l.appels} appels` : "–"}</td>
+                  <td style={ui.td}><button style={{ ...ui.btn("ligne", "s"), ...off(l.etat === "en_cours") }} disabled={l.etat === "en_cours"}
+                    onClick={() => window.confirm(`Recalculer les prix de « ${l.nom} » ?\n\nOdoo calcule le prix de chaque produit du catalogue (quelques minutes).`) && poster({ action: "prix_recalculer", liste_id: l.liste_id })}>Recalculer</button></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </section>
   );
@@ -380,6 +415,7 @@ export default function AdminApi({ adminFetch, flash }) {
         </div>
       </section>
       {selection && detail?.acces?.odoo_id === selection && <DetailAcces d={detail} t={t} poster={poster} recharger={() => chargerDetail(selection)} />}
+      <PrixListes t={t} poster={poster} />
       <Journal adminFetch={adminFetch} odooId={selection} />
     </div>
   );

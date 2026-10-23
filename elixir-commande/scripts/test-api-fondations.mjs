@@ -663,7 +663,8 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   vrai("_redirects : /api/v1/* forcé vers la fonction, AVANT /*", iApi >= 0 && iTout > iApi);
   const sql = readFileSync(join(APP, "sql/api-schema.sql"), "utf8");
   const tablesSql = [...sql.matchAll(/create table if not exists (api_\w+)/g)].map(m => m[1]);
-  eq("SQL : tables", tablesSql, ["api_reglages", "api_acces", "api_cles", "api_commandes", "api_journal", "api_evenements", "api_compteurs"]);
+  eq("SQL : tables", tablesSql, ["api_reglages", "api_acces", "api_cles", "api_commandes", "api_journal", "api_evenements", "api_compteurs",
+    "api_prix", "api_prix_listes"]);   // phase 2 (lecture) : prix des listes
   vrai("SQL : RLS sur chaque table", tablesSql.every(t => new RegExp(`alter table ${t}\\s+enable row level security`).test(sql)));
   const revoke = /revoke all on table ([\s\S]*?) from anon, authenticated;/.exec(sql)?.[1] || "";
   vrai("SQL : droits retirés à anon et authenticated sur chaque table", tablesSql.every(t => revoke.split(/[\s,]+/).includes(t)));

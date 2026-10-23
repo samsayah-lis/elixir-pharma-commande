@@ -10,6 +10,20 @@ const APERCU = /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/;
 const hote = (event) => String(event?.headers?.host || event?.headers?.Host || "").toLowerCase();
 export const estApercu = (event) => APERCU.test(hote(event));
 export const siteBase = (event) => `https://${SITE_HOSTS.includes(hote(event)) ? hote(event) : SITE_HOSTS[0]}`;
+// adresse du site pour une fonction planifiée (sans requête entrante) : URL de Netlify si c'est un hôte du site
+export const siteBaseEnv = (env = process.env) => { let h = ""; try { h = new URL(String(env.URL || "")).hostname.toLowerCase(); } catch { /* absente */ }
+  return `https://${SITE_HOSTS.includes(h) ? h : SITE_HOSTS[0]}`; };
+// Lancement du calcul des prix d'une liste (api-prix-background, x-cron-secret) → null si parti, sinon la raison
+export async function lancerCalculPrix(base, listeId, { secret = process.env.CRON_SECRET, http = (...a) => fetch(...a) } = {}) {
+  if (!secret) return "CRON_SECRET absent";
+  try {
+    const r = await http(`${base}/.netlify/functions/api-prix-background`, { method: "POST", headers: { "Content-Type": "application/json", "x-cron-secret": secret },
+      body: JSON.stringify({ liste_id: Number(listeId) }), signal: AbortSignal.timeout(6000) });
+    return r.ok || r.status === 202 ? null : `HTTP ${r.status}`;
+  } catch (e) {
+    return e?.name === "TimeoutError" ? "délai dépassé" : "injoignable";
+  }
+}
 
 // code → [statut, titre, détail par défaut]
 export const CODES = {
@@ -59,6 +73,15 @@ export function probleme(event, code, requestId, { detail, entetes = {}, extra =
   return { statusCode: statut || s, headers: { ...ENTETES, "Content-Type": "application/problem+json; charset=utf-8", "X-Request-Id": requestId, ...entetes },
     body: JSON.stringify(corps) };
 }
+// Erreur levée par une route (rendue en problem+json par le routeur) : code de CODES, détail, délai, champs propres
+export const erreurApi = (code, { detail, retry, extra } = {}) => Object.assign(new Error(code), { api: true, code, detail, retry, extra });
+
+// Fichier (PDF) : corps en base64, téléchargement, jamais gardé en cache
+export function reponseFichier(base64, nom, mime, requestId, entetes = {}) {
+  return { statusCode: 200, headers: { ...ENTETES, "Content-Type": mime, "Content-Disposition": `attachment; filename="${String(nom).replace(/[^A-Za-z0-9._-]+/g, "_")}"`,
+    "X-Request-Id": requestId, ...entetes }, body: base64, isBase64Encoded: true };
+}
+
 // Code d'erreur d'une réponse déjà construite (journal)
 export const codeDe = (reponse) => { try { return reponse.statusCode >= 400 ? JSON.parse(reponse.body)?.code || null : null; } catch { return null; } };
 

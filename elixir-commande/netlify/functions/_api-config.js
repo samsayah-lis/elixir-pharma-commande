@@ -19,14 +19,42 @@ export const CLES_ACTIVES_MAX = 3;          // par environnement et par pharmaci
 export const ROTATION_JOURS = 7;            // « Remplacer » : l'ancienne clé reste valide 7 jours
 export const CORPS_MAX_OCTETS = 256 * 1024;
 export const MENTION_PRIX = "Prix HT de votre liste, hors offres du site";
+// Phase 2 (lecture) : mentions des réponses du catalogue et des disponibilités
+export const MENTION_PRIX_DETAIL = `${MENTION_PRIX} (menus, précommandes, péremption courte, commandes groupées). Prix indicatifs : la facture applique vos conditions au jour de la livraison.`;
+export const MENTION_DISPONIBILITE = "Disponibilité indicative au moment de la lecture, non engageante : elle peut changer avant la préparation de votre commande.";
+// Niveaux de disponibilité (jamais de quantité exacte) : rupture si stock libre ≤ 0, stock faible en dessous du seuil
+// (à confirmer par Zineb), en stock au-delà.
+export const NIVEAUX_STOCK = { faible_sous: 10 };
+export const niveauStock = (libre) => {
+  const n = Number(libre);
+  if (!Number.isFinite(n) || n <= 0) return "rupture";
+  return n < NIVEAUX_STOCK.faible_sous ? "stock_faible" : "en_stock";
+};
 
 // Débits : fenêtres fixes, compteurs durables (api_compteurs). Avant authentification : par IP (IPv6 : /64).
+// Classes par clé : lecture (catalogue, contingents, commandes, factures et livraisons en liste), disponibilites (stock lu
+// en direct, 200 CIP par appel), documents (PDF), commande. odoo : charge d'Odoo, comptée seulement quand une route lit
+// vraiment Odoo (cache manqué) — par fiche, toutes clés confondues, et pour toutes les pharmacies ensemble.
 export const LIMITES = {
   ip: { par_minute: 120 },
   refus_cle: { max: 20, fenetre_s: 600 },   // clés refusées depuis un même réseau
   lecture: { par_minute: 60, par_jour: 5000 },
+  disponibilites: { par_minute: 30, par_jour: 5000 },
+  documents: { par_minute: 20, par_jour: 300 },
   commande: { par_minute: 6, par_jour: 30 },
+  odoo: { fiche_par_minute: 30, global_par_minute: 240 },
 };
+// Lectures : tailles de page et périodes (jours, bornes comprises)
+export const PAGES = {
+  catalogue: { defaut: 100, max: 500 },
+  commandes: { defaut: 20, max: 50, periode_defaut: 30, periode_max: 92 },
+  factures: { defaut: 20, max: 50, periode_defaut: 90, periode_max: 366 },
+  livraisons: { defaut: 20, max: 50, periode_defaut: 30, periode_max: 366 },
+  disponibilites: { max_cips: 200 },
+};
+// Prix : liste recalculée la nuit (api-cron) si son dernier calcul a plus de AGE_MAX_H heures ; au-delà de
+// AGE_PERIME_H heures, le catalogue l'indique (« prix.etat » : ancien)
+export const PRIX = { age_max_h: 20, age_perime_h: 48, paliers_max: 8, par_appel_rapport: 60 };
 
 // Réglages d'un accès à l'ouverture (modifiables dans l'admin, pharmacie par pharmacie)
 export const ACCES_DEFAUT = {

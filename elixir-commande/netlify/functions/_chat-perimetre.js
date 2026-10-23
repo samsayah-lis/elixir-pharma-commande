@@ -558,20 +558,24 @@ function etatSite(o, taches, dansOdoo, verifiee) {
 }
 const cipDe = (v) => { const s = String(v ?? "").trim(); return /^\d{7,13}$/.test(s) ? s : null; };
 // noms des produits relus dans Odoo (catalogue), jamais le libellé écrit dans la commande du site
-async function nomsProduits(cips, d) {
-  const codes = [...new Set(cips.filter(c => /^\d{13}$/.test(String(c || ""))))].slice(0, 30);
+async function nomsProduits(cips, d, max = 30) {
+  const codes = [...new Set(cips.filter(c => /^\d{13}$/.test(String(c || ""))))].slice(0, max);
   if (!codes.length) return new Map();
   const rows = await lire(d, "product.product", "search_read", [[["default_code", "in", codes], ["company_id", "in", [COMPANY_ID, false]]]],
-    { fields: ["default_code", "name"], limit: 60, context: { active_test: false } });
+    { fields: ["default_code", "name"], limit: max * 2, context: { active_test: false } });
   return new Map(rows.map(r => [r.default_code, tronquer(r.name, 120)]));
 }
 // commandes du site de la période, avec leur lien éventuel vers les commandes Odoo (pml_order_ref = id, idP2…)
 // noms : relit dans Odoo le nom des produits (détail d'UNE commande seulement)
-export async function commandesSite(ctx, { debut, fin, id = null, noms = false }, deps = {}) {
+// API des pharmacies (_api-suivi.js) : numeros (commandes d'une page, 100 au plus) au lieu de la période ; lignesMax : lignes
+// de produits rendues par commande (30 par défaut, comme pour l'Assistant)
+export async function commandesSite(ctx, { debut, fin, id = null, numeros = null, noms = false, lignesMax = 30 }, deps = {}) {
   const d = depsParDefaut(deps);
   const P = fiche(ctx);
   if (!ctx.cip) return [];
-  const filtre = id ? `id=eq.${enc(id)}` : `date=gte.${enc(minuitParisIso(debut))}&date=lt.${enc(minuitParisIso(jourPlus(fin, 1)))}`;
+  const liste = Array.isArray(numeros) ? [...new Set(numeros.map(String))].filter(x => /^1[7-9]\d{11}$/.test(x)).slice(0, 100) : null;
+  if (liste && !liste.length) return [];
+  const filtre = liste ? `id=in.${enc(`(${liste.join(",")})`)}` : id ? `id=eq.${enc(id)}` : `date=gte.${enc(minuitParisIso(debut))}&date=lt.${enc(minuitParisIso(jourPlus(fin, 1)))}`;
   const rows = (await d.sb(`elixir_orders?pharmacy_cip=eq.${enc(ctx.cip)}&${filtre}&select=id,date,items,processed,source,entered_by,pharmacy_email&order=date.desc&limit=100`)) || [];
   if (!rows.length) return [];
   // comptes du site de la fiche (anciennes adresses comprises : une commande passée avant un changement d'adresse reste la sienne)
@@ -594,10 +598,10 @@ export async function commandesSite(ctx, { debut, fin, id = null, noms = false }
     return { reference_site: String(o.id), date: dt ? jourParis(dt) : null, heure: dt ? heureParis(dt) : null,
       origine: o.entered_by && verifiee ? "saisie" : "site", lignes: itemsDe(o).length, etat: e.code, libelle: e.libelle, verifiee, commandes_odoo: dansOdoo,
       ids_odoo: [...(versOdoo.get(String(o.id))?.keys() || [])],
-      produits: itemsDe(o).slice(0, 30).map(it => ({ produit: null, cip: cipDe(it?.cip), commande: Math.max(0, parseInt(it?.qty) || 0) })) };
+      produits: itemsDe(o).slice(0, lignesMax).map(it => ({ produit: null, cip: cipDe(it?.cip), commande: Math.max(0, parseInt(it?.qty) || 0) })) };
   });
   if (noms) {
-    const n = await nomsProduits(sorties.filter(s => s.verifiee).flatMap(s => s.produits.map(x => x.cip)), d).catch(() => new Map());
+    const n = await nomsProduits(sorties.filter(s => s.verifiee).flatMap(s => s.produits.map(x => x.cip)), d, Math.max(30, Math.min(200, lignesMax))).catch(() => new Map());
     for (const s of sorties) if (s.verifiee) for (const x of s.produits) x.produit = n.get(x.cip) || null;
   }
   return sorties;
@@ -670,6 +674,63 @@ async function detailOdoo(ctx, so, d) {
   };
 }
 const produitSansId = (m2o) => { const { cip, produit } = produitDe(m2o); return { produit, cip }; };
+
+// ── API des pharmacies (_api-suivi.js) : codes d'état stables et suivi de commandes Odoo connues ──
+// Mêmes règles que etatCommande (libellés de l'Assistant), en codes : annulee, non_servie, partiellement_sortie (reliquat,
+// même facturée), facturee (sortie complète et facture), sortie_entrepot, en_preparation (« En préparation » et « Reçue »).
+export function codeEtatCommande(so, lignes, factures = []) {
+  if (so.state === "cancel") return "annulee";
+  if (entierementZero(lignes)) return "non_servie";
+  if (so.delivery_status === "partial") return "partiellement_sortie";
+  if (so.delivery_status === "full") return pieces2(factures).factures.length ? "facturee" : "sortie_entrepot";
+  return "en_preparation";
+}
+// Commandes Odoo d'ids connus (liens des commandes du site), RELUES avec le domaine de la fiche : un id d'une autre
+// pharmacie ou d'une autre société disparaît. detail : quantités par ligne (sorties réelles, reliquat), bons de livraison.
+// → { commandes: [{ id, numero, etat, sortie_le, factures, avoirs, livraisons? }], lignes: [{ order_id, ref, cip, produit,
+//     commandee, acceptee, servie, non_servie, a_livrer, facturee }] (detail seulement) }
+export async function suiviCommandesOdoo(ctx, ids, { detail = false } = {}, deps = {}) {
+  const d = depsParDefaut(deps);
+  const liste = [...new Set((ids || []).map(Number))].filter(n => Number.isInteger(n) && n > 0).slice(0, 200);
+  if (!liste.length) return { commandes: [], lignes: [] };
+  const sos = await lire(d, "sale.order", "search_read", [[...domaineCommandes(ctx), ["state", "in", ["sale", "done", "cancel"]], ["id", "in", liste]]],
+    { fields: CHAMPS_COMMANDE, order: "date_order asc", limit: liste.length });
+  if (!sos.length) return { commandes: [], lignes: [] };
+  const lignes = await lignesDe(ctx, sos.map(s => s.id), d);
+  const fs = await facturesDe(ctx, [...new Set(sos.flatMap(s => s.invoice_ids || []))], d);
+  const parFacture = new Map(fs.map(f => [f.id, f]));
+  const parCde = groupe(lignes, l => l.order_id?.[0]);
+  const sorties = await sortiesDe(ctx, lignes, d);
+  let livraisons = new Map(), restes = null;
+  if (detail) {
+    const pids = [...new Set(sos.flatMap(s => s.picking_ids || []))];
+    const pk = pids.length ? await lire(d, "stock.picking", "search_read", [[...domaineLivraisons(ctx), ["id", "in", pids], ["picking_type_code", "=", "outgoing"],
+      ["return_id", "=", false]]], { fields: ["name", "state", "date_done", "sale_id"], order: "date_done asc, id asc", limit: 500 }) : [];
+    livraisons = groupe(pk, p => p.sale_id?.[0]);
+    if (pk.some(p => p.state === "done") && pk.some(p => p.state !== "done" && p.state !== "cancel")) restes = await restesDe(ctx, lignes, d);
+  }
+  const commandes = sos.map(so => {
+    const ls = parCde.get(so.id) || [];
+    const factures = (so.invoice_ids || []).map(i => parFacture.get(i)).filter(Boolean);
+    const { factures: f, avoirs } = pieces2(factures);
+    const sortie = sorties.derniere.get(so.id) || ((so.delivery_status === "full" || so.delivery_status === "partial") ? so.effective_date : null) || null;
+    return { id: so.id, numero: so.name, etat: codeEtatCommande(so, ls, factures), sortie_le: sortie ? dateOdoo(sortie).toISOString() : null,
+      factures: f.map(x => x.name), avoirs: avoirs.map(x => x.name),
+      ...(detail ? { livraisons: (livraisons.get(so.id) || []).filter(p => p.state === "done").map(p => ({ id: p.id, numero: p.name, sortie_le: p.date_done ? dateOdoo(p.date_done).toISOString() : null })) } : {}) };
+  });
+  if (!detail) return { commandes, lignes: [] };
+  // avant toute sortie : rien de servi, non servi = réduction à l'enregistrement (contingent, rupture), reste à livrer = retenu
+  const etats = new Map(sos.map(so => [so.id, so.delivery_status === "full" || so.delivery_status === "partial"]));
+  return { commandes, lignes: lignes.map(l => {
+    const sortie = !!etats.get(l.order_id?.[0]);
+    const q = quantitesLigne(l, sortie, sorties.parLigne, restes);
+    const acceptee = Number(l.product_uom_qty) || 0;
+    const { cip, produit } = produitDe(l.product_id);
+    return { order_id: l.order_id?.[0] || null, ref: String(l.pml_order_ref || ""), cip, produit, commandee: q.commande, acceptee,
+      ...(sortie ? { servie: q.servi, non_servie: q.non_servi, a_livrer: q.a_livrer || 0 } : { servie: 0, non_servie: Math.max(0, q.commande - acceptee), a_livrer: acceptee }),
+      facturee: q.facture };
+  }) };
+}
 
 // ═══ Bons de livraison ═══════════════════════════════════════════════════
 // Bon de livraison (BL) = livraison SORTANTE, VALIDÉE, vers un emplacement CLIENT (stock.picking : picking_type_code =

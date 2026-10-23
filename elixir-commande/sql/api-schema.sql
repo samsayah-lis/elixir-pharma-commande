@@ -180,6 +180,36 @@ revoke all on function api_lire_compteur(text, int) from public, anon, authentic
 grant execute on function api_compter(text, int) to service_role;
 grant execute on function api_lire_compteur(text, int) to service_role;
 
+-- ── Phase 2 (lecture) : prix de la liste de chaque pharmacie ──────────────────────────────────────
+-- Prix HT calculés par Odoo lui-même (rapport de liste de prix, comme le contrôle des écarts de la péremption) pour chaque
+-- liste utilisée par un accès ouvert, la nuit (api-cron → api-prix-background, une liste par passage) ou à la demande de
+-- l'admin. Odoo facture le MINIMUM des règles applicables : le rapport donne ce prix facturé, quantité 1 puis chaque
+-- quantité de palier de la liste. Jamais de nom ni de numéro de liste dans les réponses de l'API.
+create table if not exists api_prix (
+  liste_id    int not null,
+  cip         text not null,                           -- CIP13 du catalogue (odoo_catalog.cip)
+  prix_ht     numeric(12, 2),                          -- null : pas de prix calculable (prix de base nul…)
+  paliers     text,                                    -- JSON [{ "a_partir_de": 12, "prix_ht": 3.70 }] (prix strictement décroissants)
+  calcule_le  timestamptz not null,
+  primary key (liste_id, cip)
+);
+create index if not exists api_prix_calcul on api_prix (liste_id, calcule_le);
+
+-- État du calcul de chaque liste (onglet 🔌 API, déclenchement par api-cron) :
+--   a_calculer : demandé (nouvel accès, liste changée dans Odoo, bouton de l'admin) ; en_cours ; pret ; erreur.
+create table if not exists api_prix_listes (
+  liste_id    int primary key check (liste_id > 0),
+  etat        text not null default 'a_calculer' check (etat in ('a_calculer', 'en_cours', 'pret', 'erreur')),
+  demande_le  timestamptz,
+  debut_le    timestamptz,
+  fin_le      timestamptz,
+  produits    int,                                     -- produits du catalogue traités au dernier calcul
+  sans_prix   int,
+  appels      int,                                     -- appels du rapport d'Odoo au dernier calcul (charge)
+  erreur      text,                                    -- message court, jamais de donnée
+  updated_at  timestamptz not null default now()
+);
+
 -- RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated.
 alter table api_reglages   enable row level security;
 alter table api_acces      enable row level security;
@@ -188,5 +218,8 @@ alter table api_commandes  enable row level security;
 alter table api_journal    enable row level security;
 alter table api_evenements enable row level security;
 alter table api_compteurs  enable row level security;
-revoke all on table api_reglages, api_acces, api_cles, api_commandes, api_journal, api_evenements, api_compteurs
+alter table api_prix       enable row level security;
+alter table api_prix_listes enable row level security;
+revoke all on table api_reglages, api_acces, api_cles, api_commandes, api_journal, api_evenements, api_compteurs,
+  api_prix, api_prix_listes
   from anon, authenticated;

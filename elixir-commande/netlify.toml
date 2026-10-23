@@ -95,3 +95,10 @@
 # aucune écriture Odoo sans PEREMPTION_ODOO_ECRITURE=1 (portée « Production ») ET le mode « Actif » de l'admin.
 [functions."peremption-cron"]
   schedule = "10,25,40,55 * * * *"
+
+# API des pharmacies (netlify/functions/api-cron.js) : toutes les 15 min — liste de prix des fiches ouvertes relue une fois
+# par jour ; prix d'UNE liste au plus par passage, calculés par Odoo en arrière-plan (api-prix-background : nouvelle liste,
+# liste changée, bouton de l'admin, ou la nuit entre 1 h et 6 h, heure de Paris, quand le calcul a plus de 20 h) ; ménage
+# des compteurs de débit et du journal des appels (13 mois). Lectures Odoo seulement ; rien quand aucun accès n'est ouvert.
+[functions."api-cron"]
+  schedule = "*/15 * * * *"

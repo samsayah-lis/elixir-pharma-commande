@@ -332,7 +332,13 @@ const FICHIERS_AUTORISES = {
 // public /api/v1/*), api-admin.js (onglet 🔌 API), api-compte.js (« Accès API » de la pharmacie) et _api-*.js (clés,
 // stockage des tables privées api_*, réponses problem+json, réglages) ; aucune fonction existante modifiée (_chat-perimetre.js,
 // rate-limit.js, _pharmacies.js, _odoo-rpc.js, auth.js et cors.js : importés, inchangés).
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte)|_api-[a-z-]+)\.js$/;
+// Phase 2 « lecture » (24/10/2026) : fonctions NOUVELLES api-cron.js (planifiée : listes de prix des fiches, calcul des prix
+// une liste par passage, ménage) et api-prix-background.js (prix d'une liste demandés à Odoo, lectures seules) ; _api-*.js
+// complétés ; _chat-perimetre.js complété (fonction de l'Assistant, admise par _chat-*) : options numeros et lignesMax de
+// commandesSite (défauts inchangés), suiviCommandesOdoo et codeEtatCommande ajoutées. quota-status.js et _quota.js
+// inchangés : le calcul du contingent est repris dans _api-contingent.js, comparé à quota-status.js par
+// scripts/test-api-lecture.mjs.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|_api-[a-z-]+)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;

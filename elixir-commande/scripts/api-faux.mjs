@@ -1,7 +1,10 @@
 // ── API des pharmacies : faux PostgREST en mémoire des tables api_* (sql/api-schema.sql) ──
 // Sert à scripts/test-api-fondations.mjs et au banc d'essai (scripts/banc/api-banc.mjs). Aucun appel réseau.
-// Sous-ensemble de PostgREST utilisé par netlify/functions/_api-stock.js : select, eq, gte, lt, is, or=(…), order, limit ;
-// POST (return=representation), PATCH conditionnel, DELETE ; unicité (api_acces.odoo_id, api_cles.empreinte → 409 23505) ;
+// Sous-ensemble de PostgREST utilisé par netlify/functions/_api-stock.js : select, eq, neq, gt, gte, lt, lte, like, in, is,
+// not.is, or=(…), order, offset, limit, Prefer count=exact (Content-Range) ; POST (return=representation ; upsert
+// resolution=merge-duplicates), PATCH conditionnel, DELETE ; unicité (api_acces.odoo_id, api_cles.empreinte,
+// api_prix_listes.liste_id, api_prix (liste_id, cip) → 409 23505) ; phase 2 : tables de lecture odoo_catalog, elixir_orders,
+// elixir_pharmacies, kv_store (remplies par les tests ou le banc) ;
 // fonctions rpc/api_compter et rpc/api_lire_compteur (fenêtres fixes, comme le SQL) ; clé serveur exigée (sinon 401,
 // compté dans etat.refusees) ; etat.panne = true : fetch lève (Supabase injoignable).
 // horloge() → millisecondes (horloge des tests) ; tables, appels (journal des requêtes) et etat sont exposés.
@@ -10,7 +13,8 @@ import crypto from "node:crypto";
 export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle-service-test" } = {}) {
   const T0 = () => horloge();
   const iso = () => new Date(T0()).toISOString();
-  const tables = { api_reglages: [{ id: 1, valeur: "{}", updated_at: iso() }], api_acces: [], api_cles: [], api_commandes: [], api_journal: [], api_evenements: [], api_compteurs: [] };
+  const tables = { api_reglages: [{ id: 1, valeur: "{}", updated_at: iso() }], api_acces: [], api_cles: [], api_commandes: [], api_journal: [], api_evenements: [], api_compteurs: [],
+    api_prix: [], api_prix_listes: [], odoo_catalog: [], elixir_orders: [], elixir_pharmacies: [], kv_store: [] };
   let seq = 0;
   const appels = [];
   const DEFAUTS = {
@@ -22,8 +26,10 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
       derniere_utilisation: null, dernier_reseau: null }),
     api_journal: () => ({ id: ++seq, at: iso() }),
     api_evenements: () => ({ id: ++seq, at: iso() }),
+    api_prix_listes: () => ({ etat: "a_calculer", demande_le: null, debut_le: null, fin_le: null, produits: null, sans_prix: null, appels: null, erreur: null, updated_at: iso() }),
+    api_commandes: () => ({ id: crypto.randomUUID(), recu_le: iso(), updated_at: iso() }),
   };
-  const UNIQUES = { api_acces: [r => String(r.odoo_id)], api_cles: [r => r.empreinte] };
+  const UNIQUES = { api_acces: [r => String(r.odoo_id)], api_cles: [r => r.empreinte], api_prix_listes: [r => String(r.liste_id)], api_prix: [r => `${r.liste_id}|${r.cip}`] };
   const cmp = (a, b) => {
     if (a === null || a === undefined) return NaN;
     if (typeof a === "number") return a - Number(b);
@@ -31,15 +37,22 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
     if (/^\d{4}-\d{2}-\d{2}T/.test(String(a)) && !Number.isNaN(Date.parse(b))) return Date.parse(a) - Date.parse(b);
     return String(a) < b ? -1 : String(a) > b ? 1 : 0;
   };
+  const sansGuillemets = (x) => (/^".*"$/.test(x) ? JSON.parse(x) : x);
   const condition = (r, k, v) => {
     const i = v.indexOf("."); const op = v.slice(0, i), val = v.slice(i + 1);
-    if (op === "eq") return cmp(r[k], val) === 0;
+    if (op === "not") return !condition(r, k, val);
+    if (op === "eq") return cmp(r[k], sansGuillemets(val)) === 0;
+    if (op === "neq") return !(cmp(r[k], sansGuillemets(val)) === 0);
+    if (op === "gt") return cmp(r[k], val) > 0;
     if (op === "gte") return cmp(r[k], val) >= 0;
     if (op === "lt") return cmp(r[k], val) < 0;
+    if (op === "lte") return cmp(r[k], val) <= 0;
+    if (op === "like") return new RegExp(`^${val.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`).test(String(r[k] ?? ""));
+    if (op === "in") return val.replace(/^\(|\)$/g, "").split(",").map(sansGuillemets).some(x => cmp(r[k], x) === 0);
     if (op === "is") return val === "null" ? r[k] === null || r[k] === undefined : String(r[k]) === val;
     throw new Error(`filtre non pris en charge : ${k}=${v}`);
   };
-  const SPECIAUX = new Set(["select", "order", "limit", "offset"]);
+  const SPECIAUX = new Set(["select", "order", "limit", "offset", "on_conflict"]);
   const correspond = (r, params) => [...params].every(([k, v]) => {
     if (SPECIAUX.has(k)) return true;
     if (k === "or") return v.replace(/^\(|\)$/g, "").split(",").some(c => { const i = c.indexOf("."); return condition(r, c.slice(0, i), c.slice(i + 1)); });
@@ -47,7 +60,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
   });
   const projeter = (r, select) => select ? Object.fromEntries(select.split(",").map(c => [c, r[c] ?? null])) : { ...r };
   const doublon = (table, r) => (UNIQUES[table] || []).some(f => tables[table].some(x => x !== r && f(x) === f(r)));
-  const reponse = (corps, status = 200) => new Response(corps === null ? null : JSON.stringify(corps), { status, headers: { "Content-Type": "application/json" } });
+  const reponse = (corps, status = 200, entetes = {}) => new Response(corps === null ? null : JSON.stringify(corps), { status, headers: { "Content-Type": "application/json", ...entetes } });
   const etat = { panne: false, refusees: 0 };
   async function fetch(url, opts = {}) {
     if (etat.panne) throw new TypeError("fetch failed");
@@ -72,14 +85,27 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
       let rows = tables[table].filter(r => correspond(r, p));
       const o = p.get("order");
       if (o) { const [c, sens] = o.split("."); rows = [...rows].sort((a, b) => (cmp(a[c], String(b[c])) || 0) * (sens === "desc" ? -1 : 1)); }
-      if (p.get("limit")) rows = rows.slice(0, Number(p.get("limit")));
-      return reponse(rows.map(r => projeter(r, select)));
+      const total = rows.length;
+      const debut = Number(p.get("offset") || 0);
+      rows = rows.slice(debut, p.get("limit") ? debut + Number(p.get("limit")) : undefined);
+      const plage = prefer.includes("count=exact") ? { "Content-Range": `${rows.length ? `${debut}-${debut + rows.length - 1}` : "*"}/${total}` } : {};
+      return reponse(rows.map(r => projeter(r, select)), 200, plage);
     }
     if (methode === "POST") {
-      const r = { ...(DEFAUTS[table]?.() || {}), ...JSON.parse(opts.body) };
-      if (doublon(table, r) || tables[table].some(x => (UNIQUES[table] || []).some(f => f(x) === f(r)))) return reponse({ code: "23505", message: "duplicate key" }, 409);
-      tables[table].push(r);
-      return rep ? reponse([projeter(r, select)], 201) : reponse(null, 201);
+      const corps = JSON.parse(opts.body);
+      const envoyees = Array.isArray(corps) ? corps : [corps];
+      const fusion = prefer.includes("resolution=merge-duplicates");
+      const faites = [];
+      for (const x of envoyees) {
+        const r = { ...(DEFAUTS[table]?.() || {}), ...x };
+        const existante = tables[table].find(y => (UNIQUES[table] || []).some(f => f(y) === f(r)));
+        // upsert : seuls les champs envoyés remplacent ceux de la ligne existante (comme PostgREST)
+        if (existante && fusion) { Object.assign(existante, x); faites.push(existante); continue; }
+        if (existante || doublon(table, r)) return reponse({ code: "23505", message: "duplicate key" }, 409);
+        tables[table].push(r);
+        faites.push(r);
+      }
+      return rep ? reponse(faites.map(r => projeter(r, select)), 201) : reponse(null, 201);
     }
     if (methode === "PATCH") {
       const champs = JSON.parse(opts.body);

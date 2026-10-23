@@ -16,6 +16,8 @@
 //      remise de vive voix, jamais par e-mail
 // POST { action: "cgu_signees", odoo_id, reference }           → { acces } (acceptation hors ligne : signature, tracée)
 // POST { action: "valider_test", odoo_id, motif }              → { acces } (passer outre le parcours de test, tracé)
+// POST { action: "prix_recalculer", liste_id }                 → { ok, lancement } (phase 2 : prix de la liste recalculés par
+//      Odoo en arrière-plan, api-prix-background ; le tableau donne l'état de chaque liste utilisée, sans aucun prix)
 // Les secrets ne sont jamais lus ni affichés (seule l'empreinte est en base). Hôte d'aperçu : lecture seule.
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
@@ -26,7 +28,7 @@ import { creerStockApi, estUuid } from "./_api-stock.js";
 import { cidrValide, clePublique, creerCle, refusCreation } from "./_api-cles.js";
 import { ACCES_DEFAUT, BORNES, CGU, LIBELLES_PORTEES, MODES, PORTEES, PREREQUIS, VERSION_API, commandesLiveOuvertes, commandesOuvrables,
   fusionnerReglages, prerequisEtat } from "./_api-config.js";
-import { estApercu } from "./_api-http.js";
+import { estApercu, lancerCalculPrix, siteBase } from "./_api-http.js";
 
 const json = (cors, statusCode, corps) => ({ statusCode, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify(corps) });
 const entier = (v) => { const n = Number(v); return Number.isInteger(n) && n > 0 && n < 1e9 ? n : null; };
@@ -72,7 +74,8 @@ async function listePrixOdoo(odooId) {
   return Array.isArray(v) && Number.isInteger(v[0]) ? v[0] : null;
 }
 
-// deps (doublures des tests) : stock, verifierAdmin(event), verifierFiche(odooId), listePrix(odooId), maintenant, journal, octets
+// deps (doublures des tests) : stock, verifierAdmin(event), verifierFiche(odooId), listePrix(odooId), maintenant, journal, octets,
+// lancerPrix(base, listeId) (calcul des prix en arrière-plan)
 export function creerHandler(deps = {}) {
   let stockDefaut = null;
   const stockDe = () => deps.stock || (stockDefaut ||= creerStockApi());
@@ -80,6 +83,9 @@ export function creerHandler(deps = {}) {
   const verifierFiche = deps.verifierFiche || ((id) => ficheVerifiee(id));
   const listePrix = deps.listePrix || listePrixOdoo;
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-admin", ...o })));
+  const lancerPrix = deps.lancerPrix || ((base, id) => lancerCalculPrix(base, id));
+  // liste de la fiche connue : demandée au calcul des prix si elle ne l'a jamais été (pas de nouvelle demande sinon)
+  const demanderPrix = (stock, listeId) => (listeId ? stock.prixListes.demander(listeId).catch((e) => journal({ code: "prix_demande", erreur: String(e?.message || e).slice(0, 80) })) : null);
 
   return async (event) => {
     const cors = getCors(event);
@@ -109,7 +115,13 @@ export function creerHandler(deps = {}) {
         const q = event.queryStringParameters || {};
         switch (q.vue) {
           case "tableau": {
-            const [lu, acces, cles] = await Promise.all([stock.reglages.lire(), stock.acces.lister(), stock.cles.toutes()]);
+            const [lu, acces, cles, listes] = await Promise.all([stock.reglages.lire(), stock.acces.lister(), stock.cles.toutes(),
+              stock.prixListes.toutes().catch((e) => { journal({ code: "prix_listes", erreur: String(e?.message || e).slice(0, 80) }); return []; })]);
+            const parListe = new Map(listes.map(l => [l.liste_id, l]));
+            // noms des listes connues (ceux de la péremption), chargés à la demande : module lourd, inutile aux autres vues
+            const nomListe = await import("./_peremption.js").then(m => m.nomListe).catch(() => (l) => `Liste n° ${l}`);
+            const utilisees = new Map();
+            for (const a of acces) if (a.liste_prix_id) utilisees.set(a.liste_prix_id, (utilisees.get(a.liste_prix_id) || 0) + (a.actif ? 1 : 0));
             const parFiche = new Map();
             for (const c of cles) (parFiche.get(c.odoo_id) || parFiche.set(c.odoo_id, []).get(c.odoo_id)).push(c);
             return json(cors, 200, {
@@ -122,6 +134,9 @@ export function creerHandler(deps = {}) {
                 return { ...a, cgu_preuve: undefined, cgu_a_jour: a.cgu_version === CGU.version, cles_actives: { live: actives("live"), test: actives("test") }, derniere_utilisation: derniere };
               }),
               defauts: ACCES_DEFAUT, bornes: BORNES, portees: PORTEES, libelles_portees: LIBELLES_PORTEES, cgu_version: CGU.version, version_api: VERSION_API,
+              // prix (phase 2) : listes utilisées par un accès ou déjà calculées, sans aucun prix
+              prix: [...new Set([...utilisees.keys(), ...parListe.keys()])].sort((a, b) => a - b).map(id => ({ liste_id: id, nom: nomListe(id),
+                acces_actifs: utilisees.get(id) || 0, ...(parListe.get(id) || { etat: "jamais" }) })),
             });
           }
           case "acces": {
@@ -195,6 +210,7 @@ export function creerHandler(deps = {}) {
           if (f.refus) return f.refus;
           const a = await stock.acces.creer({ odoo_id: id, ...(await infosFiche(f.p)), ...champs, actif: true, ouvert_par: par });
           if (!a) return json(cors, 409, { error: "Un accès existe déjà pour cette fiche." });
+          await demanderPrix(stock, a.liste_prix_id);
           await evenement("acces_ouvert", id, { portees: a.portees, mode: a.mode });
           return json(cors, 200, { acces: a });
         }
@@ -222,6 +238,7 @@ export function creerHandler(deps = {}) {
           const a = await stock.acces.modifier(id, { ...(await infosFiche(f.p)),
             ...(b.action === "reactiver_acces" ? { actif: true, suspendu_le: null, suspendu_par: null, motif_suspension: null } : {}) });
           await evenement(b.action === "reactiver_acces" ? "acces_reactive" : "fiche_rafraichie", id, { liste_prix_id: a?.liste_prix_id ?? null });
+          await demanderPrix(stock, a?.liste_prix_id);
           return json(cors, 200, { acces: a });
         }
         case "revoquer_cle": {
@@ -263,6 +280,15 @@ export function creerHandler(deps = {}) {
           const a = await stock.acces.modifier(id, { test_valide_le: now.toISOString(), test_valide_par: par });
           await evenement("test_valide_admin", id, { motif });
           return json(cors, 200, { acces: a });
+        }
+        case "prix_recalculer": {
+          const l = entier(b.liste_id);
+          if (!l) return json(cors, 400, { error: "Liste de prix manquante" });
+          const r = await stock.prixListes.demander(l, { forcer: true });
+          if (r?.etat === "en_cours") return json(cors, 409, { error: "Calcul déjà en cours pour cette liste : actualisez dans quelques minutes." });
+          const raison = await lancerPrix(siteBase(event), l);
+          await evenement("prix_recalcul_demande", null, { liste_id: l, lancement: raison || "parti" });
+          return json(cors, 200, { ok: true, lancement: raison || null });
         }
         default: return json(cors, 400, { error: "Action inconnue" });
       }

@@ -16,6 +16,15 @@ const COLS_ACCES = "odoo_id,nom,cip,ville,actif,portees,mode,delai_annulation_mi
 const COLS_CLE = "id,odoo_id,environnement,prefixe,libelle,portees,creee_par,creee_par_role,created_at,expire_le,revoquee_le,revoquee_par,motif_revocation,remplace,derniere_utilisation,dernier_reseau";
 const COLS_JOURNAL = "id,at,request_id,cle_id,odoo_id,environnement,methode,route,statut,code,duree_ms,reseau";
 const COLS_EVT = "id,at,type,odoo_id,cle_id,par,role,detail";
+const COLS_PRIX_LISTE = "liste_id,etat,demande_le,debut_le,fin_le,produits,sans_prix,appels,erreur,updated_at";
+const COLS_COMMANDE = "id,odoo_id,cle_id,test,reference_client,order_id,etat,motif,statut_http,reponse,envoi_apres,envoi_resultat,recu_le,updated_at";
+// catalogue (odoo_catalog, synchronisé par la GitHub Action) : jamais les lots, ni le prix de la liste n° 5
+const COLS_CATALOGUE = "cip,barcode,name,in_stock,available,updated_at";
+const CIP13 = /^\d{13}$/;
+const ORDRE_SITE = /^1[7-9]\d{11}$/;
+const ORDRE_TEST = /^T1[7-9]\d{11}$/;
+const listeIn = (xs) => `(${xs.map(x => `"${String(x).replace(/["\\]/g, "")}"`).join(",")})`;
+const prixLigne = (r) => r ? { ...r, prix_ht: r.prix_ht == null ? null : Number(r.prix_ht), paliers: (() => { const p = typeof r.paliers === "string" ? lireJson(r.paliers, null) : r.paliers; return Array.isArray(p) ? p : []; })() } : null;
 // numeric → nombre (PostgREST rend numeric en nombre ou en texte selon la configuration)
 const acces = (r) => r ? { ...r, plafond_montant_ht: Number(r.plafond_montant_ht), anomalie_facteur: Number(r.anomalie_facteur),
   portees: r.portees || [], ip_autorisees: r.ip_autorisees || null } : null;
@@ -27,10 +36,12 @@ export function creerStockApi(deps = {}) {
   const maintenant = deps.maintenant || (() => new Date());
   const iso = () => maintenant().toISOString();
 
-  async function sb(path, { method = "GET", body, prefer } = {}) {
+  // compte : Prefer count=exact → { rows, total } (total lu dans Content-Range « 0-99/5234 »)
+  async function sb(path, { method = "GET", body, prefer, compte = false } = {}) {
     if (!cle || !url) throw Object.assign(new Error("clé serveur Supabase absente des variables Netlify"), { code: "configuration" });
     const headers = { apikey: cle, Authorization: `Bearer ${cle}`, "Content-Type": "application/json" };
-    if (prefer) headers.Prefer = prefer;
+    const pref = [prefer, compte ? "count=exact" : null].filter(Boolean).join(",");
+    if (pref) headers.Prefer = pref;
     const res = await http(`${url}/rest/v1/${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(6000) });
     const text = await res.text();
     if (!res.ok) {
@@ -39,8 +50,17 @@ export function creerStockApi(deps = {}) {
       throw Object.assign(new Error(`Supabase ${method} ${path.split("?")[0]} : HTTP ${res.status}${pg ? ` (${pg})` : ""}`),
         { status: res.status, pg, ...(schema ? { code: "schema" } : {}) });
     }
-    return text ? lireJson(text, null) : null;
+    const donnees = text ? lireJson(text, null) : null;
+    if (!compte) return donnees;
+    const total = Number(String(res.headers?.get?.("content-range") || "").split("/")[1]);
+    return { rows: Array.isArray(donnees) ? donnees : [], total: Number.isFinite(total) ? total : null };
   }
+  // Lecture seule (GET) d'autres tables par la clé serveur (odoo_catalog, elixir_orders, elixir_pharmacies, kv_store) :
+  // passée aux lectures de _chat-perimetre.js et du contingentement ; toute écriture y est refusée
+  const sbLecture = (path, opts = {}) => {
+    if (opts.method && opts.method !== "GET") throw new Error("API des pharmacies : écriture interdite hors des tables api_*");
+    return sb(path);
+  };
   const doublon = (e) => e?.status === 409 || e?.pg === "23505";
   async function lireReglages() {
     const [r] = (await sb("api_reglages?id=eq.1&select=valeur,updated_at&limit=1")) || [];
@@ -49,6 +69,7 @@ export function creerStockApi(deps = {}) {
 
   return {
     sb,
+    sbLecture,
     reglages: {
       lire: lireReglages,
       // écriture conditionnelle : base = updated_at lu (null : sans condition, « Tout couper ») → { ok, updated_at } | { conflit }
@@ -151,6 +172,8 @@ export function creerStockApi(deps = {}) {
         const n = Math.min(5000, Math.max(1, Number(limite) || 500));
         return (await sb(`api_journal?${[...f, `select=${COLS_JOURNAL}`, "order=at.desc", `limit=${n}`].join("&")}`)) || [];
       },
+      // conservation : 13 mois (api-cron)
+      purger(avantIso) { return sb(`api_journal?at=lt.${enc(avantIso)}`, { method: "DELETE", prefer: "return=minimal" }); },
     },
     evenements: {
       ajouter({ type, odoo_id = null, cle_id = null, par = null, role = null, detail = null }) {
@@ -177,6 +200,133 @@ export function creerStockApi(deps = {}) {
       purger() {
         const avant = new Date(maintenant().getTime() - 2 * 86400e3).toISOString();
         return sb(`api_compteurs?fenetre=lt.${enc(avant)}`, { method: "DELETE", prefer: "return=minimal" });
+      },
+    },
+
+    // ── Phase 2 (lecture) ──
+    // Prix calculés d'une liste (api_prix) ; jamais filtrés par pharmacie : une liste est partagée par ses fiches
+    prix: {
+      // prix de la liste pour les CIP d'une page du catalogue (bornes comprises, triés comme le catalogue)
+      async plage(listeId, cipMin, cipMax) {
+        const l = entier(listeId);
+        if (!l || !CIP13.test(String(cipMin)) || !CIP13.test(String(cipMax))) return [];
+        return ((await sb(`api_prix?liste_id=eq.${l}&cip=gte.${cipMin}&cip=lte.${cipMax}&select=cip,prix_ht,paliers,calcule_le&order=cip.asc&limit=2000`)) || []).map(prixLigne);
+      },
+      async deCips(listeId, cips) {
+        const l = entier(listeId);
+        const xs = [...new Set((cips || []).map(String))].filter(c => CIP13.test(c)).slice(0, 500);
+        if (!l || !xs.length) return [];
+        return ((await sb(`api_prix?liste_id=eq.${l}&cip=in.${enc(listeIn(xs))}&select=cip,prix_ht,paliers,calcule_le&limit=${xs.length}`)) || []).map(prixLigne);
+      },
+      // écriture groupée (upsert par liste et CIP) : rows = [{ liste_id, cip, prix_ht, paliers (tableau), calcule_le }]
+      async ecrire(rows) {
+        for (let i = 0; i < rows.length; i += 500) {
+          await sb("api_prix?on_conflict=liste_id,cip", { method: "POST", prefer: "resolution=merge-duplicates,return=minimal",
+            body: rows.slice(i, i + 500).map(r => ({ ...r, paliers: JSON.stringify(r.paliers || []) })) });
+        }
+      },
+      // produits sortis du catalogue : lignes de la liste non recalculées depuis le début du passage
+      purger(listeId, avantIso) {
+        const l = entier(listeId);
+        if (!l || !avantIso) return null;
+        return sb(`api_prix?liste_id=eq.${l}&calcule_le=lt.${enc(avantIso)}`, { method: "DELETE", prefer: "return=minimal" });
+      },
+    },
+    // État du calcul par liste (api_prix_listes)
+    prixListes: {
+      async lire(listeId) {
+        const l = entier(listeId);
+        if (!l) return null;
+        const [r] = (await sb(`api_prix_listes?liste_id=eq.${l}&select=${COLS_PRIX_LISTE}&limit=1`)) || [];
+        return r || null;
+      },
+      async toutes() { return (await sb(`api_prix_listes?select=${COLS_PRIX_LISTE}&order=liste_id.asc&limit=200`)) || []; },
+      // demande de calcul : crée la liste (a_calculer) si elle est inconnue ; forcer (admin) : la repasse à a_calculer si elle
+      // n'est pas en cours
+      async demander(listeId, { forcer = false } = {}) {
+        const l = entier(listeId);
+        if (!l) return null;
+        const champs = { etat: "a_calculer", demande_le: iso(), updated_at: iso() };
+        try {
+          const [r] = (await sb(`api_prix_listes?select=${COLS_PRIX_LISTE}`, { method: "POST", prefer: "return=representation", body: { liste_id: l, ...champs } })) || [];
+          return r || null;
+        } catch (e) {
+          if (!doublon(e)) throw e;
+          const [r] = forcer ? (await sb(`api_prix_listes?liste_id=eq.${l}&etat=neq.en_cours&select=${COLS_PRIX_LISTE}`, { method: "PATCH", prefer: "return=representation", body: champs })) || [] : [];
+          if (r) return r;
+          const [lu] = (await sb(`api_prix_listes?liste_id=eq.${l}&select=${COLS_PRIX_LISTE}&limit=1`)) || [];
+          return lu || null;
+        }
+      },
+      // début d'un calcul : seulement si personne ne calcule cette liste (ou si un calcul en cours a été coupé : 20 min)
+      async commencer(listeId) {
+        const l = entier(listeId);
+        if (!l) return null;
+        const coupe = new Date(maintenant().getTime() - 20 * 60e3).toISOString();
+        const champs = { etat: "en_cours", debut_le: iso(), erreur: null, updated_at: iso() };
+        try {
+          const [r] = (await sb(`api_prix_listes?select=${COLS_PRIX_LISTE}`, { method: "POST", prefer: "return=representation", body: { liste_id: l, demande_le: iso(), ...champs } })) || [];
+          if (r) return r;
+        } catch (e) { if (!doublon(e)) throw e; }
+        const [r] = (await sb(`api_prix_listes?liste_id=eq.${l}&or=(etat.neq.en_cours,debut_le.lt.${enc(coupe)})&select=${COLS_PRIX_LISTE}`,
+          { method: "PATCH", prefer: "return=representation", body: champs })) || [];
+        return r || null;
+      },
+      async terminer(listeId, champs) {
+        const l = entier(listeId);
+        if (!l) return null;
+        await sb(`api_prix_listes?liste_id=eq.${l}`, { method: "PATCH", prefer: "return=minimal", body: { ...champs, updated_at: iso() } });
+      },
+    },
+    // Catalogue du site (odoo_catalog), lecture seule
+    catalogue: {
+      // page triée par CIP → { rows, total }
+      async page({ offset = 0, limite = 100 } = {}) {
+        const n = Math.min(1000, Math.max(1, Number(limite) || 100)), o = Math.max(0, Number(offset) || 0);
+        return sb(`odoo_catalog?select=${COLS_CATALOGUE}&order=cip.asc&offset=${o}&limit=${n}`, { compte: true });
+      },
+      // un produit par son CIP13 (ou son code-barres)
+      async parCip(cip) {
+        if (!CIP13.test(String(cip || ""))) return null;
+        const rows = (await sb(`odoo_catalog?or=(cip.eq.${cip},barcode.eq.${cip})&select=${COLS_CATALOGUE}&order=cip.asc&limit=5`)) || [];
+        return rows.find(r => r.cip === cip) || rows[0] || null;
+      },
+      // tout le catalogue pour le calcul des prix (pages de 1 000 par CIP croissant)
+      async pourPrix() {
+        const out = [];
+        for (let apres = ""; ;) {
+          const rows = (await sb(`odoo_catalog?select=cip,odoo_pid,odoo_tmpl_id,categ_id,list_price${apres ? `&cip=gt.${apres}` : ""}&order=cip.asc&limit=1000`)) || [];
+          out.push(...rows);
+          if (rows.length < 1000) return out;
+          apres = rows.at(-1).cip;
+        }
+      },
+    },
+    // Commandes reçues par l'API (api_commandes), LECTURE seule ici : le chemin d'écriture est celui de la phase commande
+    commandes: {
+      // commandes d'une fiche (test : environnement test, « T… » ; sinon live) reçues dans [depuis, jusqua[, les plus récentes d'abord
+      async deFiche(odooId, { test = false, depuisIso = null, jusquaIso = null, limite = 200 } = {}) {
+        const n = entier(odooId);
+        if (!n) return [];
+        const f = [`odoo_id=eq.${n}`, `test=eq.${test ? "true" : "false"}`, "etat=neq.refusee", "order_id=not.is.null"];
+        if (depuisIso) f.push(`recu_le=gte.${enc(depuisIso)}`);
+        if (jusquaIso) f.push(`recu_le=lt.${enc(jusquaIso)}`);
+        return (await sb(`api_commandes?${[...f, `select=${COLS_COMMANDE}`, "order=recu_le.desc", `limit=${Math.min(500, Math.max(1, Number(limite) || 200))}`].join("&")}`)) || [];
+      },
+      // commandes de la fiche portant ces numéros (site « 1… » ou test « T1… »)
+      async parOrdres(odooId, ordres) {
+        const n = entier(odooId);
+        const xs = [...new Set((ordres || []).map(String))].filter(o => ORDRE_SITE.test(o) || ORDRE_TEST.test(o)).slice(0, 200);
+        if (!n || !xs.length) return [];
+        return (await sb(`api_commandes?odoo_id=eq.${n}&order_id=in.${enc(listeIn(xs))}&etat=neq.refusee&select=${COLS_COMMANDE}&limit=${xs.length * 2}`)) || [];
+      },
+    },
+    // Commandes du site d'une pharmacie (elixir_orders, par le CIP de la fiche), numéros et dates seulement
+    site: {
+      async numeros(cip, { debutIso, finIso, offset = 0, limite = 21 } = {}) {
+        if (!/^\d{7,13}$/.test(String(cip || ""))) return [];
+        const o = Math.max(0, Number(offset) || 0), n = Math.min(600, Math.max(1, Number(limite) || 21));
+        return (await sb(`elixir_orders?pharmacy_cip=eq.${enc(cip)}&date=gte.${enc(debutIso)}&date=lt.${enc(finIso)}&select=id,date&order=date.desc&offset=${o}&limit=${n}`)) || [];
       },
     },
   };

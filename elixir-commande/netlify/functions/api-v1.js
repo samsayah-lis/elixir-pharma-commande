@@ -13,8 +13,10 @@
 // Erreurs : RFC 9457 (application/problem+json) ; X-Request-Id sur toute réponse ; aucune en-tête CORS.
 // Hôte d'aperçu Netlify (variables de production) : toute clé y est traitée comme une clé de test, rien n'est écrit au
 // journal ni sur la clé (seuls les compteurs de débit, tables privées, sont tenus).
-// Phase 1 (fondations) : seule la route GET /v1/etat est servie. Les routes de lecture et de commande s'ajoutent à ROUTES ;
-// celles qui écrivent une commande réelle restent fermées par l'interrupteur « Commandes par API » (_api-config.js).
+// Phase 1 (fondations) : GET /v1/etat. Phase 2 (lecture, _api-lecture.js) : catalogue, disponibilités, contingents,
+// commandes, factures et bons de livraison (droit « lecture »), chacune coupée à 8,5 s (503 rejouable, limite de 10 s des
+// fonctions Netlify). Les routes de commande s'ajoutent à ROUTES ; celles qui écrivent une commande réelle restent fermées
+// par l'interrupteur « Commandes par API » (_api-config.js).
 import crypto from "node:crypto";
 import { clientIp, prefixeIp } from "./rate-limit.js";
 import { ficheVerifiee } from "./_chat-perimetre.js";
@@ -23,11 +25,13 @@ import { creerStockApi } from "./_api-stock.js";
 import { analyserCle, cleDeRequete, empreinteCle, etatCle, ipDansListe, reseauDe } from "./_api-cles.js";
 import { LIMITES, CORPS_MAX_OCTETS, VERSION_API, DERNIERE_MODIFICATION, MENTION_PRIX, CGU, fusionnerReglages, commandesLiveOuvertes } from "./_api-config.js";
 import { probleme, reponseJson, codeDe, estApercu, isoParis } from "./_api-http.js";
+import { ROUTES_LECTURE, creerServicesLecture } from "./_api-lecture.js";
 
 const CACHE_MS = 30_000;            // clé, accès, réglages : 30 s au plus par instance (une révocation est vue en ≤ 30 s)
 const FICHE_MS = 10 * 60_000;       // fiche revérifiée dans Odoo au plus toutes les 10 min par instance (lectures)
 const FICHE_ECHEC_MS = 60_000;      // Odoo injoignable : nouvel essai après 1 min (lectures)
 const IP_MEMOIRE_MAX = 240;         // garde par instance, avant le compteur durable : épargne la base pendant une crue
+const DELAI_ROUTE_MS = 8500;        // une route plus longue répond 503 (Retry-After) avant la coupure de 10 s de Netlify
 const PARAMS_CLE = /^(cle|key|api[_-]?key|token|access[_-]?token|authorization|bearer)$/i;
 const nettoyer = (s) => String(s || "").replace(/\s+/g, " ").trim();
 
@@ -36,6 +40,7 @@ const nettoyer = (s) => String(s || "").replace(/\s+/g, " ").trim();
 // quand l'API est suspendue ; fiche_fraiche : fiche relue dans Odoo à chaque appel (écritures)
 export const ROUTES = [
   { methode: "GET", gabarit: "/v1/etat", re: /^\/v1\/etat$/, portee: null, classe: "lecture", toujours: true, traiter: routeEtat },
+  ...ROUTES_LECTURE,
 ];
 
 // /api/v1/etat (réécriture de _redirects), /.netlify/functions/api-v1/etat (appel direct) → /v1/etat
@@ -66,16 +71,17 @@ async function routeEtat({ cle, acces, reglages, fiche, environnement, maintenan
         montant_ht_par_commande: acces.plafond_montant_ht, commandes_par_jour: acces.plafond_commandes_jour },
     },
     prix: { base: "liste_pharmacie", mention: MENTION_PRIX },
-    limites: { lecture: LIMITES.lecture, commande: LIMITES.commande },
+    limites: { lecture: LIMITES.lecture, disponibilites: LIMITES.disponibilites, documents: LIMITES.documents, commande: LIMITES.commande },
     cgu: { version_en_vigueur: CGU.version, acceptee: acces.cgu_version === CGU.version },
     version_api: VERSION_API,
     derniere_modification: DERNIERE_MODIFICATION,
   };
 }
 
-// deps (doublures des tests) : stock, maintenant, horloge (ms), verifierFiche(odooId), uuid, log, sel, hasard
+// deps (doublures des tests) : stock, maintenant, horloge (ms), verifierFiche(odooId), uuid, log, sel, hasard, odoo (lectures
+// de la phase 2, signature de _odoo-rpc.js), quota (contingents, doublure du banc), delaiRouteMs
 export function creerHandler(deps = {}) {
-  let stockDefaut = null;
+  let stockDefaut = null, servicesDefaut = null;
   const stockDe = () => deps.stock || (stockDefaut ||= creerStockApi());
   const maintenant = deps.maintenant || (() => new Date());
   const horloge = deps.horloge || (() => maintenant().getTime());
@@ -87,6 +93,9 @@ export function creerHandler(deps = {}) {
   // empreinte d'un réseau pour les compteurs (aucune IP en clair en base)
   const hache = (v) => crypto.createHmac("sha256", sel).update(String(v)).digest("hex").slice(0, 24);
   const caches = { cles: new Map(), acces: new Map(), fiches: new Map(), ip: new Map(), usage: new Map(), reglages: null };
+  // services des lectures (caches par instance, charge d'Odoo) : créés au premier appel d'une route de lecture
+  const servicesDe = (stock) => (servicesDefaut ||= creerServicesLecture({ stock, odoo: deps.odoo, horloge, maintenant, log, quota: deps.quota }));
+  const delaiRoute = deps.delaiRouteMs ?? DELAI_ROUTE_MS;
   const borner = (m) => { if (m.size > 5000) m.clear(); };
 
   async function enCache(map, cle, lire, ms = CACHE_MS) {
@@ -213,9 +222,19 @@ export function creerHandler(deps = {}) {
       }
     }
 
-    // 7. route
-    const corps = await route.traiter({ event, cle, acces, reglages, fiche: fiche.fiche, environnement: ctx.environnement, stock,
-      maintenant: ctx.maintenant, requestId: ctx.requestId, apercu: ctx.apercu });
+    // 7. route (coupée à 8,5 s ; erreur d'une route → problem+json ; Odoo ou base injoignable → 503 rejouable)
+    const segments = (ctx.chemin.match(route.re) || []).slice(1).map(x => { try { return decodeURIComponent(x); } catch { return x; } });
+    let minuteur;
+    const delai = new Promise((_, ko) => { minuteur = setTimeout(() => ko(Object.assign(new Error("délai de la route dépassé"), { code: "delai" })), delaiRoute); });
+    let corps;
+    try {
+      corps = await Promise.race([route.traiter({ event, cle, acces, reglages, fiche: fiche.fiche, environnement: ctx.environnement, stock,
+        maintenant: ctx.maintenant, requestId: ctx.requestId, apercu: ctx.apercu, params: segments, services: servicesDe(stock) }), delai]);
+    } catch (e) {
+      if (e?.api) return pb(e.code, { detail: e.detail, extra: e.extra, entetes: { ...debit, ...(e.retry ? { "Retry-After": String(e.retry) } : {}) } });
+      log({ request_id: ctx.requestId, route: route.gabarit, code: e?.code || "erreur", erreur: String(e?.message || e).slice(0, 120) });
+      return pb("indisponible", { entetes: { ...debit, "Retry-After": "30" } });
+    } finally { clearTimeout(minuteur); }
     if (corps && typeof corps.statusCode === "number") return { ...corps, headers: { ...debit, ...corps.headers } };
     return reponseJson(200, corps, ctx.requestId, debit);
   }
