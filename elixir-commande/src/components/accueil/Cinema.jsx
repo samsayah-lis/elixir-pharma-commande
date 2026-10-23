@@ -21,6 +21,7 @@ import { Icone } from "../../icons.jsx";
 import { fmtEur, fmtPct } from "../../theme.js";
 import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
+import { Quota } from "../quota/entree.jsx";
 import Rouleau from "./Rouleau.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail, { donne } from "./Eventail.jsx";
@@ -490,6 +491,8 @@ function Textes({ e, titreId, fantome, actif = true, reduit, onExpire, children 
       )}
     </div>
     {e.finOffre && <Rebours fin={e.finOffre} actif={actif && !fantome} secondes={!reduit} onFin={fantome ? undefined : onExpire} classe={`mea-a${fantome ? " mea-cache" : ""}`} />}
+    {/* contingentement (src/components/quota/) ; aussi dans le gabarit, caché : la salle garde la hauteur de la plus haute offre */}
+    {o && <Quota cip={o.cip} pas={o.lot?.qte} forme="moyenne" className={fantome ? "mea-cache" : undefined} style={{ marginTop: 10 }} />}
     <div className={`mea-actions mea-actions--${o ? "produit" : e.outil ? "outil" : "menu"}${fantome ? " mea-cache" : ""}`}>{children}</div>
   </>);
 }

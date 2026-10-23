@@ -225,6 +225,17 @@ const ECARTS_AUTORISES = [
   { zone: "envoi de la commande", lot: "péremption courte, règle panier (21/10/2026), revue", attente: "peremptionPanier", motif: "fin d'envoi : ligne péremption gardée seulement si sa commande à part a été refusée (plus jamais au titre du justificatif)",
     avant: "        setSpecialItems(prev => prev.filter(x => keepJustif?.has(x.cip) || (estPeremption(x) && keepSepare?.has(x.cip))));",
     apres: "        setSpecialItems(prev => prev.filter(x => (!estPeremption(x) && keepJustif?.has(x.cip)) || (estPeremption(x) && keepSepare?.has(x.cip))));" },
+  // ── Contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md ; attente « quotaLigne ») ──
+  // Revue : une réponse de quota-status arrivée APRÈS un changement de pharmacie (saisie Elixir : panier ouvert, ajout depuis la
+  // Saisie ou pastille pour A, puis passage à B) s'affichait sur les lignes de B et dans son panier. loadQuota n'enregistre plus
+  // une réponse que si la pharmacie affichée est encore celle du départ de la lecture (cleQuotaRef, posée hors zone juste avant) ;
+  // il renvoie toujours la réponse (contrôle de l'envoi inchangé : il relit et bloque avec les chiffres qu'il a demandés).
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "contingentement dans la ligne (23/10/2026)", attente: "quotaLigne", motif: "loadQuota : identité de la pharmacie notée au départ de la lecture (même clé que cleQuotaRef)",
+    avant: "    if (!pharmacyEmail && !actingFor) return null;\n    try {",
+    apres: "    if (!pharmacyEmail && !actingFor) return null;\n    // réponse enregistrée seulement pour la pharmacie encore affichée (saisie Elixir : autre pharmacie choisie entre-temps)\n    const cle = `${actingFor?.odoo_id ?? \"\"}|${pharmacyEmail}|${pharmacyCip}`, garde = (j) => { if (cle === cleQuotaRef.current) setQuota(j); return j; };\n    try {" },
+  { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "contingentement dans la ligne (23/10/2026)", attente: "quotaLigne", motif: "loadQuota : réponse, refus et panne enregistrés par garde (rien pour une autre pharmacie), réponse toujours renvoyée",
+    avant: "      if (!r.ok) { setQuota(null); return null; }\n      const j = await r.json();\n      setQuota(j);\n      return j;\n    } catch { setQuota(null); return null; }",
+    apres: "      if (!r.ok) return garde(null);\n      return garde(await r.json());\n    } catch { return garde(null); }" },
 ];
 // Lots en attente de fusion dans la référence : leurs écarts ne valent que si la référence ne les contient pas encore,
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
@@ -250,6 +261,9 @@ const LOTS = {
   peremptionPanier: { nom: "péremption courte, règle panier", repere: "scripts/test-peremption-panier.mjs" },
   // appli « Elixir Admin » à l'adresse /admin (21/10/2026, docs/notifications.md § 10) : retour à l'admin dans l'appli
   appliAdmin: { nom: "appli « Elixir Admin » (adresse /admin)", repere: "src/adresse-admin.js" },
+  // contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md) : loadQuota ignore une réponse
+  // arrivée pour une autre pharmacie (ECARTS_AUTORISES, attente « quotaLigne »)
+  quotaLigne: { nom: "contingentement dans la ligne de l'article", repere: "src/quota-ligne.js" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -311,7 +325,10 @@ const FICHIERS_AUTORISES = {
 // src/components/sections-produits.js) : fonction NOUVELLE products-sections.js, en LECTURE SEULE (produits retirés d'une
 // section, état et stock de CIP ; réservée à l'admin) ; les écritures passent par products-upsert.js, qui contrôle aussi
 // les actions section_* (FICHIERS_AUTORISES, empreinte), les autres actions inchangées.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections)\.js$/;
+// Contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md) : fonction NOUVELLE quota-liste.js,
+// en LECTURE SEULE (règles des produits contingentés par quotaProducts de _quota.js, jeton exigé) ; _quota.js et
+// quota-status.js inchangés (le reste de la pharmacie est lu par le même appel que le panier).
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -453,7 +470,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue, contingentement)` : ""}`);
 }
 
 // 3. clés de stockage

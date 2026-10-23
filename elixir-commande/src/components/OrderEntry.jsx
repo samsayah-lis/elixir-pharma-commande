@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useContext } from "react";
 
 import { applyTiers, TierBadge, jaugePaliers } from "../tiers.jsx";
 import JaugePaliers from "./JaugePaliers.jsx";
@@ -9,6 +9,7 @@ import EnteteVue, { CompteurVue } from "./ui/EnteteVue.jsx";
 import BadgeStatut from "./ui/BadgeStatut.jsx";
 import CipCell from "./ui/CipCell.jsx";
 import EtatVide, { ActionEtat, Squelette } from "./ui/EtatVide.jsx";
+import { Quota, ContexteQuota, tiersQuota } from "./quota/entree.jsx";
 
 // Affichage seulement (refonte charte, lot 5) : format français de src/theme.js — « 1 234,50 € », « −14,7 % ».
 // Rien de ce qui part (panier, search-track, restock-alert) ne passe par ces deux fonctions.
@@ -24,6 +25,7 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 
 export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, panierSaisie, arrondiQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur }) {
   const [query, setQuery] = useState(initialQuery || "");
+  const cq = useContext(ContexteQuota);   // contingentement : paliers au-delà du reste retirés de la jauge et du badge
   const [results, setResults] = useState([]);
   // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
   const [searching, setSearching] = useState(() => (initialQuery || "").trim().length >= 2);
@@ -269,7 +271,8 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
               const dest = p.supplier_code ? null : panierSaisie?.(p.cip);
               const deja = dest?.deja || 0, qAjout = regle && arrondiQuantite ? arrondiQuantite(qty, regle) : qty;
               const tarif = dest || { base: displayPrice, pv: p.list_price, tiers: p.price_tiers };
-              const reglage = { base: tarif.base, pv: tarif.pv, tiers: tarif.tiers, qte: deja + qAjout, pas, min: regle?.min || 0, max: jr?.maxCommande || null };
+              // contingentement : la ligne du panier peut monter jusqu'à « déjà » + reste − panier (tiersQuota) ; paliers au-delà retirés
+              const reglage = { base: tarif.base, pv: tarif.pv, tiers: tiersQuota(cq, p.cip, tarif.tiers, deja, pas), qte: deja + qAjout, pas, min: regle?.min || 0, max: jr?.maxCommande || null };
               const jauge = orderable && !p.supplier_code && jaugePaliers(reglage);
               const pnPanier = applyTiers(tarif.base, tarif.tiers, deja + qAjout).pn ?? displayPrice;
               const palier = pnPanier < tarif.base;   // prix palier appliqué à la ligne du panier
@@ -311,7 +314,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     <div className="num" title={palier ? `Prix palier, au lieu de ${fmt(tarif.base)} HT` : undefined} style={{ fontSize: 18, fontWeight: 700, color: T.ink, letterSpacing: "-0.01em", lineHeight: 1.3 }}>{fmt(palier ? pnPanier : displayPrice)}</div>
                     <div style={{ fontSize: 11, color: T.inkMute }}>{palier ? "Prix palier HT" : "Prix HT"}</div>
                     {/* palier : jauge sous la ligne ; petit badge sans jauge (rupture, palier atteint dès le premier colis, multi-CIP) */}
-                    {!jauge && <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />}
+                    {!jauge && <TierBadge tiers={tiersQuota(cq, p.cip, p.price_tiers, deja, pas)} pn={displayPrice} bloc />}
                     {regle && <div className="num" style={{ fontSize: 12, color: T.inkSoft, marginTop: 4 }}>Se commande par {regle.multiple} · {regle.rayon}</div>}
                   </div>
 
@@ -341,6 +344,9 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                     )}
                   </div>
 
+                  {/* contingentement (src/components/quota/) : rangée à part sous les boutons, sur toute la largeur — le « + » ne bouge
+                      pas quand le texte change ; reste, déjà au panier, quantité saisie (« 1 saisi → 120 » : arrondie au colis) */}
+                  {orderable && <Quota cip={p.cip} saisie={qAjout} tape={qty} pas={pas} style={{ gridColumn: "1 / -1", marginTop: -4 }} />}
                   {/* Jauge des paliers (src/components/JaugePaliers.jsx) sur toute la largeur de la ligne, sur la quantité totale de la ligne du
                       panier (déjà au panier + saisie arrondie) ; un clic sur un palier pose la quantité qui manque, au pas du colis et au
                       minimum de la règle du catalogue, au plus le maximum du justificatif — « Ajouter » l'arrondit encore comme avant */}

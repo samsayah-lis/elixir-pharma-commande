@@ -338,7 +338,10 @@ eq("paliers à rebours : à 20, plus de prochaine (32 est moins bon)", jaugePali
   vrai("tableaux : prix unitaire et sous-total au prix du panier (applyTiers hors campagne)",
     app.includes("const pnLigne = avecPaliers ? applyTiers(p.pn, p.price_tiers, qty).pn : p.pn;") && app.includes("const subtotal = p.pn != null ? pnLigne * qty : null;"));
   eq("tableaux : cellule de prix commune aux 10 menus (prixNet : prix palier, badge sans jauge)", (app.match(/<td style=\{\{ \.\.\.tdStyle, textAlign: "right", fontWeight: 700 \}\}>\{prixNet\}<\/td>/g) || []).length, 10);
-  vrai("tableaux : badge seulement sans jauge", app.includes("const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</>;"));
+  // contingentement dans la ligne (23/10/2026) : badge et jauge aux paliers atteignables sans dépasser le reste (tiersQuota,
+  // src/components/quota/entree.jsx, testé par test-quota.mjs) ; inchangés hors produit contingenté
+  vrai("tableaux : badge seulement sans jauge (paliers atteignables : reglage.tiers)", app.includes("const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={reglage.tiers} pn={p.pn} compact bloc />}</>;")
+    && app.includes("const reglage = { base: p.pn, pv: p.pv, tiers: tiersQuota(ctxQuota, p.cip, p.price_tiers, qty, pasLigne), pas: pasLigne };"));
   vrai("tableaux : complète une fois une quantité enregistrée avec un palier à viser, ligne sinon",
     app.includes(`variante={qty > 0 && jaugePaliers({ ...reglage, qte: qty })?.prochaine ? "complete" : "ligne"}`));
   vrai("tableaux : frappe arrondie au pas comme setQty", app.includes("(pasLigne > 1 ? Math.round(frappe.q / pasLigne) * pasLigne : frappe.q)"));
@@ -350,13 +353,13 @@ eq("paliers à rebours : à 20, plus de prochaine (32 est moins bon)", jaugePali
   vrai("cartItems inchangé : applyTiers(basePn, p.price_tiers, qty) hors campagne", app.includes("const tiered = camp ? { pn: basePn, tier: null, next: null } : applyTiers(basePn, p.price_tiers, qty);"));
   vrai("panier : jauge seulement avec un palier à viser, jamais pour un article multi-CIP", app.includes("if (!item.isCampaign && item.basePn != null && !item.supplierCode) {") &&
     app.includes("if (jaugePaliers(reglage)?.prochaine) return <JaugePaliers variante=\"compacte\""));
-  vrai("panier : encart sans palier suivant au-delà du plafond (péremption)", app.includes("const suivant = item.nextTier && !(item.plafond != null && item.nextTier.min_qty > item.plafond) ? item.nextTier : null;"));
+  vrai("panier : encart sans palier suivant au-delà du plafond (péremption) ni du reste du contingentement", app.includes("const suivant = item.nextTier && !(item.plafond != null && item.nextTier.min_qty > item.plafond)\n                          && tiersQuota(ctxQuota, item.cip, [item.nextTier], item.qty, item.step).length ? item.nextTier : null;"));
   vrai("champ des tableaux : frappe retirée quand la quantité change de l'extérieur ou que le champ disparaît",
     app.includes("useEffect(() => { setBrouillon(null); fin(frappe.current); }, [valeur]);") && app.includes("useEffect(() => { const r = frappe.current; return () => fin(r); }, []);"));
   vrai("Saisie : jauge sur la ligne de destination, quantité déjà au panier + saisie arrondie, sans multi-CIP",
     saisie.includes("const dest = p.supplier_code ? null : panierSaisie?.(p.cip);") && saisie.includes("qte: deja + qAjout") && saisie.includes("const jauge = orderable && !p.supplier_code && jaugePaliers(reglage);"));
   vrai("Saisie : prix affiché et « Ajouter » au prix de la ligne du panier", saisie.includes("{fmt(palier ? pnPanier : displayPrice)}") && saisie.includes("Ajouter {fmt(pnPanier * (qAjout || qty))}"));
-  vrai("Saisie : badge sans jauge", saisie.includes("{!jauge && <TierBadge tiers={p.price_tiers} pn={displayPrice} bloc />}"));
+  vrai("Saisie : badge sans jauge (paliers atteignables)", saisie.includes("{!jauge && <TierBadge tiers={tiersQuota(cq, p.cip, p.price_tiers, deja, pas)} pn={displayPrice} bloc />}"));
   vrai("Saisie : prix ajouté au panier inchangé (displayPrice, paliers transmis)", saisie.includes("onAddToCart?.({ cip: product.cip, name: product.name, qty, pn: price, pv: product.list_price, discount: hasDiscount ? product.discount_pct : 0, tiers: product.price_tiers || null,"));
 }
 

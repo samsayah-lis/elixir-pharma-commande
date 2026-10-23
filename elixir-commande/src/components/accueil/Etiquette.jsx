@@ -8,6 +8,7 @@ import { alpha, fmtEur, fmtPct } from "../../theme.js";
 import Rouleau from "./Rouleau.jsx";
 import Pouls from "./Pouls.jsx";
 import BoutonLot from "./BoutonLot.jsx";
+import { Quota } from "../quota/entree.jsx";
 import { prixHT, useDebord } from "./outils.js";
 
 const STOCK = { ok: ["ok", "coche", "En stock"], limite: ["warn", "horloge", "Stock limité"], dernieres: ["warn", "alerte", "Dernières boîtes"] };
@@ -101,6 +102,8 @@ export default function Etiquette({ slide, offre, position, variantes, choix, on
         {/* mobile : le bouton dit déjà « Ajouter un carton de 120 » */}
         {multiple > 0 && !mobile && <li className="acc-puce"><Icone nom="carton" taille={14} />Se commande par {offre.menu?.key === "stratege" ? "carton" : "lot"} de {multiple}</li>}
         {popularite && <li className="acc-puce"><Icone nom="cible" taille={14} />{popularite}</li>}
+        {/* contingentement (src/components/quota/) : reste de la période et déjà au panier, comme la ligne du menu */}
+        <Quota cip={offre.cip} pas={offre.lot?.qte} forme="moyenne" as="li" style={{ marginTop: 0 }} />
       </ul>
       {!mobile && slide.serie_15j?.length > 1 && (
         <div className="acc-pouls-bloc">

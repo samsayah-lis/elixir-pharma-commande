@@ -30,6 +30,10 @@
 //           un faux Odoo et un faux Supabase en mémoire (scripts/banc/peremption-banc.mjs, relevé Odoo du 20/10/2026) ;
 //           odoo-catalog?expiry_months=4 et la carte Péremption de l'accueil suivent ce monde (prix du site à jour).
 //           BANC_PEREMPTION_MODE, BANC_PEREMPTION_ECRITURE=1, BANC_PEREMPTION_ESSAI=1 : voir peremption-banc.mjs.
+//  • contingentement (pastille de la ligne d'article, docs/contingentement-ligne.md) : quota-liste et quota-status répondus
+//           avec les vraies périodes de _quota.js sur des règles d'EXEMPLE (produits non contingentés en réel, quantités
+//           inventées) ; commandes du banc comptées ; BANC_QUOTA=normal|atteint|panne|dispense|off|accueil, ou à chaud
+//           /banc-quota?mode=…&retard=<ms> : voir quota-banc.mjs.
 //  • sections du catalogue (admin, onglet ✏️ Modifier : ajout et retrait de produits) : products-upsert écrit en mémoire
 //           (jusqu'au redémarrage), products-get relit ces produits, products-sections est le VRAI code (lecture seule) sur
 //           un faux Supabase : voir sections-banc.mjs.
@@ -50,6 +54,7 @@ import { verifierModele } from "../../src/notifications/modeles.js";
 import { lirePeremption, evaluerOutil, oublierMemo } from "../../netlify/functions/_accueil-outils.js";
 import { mondePeremption, repondrePeremption, cataloguePeremption } from "./peremption-banc.mjs";
 import { repondreSections } from "./sections-banc.mjs";
+import { repondreQuota, modeQuota, razQuota, retardQuota } from "./quota-banc.mjs";
 
 // Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
 const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
@@ -757,6 +762,17 @@ export default function bancEssai() {
         res.setHeader("Access-Control-Allow-Origin", "*");
         return res.end(readFileSync(fichier));
       });
+      // contingentement : scénario à chaud (quota-banc.mjs) ; sans paramètre, scénario actuel
+      if (modeQuota() !== "normal") log(`contingentement : scénario ${modeQuota()} (BANC_QUOTA)`);
+      server.middlewares.use("/banc-quota", (req, res) => {
+        const p = new URLSearchParams(String(req.url || "").split("?")[1] || ""), m = p.get("mode");
+        if (m && modeQuota(m) === m) log(`contingentement : scénario ${m}`);
+        if (p.get("raz") === "1") { razQuota(); log("contingentement : commandes du banc remises à zéro"); }
+        if (p.has("retard")) log(`contingentement : quota-status répond après ${retardQuota(p.get("retard"))} ms`);
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+        res.setHeader("Cache-Control", "no-store");
+        res.end(JSON.stringify({ mode: modeQuota(), retard: retardQuota() }));
+      });
       server.middlewares.use("/.netlify/functions", async (req, res) => {
         const methode = String(req.method || "GET").toUpperCase();
         const url = req.url || "/";
@@ -778,6 +794,7 @@ export default function bancEssai() {
               const r = await repondreSections({ methode: "GET", fn: f, query: q, entetes: req.headers, produits, catalogue: catalogueLocal });
               if (r) return envoie(r.statut, r.corps, r.source);
             }
+            if (f === "quota-liste") { const r = repondreQuota({ methode: "GET", fn: f }); return envoie(r.statut, r.corps, r.source); }
             if (f === "odoo-catalog" && q.expiry_months) { const c = await cataloguePeremption(); if (c) return envoie(200, c, "banc péremption (prix du site à jour)"); }
             if (f === "accueil-offres" && !q.verifier && mondePeremption()) {
               // carte « Péremption courte » : règle du serveur sur la page du monde du banc (remises facturées seulement)
@@ -805,6 +822,11 @@ export default function bancEssai() {
           if (fn === "products-upsert") {
             const rs = await repondreSections({ methode, fn, corps, entetes: req.headers, produits, catalogue: catalogueLocal, campagnes: () => fige("campaign-get") || [] });
             if (rs) { log(`${methode} products-upsert (${corps?.action || "?"}) ${corps?.product?.cip || ""} → ${rs.statut} (mémoire du banc), journal ${fichier}`); return envoie(rs.statut, rs.corps, rs.source); }
+          }
+          const rq = repondreQuota({ methode, fn, commandes: commandesDuBanc });
+          if (rq) {
+            if (rq.retard) await new Promise(r => setTimeout(r, rq.retard));   // lecture Odoo lente (/banc-quota?retard=…)
+            log(`${methode} ${fn} → ${rq.statut} (${rq.source}), journal ${fichier}`); return envoie(rq.statut, rq.corps, rq.source);
           }
           const r = reponsePost({ fn, methode, corps });
           log(`${methode} ${fn}${corps?.action ? ` (${corps.action})` : ""} → rien n'est parti, journal ${fichier}`);

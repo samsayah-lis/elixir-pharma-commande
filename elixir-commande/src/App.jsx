@@ -43,6 +43,8 @@ const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ defaul
 import { lireOffres } from "./components/accueil/precharge.js";
 import SqueletteAccueil, { AccueilIndisponible, salleProbable } from "./components/accueil/Squelette.jsx";
 const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catch(() => ({ default: AccueilIndisponible })));
+// Contingentement dans la ligne de l'article (docs/contingentement-ligne.md) : contexte ici, pastille chargée à la demande
+import { ContexteQuota, Quota, chargerPastille, tiersQuota } from "./components/quota/entree.jsx";
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 // Envoi d'une commande refusé AVANT tout envoi (correctif de sécurité du 19/10/2026 : session vérifiée d'abord) :
@@ -1154,6 +1156,11 @@ export default function App() {
     if (ouvrirPanier) setCartOpen(true);   // lot E2 : la Saisie de commande n'ouvre plus le panier
   };
 
+  // Contingentement (23/10/2026, docs/contingentement-ligne.md) : pharmacie affichée, posée pendant le rendu (avant les effets
+  // des pastilles) ; loadQuota n'enregistre une réponse que si elle est la même qu'au départ de la lecture (saisie Elixir)
+  const cleQuota = `${actingFor?.odoo_id ?? ""}|${pharmacyEmail}|${pharmacyCip}`, cleQuotaRef = useRef(cleQuota);
+  cleQuotaRef.current = cleQuota;
+
   const cartItems = useMemo(() => {
     const items = [];
     Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, cat]) => {
@@ -1240,16 +1247,16 @@ export default function App() {
   const [quota, setQuota] = useState(null);
   const loadQuota = useCallback(async () => {
     if (!pharmacyEmail && !actingFor) return null;
+    // réponse enregistrée seulement pour la pharmacie encore affichée (saisie Elixir : autre pharmacie choisie entre-temps)
+    const cle = `${actingFor?.odoo_id ?? ""}|${pharmacyEmail}|${pharmacyCip}`, garde = (j) => { if (cle === cleQuotaRef.current) setQuota(j); return j; };
     try {
       // jeton pharmacie (saisie Elixir : jeton admin), renouvelé s'il a expiré (quota-status exige un jeton)
       const r = await appelAuthentifie("/.netlify/functions/quota-status", { method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cip: pharmacyCip, email: pharmacyEmail, ...(actingFor ? { odoo_id: actingFor.odoo_id } : {}) }), ...delai(12000) });
-      if (!r.ok) { setQuota(null); return null; }
-      const j = await r.json();
-      setQuota(j);
-      return j;
-    } catch { setQuota(null); return null; }   // Odoo indisponible : on ne bloque pas la commande (Odoo contrôle aussi)
+      if (!r.ok) return garde(null);
+      return garde(await r.json());
+    } catch { return garde(null); }   // Odoo indisponible : on ne bloque pas la commande (Odoo contrôle aussi)
   }, [pharmacyEmail, pharmacyCip, actingFor, appelAuthentifie]);
   useEffect(() => { setQuota(null); }, [pharmacyEmail, pharmacyCip, actingFor]);   // autre pharmacie / déconnexion
   useEffect(() => { if (cartOpen) loadQuota(); }, [cartOpen, loadQuota]);
@@ -1354,6 +1361,53 @@ export default function App() {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
+
+  // ── Contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md ; src/components/quota/) ──
+  // quota-liste (règles seules, une fois par session) dit quels produits sont contingentés ; la pastille est chargée en même
+  // temps (chargerPastille) — l'une ou l'autre en échec : nouvel essai après 2 min, rien d'affiché d'ici là. Le reste de la
+  // pharmacie n'est lu qu'à l'affichage de l'un d'eux, par le même appel et dans le même état que le panier (loadQuota :
+  // pharmacie servie en saisie Elixir, réponse arrivée pour une autre ignorée ; quotaDe : jamais montré sur une autre), puis
+  // gardé 5 min ; lecture en échec : « reste non vérifié », nouvel essai après 1 min. Commande envoyée : reste d'avant l'envoi
+  // remplacé par « mise à jour… » (une lecture partie avant l'envoi ne compte plus), relu une fois le panier vidé s'il y a une
+  // pastille à l'écran (montees) — sinon à l'affichage de la suivante (aucune lecture Odoo de plus).
+  const [quotaListe, setQuotaListe] = useState(null);
+  const [essaiListe, setEssaiListe] = useState(0);
+  const [quotaKo, setQuotaKo] = useState(null);              // loadQuota dont la lecture a échoué
+  const [quotaAttente, setQuotaAttente] = useState(false);   // commande envoyée, reste pas encore relu
+  const quotaLu = useRef({}), lectureQuota = useRef(loadQuota), quotaCourant = useRef(quota), envoiGen = useRef(0), montees = useRef(0), quotaDe = useRef([]);
+  lectureQuota.current = loadQuota; quotaCourant.current = quota;
+  if (quotaDe.current[0] !== quota) quotaDe.current = [quota, cleQuota];   // pharmacie pour laquelle le reste a été lu
+  const identifie = !!(pharmacyEmail || actingFor);
+  useEffect(() => {
+    if (!identifie || quotaListe) return;
+    let fini = false, t;
+    const echec = () => { if (!fini) t = setTimeout(() => setEssaiListe(n => n + 1), 12e4); };
+    Promise.all([appelAuthentifie("/.netlify/functions/quota-liste").then(r => r.ok && r.json()), chargerPastille()])
+      .then(([j, pret]) => { if (fini) return; if (j?.produits && pret) setQuotaListe(j.produits); else echec(); }, echec);
+    return () => { fini = true; clearTimeout(t); };
+  }, [identifie, quotaListe, appelAuthentifie, essaiListe]);
+  const demanderQuota = useCallback(function demander() {
+    const lq = lectureQuota.current, l = quotaLu.current, g = envoiGen.current;
+    // en cours ; reste lu depuis moins de 5 min ; échec depuis moins de 1 min
+    if (l.lq === lq && (l.at < 0 || Date.now() - l.at < (quotaCourant.current ? 3e5 : l.ko ? 6e4 : 0))) return;
+    quotaLu.current = { lq, at: -1 };
+    lq().then(j => {
+      if (g !== envoiGen.current) return;                                                   // partie avant un envoi : relue après
+      if (lectureQuota.current !== lq) { if (quotaLu.current.lq === lq) { quotaLu.current = {}; demander(); } return; }   // autre pharmacie : relu pour elle (si ce n'est déjà fait)
+      quotaLu.current = { lq, at: Date.now(), ko: !j };
+      setQuotaKo(() => !j && lq);   // (fonction : forme « updater » obligatoire)
+      if (j) setQuotaAttente(false);
+    });
+  }, []);
+  // commande envoyée : reste d'avant l'envoi caché (faux dès que la commande compte), relu une fois le panier vidé (3 s après)
+  const apresEnvoi = useRef(false);
+  useEffect(() => {
+    if (sendStatus === "success") { envoiGen.current++; apresEnvoi.current = true; quotaLu.current = { lq: lectureQuota.current, at: -1 }; setQuotaAttente(true); setQuotaKo(null); }
+    else if (apresEnvoi.current) { apresEnvoi.current = false; quotaLu.current = {}; if (montees.current > 0) demanderQuota(); }
+  }, [sendStatus]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const quotaVu = quotaDe.current[1] === cleQuota && !(quotaAttente && !quota?.exempt) ? quota : null;
+  const ctxQuota = useMemo(() => ({ liste: identifie ? quotaListe : null, quota: quotaVu, check: quotaCheck, ko: quotaKo === loadQuota, attente: quotaAttente,
+    demander: demanderQuota, montees, cle: cleQuota }), [identifie, quotaListe, quotaVu, quotaCheck, quotaKo, loadQuota, quotaAttente, demanderQuota, cleQuota]);
 
   // ── Saisie de commande (lot E2) : l'ajout n'ouvre plus le panier, un message le confirme ──
   // Le contingentement, que rechargeait l'ouverture du panier, est rechargé ici à chaque ajout : un dépassement
@@ -2560,6 +2614,8 @@ export default function App() {
         {/* Main content */}
         {/* bas réservé aux boutons flottants : panier (96 px), lanceur de l'Assistant Elixir (+72 px, posé au-dessus du panier) */}
         <main style={{ flex: 1, padding: isMobile ? `12px 10px ${(panierFlottant ? 96 : 12) + (assistantDispo ? 72 : 0)}px` : `20px 24px ${(panierFlottant ? 96 : 20) + (assistantDispo ? 72 : 0)}px`, minWidth: 0 }}>
+        {/* contingentement dans la ligne de l'article (src/components/quota/entree.jsx) */}
+        <ContexteQuota.Provider value={ctxQuota}>
 
           {/* Flash toast — région annoncée toujours présente (le message y apparaît) ; « ⚠ » en tête = ton avertissement.
               Sous l'en-tête collant : sur mobile (lot 9), pour ne plus cacher le compteur du panier qui vient de changer ;
@@ -2631,6 +2687,7 @@ export default function App() {
                           {/* CIP avec bouton de copie (CipCell : le CIP n'est plus sélectionnable, anti-copie § 19 ; revue § 20) */}
                           <span style={{ fontSize:12, color:T.inkMute, display:"inline-flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={p.cip} />{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
                         </div>
+                        <Quota cip={p.cip} forme="moyenne" />{/* contingentement (src/components/quota/) */}
                       </div>
 
                       {/* Prix HT : barré --ink-mute, remise en badge or + encre, prix net encre 700 (affichage français) */}
@@ -3180,7 +3237,7 @@ export default function App() {
                               {/* jauge des paliers (mini : incitation et piste) au-dessus de la quantité ; hors campagne (le panier
                                   n'y applique pas les paliers) et hors rupture ; un palier touché passe par applyQty (colis, minimum) */}
                               {!getCampaign(activeTab) && !isRupture && p.pn != null && (
-                                <JaugePaliers variante="mini" style={{ alignSelf: "stretch" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty}
+                                <JaugePaliers variante="mini" style={{ alignSelf: "stretch" }} base={p.pn} pv={p.pv} tiers={tiersQuota(ctxQuota, p.cip, p.price_tiers, qty, m > 1 ? m : step)} qte={qty}
                                   pas={m > 1 ? m : step} min={stepMin} nom={p.name} onChoisir={applyQty} />
                               )}
                               {/* « − » sable, « + » pétrole, champ à filet --line-field puis 2 px sarcelle dès qu'il y a une quantité ;
@@ -3202,6 +3259,8 @@ export default function App() {
                                   style={{ ...ui.qtyInput(qty > 0), height: 32, fontSize: 14 }}/>
                                 <button className="ex-qte-plus ex-ico ex-ico-plus" onClick={handlePlus} aria-label={`Augmenter la quantité de ${p.name}`} style={qtyBtnStyle("plus", 32)} />
                               </div>
+                              {/* contingentement (src/components/quota/) : sous les boutons, texte court — le « + » ne bouge pas */}
+                              <Quota cip={p.cip} forme="courte" pas={m > 1 ? m : step} style={{ marginTop: 0 }} />
                               {(stepMin > 0 || m > 1) && (
                                 <div className="num" style={{ fontSize: 11, color: qty > 0 ? T.teal : T.inkMute, marginTop: 2 }}>
                                   {stepMin > 0 && `min ${stepMin}`}{stepMin > 0 && m > 1 && " · "}{m > 1 && `×${m}`}
@@ -3245,16 +3304,17 @@ export default function App() {
                   const step = getStep(activeTab, p);
                   // jauge des paliers sous le nom et les quantités, prix du panier (hors campagne, hors rupture : petit badge) ; revue du
                   // 22/10 : compacte avec une quantité et un palier à viser, une ligne sinon (à 0, au meilleur prix)
-                  const camp = getCampaign(activeTab), pnLigne = camp ? p.pn : applyTiers(p.pn, p.price_tiers, qty).pn;
-                  const jl = !camp && !isRupture && jaugePaliers({ base: p.pn, pv: p.pv, tiers: p.price_tiers, qte: qty, pas: step });
+                  // contingentement : paliers au-delà du reste retirés (tiersQuota, affichage seulement)
+                  const camp = getCampaign(activeTab), pnLigne = camp ? p.pn : applyTiers(p.pn, p.price_tiers, qty).pn, tq = tiersQuota(ctxQuota, p.cip, p.price_tiers, qty, step);
+                  const jl = !camp && !isRupture && jaugePaliers({ base: p.pn, pv: p.pv, tiers: tq, qte: qty, pas: step });
                   const jauge = jl ? (
-                    <JaugePaliers variante={qty > 0 && jl.prochaine ? "compacte" : "ligne"} style={{ flexBasis: "100%" }} base={p.pn} pv={p.pv} tiers={p.price_tiers} qte={qty} pas={step} nom={p.name}
+                    <JaugePaliers variante={qty > 0 && jl.prochaine ? "compacte" : "ligne"} style={{ flexBasis: "100%" }} base={p.pn} pv={p.pv} tiers={tq} qte={qty} pas={step} nom={p.name}
                       onChoisir={(n) => setQty(key, n, step)} />
                   ) : null;
                   return (
                     <div key={key} className="ex-tr" data-rupture={isRupture ? "" : undefined} style={{
                       padding: "10px 14px", borderBottom: `1px solid ${T.lineSoft}`,
-                      display: "flex", alignItems: "center", gap: 10, flexWrap: jauge ? "wrap" : undefined
+                      display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap"
                     }}>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.3 }}>
@@ -3262,7 +3322,7 @@ export default function App() {
                           {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 5, whiteSpace: "normal" }}>{p.note}</span>}
                           {isRupture && <span style={{ ...ui.badge("danger"), marginLeft: 5 }}><Icone nom="alerte" taille={11} />Rupture</span>}
                         </div>
-                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{prixUnitaire(pnLigne, p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact />}</div>
+                        <div className="num" style={{ fontSize: 12, fontWeight: 700, color: T.ink, marginTop: 3 }}>{prixUnitaire(pnLigne, p.pn)} {p.pct ? <span style={ui.badge("promo")}>{fmtPct(p.pct)}</span> : null}{!jauge && <TierBadge tiers={tq} pn={p.pn} compact />}</div>
                       </div>
                       <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
                         <button className="ex-qte-moins" aria-label={`Diminuer la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: Math.max(0, (q[key]||0) - step) }))}
@@ -3271,6 +3331,8 @@ export default function App() {
                         <button className="ex-qte-plus" aria-label={`Augmenter la quantité de ${p.name}`} onClick={() => setQuantities(q => ({ ...q, [key]: (q[key]||0) + step }))}
                           style={qtyBtnStyle("plus", 30)}><Icone nom="plus" taille={15} epaisseur={2.4} /></button>
                       </div>
+                      {/* contingentement : rangée à part sous les boutons (le « + » ne bouge pas quand le texte change) */}
+                      <Quota cip={p.cip} pas={step} style={{ flexBasis: "100%", marginTop: -4 }} />
                       {jauge}
                     </div>
                   );
@@ -3310,14 +3372,15 @@ export default function App() {
                     // Revue du 22/10 : complète une fois une quantité enregistrée avec un palier à viser, une ligne sinon (à 0, au
                     // meilleur prix) — le passage de l'une à l'autre se fait à la validation, jamais pendant la frappe
                     const qteVue = frappe?.key === key && frappe.base === qty ? (pasLigne > 1 ? Math.round(frappe.q / pasLigne) * pasLigne : frappe.q) : qty;
-                    const reglage = { base: p.pn, pv: p.pv, tiers: p.price_tiers, pas: pasLigne };
+                    const reglage = { base: p.pn, pv: p.pv, tiers: tiersQuota(ctxQuota, p.cip, p.price_tiers, qty, pasLigne), pas: pasLigne };   // contingentement : paliers atteignables
                     const jauge = avecPaliers && !isRupture && jaugePaliers({ ...reglage, qte: qteVue }) ? (
                       <JaugePaliers {...reglage} qte={qteVue} nom={p.name} variante={qty > 0 && jaugePaliers({ ...reglage, qte: qty })?.prochaine ? "complete" : "ligne"}
                         onChoisir={(n) => { setFrappe(null); setQty(key, n, pasLigne); }} />
                     ) : null;
-                    const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={p.price_tiers} pn={p.pn} compact bloc />}</>;
+                    const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={reglage.tiers} pn={p.pn} compact bloc />}</>;
 
                     const ruptureBadge = isRupture ? <span style={{ ...ui.badge("danger"), marginLeft: 6, verticalAlign: "middle" }}><Icone nom="alerte" taille={11} />Rupture</span> : null;
+                    const qL = <Quota cip={p.cip} pas={pasLigne} forme="moyenne" />;   // contingentement : pastille sous la désignation, état court (la ligne garde sa hauteur)
                     // zébrure (data-zebre : rang du produit, comme l'ancien nth-child), survol et fond rupture : classe ex-tr +
                     // data-rupture (tokens.css) — le survol ne l'efface plus. Produit à paliers : ligne de la jauge dessous (ex-tr-palier)
                     return (
@@ -3337,7 +3400,7 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
                             {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
-                            {ruptureBadge}
+                            {ruptureBadge}{qL}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
@@ -3347,7 +3410,7 @@ export default function App() {
                         </>}
                         {activeTab === "stratege" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}{qL}</td>
                           <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.prix)}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
@@ -3359,7 +3422,7 @@ export default function App() {
                         </>}
                         {activeTab === "master" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}{qL}</td>
                           {/* colonnes Palier et PV retirées (jamais transmises par products-get) : 5 cellules sous 5 en-têtes */}
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
                           <td style={{ ...tdStyle, textAlign: "right", color: T.inkSoft, fontWeight: 600 }}>
@@ -3374,7 +3437,7 @@ export default function App() {
                               <div style={{ fontSize: 11, color: T.teal, fontWeight: 700, letterSpacing: "0.06em", marginBottom: 2 }}>{p.groupe.toUpperCase()}</div>
                             )}
                             {p.name}
-                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}{qL}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
@@ -3384,7 +3447,7 @@ export default function App() {
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
-                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
+                            {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}{qL}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
@@ -3392,25 +3455,25 @@ export default function App() {
                         </>}
                         {activeTab === "molnlycke" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{qL}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{fmt(p.pv)}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "blanche" && <>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{qL}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "center", color: T.inkSoft }}>{p.colis}</td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "covid" && <>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}{qL}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
                           <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700 }}>{prixNet}</td>
                         </>}
                         {activeTab === "otc" && <>
-                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}</td>
+                          <td style={{ ...tdStyle, fontWeight: 600 }}>{p.name}{ruptureBadge}{qL}</td>
                           <td style={tdStyle}><CipCell cip={p.cip} /></td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
@@ -3421,7 +3484,7 @@ export default function App() {
                           <td style={{ ...tdStyle, fontWeight: 600 }}>
                             {p.name}
                             {p.note && <span style={{ ...ui.badge("warn"), marginLeft: 6, whiteSpace: "normal" }}>{p.note}</span>}
-                            {ruptureBadge}
+                            {ruptureBadge}{qL}
                           </td>
                           <td style={{ ...tdStyle, textAlign: "right" }}>{p.pv != null ? fmt(p.pv) : "–"}</td>
                           <td style={{ ...tdStyle, textAlign: "right" }}><BadgeRemise pct={p.pct} /></td>
@@ -3610,6 +3673,7 @@ export default function App() {
           })()}
           </>
           </>)}
+        </ContexteQuota.Provider>
         </main>
 
         {/* ── Notifications — fenêtre (chargée à la demande) ; saisie Elixir : lecture seule ── */}
@@ -3777,11 +3841,13 @@ export default function App() {
                         if (!item.isCampaign && item.basePn != null && !item.supplierCode) {
                           const src = item.isSpecial ? specialItems.find(l => idSpecial(l) === item.specialId)
                             : CATALOG_WITH_ADMIN[item.catKey]?.products?.[Number(item.key.slice(item.key.lastIndexOf("-") + 1))];
-                          const reglage = { base: item.basePn, pv: src?.pv, tiers: item.isSpecial ? src?.tiers : src?.price_tiers, qte: item.qty, pas: item.step, max: item.plafond ?? null };
+                          // contingentement : paliers au-delà du reste retirés (tiersQuota : la ligne peut monter jusqu'à sa quantité + reste − panier)
+                          const reglage = { base: item.basePn, pv: src?.pv, tiers: tiersQuota(ctxQuota, item.cip, item.isSpecial ? src?.tiers : src?.price_tiers, item.qty, item.step), qte: item.qty, pas: item.step, max: item.plafond ?? null };
                           if (jaugePaliers(reglage)?.prochaine) return <JaugePaliers variante="compacte" style={{ marginTop: 8 }} {...reglage} nom={item.name} onChoisir={(n) => setItemQty(item, n)} />;
                         }
-                        // palier suivant au-delà du plafond (ligne péremption) : jamais proposé, « + » ne permet pas de l'atteindre
-                        const suivant = item.nextTier && !(item.plafond != null && item.nextTier.min_qty > item.plafond) ? item.nextTier : null;
+                        // palier suivant au-delà du plafond (ligne péremption) ou du reste du contingentement : jamais proposé
+                        const suivant = item.nextTier && !(item.plafond != null && item.nextTier.min_qty > item.plafond)
+                          && tiersQuota(ctxQuota, item.cip, [item.nextTier], item.qty, item.step).length ? item.nextTier : null;
                         return (item.tier || suivant) && (
                           <div style={encart(item.tier ? "tier" : "warn")}>
                             {item.tier && (<div style={ligneEncart}><Icone nom="coche" taille={14} epaisseur={2.4} style={iconeEncart} />
@@ -3791,7 +3857,8 @@ export default function App() {
                           </div>
                         );
                       })()}
-                      {/* Contingentement : quota de la période, déjà commandé, reste */}
+                      {/* Contingentement : quota de la période, déjà commandé, reste — période dite comme sur la pastille de la ligne
+                          (src/quota-ligne.js : « par semaine (lundi–dimanche) », « par jour »), même format de date */}
                       {item.cip && quotaCheck.P[item.cip] && (() => {
                         const q = quotaCheck.P[item.cip];
                         const over = quotaCheck.inCart[item.cip] > q.remaining;
@@ -3801,7 +3868,7 @@ export default function App() {
                           <div style={encart(over ? "danger" : "info")}>
                             <div style={ligneEncart}>
                               <Icone nom="cadenas" taille={14} style={iconeEncart} />
-                              <span>Contingenté : <strong>{q.label}</strong>{q.used > 0 ? ` · déjà commandé ${q.used}` : ""} · reste <strong>{q.remaining}</strong>
+                              <span>Contingenté : <strong>{q.period === "1" && q.days < 2 ? `${q.quota} par jour` : q.label}{q.period === "-1" ? " (lundi–dimanche)" : ""}</strong>{q.used > 0 ? ` · déjà commandé ${q.used}` : ""} · reste <strong>{q.remaining}</strong>
                                 {q.end && <span style={{ color: over ? T.danger : T.inkSoft }}> (nouveau quota le {quotaDay(q.end)})</span>}</span>
                             </div>
                             {over && (

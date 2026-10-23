@@ -14,6 +14,7 @@ import { Icone } from "../../icons.jsx";
 import { fmtEur, fmtPct } from "../../theme.js";
 import Boite from "./Boite.jsx";
 import BoutonLot from "./BoutonLot.jsx";
+import { Quota } from "../quota/entree.jsx";
 import Rebours from "./Rebours.jsx";
 import Eventail from "./Eventail.jsx";
 import { PhotoDecor, RESSORT, SegmentsMeta, anime, photo, photoReconnue, sansEmoji, surErreurPhoto, useIllisibles } from "./outils.js";
@@ -168,6 +169,7 @@ function TuileProduit({ e, v, props, id, qte, pret, apercu, onAjouter, onModifie
         {!grand && <p className="mea-tuile-lot num" aria-hidden="true"><span>{lot(o)}</span><span>{fmtEur(o.lot?.total ?? o.pn)} HT</span>
           {o.lot?.pu != null && o.pn != null && o.lot.pu < o.pn && <span className="mea-tuile-palier">soit {fmtEur(o.lot.pu)} HT la boîte</span>}</p>}
         {e.finOffre && <Rebours fin={e.finOffre} secondes={false} onFin={onExpire} classe="mea-tuile-fin" />}
+        <Quota cip={o.cip} forme="courte" pas={o.lot?.qte} />{/* contingentement : reste de la période, version courte (src/components/quota/) */}
         <div className="mea-tuile-actions">
           <BoutonLot offre={o} nom={e.titre} qte={qte} pret={pret} desactive={apercu} compacte={!grand}
             onAjouter={(q) => onAjouter?.(e, q, ref.current?.querySelector(".mea-tuile-visuel > *") || ref.current)}
