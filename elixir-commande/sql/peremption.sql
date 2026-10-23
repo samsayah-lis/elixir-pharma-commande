@@ -177,6 +177,10 @@ alter table peremption_regles    enable row level security;
 alter table peremption_journal   enable row level security;
 alter table peremption_passages  enable row level security;
 -- Ne jamais ajouter de policy.
+-- Droits retirés à anon et authenticated (comme chat-schema.sql et le Bloc 1bis de la fermeture de Supabase) :
+revoke all on table peremption_reglages, peremption_faits, peremption_decisions, peremption_regles, peremption_journal,
+  peremption_passages from anon, authenticated;
+revoke all on sequence peremption_journal_id_seq from anon, authenticated;
 
 -- Contrôle après exécution (doit afficher 6 lignes « true » et le mode « simulation ») :
 -- select relname, relrowsecurity from pg_class where relname like 'peremption\_%' and relkind = 'r';
