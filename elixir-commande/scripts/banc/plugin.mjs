@@ -37,6 +37,8 @@
 //  • sections du catalogue (admin, onglet ✏️ Modifier : ajout et retrait de produits) : products-upsert écrit en mémoire
 //           (jusqu'au redémarrage), products-get relit ces produits, products-sections est le VRAI code (lecture seule) sur
 //           un faux Supabase : voir sections-banc.mjs.
+//  • API des pharmacies (api-compte, api-admin, et /api/v1/* comme la règle de public/_redirects) : VRAI code sur un faux
+//           PostgREST en mémoire, pharmacie du banc avec un accès ouvert d'avance : voir api-banc.mjs.
 // Variables : BANC=0 (désactive), BANC_AUTH=legacy|otp (mode d'identification), BANC_LATENCE=<ms>, BANC_PHOTOS=prive,
 // BANC_JOURNAL=<nom> (dossier du journal des envois, sinon la date du jour), BANC_CHAT=reconnexion (session sans jeton
 // valide, assistant ouvert à toutes les pharmacies : « etat » répond reconnexion + ouvert, l'ouverture 401 : encart
@@ -55,6 +57,7 @@ import { lirePeremption, evaluerOutil, oublierMemo } from "../../netlify/functio
 import { mondePeremption, repondrePeremption, cataloguePeremption } from "./peremption-banc.mjs";
 import { repondreSections } from "./sections-banc.mjs";
 import { repondreQuota, modeQuota, razQuota, retardQuota } from "./quota-banc.mjs";
+import { repondreApi } from "./api-banc.mjs";
 
 // Photos envoyées à product-upload-image sur le banc (hors git, comme toutes les données du banc)
 const DOSSIER_PHOTOS = resolve(DOSSIER_FIXTURES, "_photos", "products");
@@ -773,6 +776,17 @@ export default function bancEssai() {
         res.setHeader("Cache-Control", "no-store");
         res.end(JSON.stringify({ mode: modeQuota(), retard: retardQuota() }));
       });
+      // API des pharmacies : /api/v1/* servi par le vrai routeur (réponses brutes : problem+json, en-têtes de débit)
+      server.middlewares.use("/api/v1", async (req, res) => {
+        try {
+          const brut = await litCorps(req);
+          const r = await repondreApi({ fn: "api-v1", methode: String(req.method || "GET").toUpperCase(), url: `/api/v1${req.url || ""}`, corps: brut || null, entetes: req.headers });
+          res.statusCode = r.statut;
+          for (const [k, v] of Object.entries(r.entetes)) res.setHeader(k, v);
+          res.setHeader("X-Banc", encodeURIComponent(r.source));
+          res.end(r.texte);
+        } catch (e) { res.statusCode = 500; res.end(JSON.stringify({ error: `Banc d'essai : ${e.message}` })); }
+      });
       server.middlewares.use("/.netlify/functions", async (req, res) => {
         const methode = String(req.method || "GET").toUpperCase();
         const url = req.url || "/";
@@ -795,6 +809,7 @@ export default function bancEssai() {
               if (r) return envoie(r.statut, r.corps, r.source);
             }
             if (f === "quota-liste") { const r = repondreQuota({ methode: "GET", fn: f }); return envoie(r.statut, r.corps, r.source); }
+            if (f === "api-admin") { const r = await repondreApi({ fn: f, methode, url, corps: null, entetes: req.headers }); return envoie(r.statut, JSON.parse(r.texte), r.source); }
             if (f === "odoo-catalog" && q.expiry_months) { const c = await cataloguePeremption(); if (c) return envoie(200, c, "banc péremption (prix du site à jour)"); }
             if (f === "accueil-offres" && !q.verifier && mondePeremption()) {
               // carte « Péremption courte » : règle du serveur sur la page du monde du banc (remises facturées seulement)
@@ -823,6 +838,8 @@ export default function bancEssai() {
             const rs = await repondreSections({ methode, fn, corps, entetes: req.headers, produits, catalogue: catalogueLocal, campagnes: () => fige("campaign-get") || [] });
             if (rs) { log(`${methode} products-upsert (${corps?.action || "?"}) ${corps?.product?.cip || ""} → ${rs.statut} (mémoire du banc), journal ${fichier}`); return envoie(rs.statut, rs.corps, rs.source); }
           }
+          const ra = await repondreApi({ fn, methode, url, corps: brut, entetes: req.headers });
+          if (ra) { log(`${methode} ${fn} (${corps?.action || "?"}) → ${ra.statut} (vrai code, mémoire du banc), journal ${fichier}`); return envoie(ra.statut, JSON.parse(ra.texte), ra.source); }
           const rq = repondreQuota({ methode, fn, commandes: commandesDuBanc });
           if (rq) {
             if (rq.retard) await new Promise(r => setTimeout(r, rq.retard));   // lecture Odoo lente (/banc-quota?retard=…)

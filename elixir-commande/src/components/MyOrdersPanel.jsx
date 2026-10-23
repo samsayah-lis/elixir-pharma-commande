@@ -22,8 +22,8 @@ const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 const btnFilet = { ...ui.btn("ligne", "m"), background:undefined, color:T.petrol, boxShadow:`inset 0 0 0 1.5px ${T.lineField}` };
 
 // onQuestion(order) (facultatif) : « Une question sur cette commande ? » ouvre l'Assistant Elixir sur cette commande
-// (App ne le passe que si l'assistant est disponible pour la pharmacie)
-export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder, onQuestion, erreur = null, onReconnecter = null }) {
+// (App ne le passe que si l'assistant est disponible pour la pharmacie) ; extra : lien « Accès API » (chargé à la demande par App)
+export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, onReorder, onQuestion, erreur = null, onReconnecter = null, extra = null }) {
   return (
     <div role="dialog" aria-modal="true" aria-labelledby="mes-commandes-titre" style={{ ...ui.overlay, zIndex:400, padding:16 }}
       onClick={onClose}>
@@ -38,6 +38,7 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
             <h2 id="mes-commandes-titre" style={ui.titreModal}><Icone nom="commandes" taille={22} style={{ color:T.teal }} />Mes commandes</h2>
             <div className="num" style={{ fontSize:12, color:T.inkSoft, marginTop:4 }}>{pharmacyName}{loading || erreur ? "" : ` · ${pluriel(orders.length, "commande")}`}</div>
           </div>
+          {extra}
           <button className="ex-btn-discret ex-cible" data-focus-initial onClick={onClose} aria-label="Fermer" title="Fermer" style={ui.rond(36)}><Icone nom="fermer" taille={18} /></button>
         </div>
 

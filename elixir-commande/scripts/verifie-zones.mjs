@@ -328,7 +328,11 @@ const FICHIERS_AUTORISES = {
 // Contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md) : fonction NOUVELLE quota-liste.js,
 // en LECTURE SEULE (règles des produits contingentés par quotaProducts de _quota.js, jeton exigé) ; _quota.js et
 // quota-status.js inchangés (le reste de la pharmacie est lu par le même appel que le panier).
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste)\.js$/;
+// API des pharmacies (branche api-pharmacies, 24/10/2026, phase 1 « fondations ») : fonctions NOUVELLES api-v1.js (routeur
+// public /api/v1/*), api-admin.js (onglet 🔌 API), api-compte.js (« Accès API » de la pharmacie) et _api-*.js (clés,
+// stockage des tables privées api_*, réponses problem+json, réglages) ; aucune fonction existante modifiée (_chat-perimetre.js,
+// rate-limit.js, _pharmacies.js, _odoo-rpc.js, auth.js et cors.js : importés, inchangés).
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte)|_api-[a-z-]+)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
@@ -450,7 +454,7 @@ const verifieFichier = (chemin, silencieux) => {
   if (a == null && b == null) return true;
   if (a == null && AJOUTS_AUTORISES.test(chemin)) { assistant.ajoutes++; return true; }
   // fonctions de l'assistant déjà en ligne : ce sont les siennes, pas des fonctions protégées par la refonte
-  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : /peremption/.test(chemin) ? "de la Péremption courte" : /products-sections/.test(chemin) ? "des sections du catalogue" : "de l'Assistant Elixir"})`); return true; }
+  if (a != null && b != null && a !== b && AJOUTS_AUTORISES.test(chemin)) { assistant.modifies++; console.log(`  ~ ${chemin} : modifié (fonction ${/accueil/.test(chemin) ? "de la page d'accueil" : /restock/.test(chemin) ? "des alertes retour" : /push/.test(chemin) ? "des notifications" : /peremption/.test(chemin) ? "de la Péremption courte" : /products-sections/.test(chemin) ? "des sections du catalogue" : /(^|\/)_?api-/.test(chemin) ? "de l'API des pharmacies" : "de l'Assistant Elixir"})`); return true; }
   const permis = FICHIERS_AUTORISES[chemin];
   if (permis?.empreinte && a != null && b != null && a !== b) {
     if (empreinte(b) === permis.empreinte) { assistant.modifies++; return true; }
@@ -470,7 +474,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue, contingentement)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue, contingentement, API des pharmacies)` : ""}`);
 }
 
 // 3. clés de stockage
@@ -554,6 +558,25 @@ console.log("\nBudget du bundle (dist/assets, octets)");
     if (total <= BUDGET) ok(`${total.toLocaleString("fr-FR")} octets ≤ ${BUDGET.toLocaleString("fr-FR")} (marge ${(BUDGET - total).toLocaleString("fr-FR")}) — ${detail}`);
     else ko(`${total.toLocaleString("fr-FR")} octets > budget ${BUDGET.toLocaleString("fr-FR")} — ${detail}`);
   }
+}
+
+// 6. clés de l'API des pharmacies dans le dépôt PUBLIC (conception § 3.2) : aucune clé « elx_live_… » ou « elx_test_… »
+// (40 caractères base62, puis la somme de contrôle) dans les fichiers suivis ou nouveaux de l'arbre de travail. Les tests
+// fabriquent leurs clés à l'exécution ; la documentation n'en montre que des formes tronquées (« elx_test_<votre clé> »).
+console.log("\nClés d'API dans le dépôt (elx_live_ / elx_test_)");
+{
+  const RE_CLE_API = /elx_(live|test)_[0-9A-Za-z]{40}/g;
+  const liste = (...a) => { try { return git("ls-files", ...a, "--", ".").split("\n").filter(Boolean); } catch { return []; } };
+  const suivis = [...new Set([...liste(), ...liste("--others", "--exclude-standard")])]
+    .filter(f => !/(^|\/)(node_modules|dist|dev-fixtures)\//.test(f) && !/\.(png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf|zip|xlsx?)$/i.test(f));
+  const fuites = [];
+  for (const f of suivis) {
+    const t = enCours(f);
+    if (t && RE_CLE_API.test(t)) fuites.push(f);
+    RE_CLE_API.lastIndex = 0;
+  }
+  if (fuites.length) for (const f of fuites) ko(`${f} : contient une clé d'API complète (à retirer, et la clé à révoquer)`);
+  else ok(`${suivis.length} fichiers, aucune clé`);
 }
 
 console.log(`\nRésultat : ${erreurs ? `${erreurs} erreur(s) de définition, ` : ""}${ecarts ? `${ecarts} écart(s)` : "aucun écart"}`);

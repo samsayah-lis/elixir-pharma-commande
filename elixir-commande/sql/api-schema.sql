@@ -1,0 +1,192 @@
+-- ── API des pharmacies (/api/v1) : tables privées du serveur ─────────────────────────────────────
+-- Conception : note de travail « API Elixir pour les pharmacies — V1 » (§ 3, § 5, § 6, § 17) ; contrat interne à venir
+-- dans docs/api.md. À exécuter par Zineb dans l'éditeur SQL de Supabase. Rejouable sans effet (IF [NOT] EXISTS partout).
+--
+-- Sécurité : RLS ACTIVÉ et AUCUNE policy, droits retirés à anon et authenticated (modèle de sql/chat-schema.sql). Ces
+-- tables sont donc illisibles et non modifiables avec la clé anon du navigateur. Seules les fonctions de l'API
+-- (api-v1, api-admin, api-compte) y accèdent, avec la clé serveur SUPABASE_SERVICE_ROLE_KEY (déjà en place). Ne jamais
+-- ajouter de policy ni désactiver le RLS ici.
+--
+-- Aucune clé d'API n'est stockée : seulement son empreinte SHA-256 (hex) et un préfixe d'affichage (« elx_live_Ab3d…k9Qz »).
+-- Le journal des appels ne contient ni corps de requête, ni adresse IP complète (préfixe /24 ou /64), ni e-mail.
+-- Les dates sont en UTC (timestamptz) ; l'API les rend à l'heure de Paris.
+
+-- Réglages (une seule ligne, id = 1) : JSON fusionné avec REGLAGES_DEFAUT de netlify/functions/_api-config.js.
+--   actif            : interrupteur général (« Tout couper » : toutes les routes en 503 api_suspendue, sauf /v1/etat) ;
+--   commandes_live   : « Commandes par API » — fermées tant que les prérequis ne sont pas tous cochés (le serveur refuse
+--                      de les ouvrir avant) ; les commandes de TEST (clés elx_test_) n'en dépendent pas ;
+--   prerequis        : liste de contrôle de l'onglet 🔌 API (fait, date, auteur, note).
+-- Pas dans ec_config : ec_config est lisible publiquement par config-get.
+create table if not exists api_reglages (
+  id          int primary key default 1 check (id = 1),
+  valeur      text not null default '{}',
+  updated_at  timestamptz not null default now()
+);
+insert into api_reglages (id) values (1) on conflict (id) do nothing;
+
+-- Accès : une ligne par fiche commerciale Odoo (société 2, ou partagée cliente d'Elixir), ouverte par Elixir à la demande.
+-- La pharmacie crée ensuite ses clés dans son compte (api-compte) ; variante admin tracée pour une pharmacie sans compte.
+create table if not exists api_acces (
+  odoo_id                 int primary key check (odoo_id > 0),
+  nom                     text,                         -- relevés dans Odoo à l'ouverture (admin, /v1/etat)
+  cip                     text,
+  ville                   text,
+  actif                   boolean not null default true,   -- false : accès suspendu (403 acces_suspendu)
+  portees                 text[] not null default '{lecture,commande}'
+                          check (portees <@ array['lecture', 'commande']::text[]),
+  -- auto   : commande acceptée, mise en file après le délai d'annulation (sauf anomalie : « à vérifier ») ;
+  -- bloque : nouvelles commandes refusées (403 commandes_bloquees), celles en attente ne partent pas
+  mode                    text not null default 'auto' check (mode in ('auto', 'bloque')),
+  delai_annulation_min    int not null default 10 check (delai_annulation_min between 0 and 20),
+  -- plafonds (réglables pharmacie par pharmacie)
+  plafond_lignes          int not null default 100 check (plafond_lignes between 1 and 200),
+  plafond_boites          int not null default 1000 check (plafond_boites between 1 and 100000),
+  plafond_montant_ht      numeric(12, 2) not null default 3000 check (plafond_montant_ht > 0),
+  plafond_commandes_jour  int not null default 10 check (plafond_commandes_jour between 1 and 200),
+  -- anomalies nettes → commande gardée « à vérifier » (jamais d'envoi automatique) :
+  --   ligne au-delà de anomalie_facteur × la quantité mensuelle habituelle de ce produit pour cette pharmacie ;
+  --   quasi-doublon d'une commande reçue depuis moins de anomalie_doublon_min minutes, tous canaux (0 : contrôle coupé)
+  anomalie_active         boolean not null default true,
+  anomalie_facteur        numeric(6, 2) not null default 10 check (anomalie_facteur >= 2),
+  anomalie_doublon_min    int not null default 30 check (anomalie_doublon_min between 0 and 1440),
+  ip_autorisees           text[],                       -- adresses ou réseaux (CIDR) autorisés ; null : tous
+  liste_prix_id           int,                          -- liste de prix de la fiche (Odoo, société 2)
+  liste_prix_lue_le       timestamptz,
+  test_valide_le          timestamptz,                  -- parcours de test réussi (ou validé par l'admin, tracé)
+  test_valide_par         text,
+  cgu_version             text,                         -- conditions d'utilisation de l'API acceptées (preuve)
+  cgu_acceptees_le        timestamptz,
+  cgu_acceptees_par       text,
+  cgu_preuve              text,                         -- JSON : empreinte du texte, réseau, mode (en ligne, signature)
+  ouvert_par              text not null,
+  ouvert_le               timestamptz not null default now(),
+  suspendu_le             timestamptz,
+  suspendu_par            text,
+  motif_suspension        text,
+  note                    text,
+  created_at              timestamptz not null default now(),
+  updated_at              timestamptz not null default now()
+);
+
+-- Clés : une par outil (libellé), live ou test. Le secret n'est montré qu'UNE fois, à la création.
+create table if not exists api_cles (
+  id                    uuid primary key default gen_random_uuid(),
+  odoo_id               int not null references api_acces (odoo_id),
+  environnement         text not null check (environnement in ('live', 'test')),
+  empreinte             text not null unique check (empreinte ~ '^[0-9a-f]{64}$'),   -- sha256 hex de la clé
+  prefixe               text not null,                 -- affichage : « elx_live_Ab3d…k9Qz »
+  libelle               text not null check (char_length(libelle) between 1 and 60),
+  portees               text[] not null check (portees <@ array['lecture', 'commande']::text[] and cardinality(portees) > 0),
+  creee_par             text not null,
+  creee_par_role        text not null check (creee_par_role in ('pharmacie', 'admin')),
+  created_at            timestamptz not null default now(),
+  expire_le             timestamptz,                   -- rotation : l'ancienne clé reste valide 7 jours
+  revoquee_le           timestamptz,
+  revoquee_par          text,
+  motif_revocation      text,
+  remplace              uuid references api_cles (id),
+  derniere_utilisation  timestamptz,                   -- mise à jour au plus une fois par minute
+  dernier_reseau        text                           -- préfixe /24 ou /64
+);
+create index if not exists api_cles_fiche on api_cles (odoo_id, environnement);
+
+-- Commandes reçues par l'API : réservation (idempotence) puis preuve. Une ligne par (fiche, environnement, Idempotency-Key).
+-- Le numéro de commande (order_id) est choisi par le serveur et écrit AVANT l'insertion dans elixir_orders.
+create table if not exists api_commandes (
+  id                 uuid primary key default gen_random_uuid(),
+  odoo_id            int not null,
+  cle_id             uuid not null references api_cles (id),
+  test               boolean not null,
+  idempotency_key    text not null check (idempotency_key ~ '^[A-Za-z0-9_.:-]{8,128}$'),
+  empreinte_requete  text not null,                    -- sha256 du corps normalisé
+  reference_client   text check (reference_client is null or char_length(reference_client) <= 40),
+  order_id           text,                             -- elixir_orders.id (« T… » en test : jamais dans elixir_orders)
+  etat               text not null,                    -- en_cours, refusee, recue, a_verifier, envoi_demande, annulee…
+  motif              text,
+  statut_http        int,
+  demande            text,                             -- corps normalisé (preuve), jamais de donnée personnelle
+  reponse            text,                             -- réponse rendue (rejeu à l'identique)
+  envoi_apres        timestamptz,                      -- fin du délai d'annulation
+  envoi_resultat     text,
+  recu_le            timestamptz not null default now(),
+  updated_at         timestamptz not null default now(),
+  unique (odoo_id, test, idempotency_key)
+);
+create unique index if not exists api_commandes_reference on api_commandes (odoo_id, test, reference_client)
+  where reference_client is not null and etat <> 'refusee';
+create index if not exists api_commandes_a_envoyer on api_commandes (etat, envoi_apres);
+create index if not exists api_commandes_commande on api_commandes (order_id);
+create index if not exists api_commandes_fiche on api_commandes (odoo_id, recu_le);
+
+-- Journal des appels : ni corps, ni IP complète, ni e-mail. Conservé 13 mois.
+create table if not exists api_journal (
+  id             bigint generated always as identity primary key,
+  at             timestamptz not null default now(),
+  request_id     uuid not null,
+  cle_id         uuid,
+  odoo_id        int,
+  environnement  text,
+  methode        text not null,
+  route          text not null,                        -- gabarit : /v1/commandes/{id}
+  statut         int not null,
+  code           text,                                 -- code d'erreur (problem+json) ou null
+  duree_ms       int,
+  reseau         text                                  -- préfixe /24 ou /64
+);
+create index if not exists api_journal_at on api_journal (at);
+create index if not exists api_journal_cle on api_journal (cle_id, at);
+create index if not exists api_journal_fiche on api_journal (odoo_id, at);
+
+-- Événements de cycle de vie (preuve) : accès ouvert ou modifié, CGU acceptées, clé créée, remplacée ou révoquée,
+-- test validé par l'admin, réglages, prérequis, « Tout couper ». Jamais de secret.
+create table if not exists api_evenements (
+  id        bigint generated always as identity primary key,
+  at        timestamptz not null default now(),
+  type      text not null,
+  odoo_id   int,
+  cle_id    uuid,
+  par       text,                                      -- compte (pharmacie) ou e-mail admin
+  role      text check (role in ('pharmacie', 'admin', 'systeme')),
+  detail    text                                       -- JSON
+);
+create index if not exists api_evenements_fiche on api_evenements (odoo_id, at);
+
+-- Compteurs de débit durables (communs à toutes les instances) : fenêtre fixe, incrément atomique.
+-- Clés : « ip:<empreinte> », « ipko:<empreinte> », « cle:<uuid>:<classe>:<fenêtre> » (aucune IP en clair). Purge : 2 jours.
+create table if not exists api_compteurs (
+  cle      text not null,
+  fenetre  timestamptz not null,
+  n        int not null default 0,
+  primary key (cle, fenetre)
+);
+create index if not exists api_compteurs_fenetre on api_compteurs (fenetre);
+
+-- +1 sur la fenêtre en cours → nouvelle valeur
+create or replace function api_compter(p_cle text, p_fenetre_s int) returns int
+language sql set search_path = public as $$
+  insert into api_compteurs (cle, fenetre, n)
+  values (p_cle, to_timestamp(floor(extract(epoch from now()) / p_fenetre_s) * p_fenetre_s), 1)
+  on conflict (cle, fenetre) do update set n = api_compteurs.n + 1
+  returning n;
+$$;
+-- valeur de la fenêtre en cours, sans incrément (refus de clés par réseau)
+create or replace function api_lire_compteur(p_cle text, p_fenetre_s int) returns int
+language sql stable set search_path = public as $$
+  select coalesce((select n from api_compteurs
+    where cle = p_cle and fenetre = to_timestamp(floor(extract(epoch from now()) / p_fenetre_s) * p_fenetre_s)), 0);
+$$;
+revoke all on function api_compter(text, int) from public, anon, authenticated;
+revoke all on function api_lire_compteur(text, int) from public, anon, authenticated;
+grant execute on function api_compter(text, int) to service_role;
+grant execute on function api_lire_compteur(text, int) to service_role;
+
+-- RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated.
+alter table api_reglages   enable row level security;
+alter table api_acces      enable row level security;
+alter table api_cles       enable row level security;
+alter table api_commandes  enable row level security;
+alter table api_journal    enable row level security;
+alter table api_evenements enable row level security;
+alter table api_compteurs  enable row level security;
+revoke all on table api_reglages, api_acces, api_cles, api_commandes, api_journal, api_evenements, api_compteurs
+  from anon, authenticated;

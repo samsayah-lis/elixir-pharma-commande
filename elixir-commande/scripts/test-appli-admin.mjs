@@ -112,7 +112,9 @@ eq("admin : la page de départ affiche l'admin (script d'index.html)", executer(
 
 // ── 3. Routage Netlify : /admin servi par index.html ──
 const regles = lire("public/_redirects").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#"));
-eq("_redirects : une seule règle, /* → /index.html 200, non forcée (fichiers réels servis d'abord : sw.js, manifestes, assets)", regles.map((l) => l.split(/\s+/)), [["/*", "/index.html", "200"]]);
+// API des pharmacies (24/10/2026) : la route /api/v1/* (forcée vers sa fonction) passe AVANT /* ; /* reste la dernière règle, non forcée
+eq("_redirects : /api/v1/* → api-v1 (forcée), puis /* → /index.html 200, non forcée (fichiers réels servis d'abord : sw.js, manifestes, assets)", regles.map((l) => l.split(/\s+/)),
+  [["/api/v1/*", "/.netlify/functions/api-v1/:splat", "200!"], ["/*", "/index.html", "200"]]);
 const toml = lire("netlify.toml");
 const redirections = [...toml.matchAll(/\[\[redirects\]\]([\s\S]*?)(?=\n\[|$)/g)].map((m) => m[1]);
 eq("netlify.toml : redirection /* → /index.html 200 non forcée, aucune autre", redirections.map((r) => [/from = "\/\*"/.test(r), /to = "\/index\.html"/.test(r), /status = 200/.test(r), /force/.test(r)]), [[true, true, true, false]]);

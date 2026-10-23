@@ -3,6 +3,8 @@ import * as XLSX from "xlsx";
 import { estPeremption, badgePeremption, datePeremption, consigneOdoo, remiseLigne } from "./peremption-panier.js";
 // Onglet « Péremptions » (« Odoo facture la remise », docs/peremption-odoo.md) : chargé à la demande, à l'ouverture de l'onglet
 const PeremptionsAdmin = React.lazy(() => import("./components/PeremptionsAdmin.jsx"));
+// Onglet « 🔌 API » (API des pharmacies, /api/v1) : chargé à la demande, à l'ouverture de l'onglet
+const AdminApi = React.lazy(() => import("./components/AdminApi.jsx"));
 import AdminSearchML from "./components/AdminSearchML";
 import AdminOrderKPIs from "./components/AdminOrderKPIs";
 import AdminDisplay from "./components/AdminDisplay";
@@ -1085,6 +1087,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     {k:"justif",   label:"📑 Justificatifs labos",icon:"📑"},
     {k:"sanofipro",label:"💉 Sanofi Pro",icon:"💉"},
     {k:"assistant",label:"💬 Assistant",icon:"💬"},
+    {k:"api",      label:"🔌 API",       icon:"🔌"},
     {k:"notifications",label:"📲 Notifications",icon:"📲"},   // 📲 et non 🔔 : sur téléphone, seules les icônes s'affichent (🔔 = Alertes retour)
     {k:"grouporders",label:"🤝 Groupements",icon:"🤝"},
     {k:"campaigns",label:"🏗️ Campagnes",  icon:"🏗️"},
@@ -1685,6 +1688,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         )}
         {tab==="assistant"&&(
           <AdminAssistant adminFetch={adminFetch} flash={flash} onDirtyChange={onAssistantDirty} />
+        )}
+        {tab==="api"&&(
+          <React.Suspense fallback={<div style={{padding:40,textAlign:"center",color:T.inkMute}}>Chargement de l'onglet API…</div>}>
+            <AdminApi adminFetch={adminFetch} flash={flash} />
+          </React.Suspense>
         )}
         {/* Notifications de l'appli (docs/notifications.md) : service, ouverture, appareils de l'admin, annonces */}
         {tab==="notifications"&&(

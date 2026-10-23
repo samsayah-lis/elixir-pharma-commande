@@ -1,1 +1,3 @@
+# API des pharmacies (netlify/functions/api-v1.js) : AVANT la règle « /* », sinon /api/v1/… servirait index.html
+/api/v1/*  /.netlify/functions/api-v1/:splat  200!
 /*    /index.html   200

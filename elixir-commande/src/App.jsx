@@ -43,6 +43,8 @@ const AdminPanel = React.lazy(() => import("./AdminPanel").catch(() => ({ defaul
 import { lireOffres } from "./components/accueil/precharge.js";
 import SqueletteAccueil, { AccueilIndisponible, salleProbable } from "./components/accueil/Squelette.jsx";
 const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catch(() => ({ default: AccueilIndisponible })));
+// « Accès API » dans Mes commandes (API des pharmacies) : lien et panneau chargés à la demande ; échec du chargement : rien
+const LienApi = React.lazy(() => import("./components/api/LienApi.jsx").catch(() => ({ default: () => null })));
 // Contingentement dans la ligne de l'article (docs/contingentement-ligne.md) : contexte ici, pastille chargée à la demande
 import { ContexteQuota, Quota, chargerPastille, tiersQuota } from "./components/quota/entree.jsx";
 
@@ -3691,6 +3693,7 @@ export default function App() {
             onReconnecter={actingFor ? null : demanderReconnexion}
             pharmacyName={pharmacyName}
             onClose={() => setShowMyOrders(false)}
+            extra={<React.Suspense fallback={null}><LienApi appel={appelAuthentifie} pour={actingFor?.odoo_id} qui={actingFor ? `a${actingFor.odoo_id}` : pharmacyEmail} /></React.Suspense>}
             // Assistant Elixir : « Une question sur cette commande ? » — seule la référence du site part (revérifiée par le serveur)
             onQuestion={assistantDispo ? (order) => ouvrirAssistant({ commande_site_id: String(order.id), date: order.date }) : undefined}
             onReorder={async (items) => {
