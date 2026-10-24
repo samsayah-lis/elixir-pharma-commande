@@ -27,6 +27,7 @@ Décisions de Zineb (24/10/2026) :
 | `netlify/functions/api-commandes-cron.js` | Planifiée toutes les 2 min : envois dus, réservations en suspens |
 | `netlify/functions/api-envoi-background.js` | Envoi d'une commande par le relais existant (`envoiAuto`) |
 | `netlify/functions/_api-stock.js` | Tables privées `api_*` (clé serveur), commandes du site écrites par l'API |
+| `netlify/functions/_api-avis.js` | P9 : e-mails d'avis des clés (créée, remplacée, révoquée) et alertes d'usage du passage planifié `api-cron` (§ 11) |
 | `sql/api-schema.sql` | Tables `api_*` : RLS sans policy, droits retirés à anon et authenticated |
 | `docs/api/openapi.yaml` | Description OpenAPI 3.1 (servie à `/api/openapi.yaml` par `scripts/api-doc-plugin.mjs`) |
 | `public/api/index.html` | Documentation des pharmacies (page statique `/api/`, hors bundle ; `/api/docs` y renvoie) |
@@ -41,7 +42,8 @@ Décisions de Zineb (24/10/2026) :
   - P3 : fin de la quarantaine des commandes du site (pas avant le 02/11/2026) ;
   - P4 : identifiants du relais renouvelés et envoi automatique du site stable ;
   - P7 : conditions d'utilisation de l'API validées par un avocat ;
-  - P9 : avis par e-mail des clés et alertes d'usage en place (développement à livrer : case impossible à cocher d'ici là).
+  - P9 : avis par e-mail des clés et alertes d'usage en place (livrés le 24/10/2026, § 11 ; Zineb coche la case après avoir reçu
+    un premier e-mail d'avis).
 - Rejeu d'une commande DÉJÀ enregistrée (même `Idempotency-Key`, même corps) : rendu à l'identique même si l'interrupteur,
   les CGU ou le mode de l'accès ont changé depuis ; seule une nouvelle commande est refusée.
 - Décocher une case referme l'interrupteur. Une commande acceptée puis rattrapée par une fermeture ne part pas : elle passe
@@ -219,8 +221,7 @@ complète, ni numéro de commande dans la route.
 Voir `docs/api/mise-en-service.md` (pas à pas) :
 
 - exécuter `sql/api-schema.sql` (il se rejoue sans effet) ;
-- cocher les prérequis P1, P3, P4, P7 quand ils sont faits ; P9 s'ouvre avec la livraison des avis et alertes ; puis ouvrir
-  « Commandes par API ».
+- cocher les prérequis P1, P3, P4, P7 et P9 quand ils sont faits ; puis ouvrir « Commandes par API ».
 
 ## 10. Documentation : garder la page et l'OpenAPI justes
 
@@ -229,3 +230,41 @@ reportée dans `docs/api/openapi.yaml` ET dans `public/api/index.html` : `script
 (champ non documenté, statut ou code non prévu, ancre `#erreur-<code>` absente, débit ou plafond différent du code). Seuls
 des ajouts compatibles dans `/v1` ; une rupture ouvre `/v2` avec six mois de préavis. Mettre à jour `VERSION_API`,
 `DERNIERE_MODIFICATION` (`_api-config.js`), `info.version` de l'OpenAPI et le journal des changements de la page.
+
+## 11. Avis par e-mail des clés et alertes d'usage (P9, `_api-avis.js`)
+
+Règles appliquées (constantes `AVIS` et `ALERTES` de `_api-config.js`) :
+
+- **E-mail d'avis** à chaque clé **créée, remplacée ou révoquée**, depuis le compte de la pharmacie (`api-compte`), depuis
+  l'admin (`api-admin` : clé « sans compte », révocation) ou automatiquement (`api-cron`). Destinataires : les adresses de
+  compte du site de la fiche **encore présentes sur la fiche Odoo** (celles de l'Assistant : `identifier()`, ou
+  `comptesEmailDeFiche`) ; copie à Elixir (`GP_ADMIN_MAIL`, à défaut `pharmacien@elixirpharma.fr`) pour une clé de
+  **production** ou une révocation automatique ; fiche sans aucune adresse de compte : Elixir seul, avec la mention. L'e-mail
+  ne contient **jamais la clé** : son début (`prefixe`), son nom, ses droits, l'environnement, la date, l'origine (compte,
+  Elixir, automatique), et ce qu'il faut faire si l'opération n'est pas attendue. Envoi par `mail.mail` d'Odoo (comme les
+  justificatifs et les alertes du relais), 5 s au plus ; un envoi raté n'empêche jamais l'action (la réponse dit
+  `avis_envoye: false`), il est tracé (événement `avis_echec`) et repris par `api-cron` jusqu'à 3 fois en 24 h (événement
+  `avis_envoye` au succès). Elixir reçoit toujours en plus une notification de l'admin pour une clé de production.
+- **Alertes** (`api-cron`, toutes les 15 min ; chacune = événement `alerte_*` à `role: systeme`, notification à Elixir, e-mail
+  à Elixir ; **jamais deux fois pour le même fait**, les événements eux-mêmes servant de mémoire ; 5 alertes au plus par
+  passage, le reste au passage suivant) :
+  - `alerte_cle_inactive` : clé active sans appel depuis **90 jours** (jamais utilisée : depuis sa création) ; à
+    **180 jours**, elle est **révoquée automatiquement** (`cle_revoquee`, `role: systeme`, motif « inutilisée depuis N jours »)
+    avec e-mail à la pharmacie et copie Elixir. Contrôle une fois par jour (première passe de 7 h, heure de Paris) ; une clé
+    réutilisée puis oubliée de nouveau est signalée de nouveau ;
+  - `alerte_nouveau_reseau` : une clé déjà utilisée avant la fenêtre (30 min) appelle depuis un réseau (`/24` ou `/64`)
+    jamais vu pour elle dans le journal ; sans objet pour un accès à réseaux autorisés ; une alerte par (clé, réseau) sur
+    30 jours ;
+  - `alerte_reseau_refuse` : appels refusés `ip_non_autorisee` dans la dernière heure ; une alerte par clé et par jour ;
+  - `alerte_erreurs` : au moins **20 appels** sur la dernière heure et au moins **20 % de 4xx** ; une alerte par clé et par
+    heure ;
+  - `alerte_volume` : appels du jour (heure de Paris) d'au moins **300** et supérieurs à **3 ×** la moyenne journalière des
+    14 jours précédents (clés utilisées aujourd'hui ; contrôle à la première passe de chaque heure) ; une alerte par clé et
+    par jour.
+  Les appels faits sur un hôte d'aperçu (`environnement: apercu`) ne comptent pas. Le journal relu est borné à 5 000 lignes
+  par passage (`journal_tronque` dans le bilan au-delà). Détails des événements : jamais d'adresse IP complète (réseaux
+  seulement), jamais d'e-mail autre que `par`.
+- **Où les voir** : onglet 🔌 API, section « Alertes » (30 jours), historique de chaque accès (avis envoyés ou en échec,
+  alertes), notifications de l'admin ; la pharmacie voit la mention des avis dans « Accès API ». Un résumé quotidien par
+  e-mail n'est pas prévu en V1.
+- **Tests** : `scripts/test-api-avis.mjs` (faux Odoo : aucun e-mail réel).

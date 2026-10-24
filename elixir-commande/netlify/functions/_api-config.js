@@ -8,7 +8,7 @@
 // Dépôt public : aucun secret, aucune donnée réelle ici.
 import crypto from "node:crypto";
 
-export const VERSION_API = "1.0.0";
+export const VERSION_API = "1.0.1";
 export const DERNIERE_MODIFICATION = "2026-10-24";
 
 // Droits d'une clé (et d'un accès) : « documents » (factures, avoirs, bons de livraison et leurs PDF) est séparé de « lecture »
@@ -115,10 +115,32 @@ export const PREREQUIS = [
   { id: "P4", libelle: "Identifiants du relais renouvelés et envoi automatique du site stable" },
   { id: "P7", libelle: "Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé)" },
   // revue de sécurité du 24/10/2026 : avis par e-mail à la pharmacie (clé créée, remplacée, révoquée) et alertes d'usage
-  // (nouveau réseau, volume inhabituel, erreurs, clé inutilisée) — en attendant, Elixir est prévenu (notification) de
-  // chaque clé de production créée, remplacée ou révoquée
-  { id: "P9", libelle: "Avis par e-mail des clés et alertes d'usage de l'API en place", indisponible: "développement à livrer avant l'ouverture des commandes réelles" },
+  // (nouveau réseau, volume inhabituel, erreurs, clé inutilisée) — livrés le 24/10/2026 (_api-avis.js : e-mails par
+  // mail.mail d'Odoo depuis api-compte, api-admin et le passage planifié api-cron, alertes dans api-cron). Zineb coche la
+  // case après avoir vu un premier e-mail d'avis et une alerte dans l'onglet 🔌 API (docs/api/mise-en-service.md § 2).
+  { id: "P9", libelle: "Avis par e-mail des clés et alertes d'usage de l'API en place" },
 ];
+
+// ── P9 : avis par e-mail des clés et alertes d'usage (_api-avis.js) ──
+// AVIS : e-mail à la pharmacie (adresses de compte encore sur la fiche Odoo) à chaque clé créée, remplacée ou révoquée, copie
+// à Elixir pour une clé de production ou une révocation automatique ; envoi raté (Odoo muet) tracé (api_evenements
+// « avis_echec ») et repris par api-cron jusqu'à tentatives_max fois en reprise_h heures.
+export const AVIS = { tentatives_max: 3, reprise_h: 24, delai_odoo_ms: 5000, reprises_par_passage: 5 };
+// ALERTES (api-cron, toutes les 15 min ; chaque alerte = événement api_evenements « alerte_* », notification à Elixir et
+// e-mail à Elixir, jamais deux fois pour le même fait) :
+//  • clé active inutilisée depuis inactive_jours → signalée ; depuis revocation_jours → révoquée automatiquement (e-mail à
+//    la pharmacie, copie Elixir) ; contrôle une fois par jour (première passe de 7 h, heure de Paris) ;
+//  • nouveau réseau : une clé déjà utilisée auparavant appelle depuis un réseau (/24 ou /64) jamais vu pour elle ; sans
+//    objet pour un accès à réseaux autorisés (un autre réseau y est refusé : alerte « réseau refusé » à la place) ;
+//  • erreurs : au moins erreurs_min appels sur erreurs_fenetre_min minutes et plus de erreurs_part de 4xx (une alerte par
+//    clé et par heure) ;
+//  • volume : appels du jour (heure de Paris) d'au moins volume_min ET supérieurs à volume_facteur × la moyenne journalière
+//    des volume_historique_jours jours précédents (contrôle à la première passe de chaque heure, une alerte par clé et
+//    par jour).
+//  journal_max : lignes du journal relues par passage (au-delà, le passage le dit et ne conclut rien de plus) ;
+//  par_passage_max : alertes (e-mails) envoyées au plus par passage — le reste attend le passage suivant.
+export const ALERTES = { inactive_jours: 90, revocation_jours: 180, reseau_fenetre_min: 30, erreurs_fenetre_min: 60, erreurs_min: 20, erreurs_part: 0.2,
+  volume_facteur: 3, volume_min: 300, volume_historique_jours: 14, journal_max: 5000, par_passage_max: 5 };
 
 export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: {}, cips_exclus: [] };
 // produits exclus de l'API (réglage de l'onglet 🔌 API) : CIP13 ou codes-barres, 500 au plus

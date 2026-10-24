@@ -68,11 +68,12 @@ const minuitParis = (ms) => {
   return ["+01:00", "+02:00"].map(o => Date.parse(`${jour}T00:00:00${o}`)).find(m => new Date(m).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" }) === jour
     && new Date(m - 1000).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" }) !== jour);
 };
-// P9 (avis par e-mail et alertes) : impossible à cocher tant que le développement n'est pas livré ; les essais qui ouvrent les
-// commandes réelles simulent sa livraison
+// P9 (avis par e-mail et alertes, _api-avis.js) : livré le 24/10/2026, la case se coche comme P1, P4 et P7 ; un prérequis
+// « indisponible » (développement à livrer) reste impossible à cocher — vérifié avec un prérequis d'essai, retiré ensuite
 const P9 = conf.PREREQUIS.find(p => p.id === "P9");
-const P9_INDISPONIBLE = P9.indisponible;
-const livrerP9 = (oui) => { if (oui) delete P9.indisponible; else P9.indisponible = P9_INDISPONIBLE; };
+// e-mails d'avis (P9) : doublure — aucun Odoo ici ; les e-mails eux-mêmes sont testés par scripts/test-api-avis.mjs
+const avisEnvoyes = [];
+const fauxAvis = { avisCle: async (stock, a) => { avisEnvoyes.push({ type: a.type, environnement: a.cle?.environnement, role: a.role, comptes: a.comptes || [] }); return true; } };
 
 // ═══ 1. Clés ═══
 {
@@ -149,10 +150,13 @@ const livrerP9 = (oui) => { if (oui) delete P9.indisponible; else P9.indisponibl
   const avant = new Date("2026-11-01T22:59:00Z"), apres = new Date("2026-11-01T23:00:00Z");   // minuit à Paris le 02/11
   const tous = { commandes_live: true, prerequis: Object.fromEntries(conf.PREREQUIS.map(p => [p.id, { fait: true }])) };
   eq("rien de coché", conf.commandesOuvrables({}, apres).manquants, ["P1", "P3", "P4", "P7", "P9"]);
-  eq("P9 : jamais cochable tant que le développement n'est pas livré", [conf.prerequisEtat({}, apres).find(p => p.id === "P9").cochable, !!P9_INDISPONIBLE], [false, true]);
-  eq("tout coché à la date, P9 compris : FERMÉ tant que P9 n'est pas livré", conf.commandesOuvrables(tous, apres), { ok: false, manquants: ["P9"] });
-  eq("…commandes réelles refusées", conf.commandesLiveOuvertes(tous, apres), false);
-  livrerP9(true);
+  eq("P9 livré : cochable, sans texte d'indisponibilité", [conf.prerequisEtat({}, apres).find(p => p.id === "P9").cochable, P9.indisponible ?? null], [true, null]);
+  // un prérequis « développement à livrer » reste impossible à cocher et ferme les commandes réelles (mécanisme conservé)
+  conf.PREREQUIS.push({ id: "P0", libelle: "Essai", indisponible: "développement à livrer" });
+  eq("prérequis indisponible : jamais cochable", conf.prerequisEtat({}, apres).find(p => p.id === "P0").cochable, false);
+  eq("tout coché à la date, sauf l'indisponible : FERMÉ", conf.commandesOuvrables({ ...tous, prerequis: { ...tous.prerequis, P0: { fait: true } } }, apres), { ok: false, manquants: ["P0"] });
+  conf.PREREQUIS.pop();
+  eq("…sans lui : les cinq prérequis suffisent", conf.commandesOuvrables(tous, apres), { ok: true, manquants: [] });
   eq("P3 pas cochable avant le 02/11 (Paris)", conf.prerequisEtat({}, avant).find(p => p.id === "P3").cochable, false);
   eq("P3 cochable le 02/11 à minuit (Paris)", conf.prerequisEtat({}, apres).find(p => p.id === "P3").cochable, true);
   eq("tout coché mais avant la date : fermé", conf.commandesOuvrables(tous, avant), { ok: false, manquants: ["P3"] });
@@ -160,7 +164,6 @@ const livrerP9 = (oui) => { if (oui) delete P9.indisponible; else P9.indisponibl
   eq("interrupteur ouvert + prérequis : commandes réelles", conf.commandesLiveOuvertes(tous, apres), true);
   eq("interrupteur fermé : non", conf.commandesLiveOuvertes({ ...tous, commandes_live: false }, apres), false);
   eq("une case décochée : non", conf.commandesLiveOuvertes({ ...tous, prerequis: { ...tous.prerequis, P4: { fait: false } } }, apres), false);
-  livrerP9(false);
   eq("droits : lecture, commande, documents (factures et bons à part)", conf.PORTEES, ["lecture", "commande", "documents"]);
   eq("limites des clés de test : plus de marge pour développer", [conf.limiteDe("commande", "test").par_minute, conf.limiteDe("commande", "live").par_minute, conf.limiteDe("annulation", "test").par_minute],
     [conf.LIMITES_TEST.commande.par_minute, conf.LIMITES.commande.par_minute, conf.LIMITES.annulation.par_minute]);
@@ -243,7 +246,7 @@ eq("droits gardés dans l'ordre", cleTest.cle.portees, ["lecture", "commande"]);
   eq("etat : plafonds par défaut", e.commandes.plafonds, { lignes_par_commande: 100, boites_par_commande: 1000, montant_ht_par_commande: 3000, commandes_par_jour: 10 });
   eq("etat : délai d'annulation", e.commandes.delai_annulation_min, 10);
   eq("etat : mention des prix", e.prix, { base: "liste_pharmacie", mention: "Prix HT de votre liste, hors offres du site" });
-  eq("etat : version", e.version_api, "1.0.0");
+  eq("etat : version", e.version_api, conf.VERSION_API);
   eq("etat : clé (préfixe seulement)", e.cle.prefixe, cleTest.cle.prefixe);
   vrai("etat : jamais le secret", !r.body.includes(cleTest.secret));
   vrai("etat : en-têtes de débit", /"minute";q=60;w=60/.test(r.headers["RateLimit-Policy"]) && /"minute";r=59;/.test(r.headers.RateLimit));
@@ -475,7 +478,7 @@ const identifier = async (event) => {
   if (!CTX[j]) throw Object.assign(new Error("fiche"), { status: 403, code: "fiche", identite: true });
   return CTX[j];
 };
-const hc = compte.creerHandler({ stock, identifier, maintenant, journal: silence });
+const hc = compte.creerHandler({ stock, identifier, maintenant, journal: silence, avis: fauxAvis });
 const poste = (h, qui, body, host = "elixir-commande.expepharma.com") => h({ httpMethod: "POST", path: "/.netlify/functions/x",
   headers: { host, authorization: `Bearer ${qui}`, "x-nf-client-connection-ip": "203.0.113.20", origin: "https://elixir-commande.expepharma.com" }, body: JSON.stringify(body) });
 {
@@ -590,7 +593,7 @@ const poste = (h, qui, body, host = "elixir-commande.expepharma.com") => h({ htt
 const verifierAdmin = async (event) => String(event.headers?.authorization || "") === "Bearer admin"
   ? { admin: { email: "equipe@elixir.test" }, error: null } : { error: { statusCode: 403, headers: {}, body: JSON.stringify({ error: "Accès admin requis" }) } };
 const listePrix = async (id) => (id === 595 ? 5 : 12);
-const ha = admin.creerHandler({ stock, verifierAdmin, verifierFiche, listePrix, maintenant, journal: silence });
+const ha = admin.creerHandler({ stock, verifierAdmin, verifierFiche, listePrix, maintenant, journal: silence, avis: fauxAvis, comptes: async () => ["compte@pharmacie-exemple.test"] });
 const adm = (body, { qui = "admin", host = "elixir-commande.expepharma.com" } = {}) => ha({ httpMethod: "POST", headers: { host, authorization: `Bearer ${qui}` }, body: JSON.stringify(body) });
 const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elixir-commande.expepharma.com", authorization: `Bearer ${qui}` }, queryStringParameters: q });
 {
@@ -601,7 +604,8 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   let t = corps(r);
   eq("tableau : réglages", [t.reglages.actif, t.reglages.commandes_live, t.commandes_production], [true, false, "fermees"]);
   eq("tableau : 5 prérequis", t.prerequis.map(p => p.id), ["P1", "P3", "P4", "P7", "P9"]);
-  eq("tableau : P9 indisponible (texte affiché)", [t.prerequis.find(p => p.id === "P9").cochable, !!t.prerequis.find(p => p.id === "P9").indisponible], [false, true]);
+  eq("tableau : P9 livré, cochable", [t.prerequis.find(p => p.id === "P9").cochable, t.prerequis.find(p => p.id === "P9").indisponible], [true, null]);
+  eq("tableau : alertes (P9) listées, aucune pour l'instant", t.alertes, []);
   eq("tableau : P3 pas encore cochable", t.prerequis.find(p => p.id === "P3").cochable, false);
   eq("tableau : défauts d'un accès", [t.defauts.mode, t.defauts.delai_annulation_min, t.defauts.plafond_lignes, t.defauts.plafond_boites, t.defauts.plafond_montant_ht,
     t.defauts.plafond_commandes_jour, t.defauts.anomalie_facteur, t.defauts.anomalie_doublon_min], ["auto", 10, 100, 1000, 3000, 10, 10, 30]);
@@ -617,12 +621,15 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   eq("P1, P4, P7 cochés", r.statusCode, 200);
   r = await adm({ action: "prerequis", id: "P0", fait: true });
   eq("prérequis inconnu : 400", r.statusCode, 400);
+  // un prérequis « développement à livrer » ne se coche pas (mécanisme conservé, aucun prérequis de ce type aujourd'hui)
+  conf.PREREQUIS.push({ id: "P0", libelle: "Essai", indisponible: "développement à livrer" });
   t = corps(await vue({ vue: "tableau" }));
-  r = await adm({ action: "prerequis", id: "P9", fait: true, base: t.updated_at });
-  eq("P9 tant que le développement n'est pas livré : 409, message clair", [r.statusCode, /livrer/.test(corps(r).error)], [409, true]);
-  livrerP9(true);   // la suite simule sa livraison
+  r = await adm({ action: "prerequis", id: "P0", fait: true, base: t.updated_at });
+  eq("prérequis indisponible : 409, message clair", [r.statusCode, /livrer/.test(corps(r).error)], [409, true]);
+  conf.PREREQUIS.pop();
   t = corps(await vue({ vue: "tableau" }));
-  r = await adm({ action: "prerequis", id: "P9", fait: true, note: "livré", base: t.updated_at });
+  r = await adm({ action: "prerequis", id: "P9", fait: true, note: "premier e-mail d'avis reçu", base: t.updated_at });
+  eq("P9 livré : coché", r.statusCode, 200);
   r = await adm({ action: "reglages", commandes_live: true, base: "2020-01-01T00:00:00.000Z" });
   eq("réglages lus périmés : 409 conflit", corps(r).conflit, true);
   T = Date.parse("2026-11-01T23:00:00Z");   // 02/11/2026, minuit à Paris
@@ -647,7 +654,6 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   vrai("événement tout_couper tracé", db.tables.api_evenements.some(v => v.type === "tout_couper" && v.par === "equipe@elixir.test"));
   r = await adm({ action: "reglages", actif: true, base: t.updated_at });
   eq("remise en service", r.statusCode, 200);
-  livrerP9(false);
 
   // ouverture d'un accès : fiche revérifiée dans Odoo
   odooEtat.fiches[595] = FICHES[595];

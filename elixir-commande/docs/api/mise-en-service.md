@@ -12,8 +12,8 @@ Dépôt public : ce fichier ne contient ni secret ni donnée réelle.
 **En une phrase.** Une fois en ligne, la lecture (catalogue à leurs prix, disponibilités, contingents, commandes,
 factures, bons de livraison) et les commandes de **test** fonctionnent tout de suite. Les commandes **réelles** restent
 refusées (`503 ecriture_suspendue`) tant que P1, P3, P4, P7 et P9 ne sont pas cochés et que vous n'avez pas ouvert
-l'interrupteur « Commandes par API ». P9 (avis par e-mail et alertes) ne peut pas encore être coché : son développement
-reste à livrer.
+l'interrupteur « Commandes par API ». P9 (avis par e-mail et alertes) est livré : cochez-le après avoir reçu un premier
+e-mail d'avis (§ 2 et § 5.4).
 
 ---
 
@@ -89,7 +89,7 @@ Ce qui part avec ce déploiement :
 
 - le routeur `/api/v1` ;
 - deux fonctions planifiées :
-  - `api-cron` (toutes les 15 min : prix des listes, ménage) ;
+  - `api-cron` (toutes les 15 min : prix des listes, ménage, alertes d'usage et reprise des e-mails d'avis) ;
   - `api-commandes-cron` (toutes les 2 min : envoi des commandes dont le délai est écoulé) ;
 - l'onglet admin 🔌 API ;
 - le panneau « Accès API » de « Mes commandes » ;
@@ -109,7 +109,8 @@ Ce qui part avec ce déploiement :
 4. Dans l'onglet admin **🔌 API**, on lit :
    - « API en service » ;
    - « Commandes par API (production) : fermées » ;
-   - les prérequis, tous décochés (P9 grisé : « développement à livrer avant l'ouverture des commandes réelles »).
+   - les prérequis, tous décochés ;
+   - une section « Alertes » vide (« Aucune alerte sur les 30 derniers jours »).
 5. Netlify → Functions : `api-cron` et `api-commandes-cron` sont marquées « Scheduled ». Tant qu'aucun accès n'est ouvert,
    leurs journaux ne montrent rien d'autre qu'un passage à vide.
 
@@ -134,7 +135,7 @@ n'élargissent pas l'exposition actuelle de la base.
 | **P6** | Lecture du stock par lots | Grosses commandes | Claude | Fait côté API (voir ci-dessous) | Non (non bloquant) |
 | **P7** | Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé) | Commandes réelles | Zineb (avocat + pharmacien responsable) | À faire (projet au § 6) | Oui |
 | **P8** | Entretien avec chaque pharmacie demandeuse (logiciel, outil, besoin, volume, PharmaML déjà paramétré ou non) | Avant d'ouvrir son accès | Zineb | À faire | Non |
-| **P9** | Avis par e-mail des clés et alertes d'usage de l'API en place | Commandes réelles : la pharmacie et Elixir sont prévenus de chaque clé créée, remplacée ou révoquée ; alertes nouveau réseau, volume inhabituel, erreurs, clé inutilisée | Claude (développement), puis Zineb | À livrer (en attendant : notification à Elixir pour chaque clé de production) | Oui (grisée tant que ce n'est pas livré) |
+| **P9** | Avis par e-mail des clés et alertes d'usage de l'API en place | Commandes réelles : la pharmacie et Elixir sont prévenus de chaque clé créée, remplacée ou révoquée ; alertes nouveau réseau, réseau refusé, volume inhabituel, erreurs, clé inutilisée (révoquée à 180 jours) | Claude (développement, livré le 24/10/2026), puis Zineb | Livré (§ 5.4). À cocher quand vous avez reçu un premier e-mail d'avis (créez une clé de test depuis un compte de pharmacie, ou dans l'admin) et vu la section « Alertes » de l'onglet | Oui |
 
 Détail de P6 :
 
@@ -204,7 +205,7 @@ Libellés exacts des cases de l'onglet, repris du code :
 | Arrêter seulement les commandes réelles | **Fermer les commandes par API** (ou décocher un prérequis) | `POST /v1/commandes` avec une clé de production répond `503 ecriture_suspendue`. La lecture et le mode test continuent. Les commandes dans leur délai passent « à vérifier ». |
 | Une pharmacie pose problème | **Suspendre l'accès** (motif tracé) | `403 acces_suspendu` sur toutes ses routes. |
 | La pharmacie peut lire mais ne doit plus commander | Mode **Bloqué** | Ses commandes sont refusées (`403 commandes_bloquees`) et celles en attente ne partent pas. La lecture continue. |
-| Une clé a fui | **Révoquer** (dans l'onglet, ou par la pharmacie dans « Accès API ») | `401 cle_revoquee` aussitôt pour les commandes et annulations, en moins d'une minute pour les lectures. Une notification vous prévient de chaque clé de production créée, remplacée ou révoquée. |
+| Une clé a fui | **Révoquer** (dans l'onglet, ou par la pharmacie dans « Accès API ») | `401 cle_revoquee` aussitôt pour les commandes et annulations, en moins d'une minute pour les lectures. La pharmacie reçoit un e-mail d'avis (adresses de son compte), vous en copie pour une clé de production ; une notification vous prévient aussi de chaque clé de production créée, remplacée ou révoquée. |
 | Un produit ne doit pas se commander par l'API | « Produits exclus des commandes par API » | La ligne est refusée (`produit_non_commandable`, « à commander sur le site »). |
 | Envoi automatique du relais coupé | Bandeau du relais (onglet relais, `autoSite`) | Les commandes API dont le délai se termine passent « à vérifier » (`envoi_manuel`). Il faut les synchroniser à la main. |
 
@@ -264,11 +265,36 @@ Une commande déjà partie vers PharmaML ne se rattrape pas par ces interrupteur
   - journal des appels : 13 mois (purge automatique) ;
   - compteurs de débit : 2 jours ;
   - commandes reçues par l'API : gardées, comme preuve (5 ans prévus ; purge pas encore programmée).
-- **Pas encore fait** (prérequis P9, bloquant pour les commandes réelles) :
-  - e-mails d'avis à la pharmacie (copie à Elixir) à la création, au remplacement ou à la révocation d'une clé ;
-  - alertes automatiques : clé inactive depuis 90 jours (révoquée à 180), nouveau réseau, volume supérieur à 3 fois
-    l'habitude, plus de 20 % d'erreurs ;
-  - résumé quotidien par e-mail (V1.1).
+- **Pas prévu en V1** : résumé quotidien par e-mail des alertes (elles arrivent une à une, § 5.4).
+
+### 5.4 Avis par e-mail et alertes (P9)
+
+**E-mails d'avis.** À chaque clé créée, remplacée ou révoquée (depuis le compte de la pharmacie, depuis l'admin ou
+automatiquement), la pharmacie reçoit un e-mail aux adresses de son compte encore présentes sur sa fiche Odoo. Vous êtes en
+copie pour une clé de production et pour toute révocation automatique. L'e-mail ne contient jamais la clé : son début, son
+nom, ses droits, la date, l'origine, et la consigne « si ce n'est pas vous, révoquez vos clés et prévenez Elixir ». Fiche sans
+aucune adresse de compte : vous recevez l'e-mail seul, avec la mention « prévenez la pharmacie ». Envoi par la messagerie
+d'Odoo (comme les justificatifs) ; un envoi raté est repris au passage suivant, jusqu'à 3 fois en 24 h ; l'historique de
+l'accès (onglet 🔌 API) montre « E-mail d'avis envoyé » ou « non envoyé ».
+
+**Alertes** (passage planifié `api-cron`, toutes les 15 min). Chaque alerte apparaît dans la section « Alertes » de l'onglet
+🔌 API (30 jours), dans l'historique de l'accès, dans vos notifications, et vous arrive par e-mail. Jamais deux fois pour le
+même fait.
+
+| Alerte | Quand | Que faire |
+|---|---|---|
+| Clé inutilisée | Aucun appel depuis 90 jours (contrôle à 7 h). À 180 jours : **révoquée automatiquement**, la pharmacie en est avertie par e-mail | Rien si l'outil n'est plus utilisé ; sinon demander à la pharmacie de vérifier son outil |
+| Nouveau réseau | Une clé déjà utilisée appelle depuis un réseau jamais vu pour elle | Un changement d'outil ou de connexion est l'explication courante ; en cas de doute : révoquer, appeler la pharmacie |
+| Réseau refusé | Appels refusés parce que le réseau n'est pas dans les réseaux autorisés de l'accès (une alerte par jour) | Mettre à jour ses réseaux autorisés, ou révoquer si la clé est utilisée ailleurs |
+| Trop d'erreurs | Au moins 20 appels sur une heure et plus de 20 % de réponses 4xx (une alerte par heure) | Regarder le journal des appels (codes d'erreur) : outil mal paramétré |
+| Volume inhabituel | Au moins 300 appels dans la journée et plus de 3 fois la moyenne des 14 jours précédents (une alerte par jour) | Synchronisation en boucle probable ; les débits bornent la charge ; suspendre l'accès si besoin |
+
+Les seuils (90 et 180 jours, 20 %, 3 ×, 300) sont ceux du code (`_api-config.js`, `ALERTES`) ; dites-moi s'ils ne vous
+conviennent pas après quelques semaines.
+
+**Pour cocher P9** : créez une clé de test (depuis un compte de pharmacie, ou « Créer une clé (sans compte) » dans l'admin pour
+une fiche dont une adresse de compte est la vôtre), vérifiez la réception de l'e-mail d'avis et la ligne « E-mail d'avis
+envoyé » dans l'historique de l'accès, puis cochez P9 avec cette date en note.
 
 ---
 
@@ -369,7 +395,7 @@ sur papier existe : signature d'un PDF, puis référence saisie dans l'admin.
    l'API (`409 trop_tard`).
 8. **Adresse de l'API** : `https://elixir-commande.expepharma.com/api/v1`. Un sous-domaine dédié pourra venir plus tard
    si besoin.
-9. **E-mails d'avis et alertes automatiques** : prérequis P9, voir § 5.3.
+9. **E-mails d'avis et alertes automatiques** : livrés (§ 5.4) ; seuils à ajuster après quelques semaines d'usage si besoin.
 10. **Serveur partagé par plusieurs pharmacies** (éditeur de logiciel) : les 120 requêtes par minute avant la clé sont
     comptées par adresse IP ; une clé révoquée d'une pharmacie ne bloque plus les autres, mais le débit par IP reste
     commun. À relever pour ce cas, si une demande arrive.

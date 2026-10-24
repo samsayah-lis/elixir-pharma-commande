@@ -9,8 +9,9 @@
 //                                                           request_id : à donner au support d'Elixir) }
 // Compte dont l'adresse n'est plus sur la fiche Odoo, ou fiche sans CIP (mode « conseiller_seul ») : « etat » ne dit que
 // { ouvert, lecture_seule: "adresse" } (ni plafonds, ni clés, ni parcours), « journal » est refusé (403 lecture_seule).
-// Avis à Elixir (notification de l'admin) à chaque clé de PRODUCTION créée, remplacée ou révoquée (en attendant l'e-mail
-// d'avis à la pharmacie, prérequis P9).
+// Avis (P9, _api-avis.js) : e-mail aux adresses de compte de la fiche (ctx.comptes : encore sur la fiche Odoo) à chaque clé
+// créée, remplacée ou révoquée, copie à Elixir pour une clé de PRODUCTION ; Elixir est aussi prévenu par une notification de
+// l'admin pour chaque clé de production. Un e-mail raté n'empêche rien (repris par api-cron) ; la réponse dit `avis_envoye`.
 // Identité : celle de l'Assistant (identifier() de _chat-perimetre.js) — jeton du code reçu par e-mail, adresse ENCORE
 // sur la fiche Odoo (mode « complet ») pour toute écriture ; admin « Commander pour une pharmacie » (admin_token +
 // pour_odoo_id revalidé dans Odoo) : lecture seule (les clés d'une pharmacie sans compte se créent dans l'admin, tracé).
@@ -24,6 +25,7 @@ import { clePublique, creerCle, remplacerCle, refusCreation, reseauDe } from "./
 import { CGU, LIBELLES_PORTEES, LIMITES, MENTION_PRIX, commandesLiveOuvertes, empreinteCgu, fusionnerReglages } from "./_api-config.js";
 import { estApercu, ipClient, isoParis } from "./_api-http.js";
 import { parcoursPublic } from "./_api-parcours.js";
+import { creerAvis } from "./_api-avis.js";
 
 const ACTIONS = new Set(["etat", "cgu", "creer_cle", "remplacer_cle", "revoquer_cle", "journal"]);
 const DEBIT = [30, 60];   // requêtes par minute et par IP, par instance
@@ -39,13 +41,14 @@ function vueAcces(a) {
   };
 }
 
-// deps (doublures des tests) : stock, identifier(event, body), maintenant, journal, octets
+// deps (doublures des tests) : stock, identifier(event, body), maintenant, journal, octets, avis (creerAvis)
 export function creerHandler(deps = {}) {
   let stockDefaut = null;
   const stockDe = () => deps.stock || (stockDefaut ||= creerStockApi());
   const maintenant = deps.maintenant || (() => new Date());
   const identifie = deps.identifier || ((event, body) => identifier(event, body));
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-compte", ...o })));
+  const avis = deps.avis || creerAvis({ journal });
   const compteurs = new Map();
   function limite(event) {
     const k = cleIp(event), t = maintenant().getTime();
@@ -141,7 +144,8 @@ export function creerHandler(deps = {}) {
           const res = await creerCle(stock, { acces, environnement, libelle: body.libelle, portees, par: ctx.compteEmail, role: "pharmacie", maintenant: now, octets: deps.octets });
           await evenement("cle_creee", { environnement, libelle: res.cle.libelle, portees: res.cle.portees, prefixe: res.cle.prefixe }, res.cle.id);
           await prevenir("cle_creee", res.cle);
-          return json(cors, 201, { cle: res.secret, info: res.cle });
+          const avisEnvoye = await avis.avisCle(stock, { type: "cle_creee", cle: res.cle, acces, par: ctx.compteEmail, role: "pharmacie", comptes: ctx.comptes, quand: now });
+          return json(cors, 201, { cle: res.secret, info: res.cle, avis_envoye: avisEnvoye });
         }
         case "remplacer_cle": {
           if (!estUuid(body.id)) return json(cors, 400, { error: "id" });
@@ -154,7 +158,8 @@ export function creerHandler(deps = {}) {
           const res = await remplacerCle(stock, { acces, ancienne, par: ctx.compteEmail, role: "pharmacie", maintenant: now, octets: deps.octets });
           await evenement("cle_remplacee", { ancienne: ancienne.id, prefixe: res.cle.prefixe, ancienne_expire_le: res.ancienne_expire_le }, res.cle.id);
           await prevenir("cle_remplacee", res.cle);
-          return json(cors, 201, { cle: res.secret, info: res.cle, ancienne_expire_le: isoParis(res.ancienne_expire_le) });
+          const avisEnvoye = await avis.avisCle(stock, { type: "cle_remplacee", cle: res.cle, acces, par: ctx.compteEmail, role: "pharmacie", comptes: ctx.comptes, quand: now, expire: res.ancienne_expire_le });
+          return json(cors, 201, { cle: res.secret, info: res.cle, ancienne_expire_le: isoParis(res.ancienne_expire_le), avis_envoye: avisEnvoye });
         }
         case "revoquer_cle": {
           if (!estUuid(body.id)) return json(cors, 400, { error: "id" });
@@ -166,7 +171,8 @@ export function creerHandler(deps = {}) {
           }
           await evenement("cle_revoquee", { motif, prefixe: r.prefixe }, r.id);
           await prevenir("cle_revoquee", r);
-          return json(cors, 200, { ok: true, info: clePublique(r, now) });
+          const avisEnvoye = await avis.avisCle(stock, { type: "cle_revoquee", cle: clePublique(r, now), acces, par: ctx.compteEmail, role: "pharmacie", comptes: ctx.comptes, quand: now, motif });
+          return json(cors, 200, { ok: true, info: clePublique(r, now), avis_envoye: avisEnvoye });
         }
         default: return json(cors, 400, { error: "action" });
       }

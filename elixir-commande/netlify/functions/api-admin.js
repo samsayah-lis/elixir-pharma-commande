@@ -28,10 +28,11 @@
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
-import { ficheVerifiee } from "./_chat-perimetre.js";
+import { comptesEmailDeFiche, ficheVerifiee } from "./_chat-perimetre.js";
 import { validCip } from "./_pharmacies.js";
 import { creerStockApi, estUuid } from "./_api-stock.js";
 import { cidrValide, clePublique, creerCle, refusCreation } from "./_api-cles.js";
+import { creerAvis } from "./_api-avis.js";
 import { ACCES_DEFAUT, BORNES, CGU, LIBELLES_PORTEES, MODES, PORTEES, PREREQUIS, VERSION_API, commandesLiveOuvertes, commandesOuvrables,
   fusionnerReglages, lireCipsExclus, prerequisEtat } from "./_api-config.js";
 import { estApercu, lancerCalculPrix, siteBase } from "./_api-http.js";
@@ -81,7 +82,8 @@ async function listePrixOdoo(odooId) {
 }
 
 // deps (doublures des tests) : stock, verifierAdmin(event), verifierFiche(odooId), listePrix(odooId), maintenant, journal, octets,
-// lancerPrix(base, listeId) (calcul des prix en arrière-plan)
+// lancerPrix(base, listeId) (calcul des prix en arrière-plan), avis (creerAvis : e-mails d'avis des clés, P9), comptes(odooId)
+// (adresses de compte de la fiche, destinataires de ces e-mails)
 export function creerHandler(deps = {}) {
   let stockDefaut = null;
   const stockDe = () => deps.stock || (stockDefaut ||= creerStockApi());
@@ -89,6 +91,8 @@ export function creerHandler(deps = {}) {
   const verifierFiche = deps.verifierFiche || ((id) => ficheVerifiee(id));
   const listePrix = deps.listePrix || listePrixOdoo;
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-admin", ...o })));
+  const avis = deps.avis || creerAvis({ journal });
+  const comptesDe = (id) => (deps.comptes || comptesEmailDeFiche)(id).catch((e) => { journal({ code: "comptes", erreur: String(e?.message || e).slice(0, 80) }); return []; });
   const lancerPrix = deps.lancerPrix || ((base, id) => lancerCalculPrix(base, id));
   // liste de la fiche connue : demandée au calcul des prix si elle ne l'a jamais été (pas de nouvelle demande sinon)
   const demanderPrix = (stock, listeId) => (listeId ? stock.prixListes.demander(listeId).catch((e) => journal({ code: "prix_demande", erreur: String(e?.message || e).slice(0, 80) })) : null);
@@ -121,8 +125,10 @@ export function creerHandler(deps = {}) {
         const q = event.queryStringParameters || {};
         switch (q.vue) {
           case "tableau": {
-            const [lu, acces, cles, listes] = await Promise.all([stock.reglages.lire(), stock.acces.lister(), stock.cles.toutes(),
-              stock.prixListes.toutes().catch((e) => { journal({ code: "prix_listes", erreur: String(e?.message || e).slice(0, 80) }); return []; })]);
+            const [lu, acces, cles, listes, alertes] = await Promise.all([stock.reglages.lire(), stock.acces.lister(), stock.cles.toutes(),
+              stock.prixListes.toutes().catch((e) => { journal({ code: "prix_listes", erreur: String(e?.message || e).slice(0, 80) }); return []; }),
+              // P9 : alertes du passage planifié des 30 derniers jours (section « Alertes » de l'onglet)
+              stock.evenements.alertes(new Date(now.getTime() - 30 * 86400e3).toISOString(), 100).catch((e) => { journal({ code: "alertes", erreur: String(e?.message || e).slice(0, 80) }); return []; })]);
             const parListe = new Map(listes.map(l => [l.liste_id, l]));
             // noms des listes connues (ceux de la péremption), chargés à la demande : module lourd, inutile aux autres vues
             const nomListe = await import("./_peremption.js").then(m => m.nomListe).catch(() => (l) => `Liste n° ${l}`);
@@ -140,6 +146,9 @@ export function creerHandler(deps = {}) {
                 return { ...a, cgu_preuve: undefined, cgu_a_jour: a.cgu_version === CGU.version, cles_actives: { live: actives("live"), test: actives("test") }, derniere_utilisation: derniere };
               }),
               defauts: ACCES_DEFAUT, bornes: BORNES, portees: PORTEES, libelles_portees: LIBELLES_PORTEES, cgu_version: CGU.version, version_api: VERSION_API,
+              alertes: alertes.sort((x, y) => (Date.parse(y.at) - Date.parse(x.at)) || ((Number(y.id) || 0) - (Number(x.id) || 0)))
+                .map(e => ({ id: e.id, at: e.at, type: e.type, odoo_id: e.odoo_id, cle_id: e.cle_id, detail: e.detail,
+                  pharmacie: e.detail?.pharmacie || acces.find(a => a.odoo_id === e.odoo_id)?.nom || null })),
               // prix (phase 2) : listes utilisées par un accès ou déjà calculées, sans aucun prix
               prix: [...new Set([...utilisees.keys(), ...parListe.keys()])].sort((a, b) => a - b).map(id => ({ liste_id: id, nom: nomListe(id),
                 acces_actifs: utilisees.get(id) || 0, ...(parListe.get(id) || { etat: "jamais" }) })),
@@ -285,7 +294,10 @@ export function creerHandler(deps = {}) {
           const r = await stock.cles.revoquer(c.id, c.odoo_id, { par, motif });
           if (!r) return json(cors, 409, { error: "Clé déjà révoquée" });
           await evenement("cle_revoquee", c.odoo_id, { motif, prefixe: r.prefixe }, r.id);
-          return json(cors, 200, { ok: true, cle: clePublique(r, now, { admin: true }) });
+          // P9 : la pharmacie est prévenue par e-mail (adresses de compte encore sur sa fiche), copie Elixir pour une clé de production
+          const avisEnvoye = await avis.avisCle(stock, { type: "cle_revoquee", cle: clePublique(r, now), acces: await stock.acces.lire(c.odoo_id).catch(() => null),
+            par, role: "admin", comptes: await comptesDe(c.odoo_id), quand: now, motif });
+          return json(cors, 200, { ok: true, cle: clePublique(r, now, { admin: true }), avis_envoye: avisEnvoye });
         }
         case "creer_cle_admin": {
           const motif = texte(b.motif, 300);
@@ -301,7 +313,9 @@ export function creerHandler(deps = {}) {
           if (environnement === "live") await stock.site.notifier({ type: "new_order", title: `🔑 Clé API de production créée dans l'admin — ${a.nom || `fiche n° ${id}`}`,
             body: `« ${res.cle.libelle} » (${res.cle.prefixe}) par ${par} : ${motif}`, data: { source: "api", motif: "cle_creee_admin", odoo_id: id, prefixe: res.cle.prefixe } })
             .catch((e) => journal({ code: "avis_cle", erreur: String(e?.message || e).slice(0, 80) }));
-          return json(cors, 201, { cle: res.secret, info: res.cle });
+          // P9 : e-mail d'avis à la pharmacie (sans le secret, qui n'est montré qu'à l'admin, une fois), copie Elixir en production
+          const avisEnvoye = await avis.avisCle(stock, { type: "cle_creee", cle: res.cle, acces: a, par, role: "admin", comptes: await comptesDe(id), quand: now, motif });
+          return json(cors, 201, { cle: res.secret, info: res.cle, avis_envoye: avisEnvoye });
         }
         case "cgu_signees": {
           const reference = texte(b.reference, 200);

@@ -5,12 +5,19 @@
 //     x-cron-secret) — demandée (nouvel accès, liste changée, bouton de l'admin) : au premier passage ; calcul coupé : repris
 //     après 20 min ; en erreur : nouvel essai après 1 h ; à jour : recalculée la nuit (1 h – 6 h, heure de Paris) quand son
 //     dernier calcul a plus de 20 h ;
-//  3. ménage : compteurs de débit de plus de 2 jours ; journal des appels de plus de 13 mois (une fois par nuit).
-// Rien n'est écrit hors des tables privées api_* ; aucune lecture Odoo quand aucun accès n'est ouvert.
+//  3. ménage : compteurs de débit de plus de 2 jours ; journal des appels de plus de 13 mois (une fois par nuit) ;
+//  4. P9 (_api-avis.js) : reprise des e-mails d'avis de clé en échec ; alertes d'usage — clés inutilisées (signalées à
+//     90 jours, révoquées à 180 ; une fois par jour, première passe de 7 h, heure de Paris), erreurs, réseaux refusés et
+//     nouveaux réseaux (journal de la dernière heure), volume du jour (première passe de chaque heure). Chaque alerte : un
+//     événement « alerte_* », une notification et un e-mail à Elixir (mail.mail d'Odoo), jamais deux fois pour le même fait.
+// Rien n'est écrit hors des tables privées api_* (et les notifications de l'admin) ; aucune lecture Odoo de prix quand aucun
+// accès n'est ouvert.
 import { creerStockApi } from "./_api-stock.js";
 import { lecteurOdoo, listesDesFiches } from "./_api-prix.js";
 import { PRIX } from "./_api-config.js";
 import { lancerCalculPrix, siteBaseEnv } from "./_api-http.js";
+import { creerAvis } from "./_api-avis.js";
+import { comptesEmailDeFiche } from "./_chat-perimetre.js";
 
 export const heureParis = (d) => Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", hour: "2-digit", hourCycle: "h23" })
   .formatToParts(d).find(x => x.type === "hour")?.value);
@@ -25,15 +32,18 @@ export function priorite(l, now, { nuit }) {
   return nuit && age(l.fin_le, now) > PRIX.age_max_h * 3600e3 ? 4 : null;
 }
 
-// deps (doublures des tests) : stock, odoo, maintenant, lancer(listeId), journal
+// deps (doublures des tests) : stock, odoo, maintenant, lancer(listeId), journal, avis (creerAvis), comptes(odooId),
+// horaire { inactives, volumes } (sinon : clés inutilisées à la première passe de 7 h, volumes à la première passe de l'heure)
 export function creerHandler(deps = {}) {
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-cron", ...o })));
   const maintenant = deps.maintenant || (() => new Date());
+  const avis = deps.avis || creerAvis({ journal: (o) => journal({ avis: true, ...o }) });
+  const comptes = deps.comptes || ((id) => comptesEmailDeFiche(id));
   return async () => {
     const stock = deps.stock || creerStockApi();
     const now = maintenant();
     const nuit = heureParis(now) >= 1 && heureParis(now) < 6;
-    const bilan = { listes_relues: 0, listes_changees: 0, lancee: null };
+    const bilan = { listes_relues: 0, listes_changees: 0, lancee: null, avis: null };
     try {
       const acces = (await stock.acces.lister()).filter(a => a.actif);
       // 1. listes de prix des fiches, relues une fois par jour
@@ -69,6 +79,10 @@ export function creerHandler(deps = {}) {
         const avant = new Date(now.getTime() - 396 * 86400e3).toISOString();   // 13 mois
         await stock.journal.purger(avant).catch((e) => journal({ code: "purge_journal", erreur: String(e?.message || e).slice(0, 80) }));
       }
+      // 4. P9 : avis en échec repris, alertes d'usage (ne lève jamais)
+      const premierePasse = now.getUTCMinutes() < 15;
+      const horaire = deps.horaire || { inactives: premierePasse && heureParis(now) === 7, volumes: premierePasse };
+      bilan.avis = await avis.surveiller(stock, { now, comptes, ...horaire });
       journal({ code: "ok", ...bilan });
     } catch (e) {
       journal({ code: e?.code || "erreur", erreur: String(e?.message || e).slice(0, 160) });

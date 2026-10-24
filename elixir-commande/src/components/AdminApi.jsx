@@ -24,10 +24,19 @@ const NOMS_DROITS = { lecture: "Lecture", commande: "Commande", documents: "Docu
 const TYPES_EVT = { acces_ouvert: "Accès ouvert", acces_modifie: "Réglages modifiés", acces_suspendu: "Accès suspendu", acces_reactive: "Accès réactivé", fiche_rafraichie: "Fiche relue dans Odoo",
   cgu_acceptees: "Conditions acceptées en ligne", cgu_signees: "Conditions signées (hors ligne)", cle_creee: "Clé créée par la pharmacie", cle_creee_admin: "Clé créée dans l'admin",
   cle_remplacee: "Clé remplacée", cle_revoquee: "Clé révoquée", test_valide: "Mode test validé (parcours complet)", test_valide_admin: "Mode test validé par l'admin",
-  reglages: "Réglages du service", prerequis: "Prérequis", tout_couper: "Tout couper", prix_recalcul_demande: "Recalcul des prix demandé" };
+  reglages: "Réglages du service", prerequis: "Prérequis", tout_couper: "Tout couper", prix_recalcul_demande: "Recalcul des prix demandé",
+  // P9 : e-mails d'avis et alertes du passage planifié
+  avis_envoye: "E-mail d'avis envoyé", avis_echec: "E-mail d'avis non envoyé (nouvel essai au prochain passage)", alerte_cle_inactive: "Alerte : clé inutilisée",
+  alerte_nouveau_reseau: "Alerte : nouveau réseau", alerte_reseau_refuse: "Alerte : réseau refusé", alerte_erreurs: "Alerte : trop d'erreurs", alerte_volume: "Alerte : volume inhabituel" };
+const AVIS_TXT = { cle_creee: "clé créée", cle_remplacee: "clé remplacée", cle_revoquee: "clé révoquée" };
 const CHAMPS_EVT = { environnement: (v) => (v === "live" ? "production" : v === "test" ? "test" : v), libelle: (v) => `« ${v} »`, portees: (v) => [].concat(v).map(p => NOMS_DROITS[p] || p).join(" + "),
   prefixe: (v) => v, motif: (v) => `motif : ${v}`, version: (v) => `version ${v}`, reference: (v) => `référence : ${v}`, mode: (v) => `mode ${v}`, vue_par: (v) => `vue par ${v}`,
-  ancienne_expire_le: (v) => `ancienne valide jusqu'au ${dt(v)}`, reseau: (v) => `réseau ${v}` };
+  ancienne_expire_le: (v) => `ancienne valide jusqu'au ${dt(v)}`, reseau: (v) => `réseau ${v}`,
+  // P9
+  avis: (v) => AVIS_TXT[v] || v, destinataires: (v) => (v ? `${v} adresse(s) de la pharmacie` : "aucune adresse de compte : Elixir seul"), copie_elixir: (v) => (v ? "copie Elixir" : null),
+  tentative: (v) => (v > 1 ? `tentative ${v}` : null), erreur: (v) => `erreur : ${v}`, jours_inactive: (v) => `${v} jours sans utilisation`, automatique: (v) => (v ? "automatique" : null),
+  appels: (v) => `${v} appel(s)`, reseaux: (v) => `réseaux ${[].concat(v).join(", ")}`, requetes: (v) => `${v} appels`, erreurs: (v) => `${v} erreurs 4xx`, part: (v) => `${v} %`,
+  appels_jour: (v) => `${v} appels aujourd'hui`, moyenne_jour: (v) => `${v} par jour en moyenne` };
 const texteEvt = (d) => (d && typeof d === "object" ? Object.entries(d).filter(([k, v]) => CHAMPS_EVT[k] && v != null && v !== "").map(([k, v]) => CHAMPS_EVT[k](v)).join(" · ") : "");
 const carte = { ...ui.card, marginBottom: 16 };
 const grille = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 };
@@ -94,6 +103,39 @@ function EtatService({ t, poster }) {
               onClick={() => basculer({ action: "reglages", commandes_live: true }, "Ouvrir les commandes par API en production ?\n\nLes pharmacies dont l'accès est en mode automatique pourront passer des commandes réelles.")}>Ouvrir les commandes par API</button>}
       </div>
       <ProduitsExclus t={t} poster={poster} />
+    </section>
+  );
+}
+
+// ── Alertes du passage planifié (P9) : 30 derniers jours, les plus récentes d'abord ; chacune a aussi été envoyée par e-mail à
+// Elixir et notifiée. Le détail reprend le texte de l'historique de l'accès (jamais d'adresse IP complète ni de secret).
+function Alertes({ t, onVoirAcces }) {
+  const alertes = t.alertes || [];
+  return (
+    <section style={carte} aria-labelledby="api-alertes">
+      <h2 id="api-alertes" style={ui.h2}>Alertes ({alertes.length})</h2>
+      <p style={{ fontSize: 12, color: T.inkMute, marginTop: 0 }}>
+        Clé inutilisée depuis 90 jours (révoquée seule à 180), nouveau réseau, réseau refusé, trop d'erreurs ou volume inhabituel : une alerte par fait, envoyée aussi par e-mail à Elixir.
+        Les e-mails d'avis de chaque clé (créée, remplacée, révoquée) sont dans l'historique de l'accès.
+      </p>
+      {alertes.length === 0 ? <p style={{ fontSize: 13, color: T.inkMute, margin: 0 }}>Aucune alerte sur les 30 derniers jours.</p> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead><tr>{["Date", "Pharmacie", "Alerte", "Clé", "Détail"].map(h => <th key={h} style={ui.th}>{h}</th>)}</tr></thead>
+            <tbody>
+              {alertes.map(e => (
+                <tr key={e.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                  <td style={{ ...ui.td, whiteSpace: "nowrap" }}>{dt(e.at)}</td>
+                  <td style={ui.td}>{e.odoo_id ? <button className="ex-btn-discret" style={{ ...ui.btn("ligne", "s"), padding: "2px 8px" }} onClick={() => onVoirAcces?.(e.odoo_id)}>{e.pharmacie || `fiche n° ${e.odoo_id}`}</button> : "–"}</td>
+                  <td style={ui.td}><Badge ton={e.type === "alerte_erreurs" || e.type === "alerte_volume" ? "warn" : "danger"}>{(TYPES_EVT[e.type] || e.type).replace(/^Alerte : /, "")}</Badge></td>
+                  <td style={{ ...ui.td, fontFamily: T.mono, fontSize: 12 }}>{e.detail?.prefixe || "–"}{e.detail?.libelle ? <div style={{ fontFamily: "inherit", fontSize: 11, color: T.inkMute }}>{e.detail.libelle}</div> : null}</td>
+                  <td style={{ ...ui.td, fontSize: 12, color: T.inkSoft }}>{texteEvt({ ...e.detail, prefixe: undefined, libelle: undefined, environnement: undefined, pharmacie: undefined })}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -510,6 +552,7 @@ export default function AdminApi({ adminFetch, flash, onVoirCommande }) {
     <div style={{ padding: "8px 0" }}>
       {secret && <SecretUnique secret={secret} onFermer={() => setSecret(null)} />}
       <EtatService t={t} poster={poster} />
+      <Alertes t={t} onVoirAcces={(id) => setSelection(id)} />
       <section style={carte} aria-labelledby="api-acces">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
           <h2 id="api-acces" style={ui.h2}>Accès des pharmacies ({t.acces.length})</h2>

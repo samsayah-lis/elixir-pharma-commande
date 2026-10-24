@@ -6,7 +6,7 @@
 openapi: "3.1.0"
 info:
   title: API Elixir Pharma pour les pharmacies
-  version: "1.0.0"
+  version: "1.0.1"
   summary: Catalogue à vos prix, disponibilités, contingents, commandes, factures et bons de livraison.
   description: |
     Réservée aux pharmacies clientes d'Elixir Pharma dont l'accès a été ouvert à leur demande, et qui ont accepté les
@@ -177,7 +177,7 @@ paths:
                       annulation: { par_minute: 30, par_jour: 1000 }
                       simulation: { par_minute: 30, par_jour: 1000 }
                     cgu: { version_en_vigueur: "2026-10-24-projet", acceptee: true }
-                    version_api: "1.0.0"
+                    version_api: "1.0.1"
                     derniere_modification: "2026-10-24"
         "400": { $ref: "#/components/responses/E400Cle" }
         "401": { $ref: "#/components/responses/E401" }

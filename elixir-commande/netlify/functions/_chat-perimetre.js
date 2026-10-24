@@ -113,6 +113,15 @@ async function comptesDeFiche(odooId, d, adresses, premier = null) {
   const ok = (e) => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/.test(e) && adresses.has(e);
   return [...new Set([premier, ...rows.map(r => minuscule(r.email))].filter(e => e && ok(e)))];
 }
+// API des pharmacies (P9, _api-avis.js) : adresses de compte du site d'une fiche, encore sur la fiche Odoo — destinataires
+// de l'e-mail d'avis d'une clé créée, remplacée ou révoquée depuis l'admin ou par le passage planifié (depuis le compte de la
+// pharmacie, identifier() les donne déjà : ctx.comptes). Même règle que l'Assistant : jamais une ancienne adresse.
+export async function comptesEmailDeFiche(odooId, deps = {}) {
+  const d = depsParDefaut(deps);
+  const id = Number(odooId);
+  if (!Number.isInteger(id) || id <= 0) return [];
+  return comptesDeFiche(id, d, await adressesDeFiche(id, d));
+}
 // limite : compte dont l'adresse n'est plus sur la fiche → seulement « parler à un conseiller »
 function contexte(p, extra, limite = false) {
   const cip = validCip(p.cip) ? String(p.cip).trim() : null;

@@ -195,6 +195,25 @@ export function creerStockApi(deps = {}) {
       },
       // conservation : 13 mois (api-cron)
       purger(avantIso) { return sb(`api_journal?at=lt.${enc(avantIso)}`, { method: "DELETE", prefer: "return=minimal" }); },
+      // P9 (alertes) : nombre de lignes d'une clé sur une période (depuis inclus, avant exclu), statut dans [statutMin, statutMax[
+      // → compté par PostgREST (Content-Range), une seule ligne lue
+      async compter({ cleId, depuisIso = null, avantIso = null, statutMin = null, statutMax = null } = {}) {
+        if (!estUuid(cleId)) return 0;
+        const f = [`cle_id=eq.${cleId}`];
+        if (depuisIso) f.push(`at=gte.${enc(depuisIso)}`);
+        if (avantIso) f.push(`at=lt.${enc(avantIso)}`);
+        if (Number.isInteger(statutMin)) f.push(`statut=gte.${statutMin}`);
+        if (Number.isInteger(statutMax)) f.push(`statut=lt.${statutMax}`);
+        const { total, rows } = await sb(`api_journal?${f.join("&")}&select=id&limit=1`, { compte: true });
+        return Number.isFinite(total) ? total : rows.length;
+      },
+      // P9 (alertes) : la clé a-t-elle déjà appelé avant une date (depuis ce réseau, si donné) ? Une seule ligne lue.
+      async existe({ cleId, avantIso, reseau = null } = {}) {
+        if (!estUuid(cleId) || !avantIso) return false;
+        const f = [`cle_id=eq.${cleId}`, `at=lt.${enc(avantIso)}`];
+        if (reseau) f.push(`reseau=eq.${enc(reseau)}`);
+        return ((await sb(`api_journal?${f.join("&")}&select=id&limit=1`)) || []).length > 0;
+      },
     },
     evenements: {
       ajouter({ type, odoo_id = null, cle_id = null, par = null, role = null, detail = null }) {
@@ -210,6 +229,16 @@ export function creerStockApi(deps = {}) {
       async deType(type, depuisIso, limite = 500) {
         if (!/^[a-z_]{3,40}$/.test(String(type || ""))) return [];
         const rows = (await sb(`api_evenements?type=eq.${type}&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(1000, limite)}`)) || [];
+        return rows.map(r => ({ ...r, detail: r.detail ? lireJson(r.detail, null) : null }));
+      },
+      // P9 : alertes du passage planifié (types « alerte_* ») depuis une date, les plus récentes d'abord (onglet 🔌 API)
+      async alertes(depuisIso, limite = 100) {
+        const rows = (await sb(`api_evenements?type=like.alerte_*&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(500, limite)}`)) || [];
+        return rows.map(r => ({ ...r, detail: r.detail ? lireJson(r.detail, null) : null }));
+      },
+      // P9 : avis par e-mail d'une clé (envoyés ou en échec) depuis une date, les plus récents d'abord (reprise par api-cron)
+      async avis(depuisIso, limite = 500) {
+        const rows = (await sb(`api_evenements?type=in.(avis_envoye,avis_echec)&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(1000, limite)}`)) || [];
         return rows.map(r => ({ ...r, detail: r.detail ? lireJson(r.detail, null) : null }));
       },
     },

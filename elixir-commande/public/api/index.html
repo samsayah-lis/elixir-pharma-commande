@@ -244,6 +244,8 @@ curl -s https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -
         <li><strong>Une clé par outil</strong>, au plus 3 clés actives par environnement (test, production). Chaque clé porte des droits : « lecture », « commande », « documents » (factures, avoirs, bons de livraison). Donnez à chaque outil le moins de droits possible : un outil de disponibilités n'a besoin que de « lecture ».</li>
         <li><strong>Remplacer</strong> une clé (« Accès API ») en crée une nouvelle ; l'ancienne reste valide 7 jours, le temps de mettre votre outil à jour, puis s'arrête seule.</li>
         <li><strong>Révoquer</strong> une clé l'arrête aussitôt pour les commandes et les annulations, en moins d'une minute pour les lectures. En cas de doute ou de fuite : révoquez-la, créez-en une autre et prévenez Elixir Pharma.</li>
+        <li><strong>Un e-mail d'avis</strong> (sans la clé) est envoyé aux adresses de votre compte à chaque clé créée, remplacée ou révoquée, que l'opération vienne de votre compte, d'Elixir Pharma ou d'une révocation automatique. Si vous n'en êtes pas à l'origine, révoquez vos clés et prévenez Elixir Pharma.</li>
+        <li>Une clé <strong>inutilisée pendant 90 jours</strong> est signalée à Elixir Pharma ; <strong>à 180 jours</strong>, elle est révoquée automatiquement (vous en êtes averti par e-mail). Un usage inhabituel d'une clé (nouveau réseau, erreurs répétées, volume soudain) est surveillé : Elixir Pharma peut vous appeler ou suspendre l'accès.</li>
         <li>Les clés de production ne fonctionnent qu'à l'adresse du service, <code>https://elixir-commande.expepharma.com/api/v1</code> ; toute autre adresse les refuse (<a href="#erreur-cle_production_hors_site"><code>cle_production_hors_site</code></a>).</li>
         <li>Sur demande, Elixir Pharma peut limiter vos clés aux réseaux de votre pharmacie (<a href="#erreur-ip_non_autorisee"><code>ip_non_autorisee</code></a> ailleurs).</li>
         <li>L'identité vient <strong>toujours de la clé</strong> : aucun identifiant de pharmacie n'est lu dans la requête, et une ressource d'une autre pharmacie répond <code>404</code>, comme une ressource inconnue.</li>
@@ -497,6 +499,7 @@ Content-Type: application/json
       <div class="tableau"><table>
         <thead><tr><th>Version</th><th>Date</th><th>Changements</th></tr></thead>
         <tbody>
+          <tr><td>version 1.0.1</td><td class="num">24/10/2026</td><td>E-mail d'avis à chaque clé créée, remplacée ou révoquée ; clé inutilisée signalée à 90 jours et révoquée automatiquement à 180 jours ; surveillance des usages inhabituels. Aucun changement des routes ni des réponses.</td></tr>
           <tr><td>version 1.0.0</td><td class="num">24/10/2026</td><td>Première version : catalogue à vos prix, disponibilités, contingents, commande (simulation, délai d'annulation, annulation), suivi, factures et bons de livraison, mode test.</td></tr>
         </tbody>
       </table></div>
@@ -511,7 +514,7 @@ Content-Type: application/json
 </div>
 
 <footer class="pied">
-  <div class="bande">API Elixir Pharma pour les pharmacies · version 1.0.0 · réservée aux pharmacies clientes, selon les conditions d'utilisation de l'API acceptées dans « Accès API ».</div>
+  <div class="bande">API Elixir Pharma pour les pharmacies · version 1.0.1 · réservée aux pharmacies clientes, selon les conditions d'utilisation de l'API acceptées dans « Accès API ».</div>
 </footer>
 </body>
 </html>
