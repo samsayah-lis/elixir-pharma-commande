@@ -559,9 +559,13 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // Thème sombre (24/10/2026 : palette sombre de src/styles/tokens.css et nouveaux jetons) : +1 912 octets (938 338 → 940 250),
 // au-delà de la marge restante (1 662) ; budget porté de 940 000 à 942 000 avec l'accord de Zineb (24/10/2026), pour
 // garder une marge du même ordre qu'avant.
+// Curseur à glisser de la jauge des paliers (24/10/2026) : +3 367 octets (940 480 → 943 847), au-delà de la marge (1 520) ;
+// budget porté de 942 000 à 945 000 avec l'accord de Zineb (24/10/2026). Mesuré le même jour : xlsx (Excel, 426 Ko) pèse
+// 46 % de ce bundle, chargé pour le seul import d'un fichier des commandes groupées (GroupOrders → gp-files) ; chargé à la
+// demande, le bundle tomberait à ~511 000 octets et ce budget serait à resserrer.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
-  const BUDGET = 942_000;
+  const BUDGET = 945_000;
   const dossier = join(APP, "dist", "assets");
   if (!existsSync(dossier)) console.log("  · dist/ absent : lancer npm run build pour contrôler le budget");
   else {
