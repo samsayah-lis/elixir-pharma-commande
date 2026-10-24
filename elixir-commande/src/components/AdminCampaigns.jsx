@@ -56,7 +56,7 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
               {!campEditing&&(
                 <div style={{display:"flex",gap:8}}>
                   <button onClick={fetchCampaigns} style={{fontSize:12,background:T.surface2,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer"}}>🔄</button>
-                  <button onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})} style={{fontSize:12,background:T.ok,color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>+ Nouvelle campagne</button>
+                  <button onClick={()=>setCampEditing({...EMPTY_CAMPAIGN})} style={{fontSize:12,background:T.ok,color:T.paper,border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>+ Nouvelle campagne</button>
                 </div>
               )}
             </div>
@@ -79,7 +79,7 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                       </div>
                       <div style={{display:"flex",gap:8,alignItems:"center"}}>
                         <span style={{fontSize:11,background:c.active?T.okBg:T.dangerBg,color:c.active?T.ok:T.danger,borderRadius:6,padding:"3px 9px",fontWeight:700}}>{c.active?"Actif":"Inactif"}</span>
-                        <button onClick={()=>setCampEditing({...c, restricted_to: c.restricted_to||[], conditions: c.conditions||[], groupes: c.groupes||[]})} style={{fontSize:12,background:T.teal,color:"white",border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>✏️ Éditer</button>
+                        <button onClick={()=>setCampEditing({...c, restricted_to: c.restricted_to||[], conditions: c.conditions||[], groupes: c.groupes||[]})} style={{fontSize:12,background:T.teal,color:T.paper,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>✏️ Éditer</button>
                         <button onClick={()=>deleteCampaign(c.id)} style={{fontSize:12,background:T.dangerBg,color:T.danger,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontWeight:700}}>🗑️</button>
                       </div>
                     </div>
@@ -184,15 +184,15 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                   </div>
 
                   {/* ── Conditions obligatoires ── */}
-                  <div style={{background:"#fdf4ff",borderRadius:12,padding:16,marginBottom:16,border:"1px solid #e9d5ff"}}>
+                  <div style={{background:"rgba(147,51,234,.05)",borderRadius:12,padding:16,marginBottom:16,border:"1px solid rgba(147,51,234,.25)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
-                      <div style={{fontWeight:700,fontSize:13,color:"#7e22ce"}}>⚠️ Conditions obligatoires</div>
+                      <div style={{fontWeight:700,fontSize:13,color:T.violet}}>⚠️ Conditions obligatoires</div>
                       <button onClick={addCond} style={{fontSize:12,background:"#7e22ce",color:"white",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter</button>
                     </div>
-                    <div style={{fontSize:11,color:"#9333ea",marginBottom:10}}>Ex : "3 dentifrices Parogencyl" → label="Parogencyl", regex="parogencyl.*dentifrice", count=3</div>
+                    <div style={{fontSize:11,color:T.violet,marginBottom:10}}>Ex : "3 dentifrices Parogencyl" → label="Parogencyl", regex="parogencyl.*dentifrice", count=3</div>
                     {(campEditing.conditions||[]).length===0&&<div style={{color:T.inkFaint,fontSize:13,textAlign:"center",padding:8}}>Aucune condition obligatoire</div>}
                     {(campEditing.conditions||[]).map((cond,ci)=>(
-                      <div key={ci} style={{background:T.surface,borderRadius:8,padding:12,marginBottom:8,border:"1px solid #e9d5ff",display:"grid",gridTemplateColumns:"1fr 1fr 80px 32px",gap:8,alignItems:"end"}}>
+                      <div key={ci} style={{background:T.surface,borderRadius:8,padding:12,marginBottom:8,border:"1px solid rgba(147,51,234,.25)",display:"grid",gridTemplateColumns:"1fr 1fr 80px 32px",gap:8,alignItems:"end"}}>
                         <div>
                           <label style={LS}>Libellé (ex: Parogencyl)</label>
                           <input value={cond.label||""} onChange={e=>updCond(ci,"label",e.target.value)} placeholder="Parogencyl" style={IS}/>
@@ -214,7 +214,7 @@ export default function AdminCampaigns({ campaigns, setCampaigns, adminFetch, fl
                   <div style={{background:T.okBg,borderRadius:12,padding:16,marginBottom:16,border:"1px solid rgba(6,95,70,.28)"}}>
                     <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
                       <div style={{fontWeight:700,fontSize:13,color:T.ok}}>📦 Groupes de produits</div>
-                      <button onClick={addGroupe} style={{fontSize:12,background:T.ok,color:"white",border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter un groupe</button>
+                      <button onClick={addGroupe} style={{fontSize:12,background:T.ok,color:T.paper,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontWeight:700}}>+ Ajouter un groupe</button>
                     </div>
                     <div style={{fontSize:11,color:T.ok,marginBottom:10}}>Les produits sont classés dans le premier groupe dont la regex correspond à leur nom. Ordre = priorité.</div>
                     {(campEditing.groupes||[]).length===0&&<div style={{color:T.inkFaint,fontSize:13,textAlign:"center",padding:8}}>Aucun groupe — les produits seront affichés sans regroupement</div>}

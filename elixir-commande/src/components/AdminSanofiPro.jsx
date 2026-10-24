@@ -36,7 +36,7 @@ const MODES = [["arret", "Arrêt"], ["simulation", "Simulation (rien n'est fait)
 const card = { background: T.surface, borderRadius: 14, padding: "16px 20px", border: "1px solid var(--line)" };
 const lbl = { fontSize: 11, fontWeight: 700, color: T.inkSoft, display: "block", marginBottom: 3 };
 const inp = { width: "100%", boxSizing: "border-box", border: `1px solid ${T.lineField}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", background: T.surface, color: T.ink };
-const btn = (bg, color = "white") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
+const btn = (bg, color = T.paper) => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 const CHAMPS = ["mode", "ageMaxHeures", "maxQteLigne", "plafondJour", "delaiOdooMin", "alertes"];
 const reglages = (c) => Object.fromEntries(CHAMPS.map(k => [k, c?.[k]]));
@@ -197,7 +197,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
                       <td>{(c.lignes || []).map((l, i) => <div key={i}>{l.qte} × {l.nom}{l.prix ? <span style={{ color: T.inkMute }}> · {Number(l.prix).toFixed(2)} € net</span> : null}</div>)}</td>
                       <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
                         {c.decision === "serait_traitee" && <div style={{ fontSize: 11, color: T.ok }}>PharmaML SP{c.ref} puis « Traiter »</div>}
-                        {c.motif && <div style={{ fontSize: 11, color: "#9a3412", maxWidth: 320 }}>{c.motif}</div>}</td>
+                        {c.motif && <div style={{ fontSize: 11, color: T.acting, maxWidth: 320 }}>{c.motif}</div>}</td>
                     </tr>);
                 })}</tbody>
               </table>
@@ -234,7 +234,7 @@ export default function AdminSanofiPro({ adminFetch, flash }) {
                       {c.traiteeA && <div style={{ fontSize: 11, color: T.inkMute }}>dans PharmaML depuis le {dt(c.traiteeA)}</div>}
                       {(c.doublon || c.deja || []).length > 0 && <div style={{ fontSize: 11, color: T.danger }}>autre(s) commande(s) PharmaML : {(c.doublon || c.deja).map(x => `${x.ref} (${x.date})`).join(", ")}</div>}
                       {(c.odoo || []).length > 0 && <div style={{ fontSize: 11, color: T.ok, fontFamily: "monospace" }}>{c.odoo.join(", ")}</div>}
-                      {c.motif && !["dans_odoo", "traitee"].includes(c.etat) && <div style={{ fontSize: 11, color: "#9a3412", maxWidth: 320 }}>{c.motif}</div>}
+                      {c.motif && !["dans_odoo", "traitee"].includes(c.etat) && <div style={{ fontSize: 11, color: T.acting, maxWidth: 320 }}>{c.motif}</div>}
                       {c.issueInconnue && c.etat !== "incertaine" && <div style={{ fontSize: 11, color: T.danger }}>⚠ envoi tenté le {dt(c.issueInconnue)} (issue inconnue)</div>}
                       {c.envoiPortail && c.etat !== "portail" && <div style={{ fontSize: 11, color: T.danger }}>⚠ déjà traitée sur le portail le {dt(c.envoiPortail)}{c.statutPortail ? ` (statut ${c.statutPortail})` : ""}</div>}
                       {c.plusieursDocs && <div style={{ fontSize: 11, color: T.danger }}>⚠ référence vue avec plusieurs documents sur le portail</div>}

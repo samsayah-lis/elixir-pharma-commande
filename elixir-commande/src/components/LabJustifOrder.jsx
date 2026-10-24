@@ -227,7 +227,7 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                         <span style={{ ...ui.badge("ok"), padding: "2px 8px 2px 6px" }}><Icone nom="coche" taille={12} epaisseur={2.4} />En stock chez Elixir</span>
                         {ajoute === p.cip
-                          ? <button className="ex-tactile" onClick={() => ajouterPanier(p, 1)} style={{ ...ui.btn("primaire", "m"), background: T.ok, color: "#fff" }}><Icone nom="coche" taille={14} epaisseur={2.4} />Ajouté</button>
+                          ? <button className="ex-tactile" onClick={() => ajouterPanier(p, 1)} style={{ ...ui.btn("primaire", "m"), background: T.ok, color: T.paper }}><Icone nom="coche" taille={14} epaisseur={2.4} />Ajouté</button>
                           : <button className="ex-btn-petrole ex-tactile" onClick={() => ajouterPanier(p, 1)} aria-label={`Ajouter ${p.nom} au panier`} style={btnPetrole}><Icone nom="plus" taille={14} epaisseur={2.4} />Panier</button>}
                       </div>
                     ) : (

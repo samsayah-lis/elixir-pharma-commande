@@ -120,7 +120,7 @@ export default function Bento({ items, format = "l", reduit, finPointer, depart 
       <ul role="list" ref={liste} className={`mea-grille mea-grille--${format}${vivant ? " mea-vivant" : ""}`}>
         {items.map((e, i) => {
           const p = places[i] || { c: 1, r: 1, v: "petite" };
-          const props = { className: `mea-tuile mea-tuile--${p.v}${e.menu || e.outil ? " mea-tuile--menu" : ""}${e.outil ? " mea-tuile--outil" : ""}`, style: varsTeinte(e), "data-amp": p.v === "grande" || p.v === "bandeau" ? "3" : "4",
+          const props = { className: `mea-tuile ex-clair mea-tuile--${p.v}${e.menu || e.outil ? " mea-tuile--menu" : ""}${e.outil ? " mea-tuile--outil" : ""}`, style: varsTeinte(e), "data-amp": p.v === "grande" || p.v === "bandeau" ? "3" : "4",
             onPointerMove: survol, onPointerLeave: sortie };
           return (
             <li key={e.id} className="mea-place" style={{ gridColumn: `span ${p.c}`, gridRow: `span ${p.r}` }}>

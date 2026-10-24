@@ -9,7 +9,10 @@
    plus aucune police externe (Google Fonts retiré d'index.html) */
 @import "@fontsource-variable/inter/wght.css";
 
-:root {
+/* Palette claire (la charte). Redéclarée sur les zones qui gardent leur dessin dans le thème sombre (plus bas) :
+   .ex-on-dark (bandeaux pétrole : en-tête, salle de cinéma de l'accueil, visionneuse…) et .ex-clair (objets dessinés
+   en clair : boîtes de médicament de l'accueil…) */
+:root, .ex-on-dark, .ex-clair {
   /* marque — copie de site/src/styles/base.css */
   --cream: #f4efe4; --paper: #fbf8f2; --ink: #201917; --ink-soft: #4b4440;
   --teal: #285557; --teal-2: #3c7782; --petrol: #0f2d3d; --deep: #0a1d22;
@@ -23,15 +26,57 @@
   --ok: #065f46; --ok-bg: #dce9e5; --danger: #b91c1c; --danger-bg: #f7e4e4;
   --warn: #92400e; --warn-bg: #f4e7dd; --tier-bg: #f0e9da; --orange-acting: #9a3412;
   --or-fonce: #93733a;                             /* or des tracés de la jauge des paliers : 3,55:1 sur --sand, 4,17:1 sur --paper */
+  /* thème sombre : fonds et filets qui étaient écrits en dur (rupture, survols, tons de theme.js) */
+  --ink-fixe: #201917;                             /* encre qui reste foncée dans les deux thèmes : texte sur or et or clair (5,82:1) */
+  --acting-bg: #fff7ed; --labo-bg: #e4ecee; --violet: #6d28d9;   /* violet des textes de l'admin (7,1:1) */
+  --rupture-bg: #fcf1f0; --rupture-survol: #f9e9e8; --sand-survol: #e2dccf; --hover-tint: rgba(15,45,61,.035);
+  --ok-line: rgba(6,95,70,.28); --danger-line: rgba(185,28,28,.28); --danger-line-2: rgba(185,28,28,.45);
+  --warn-line: rgba(146,64,14,.28); --acting-line: rgba(154,52,18,.3);
   --scrim: rgba(10,29,34,.55);
   --shadow-1: 0 4px 14px -6px rgba(15,45,61,.25);
   --shadow-2: 0 12px 40px -12px rgba(15,45,61,.28);
   --shadow-3: 0 30px 60px -30px rgba(10,29,34,.5);
+}
+:root {
   --r-xs: 6px; --r-s: 10px; --r-m: 16px; --r-l: 28px; --r-pill: 999px;
   --sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   --ease: cubic-bezier(.22,1,.36,1);
-  color-scheme: light;
+  /* les deux thèmes sont déclarés (et dans la balise color-scheme d'index.html) : un navigateur réglé en sombre ne
+     noircit plus le site lui-même (Chrome et WebView Android, Samsung Internet) — il prend le thème sombre ci-dessous */
+  color-scheme: light dark;
 }
+.ex-clair { color-scheme: light; }
+
+/* ── Thème sombre : appareil réglé en mode sombre (prefers-color-scheme). Écran seulement : l'impression garde la
+   palette claire. Même rôle pour chaque jeton, tons inversés (comme les thèmes sombres Material) : les fonds clairs
+   deviennent sombres, l'encre claire ; --petrol (titres, liens, boutons pleins) devient un pétrole clair et --paper
+   (texte des boutons pleins) un fond sombre, si bien qu'un bouton « pétrole + paper » reste lisible (10,6:1) ; l'or
+   ne change pas et garde son encre foncée (--ink-fixe). Textes ≥ 4,5:1 sur tous les fonds (--ink-mute : 4,54:1 sur
+   --sand), --line-field 4:1 sur --surface. --deep, --or et --or-clair ne changent pas ── */
+@media screen and (prefers-color-scheme: dark) {
+  :root {
+    --cream: #0c171c; --paper: #111e24; --ink: #ece6dc; --ink-soft: #c9c2b8;
+    --teal: #8fcdc5; --teal-2: #6aaebb; --petrol: #a9d3e0;
+    --mint: #1b3a3a; --mint-2: #2f5956;
+    --surface: #16252c; --surface-2: #1c2c34; --sand: #25363f;
+    --line: rgba(236,230,220,.15); --line-soft: rgba(236,230,220,.08); --line-field: #74838a;
+    --ink-mute: #a19b93; --ink-faint: #56636a;
+    --petrol-field: #97bcc8;
+    --paper-mute: rgba(17,30,36,.72);
+    --ok: #7fd3af; --ok-bg: #13302a; --danger: #f4a29b; --danger-bg: #3c1f1f;
+    --warn: #efb37f; --warn-bg: #37281c; --tier-bg: #302a1a; --orange-acting: #f6ac82;
+    --or-fonce: #c9a35c;                           /* 5,29:1 sur --sand */
+    --acting-bg: #3a2518; --labo-bg: #1b3138; --violet: #c4b5fd;
+    --rupture-bg: #2e1b1c; --rupture-survol: #3a2224; --sand-survol: #2e414b; --hover-tint: rgba(236,230,220,.04);
+    --ok-line: rgba(127,211,175,.32); --danger-line: rgba(244,162,155,.34); --danger-line-2: rgba(244,162,155,.55);
+    --warn-line: rgba(239,179,127,.32); --acting-line: rgba(246,172,130,.34);
+    --scrim: rgba(3,9,12,.66);
+    --shadow-1: 0 4px 14px -6px rgba(0,0,0,.5);
+    --shadow-2: 0 12px 40px -12px rgba(0,0,0,.55);
+    --shadow-3: 0 30px 60px -30px rgba(0,0,0,.7);
+  }
+}
+@media print { :root { color-scheme: light; } }
 /* Pile des z-index (inline, inchangée — on la documente, on ne la renumérote pas) :
    50 barre collante U-Labs · 80 barre A–Z · 90 en-tête collant · 140 voile du menu mobile · 150 barre latérale ·
    290 panier flottant, lanceur de l'Assistant Elixir · 300 voile du panier · 301 panier, panneau de l'Assistant Elixir ·
@@ -51,7 +96,7 @@ i, em { font-style: normal; }
 /* !important : l'emporte sur les 26 outline:"none" posés en inline (App, AdminDisplay, ShortExpiry…) */
 :focus-visible { outline: 3px solid var(--focus, var(--teal-2)) !important; outline-offset: 2px; }
 .ex-on-dark { --focus: var(--or-clair); }
-::selection { background: var(--or); color: var(--ink); }
+::selection { background: var(--or); color: var(--ink-fixe); }
 ::placeholder { color: var(--ink-mute); opacity: 1; }
 .ex-on-dark ::placeholder { color: var(--paper-mute); }   /* paper 72 % : ≥ 7:1 sur pétrole, 5,6:1 sur --petrol-field */
 input[type=number] { -moz-appearance: textfield; appearance: textfield; }
@@ -133,11 +178,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
    src/components/JaugePaliers.jsx) a le fond de son produit ; avant les règles rupture et survol, qui l'emportent toujours */
 .ex-tr[data-zebre="0"], .ex-tr-palier { background: var(--surface); }
 .ex-tr[data-zebre="1"], .ex-tr-palier[data-zebre="1"] { background: var(--paper); }
-.ex-tr[data-rupture] + .ex-tr-palier { background: #fcf1f0; }
-.ex-tr[data-rupture] { background: #fcf1f0; }   /* --danger-bg éclairci : CIP en --ink-mute à 4,9:1 */
+.ex-tr[data-rupture] + .ex-tr-palier { background: var(--rupture-bg); }
+.ex-tr[data-rupture] { background: var(--rupture-bg); }   /* --danger-bg éclairci : CIP en --ink-mute à 4,9:1 */
 @media (hover: hover) {
   .ex-tr:hover { background: var(--surface-2); }
-  .ex-tr[data-rupture]:hover { background: #f9e9e8; }
+  .ex-tr[data-rupture]:hover { background: var(--rupture-survol); }
 }
 /* colonne Qté du tableau d'ordinateur (revue, § 20) : de 768 à 1 279 px, le tableau (Stratège : 990 px) défile en largeur
    dans son cadre et la quantité était hors de l'écran ; elle reste collée au bord droit tant qu'elle le dépasserait.
@@ -150,7 +195,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 /* filtres : sable + encre ; actif (aria-pressed) encre + paper, comme les liens actifs de la vitrine */
 .ex-filtre { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease), color .15s var(--ease); }
 .ex-filtre[aria-pressed="true"], .ex-filtre[data-actif] { background: var(--ink); color: var(--paper); }
-@media (hover: hover) { .ex-filtre:not([aria-pressed="true"]):not([data-actif]):hover { background: #e2dccf; } }
+@media (hover: hover) { .ex-filtre:not([aria-pressed="true"]):not([data-actif]):hover { background: var(--sand-survol); } }
 /* Centrale OTC (docs/labo-otc.md) : liste « Laboratoire » (options lisibles même quand la liste est active) et tri en
    sélecteur segmenté de 32 px (piste sable, segment actif pétrole, comme le fauteuil) */
 .ex-liste option { background: var(--surface); color: var(--ink); }
@@ -158,12 +203,12 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-segment > button { height: 26px; padding: 0 12px; border: none; border-radius: 999px; background: transparent; color: var(--ink);
   font-size: 13px; font-weight: 600; cursor: pointer; transition: background-color .15s var(--ease), color .15s var(--ease); }
 .ex-segment > button[aria-pressed="true"] { background: var(--petrol); color: var(--paper); }
-@media (hover: hover) { .ex-segment > button:not([aria-pressed="true"]):hover { background: #e2dccf; } }
+@media (hover: hover) { .ex-segment > button:not([aria-pressed="true"]):hover { background: var(--sand-survol); } }
 /* boutons de quantité : « − » sable + encre, « + » pétrole + paper (survol sarcelle) */
 .ex-qte-moins { background: var(--sand); color: var(--ink); transition: background-color .15s var(--ease); }
 .ex-qte-plus { background: var(--petrol); color: var(--paper); transition: background-color .15s var(--ease); }
 @media (hover: hover) {
-  .ex-qte-moins:hover { background: #e2dccf; }
+  .ex-qte-moins:hover { background: var(--sand-survol); }
   .ex-qte-plus:hover { background: var(--teal); }
 }
 /* cartes produit : blanc, filet --line, ombre douce ; produit au panier = anneau sarcelle de 2 px (filet + 1 px).
@@ -244,12 +289,12 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 /* ── Panier et envoi (lot 6) : le fond des boutons est posé ici et non en inline, sinon pas de survol ── */
 /* « Envoyer la commande » : seule action or + encre de l'app (5,82:1) ; survol or clair. Les états envoi réussi,
    erreur et bloqué posent leur fond en inline (ils l'emportent sur la classe) */
-.ex-btn-or { background: var(--or); color: var(--ink); }
+.ex-btn-or { background: var(--or); color: var(--ink-fixe); }
 .ex-btn-or:hover:not(:disabled) { background: var(--or-clair); }
 /* « Ramener à N » (contingentement dépassé) : filet danger sur blanc, plein au survol */
-.ex-btn-danger-ligne { background: var(--surface); color: var(--danger); box-shadow: inset 0 0 0 1px rgba(185,28,28,.45);
+.ex-btn-danger-ligne { background: var(--surface); color: var(--danger); box-shadow: inset 0 0 0 1px var(--danger-line-2);
   transition: background-color .15s var(--ease), color .15s var(--ease); }
-.ex-btn-danger-ligne:hover { background: var(--danger); color: #fff; }
+.ex-btn-danger-ligne:hover { background: var(--danger); color: var(--paper); }
 /* « Vider le panier » : lien danger, soulignement plus marqué au survol */
 .ex-lien-danger { text-decoration-thickness: 1px; }
 .ex-lien-danger:hover { text-decoration-thickness: 2px; }
@@ -361,7 +406,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 /* tableaux : chiffres alignés ; survol de ligne discret pour suivre une ligne dans les tableaux larges (les lignes
    .ex-tr des composants partagés, Péremptions et Commandes groupées, ont déjà le leur) */
 .ex-admin table { font-variant-numeric: tabular-nums; }
-@media (hover: hover) { .ex-admin tbody tr:not(.ex-tr):hover > td { background-color: rgba(15,45,61,.035); } }
+@media (hover: hover) { .ex-admin tbody tr:not(.ex-tr):hover > td { background-color: var(--hover-tint); } }
 /* téléphone : l'admin reste un outil de bureau, mais la barre du haut et les onglets ne débordent plus — libellés
    masqués visuellement (toujours lus par les lecteurs d'écran), onglets réduits à leur icône, statistiques retirées */
 @media (max-width: 767px) {
@@ -407,7 +452,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-jauge__incitation svg { color: var(--ok); flex-shrink: 0; }
 .ex-jauge__n { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center;
   background: var(--petrol); color: var(--paper); font-size: 12px; white-space: nowrap; }
-.ex-jauge__prix { padding: 2px 8px; border-radius: 999px; background: var(--or); color: var(--ink); font-size: 12px; white-space: nowrap; }
+.ex-jauge__prix { padding: 2px 8px; border-radius: 999px; background: var(--or); color: var(--ink-fixe); font-size: 12px; white-space: nowrap; }
 .ex-jauge__deja { font-size: 12px; color: var(--ink-soft); }
 .ex-jauge__br { display: none; flex-basis: 100%; height: 0; }
 .ex-jauge:is([data-variante="compacte"], [data-variante="mini"]) .ex-jauge__br { display: block; }
@@ -434,7 +479,7 @@ span.ex-jauge__etape { cursor: default; }
 .ex-jauge__rp { display: none; }   /* « · −23,6 % » : jauge complète sur ordinateur seulement (place) */
 .ex-jauge__etape[data-etat="suite"] .ex-jauge__q { color: var(--ink-mute); }
 .ex-jauge__etape[data-etat="prochaine"] .ex-jauge__point { box-shadow: inset 0 0 0 3px var(--or-fonce); }
-.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { background: var(--or); color: var(--ink); box-shadow: none; }
+.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { background: var(--or); color: var(--ink-fixe); box-shadow: none; }
 .ex-jauge__etape[data-etat="atteinte"] .ex-jauge__point { background: var(--or-fonce); box-shadow: none; }
 .ex-jauge__etape[data-etat="atteinte"] .ex-jauge__remise { background: var(--tier-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--or); }
 /* palier cliquable : soulignement et anneau au survol (et le prochain toujours en relief de bouton) */
@@ -476,6 +521,6 @@ button.ex-jauge__etape[data-etat="prochaine"] .ex-jauge__remise { box-shadow: 0 
 .ex-jauge[data-variante="ligne"] .ex-jauge__incitation > svg:first-child { color: var(--or-fonce); }
 .ex-jauge__passer { height: 26px; padding: 0 10px; border: none; border-radius: 999px; background: var(--tier-bg); box-shadow: inset 0 0 0 1px var(--or-fonce);
   color: var(--ink); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; white-space: nowrap; }
-@media (hover: hover) { .ex-jauge__passer:hover { background: var(--or-clair); } }
+@media (hover: hover) { .ex-jauge__passer:hover { background: var(--or-clair); color: var(--ink-fixe); } }
 /* prix unitaire d'une ligne de menu quand le palier s'applique (prixUnitaire, src/App.jsx) : ton palier, même hauteur de ligne */
 .ex-prix-palier { padding: 0 4px; border-radius: 5px; background: var(--tier-bg); box-shadow: inset 0 0 0 1px var(--or); white-space: nowrap; }

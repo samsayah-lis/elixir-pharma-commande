@@ -120,7 +120,7 @@ export default function Gondole({ offre, index, cle = index, position, arrivee, 
   };
 
   return (
-    <div ref={scene} className={`acc-scene${actif ? " acc-scene--vivante" : ""}`} onPointerMove={surDeplacement} onPointerLeave={surSortie}
+    <div ref={scene} className={`acc-scene ex-clair${actif ? " acc-scene--vivante" : ""}`} onPointerMove={surDeplacement} onPointerLeave={surSortie}
       onPointerDown={surAppui} onPointerUp={surRelache} onPointerCancel={() => { glisse.current = null; }}>
       {/* fond rogné (halo agrandi, projecteur) ; le produit, lui, n'est pas rogné : il vole depuis le linéaire */}
       <span className="acc-scene-fond" aria-hidden="true">

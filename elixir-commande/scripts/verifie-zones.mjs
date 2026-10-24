@@ -556,9 +556,12 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // l'accord de Zineb (19/10/2026). Lanceur flottant et fenêtre de présentation (chargés à la demande, eux aussi) :
 // 3 559 octets en tout, mesurés contre le build de f2461b7 (master sans l'assistant), soit +120 octets ; 3 655 après les
 // correctifs de la revue (lien de menu promo, barre U-Labs : +96 octets).
+// Thème sombre (24/10/2026 : palette sombre de src/styles/tokens.css et nouveaux jetons) : +1 912 octets (938 338 → 940 250),
+// au-delà de la marge restante (1 662) ; budget porté de 940 000 à 942 000 avec l'accord de Zineb (24/10/2026), pour
+// garder une marge du même ordre qu'avant.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
-  const BUDGET = 940_000;
+  const BUDGET = 942_000;
   const dossier = join(APP, "dist", "assets");
   if (!existsSync(dossier)) console.log("  · dist/ absent : lancer npm run build pour contrôler le budget");
   else {

@@ -1075,3 +1075,21 @@ Trois relectures contradictoires de la branche (invariants, rendu, production) o
   - à l'ajout (`ajouterDepuisSaisie`), même arrondi que les tableaux (`setQty`) : 150 → 160 avec le message « arrondi au colis de 160 » ; moins d'un demi-colis (4) → rien n'est ajouté, message « se commande par 160 : saisissez 160 ou plus » ;
   - références sans règle et articles à plusieurs références (code fournisseur) : inchangés.
   - Vérifié sur le banc (Dafalgan 1000 gélules, colis 160) : 4 → refus, 150 → 160 (stratege-4), + → 160 → 320.
+
+---
+
+## 21. Thème sombre (24/10/2026)
+
+**Problème.** Un téléphone réglé en mode sombre en permanence noircissait le site lui-même : Chrome Android (« thème sombre pour les sites »), les WebView Android et Samsung Internet appliquent leur propre assombrissement aux pages qui ne déclarent pas de thème sombre. Résultat sur le banc, avec l'assombrissement de Chrome : bouton « Continuer » pétrole sur carte sombre, boîte Ventoline de l'accueil noircie, fonds brunâtres. `color-scheme: light` (lot 1) n'y suffisait pas, et Samsung Internet ignore aussi `only light`.
+
+**Ce qui est fait.** Le site déclare ses deux thèmes (`color-scheme: light dark` dans `tokens.css` et balise `<meta name="color-scheme">` d'index.html). Un navigateur réglé en sombre affiche donc le thème sombre du site au lieu de le noircir. Vérifié sur le banc : avec l'assombrissement forcé de Chrome, le rendu est identique pixel pour pixel au thème sombre.
+- **Jetons** : les mêmes noms, redéfinis sous `@media screen and (prefers-color-scheme: dark)` (écran seulement, l'impression reste claire). Les tons sont inversés, comme dans les thèmes sombres Material. Les fonds clairs deviennent sombres et l'encre claire. `--petrol` (titres, liens, boutons pleins) devient un pétrole clair et `--paper` un fond sombre : un bouton « pétrole + paper » reste lisible (10,6:1). L'or ne change pas et garde une encre foncée (`--ink-fixe`). Tous les textes sont à ≥ 4,5:1.
+- **Nouveaux jetons** pour les couleurs écrites en dur : `--ink-fixe`, `--acting-bg`, `--labo-bg`, `--violet` (textes de l'admin), `--rupture-bg`, `--rupture-survol`, `--sand-survol`, `--hover-tint` et les filets des tons (`--ok-line`, `--danger-line`, `--danger-line-2`, `--warn-line`, `--acting-line`). Les tons `labo` et `acting` de theme.js et le bouton `danger` y passent.
+- **Texte blanc sur fond plein** (`color: "white"` / `"#fff"` sur `T.petrol`, `T.teal`, `T.ok`, `T.danger`, `T.warn`, `T.acting`) : passé à `T.paper`, quasi blanc en clair (#fbf8f2) et sombre en thème sombre, comme son fond devenu clair. Les fonds hexadécimaux saisis dans l'admin (couleurs de rayon, de campagne) gardent leur blanc.
+- **Zones qui gardent la palette claire** : la palette claire est redéclarée sur `.ex-on-dark` (bandeaux pétrole : en-tête, salle de cinéma de l'accueil, visionneuse, barre de l'admin, aperçu des mises en avant), qui restent identiques dans les deux thèmes. Elle l'est aussi sur la nouvelle classe `.ex-clair`, pour les objets qui ne se lisent que sur fond clair : photos produit sur fond blanc ou en `mix-blend-mode: multiply`, boîtes dessinées. Concrètement : puits photo des cartes du catalogue, boîtes, scènes et linéaire de « Les plus commandés », tuiles « À la une », geste d'achat, photos des recommandations et du fauteuil.
+
+**Thème clair inchangé** : captures avant/après identiques (connexion, accueil, Centrale OTC, Expert, Master, panier), au texte des pastilles « Rupture » près (#fff → #fbf8f2).
+
+**Vérifié (banc, 24/10/2026)** : audit de contraste automatique, texte par texte, en clair puis en sombre, sur mobile (390 px) et ordinateur (1 280 px). Vues couvertes : connexion, accueil, menus, Saisie, Péremption courte, fauteuil, justificatif, panier, Mes commandes, Notifications, Assistant, menu mobile, recherche de l'en-tête, et les 17 onglets de l'admin. Aucune régression : aucun texte qui passait en clair ne descend sous 4,5:1 (3:1 pour les grands textes) en sombre. `npm run lint`, `npm run build`, `verifie-zones` et les tests concernés passent (test-appli-admin, test-peremption-mention, test-peremption-panier, test-push-client, test-push-messages).
+
+**Budget du bundle** : +1 912 octets (938 338 → 940 250), au-delà de la marge de 1 662 octets. Le budget de `verifie-zones` passe de 940 000 à 942 000 octets, avec l'accord de Zineb (24/10/2026).

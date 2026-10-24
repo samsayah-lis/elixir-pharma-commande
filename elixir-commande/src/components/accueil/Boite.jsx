@@ -9,7 +9,7 @@ export default function Boite({ boite = {}, cip, teinte, mode = "25d", taille = 
   const dosage = boite.dosage || "";
   const long = dosage.length > 9 ? " acc-boite-dosage--long" : dosage.length > 6 ? " acc-boite-dosage--moyen" : "";
   return (
-    <div className={`acc-boite acc-boite--${mode} acc-boite--${taille}`} style={teinte ? { "--acc-teinte": teinte } : undefined} aria-hidden="true">
+    <div className={`acc-boite acc-boite--${mode} acc-boite--${taille} ex-clair`} style={teinte ? { "--acc-teinte": teinte } : undefined} aria-hidden="true">
       <div className="acc-boite-corps">
         <div className="acc-boite-face">
           <span className="acc-boite-bandeau" />

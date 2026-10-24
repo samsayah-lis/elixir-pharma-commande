@@ -613,7 +613,7 @@ function Ligne({ p, R0, v, occupe, selection, setSelection, remise, setRemise, o
           {sansEffet && <div style={{ color: T.inkMute, fontSize: 11 }}>sans effet (seuil : {pct(R0.seuil_annonce_pct)} d'économie)</div>}
           <div style={{ color: marge != null && marge < 0 ? T.danger : T.inkMute, fontWeight: marge != null && marge < 0 ? 700 : 400 }}>{marge == null ? "" : `marge ${pct(marge)}`}</div></td>
         <td style={td}>{f?.ventes_30j ? `${(f.ventes_30j.lgo || 0) + (f.ventes_30j.site || 0) + (f.ventes_30j.autre || 0)} (${f.ventes_30j.lgo || 0})` : "–"}</td>
-        <td style={td}><span style={{ ...ui.badge(ton), background: ton === "warn" && p.etat === "a_remiser" ? "#fff7ed" : t.bg }}>{libelle}</span>
+        <td style={td}><span style={{ ...ui.badge(ton), background: ton === "warn" && p.etat === "a_remiser" ? T.actingBg : t.bg }}>{libelle}</span>
           {d && <div style={{ color: T.inkMute, fontSize: 11, marginTop: 3, maxWidth: 200 }}>{texteDecision(d, R0)}</div>}</td>
         <td style={{ ...td, minWidth: 120, ...colleDroite, background: coche ? T.surface2 : T.surface }}>
           <div style={{ display: "flex", gap: 4, flexDirection: "column", alignItems: "flex-start" }}>

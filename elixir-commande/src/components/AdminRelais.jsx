@@ -33,7 +33,7 @@ async function confirmer(adminFetch, flash, ref, onChange) {
 const lien = { background: "none", border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700, textDecoration: "underline", padding: 0 };
 const Verifier = ({ t, adminFetch, flash, onChange }) => (<>
   <button onClick={() => confirmer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: T.ok }}>vérifié : arrivé dans PharmaML</button>
-  <button onClick={() => liberer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: "#9a3412" }}>vérifié : pas dans PharmaML</button>
+  <button onClick={() => liberer(adminFetch, flash, t.ref, onChange)} style={{ ...lien, color: T.acting }}>vérifié : pas dans PharmaML</button>
 </>);
 
 // Envois d'une commande (sous la commande, onglet Commandes)
@@ -109,17 +109,17 @@ export default function AdminRelais({ adminFetch, flash }) {
           }}
           disabled={busy} title="L'agent du Mac envoie à PharmaML une liste VIDE (aucune commande créée) ; marche aussi pendant une pause, pour vérifier l'adresse du bureau" style={{ background: T.surface2, border: "none", borderRadius: 8, padding: "4px 10px", cursor: busy ? "wait" : "pointer", fontSize: 11, fontWeight: 700 }}>{busy ? "Essai (jusqu'à 90 s)…" : "🔌 Tester"}</button>
       </div>
-      {test && <div style={{ marginTop: 6, fontSize: 12, color: /^✓/.test(test) ? T.ok : "#9a3412" }}>{test}</div>}
+      {test && <div style={{ marginTop: 6, fontSize: 12, color: /^✓/.test(test) ? T.ok : T.acting }}>{test}</div>}
       {st.pause?.at && (
         <div style={{ marginTop: 8, background: T.dangerBg, border: "1px solid #fecaca", borderRadius: 8, padding: "6px 10px", color: T.danger }}>
           ⛔ Envois suspendus depuis le {dt(st.pause.at)} : {st.pause.motif}{" "}
           <button onClick={async () => { if (!window.confirm("Reprendre les envois vers PharmaML ? (l'adresse du bureau doit de nouveau être autorisée par InfoSoft)")) return; try { await appel(adminFetch, { action: "reprendre_envois" }); await charger(); } catch (e) { flash?.(`⚠ ${e.message}`); } }}
-            style={{ marginLeft: 8, background: T.danger, color: "white", border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Reprendre les envois</button>
+            style={{ marginLeft: 8, background: T.danger, color: T.paper, border: "none", borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontSize: 11, fontWeight: 700 }}>Reprendre les envois</button>
         </div>
       )}
       {(st.aVerifier || []).length > 0 && (
-        <div style={{ marginTop: 8, background: "#fff7ed", border: "1px solid #fed7aa", borderRadius: 8, padding: "6px 10px" }}>
-          <b style={{ color: "#9a3412" }}>⚠ Envois à l'issue inconnue : à vérifier sur le portail PharmaML avant toute nouvelle saisie</b>
+        <div style={{ marginTop: 8, background: T.actingBg, border: "1px solid var(--acting-line)", borderRadius: 8, padding: "6px 10px" }}>
+          <b style={{ color: T.acting }}>⚠ Envois à l'issue inconnue : à vérifier sur le portail PharmaML avant toute nouvelle saisie</b>
           {st.aVerifier.map(t => (
             <div key={t.ref} style={{ marginTop: 3 }}>
               <span style={{ fontFamily: "monospace" }}>{t.ref}</span> · {t.pharmacie || t.source} · {dt(t.renduA || t.priseA)} — {t.message}{" "}
