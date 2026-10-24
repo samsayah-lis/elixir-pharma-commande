@@ -298,6 +298,8 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/_relais.js": { empreinte: "07965174f91d", motif: "péremption courte, règle panier (21/10/2026) : empreinte anti-doublon d'envoiAuto, ligne péremption marquée « :per » — la commande « à part » (même produit, même quantité que la ligne du menu de la commande voisine) n'est plus classée « POSSIBLE DOUBLON » ni écartée de l'envoi automatique ; sans ligne péremption, empreinte inchangée" },
   // Sections du catalogue (22/10/2026, docs/sections-admin.md) : contrôle serveur des seules actions section_* (ajout,
   // déplacement, remise, retrait depuis l'onglet ✏️ Modifier) ; les autres actions (update, create, delete) sont inchangées
+  // Fermeture Supabase, préalable à la bascule de SUPABASE_KEY (24/10/2026) : statistiques réservées à l'admin
+  "netlify/functions/search-track.js": { empreinte: "c699cd3fcd4e", motif: "fermeture Supabase (24/10/2026) : GET des statistiques de recherche réservé à l'admin (verifyAdmin), avant la bascule de SUPABASE_KEY sur une clé secrète qui les rendrait lisibles par tous ; POST (enregistrement d'une recherche) toujours public, champs bornés" },
   "netlify/functions/products-upsert.js": { empreinte: "f18d186674d1", motif: "sections du catalogue (22/10/2026) : actions section_* contrôlées par refusActionSection (src/components/sections-produits.js) après lecture de la ligne et des campagnes actives — refus 400 menu promo, outil, clé invalide, U-Labs ou campagne active (arrivée ou origine), Stratège sans colis ; 409 CIP déjà présent ; 503 si la lecture échoue, rien d'écrit ; les autres actions sont inchangées" },
 };
 // Projet « Assistant Elixir » (branche assistant-elixir, docs/assistant-contrat.md), en attente de fusion dans master :
