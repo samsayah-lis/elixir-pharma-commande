@@ -112,7 +112,7 @@ create table if not exists gp_triggers (
 
 -- Accès : comme les autres tables du site, ces tables ne sont lues et écrites que
 -- par les fonctions Netlify, avec la clé SECRÈTE du serveur (SUPABASE_KEY = clé sb_secret
--- « commandes-elixir » depuis l'étape 2 de la fermeture de Supabase ; elle agit en service_role,
+-- « commandes_elixir » depuis l'étape 2 de la fermeture de Supabase ; elle agit en service_role,
 -- qui contourne la RLS). RLS activée, aucune politique, aucun droit pour anon ni authenticated :
 -- un rejeu de ce script ne rouvre rien (avant, il désactivait la RLS et ouvrait les tables à anon).
 -- Ne pas rejouer tant que SUPABASE_KEY est encore la clé publique : les commandes groupées
