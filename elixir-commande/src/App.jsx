@@ -2594,7 +2594,7 @@ export default function App() {
             <button data-cible-panier className={cartCount > 0 ? "ex-cible" : "ex-icone-entete ex-cible"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
               aria-label={cartCount > 0 ? `Panier : ${cartCount} unité${cartCount > 1 ? "s" : ""}` : "Panier (vide)"} title="Panier"
               style={cartCount > 0
-                ? { ...btnEntete, width: "auto", gap: 6, padding: "0 13px 0 10px", background: T.or, color: T.ink, fontSize: 13, fontWeight: 700 }
+                ? { ...btnEntete, width: "auto", gap: 6, padding: "0 13px 0 10px", background: T.or, color: T.inkFixe, fontSize: 13, fontWeight: 700 }
                 : btnEntete}>
               <Icone nom="panier" />
               {cartCount > 0 && <span className="num">{cartCount}</span>}
@@ -2646,7 +2646,7 @@ export default function App() {
                 </div>
               </div>
               <button onClick={() => setShowPharmacyPicker(true)} style={{ ...ui.btn("ligne", "s"), background: T.surface, color: T.acting, boxShadow: `inset 0 0 0 1px ${tone("acting").border}` }}>Changer de pharmacie</button>
-              <button onClick={stopActing} style={{ ...ui.btn("primaire", "s"), background: T.acting, color: "#fff" }}>Terminer</button>
+              <button onClick={stopActing} style={{ ...ui.btn("primaire", "s"), background: T.acting, color: T.paper }}>Terminer</button>
             </div>
           )}
 
@@ -3148,8 +3148,9 @@ export default function App() {
                         display: "flex", flexDirection: "column", gap: 0, minWidth: 0,
                         overflow: "hidden"
                       }}>
-                        {/* Photo : puits blanc (photos Medipim sur fond blanc) ; sans photo, puits sable et icône du rayon */}
-                        <div style={{ width: "100%", height: isMobile ? 120 : 160, background: p.image_url ? T.surface : T.surface2, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: `1px solid ${T.lineSoft}`, boxSizing: "border-box" }}>
+                        {/* Photo : puits blanc (photos Medipim sur fond blanc), blanc aussi dans le thème sombre (ex-clair) ; sans
+                            photo, puits sable et icône du rayon */}
+                        <div className={p.image_url ? "ex-clair" : undefined} style={{ width: "100%", height: isMobile ? 120 : 160, background: p.image_url ? T.surface : T.surface2, position: "relative", display: "flex", alignItems: "center", justifyContent: "center", borderBottom: `1px solid ${T.lineSoft}`, boxSizing: "border-box" }}>
                           {p.image_url
                             ? <img src={p.image_url} alt={p.name} loading="lazy" draggable={false} style={{ width: "100%", height: "100%", objectFit: "contain", padding: 10, boxSizing: "border-box" }}/>
                             : (() => { const ic = iconeMenu(activeTab, cat, 40); return <span aria-hidden="true" style={typeof ic === "string" ? { fontSize: 34, opacity: 0.2 } : { display: "flex", color: T.inkFaint }}>{ic}</span>; })()
@@ -3659,7 +3660,7 @@ export default function App() {
                   <button className={ulabsConfirmed || ulabsConfirming ? undefined : "ex-btn-or"} onClick={confirmOrder} disabled={ulabsConfirming || ulabsConfirmed} style={{
                     ...ui.btn("or", "l"), flexShrink: 0, gap: 8, fontSize: 14,
                     ...(isMobile ? { height: "auto", minHeight: 44, padding: "6px 14px", whiteSpace: "normal", lineHeight: 1.2, maxWidth: 150, textAlign: "left" } : {}),
-                    ...(ulabsConfirmed ? { background: T.ok, color: "#fff", cursor: "default" }
+                    ...(ulabsConfirmed ? { background: T.ok, color: T.paper, cursor: "default" }
                       : ulabsConfirming ? { cursor: "progress" }
                       : { background: undefined, color: undefined }),
                   }}>
@@ -3976,8 +3977,8 @@ export default function App() {
                     disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || justifCheck.length > 0}
                     style={{
                       ...ui.btn("or", "l"), width: "100%", gap: 10,
-                      ...(sendStatus === "success" ? { background: T.ok, color: "#fff" }
-                        : sendStatus === "error" ? { background: T.danger, color: "#fff" }
+                      ...(sendStatus === "success" ? { background: T.ok, color: T.paper }
+                        : sendStatus === "error" ? { background: T.danger, color: T.paper }
                         : quotaCheck.over.length > 0 || justifCheck.length > 0 ? { background: T.sand, color: T.inkSoft, cursor: "not-allowed" }
                         : { background: undefined, color: undefined, cursor: sendStatus === "sending" ? "progress" : "pointer" }),
                     }}>
@@ -4041,7 +4042,7 @@ export default function App() {
           <Icone nom="panier" taille={24} />
           {/* compteur or + encre, comme le compteur du panier de l'en-tête */}
           <span className="num" style={{ position: "absolute", top: -4, right: -4, minWidth: 24, height: 24, padding: "0 6px", boxSizing: "border-box",
-            borderRadius: R.pill, background: T.or, color: T.ink, fontSize: 12, fontWeight: 700, lineHeight: "24px", textAlign: "center",
+            borderRadius: R.pill, background: T.or, color: T.inkFixe, fontSize: 12, fontWeight: 700, lineHeight: "24px", textAlign: "center",
             boxShadow: `0 0 0 2px ${T.cream}` }}>{cartCount}</span>
         </button>
       )}

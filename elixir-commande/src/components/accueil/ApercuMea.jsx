@@ -56,7 +56,7 @@ export default function ApercuMea({ brouillon, statut, verif, promos = [], cache
       {!mod ? <div style={{ fontSize: 12, color: "var(--ink-mute)", padding: 12 }}>Chargement…</div> : mod.erreur ? <div style={{ fontSize: 12, color: "var(--danger)", padding: 12 }}>Aperçu indisponible (rechargez la page).</div>
         : vide ? <div style={{ fontSize: 12, color: "var(--ink-mute)", padding: 12 }}>Rien à montrer : aucune mise en avant visible et pas de menu promo actif pour le repli automatique.</div> : (
         <div style={{ display: "flex", gap: 16, alignItems: "flex-start", flexWrap: "wrap" }}>
-          <div aria-label="Aperçu téléphone" style={{ width: 375, flexShrink: 0, maxHeight: 812, overflowY: "auto", overflowX: "hidden", padding: "12px 10px", background: "var(--cream)", borderRadius: 28, boxShadow: "0 0 0 8px var(--ink), 0 20px 40px -20px rgba(0,0,0,.5)", margin: 8 }}>
+          <div aria-label="Aperçu téléphone" style={{ width: 375, flexShrink: 0, maxHeight: 812, overflowY: "auto", overflowX: "hidden", padding: "12px 10px", background: "var(--cream)", borderRadius: 28, boxShadow: "0 0 0 8px var(--ink-fixe), 0 20px 40px -20px rgba(0,0,0,.5)", margin: 8 }}>
             {rendu("s")}
           </div>
           <div ref={cadre} aria-label="Aperçu ordinateur" style={{ flex: "1 1 600px", minWidth: 0 }}>{rendu(largeur >= 1100 ? "l" : "m")}</div>

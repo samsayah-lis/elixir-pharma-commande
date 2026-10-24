@@ -15,7 +15,7 @@ const h3 = { fontSize: 13, fontWeight: 700, color: T.petrol, textTransform: "upp
 // boutons en pastille (lot 10) : principal pétrole à plat, « ok » vert foncé (7,7:1), danger en teinte, secondaire neutre
 const btn = (kind = "sec") => ({ border: "none", borderRadius: R.pill, padding: "9px 16px", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap",
   ...(kind === "pri" ? { background: T.petrol, color: T.paper }
-    : kind === "ok" ? { background: T.ok, color: "white" } : kind === "danger" ? { background: T.dangerBg, color: T.danger } : { background: T.surface2, color: T.petrol }) });
+    : kind === "ok" ? { background: T.ok, color: T.paper } : kind === "danger" ? { background: T.dangerBg, color: T.danger } : { background: T.surface2, color: T.petrol }) });
 const grid = (cols) => ({ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "end" });
 
 const eur = (n) => (Math.round((n || 0) * 100) / 100).toLocaleString("fr-FR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " €";

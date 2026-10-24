@@ -256,7 +256,7 @@ export default function AdminEdit({
                 <div key={p._key} style={{
                   borderRadius:12,marginBottom:8,
                   border:hasOv?"2px solid #fbbf24":"1px solid var(--line)",
-                  background:hasOv?"#fffbeb":T.paper,overflow:"hidden"
+                  background:hasOv?"rgba(251,191,36,.1)":T.paper,overflow:"hidden"
                 }}>
                   <div style={{display:"flex",flexWrap:"wrap",justifyContent:"space-between",alignItems:"center",gap:"8px 10px",padding:"10px 14px"}}>
                     {enSection && retirable(p) && (
@@ -289,7 +289,7 @@ export default function AdminEdit({
                       <button onClick={()=>isEditing?setEditingKey(null):startEdit(p)} style={{
                         background:isEditing?T.sand:T.petrol,border:"none",borderRadius:8,
                         padding:"5px 12px",cursor:"pointer",fontSize:12,
-                        color:isEditing?T.inkSoft:"white",fontWeight:700
+                        color:isEditing?T.inkSoft:T.paper,fontWeight:700
                       }}>{isEditing?"Annuler":"✏️ Modifier"}</button>
                       {retirable(p) && (
                         <button type="button" onClick={()=>setRetraitDemande([p])} disabled={etatSections.occupe} title={`Retirer de la section « ${nomSection(p._section ?? p.section, allSectionsList)} »`}
@@ -406,7 +406,7 @@ export default function AdminEdit({
                                   if(j.success){setUploadedImgs(prev=>({...prev,[p.cip]:j.image_url}));flash("🖼️ Photo Medipim importée !");await fetchProducts();}
                                   setUploadingImg(null);
                                 }catch(e){alert(e.message);setUploadingImg(null);}
-                              }} style={{fontSize:11,background:T.teal,color:"white",border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
+                              }} style={{fontSize:11,background:T.teal,color:T.paper,border:"none",borderRadius:6,padding:"5px 10px",cursor:"pointer",fontWeight:700}}>
                                 🔄 Photo Medipim
                               </button>
                             )}
@@ -464,7 +464,7 @@ export default function AdminEdit({
                   }
                   await fetchProducts();
                   flash(`✅ ${ok} photos importées${ko>0?`, ${ko} non trouvées`:""}${sature>0?`, ${sature} non traitées (base photos saturée : relancez plus tard)`:""}`)
-                }} style={{fontSize:12,background:T.teal,color:"white",border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
+                }} style={{fontSize:12,background:T.teal,color:T.paper,border:"none",borderRadius:8,padding:"7px 16px",cursor:"pointer",fontWeight:700}}>
                   🔄 Importer photos Medipim pour les produits filtrés sans photo
                 </button>
                 {filterSection === "ulabs" && (

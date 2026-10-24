@@ -26,7 +26,7 @@ export function voler(source, { image, marque, dosage, teinte }) {
   const a = source.getBoundingClientRect(), b = arrivee.getBoundingClientRect();
   if (!a.width) return;
   const x = document.createElement("div"), y = document.createElement("div");
-  x.className = "acc-vol"; y.className = "acc-vol-y";
+  x.className = "acc-vol"; y.className = "acc-vol-y ex-clair";
   if (image) {
     const img = document.createElement("img");
     // photo en erreur : la mini-boîte à sa place (le geste d'achat reste visible), jamais une icône d'image cassée

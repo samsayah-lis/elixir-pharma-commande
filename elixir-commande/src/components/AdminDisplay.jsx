@@ -67,7 +67,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                 <div style={{fontSize:11,color:T.teal,marginTop:2}}>Compare votre config (onglets, promos, sections) à celle que voient les pharmacies ; en cas d'écart, un bandeau en haut permet de publier la vôtre.</div>
               </div>
               <button onClick={() => syncConfigToSupabase()}
-                style={{background:T.teal,color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
+                style={{background:T.teal,color:T.paper,border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer",whiteSpace:"nowrap"}}>
                 Synchroniser maintenant
               </button>
             </div>
@@ -126,7 +126,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                           <input value={iconInput} onChange={e=>setIconInput(e.target.value)}
                             onKeyDown={e=>{ if(e.key==="Enter") saveIcon(key); if(e.key==="Escape") setEditingIcon(null); }}
                             autoFocus style={{width:36,textAlign:"center",border:"1.5px solid var(--teal)",borderRadius:6,padding:"2px",fontSize:16,outline:"none"}} />
-                          <button onClick={e=>{e.stopPropagation();saveIcon(key);}} style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"2px 5px",fontSize:11,cursor:"pointer"}}>✓</button>
+                          <button onClick={e=>{e.stopPropagation();saveIcon(key);}} style={{background:T.ok,color:T.paper,border:"none",borderRadius:4,padding:"2px 5px",fontSize:11,cursor:"pointer"}}>✓</button>
                         </div>
                       ) : (
                         <span style={{fontSize:18,width:28,textAlign:"center",cursor:"pointer"}} title="Cliquer pour changer l'icône"
@@ -144,7 +144,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                             <input value={labelInput} onChange={e=>setLabelInput(e.target.value)}
                               onKeyDown={e=>{ if(e.key==="Enter") saveLabel(key); if(e.key==="Escape") setEditingLabel(null); }}
                               autoFocus style={{flex:1,border:"1.5px solid var(--teal)",borderRadius:6,padding:"3px 8px",fontSize:13,fontWeight:600,outline:"none",fontFamily:"inherit"}} />
-                            <button onClick={e=>{e.stopPropagation();saveLabel(key);}} style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
+                            <button onClick={e=>{e.stopPropagation();saveLabel(key);}} style={{background:T.ok,color:T.paper,border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
                             <button onClick={e=>{e.stopPropagation();setEditingLabel(null);}} style={{background:"none",border:"none",cursor:"pointer",color:T.inkMute,fontSize:12}}>✕</button>
                           </div>
                         ) : (
@@ -163,7 +163,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                               autoFocus placeholder="Sous-titre de la section..."
                               style={{flex:1,border:"1.5px solid var(--teal)",borderRadius:6,padding:"3px 8px",fontSize:11,outline:"none",fontFamily:"inherit"}} />
                             <button onClick={(e)=>{e.stopPropagation();saveSubtitle(key);}}
-                              style={{background:T.ok,color:"white",border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
+                              style={{background:T.ok,color:T.paper,border:"none",borderRadius:4,padding:"3px 8px",fontSize:11,cursor:"pointer",fontWeight:700}}>✓</button>
                             <button onClick={(e)=>{e.stopPropagation();setEditingSubtitle(null);}}
                               style={{background:"none",border:"none",cursor:"pointer",color:T.inkMute,fontSize:12}}>✕</button>
                           </div>
@@ -269,7 +269,7 @@ export default function AdminDisplay({ displayConfig, saveDisplayConfig, ordered
                   </div>
                   <div style={{display:"flex",gap:8,marginTop:14}}>
                     <button onClick={addCustomSection}
-                      style={{background:T.petrol,color:"white",border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+                      style={{background:T.petrol,color:T.paper,border:"none",borderRadius:8,padding:"8px 20px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
                       ✓ Créer la section
                     </button>
                     <button onClick={()=>setShowNewSection(false)}

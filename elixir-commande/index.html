@@ -6,6 +6,9 @@
     <!-- Appli installable (docs/notifications.md) : icônes, couleur de la barre ; iPhone : « Sur l'écran d'accueil ». Le manifeste
          est ajouté par le script ci-dessous (une seule balise, choisie selon l'adresse) -->
     <meta name="theme-color" content="#0f2d3d" />
+    <!-- thème clair et thème sombre (src/styles/tokens.css) : un téléphone réglé en sombre affiche le thème sombre du site au
+         lieu de le noircir lui-même (Chrome et WebView Android, Samsung Internet), dès le premier affichage -->
+    <meta name="color-scheme" content="light dark" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="Elixir" />
     <meta name="apple-mobile-web-app-capable" content="yes" />

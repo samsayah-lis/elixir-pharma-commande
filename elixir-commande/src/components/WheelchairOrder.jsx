@@ -176,7 +176,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
         ) : (
           <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             {mainPhoto && (
-              <button onClick={() => setZoom({ photos: media.photos, index: 0 })} aria-label="Agrandir la photo du fauteuil"
+              <button className="ex-clair" onClick={() => setZoom({ photos: media.photos, index: 0 })} aria-label="Agrandir la photo du fauteuil"
                 style={{ flexShrink: 0, width: 96, height: 66, borderRadius: R.s, overflow: "hidden", border: `1px solid ${T.line}`, padding: 0, background: T.surface, cursor: "zoom-in" }}>
                 <img src={mainPhoto.src} alt="" referrerPolicy="no-referrer" loading="lazy" draggable={false} onError={(e) => { e.currentTarget.parentElement.style.display = "none"; }}
                   style={{ width: "100%", height: "100%", objectFit: "contain" }} />

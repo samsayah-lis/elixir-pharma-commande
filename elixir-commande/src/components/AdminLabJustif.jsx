@@ -20,7 +20,7 @@ const STATUTS = {
 const card = { background: T.surface, borderRadius: 14, padding: "16px 20px", border: "1px solid var(--line)" };
 const lbl = { fontSize: 11, fontWeight: 700, color: T.inkSoft, display: "block", marginBottom: 3 };
 const inp = { width: "100%", boxSizing: "border-box", border: `1px solid ${T.lineField}`, borderRadius: 8, padding: "7px 9px", fontSize: 13, fontFamily: "inherit", background: T.surface, color: T.ink };
-const btn = (bg, color = "white") => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
+const btn = (bg, color = T.paper) => ({ background: bg, color, border: "none", borderRadius: 8, padding: "7px 12px", fontSize: 12, fontWeight: 700, cursor: "pointer" });
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
 
 // Suivi vu par la pharmacie : étapes qu'Elixir peut poser à la main
@@ -36,7 +36,7 @@ const ETAPES_SUIVI = [
 const PARCOURS = ["recue", "transmise", "acceptee", "recue_elixir", "expediee"];
 const etapeSuivante = (e) => { const i = PARCOURS.indexOf(e); return i < 0 ? "acceptee" : PARCOURS[Math.min(i + 1, PARCOURS.length - 1)]; };
 // couleur du libellé de suivi (texte seulement, toujours avec le libellé) : jetons de la charte, violet fonctionnel pour « acceptée »
-const COULEUR_SUIVI = { recue: T.inkSoft, transmise: T.teal, acceptee: "#6d28d9", recue_elixir: T.warn, expediee: T.ok, refusee: T.danger, annulee: T.inkMute };
+const COULEUR_SUIVI = { recue: T.inkSoft, transmise: T.teal, acceptee: T.violet, recue_elixir: T.warn, expediee: T.ok, refusee: T.danger, annulee: T.inkMute };
 
 // commandes / syncStatus / onSync : liste et synchronisation PharmaML de l'onglet « Commandes » (AdminPanel)
 export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onSync }) {
@@ -214,25 +214,25 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
                     <td style={{ padding: 5 }}>{dt(d.dateCommande)}<div style={{ fontSize: 11, color: T.inkMute }}>{d.source === "site" ? "🌐 site" : "📡 PharmaML"} · {d.reference}</div></td>
                     <td>{d.pharmacie?.nom}<div style={{ fontSize: 11, color: T.inkMute }}>CIP {d.pharmacie?.cip || "?"}{d.saisiPar ? " · saisie Elixir" : ""}</div></td>
                     <td>{d.lignes.map((l, i) => <div key={i}>{l.qte} × {l.produit}</div>)}
-                      <div style={{ fontSize: 11, color: "#6d28d9" }}>{[d.attestation && "attestation", d.renouvellement && "renouvellement"].filter(Boolean).join(" · ")}</div>
+                      <div style={{ fontSize: 11, color: T.violet }}>{[d.attestation && "attestation", d.renouvellement && "renouvellement"].filter(Boolean).join(" · ")}</div>
                       {(d.rx || []).map(x => <button key={x.id} onClick={() => voirOrdonnance(x.id)} style={{ background: "none", border: "none", color: T.teal, cursor: "pointer", fontSize: 11, padding: 0, display: "block" }}>📎 {x.name}</button>)}
                     </td>
                     <td>{cfg.labs[d.lab]?.nom || d.lab}</td>
                     <td><span style={{ background: bg, color: fg, borderRadius: 8, padding: "2px 7px", fontWeight: 700, fontSize: 11, whiteSpace: "nowrap" }}>{t}</span>
                       {d.envoyeLe && <div style={{ fontSize: 11, color: T.inkMute }}>{dt(d.envoyeLe)}</div>}
-                      {(d.motif || d.erreur) && <div style={{ fontSize: 11, color: "#9a3412", maxWidth: 260 }}>{d.erreur || d.motif}</div>}
+                      {(d.motif || d.erreur) && <div style={{ fontSize: 11, color: T.acting, maxWidth: 260 }}>{d.erreur || d.motif}</div>}
                     </td>
                     <td style={{ fontFamily: "monospace" }}>{d.poNom || ""}</td>
                     <td style={{ minWidth: 170 }}>
                       {d.suivi && <div style={{ fontSize: 11, fontWeight: 700, color: COULEUR_SUIVI[d.suivi.etape] || T.inkSoft }}>{d.suivi.libelle}{d.suivi.date ? <span style={{ fontWeight: 500, color: T.inkMute }}> · {dt(d.suivi.date)}</span> : null}</div>}
-                      {d.suivi?.datePrevue && <div style={{ fontSize: 11, color: "#6d28d9" }}>livraison prévue le {new Date(d.suivi.datePrevue).toLocaleDateString("fr-FR")}</div>}
+                      {d.suivi?.datePrevue && <div style={{ fontSize: 11, color: T.violet }}>livraison prévue le {new Date(d.suivi.datePrevue).toLocaleDateString("fr-FR")}</div>}
                       {d.suivi?.commentaire && <div style={{ fontSize: 11, color: T.inkSoft, maxWidth: 220 }}>« {d.suivi.commentaire} »</div>}
                       {d.commande && <div style={{ fontSize: 11, color: d.commande.processed ? T.ok : d.commande.commandeTraitee ? T.inkMute : T.warn }}>{d.commande.processed ? `✓ envoyée à PharmaML${d.commande.syncedAt ? ` le ${dt(d.commande.syncedAt)}` : ""}` : d.commande.commandeTraitee ? "commande close sans envoi PharmaML" : "pas encore synchronisée"}</div>}
                       {d.commande && syncStatus[d.orderId] && syncStatus[d.orderId] !== "ok" && <div style={{ fontSize: 11, color: syncStatus[d.orderId] === "pending" ? T.teal : T.danger }}>{syncStatus[d.orderId] === "pending" ? "synchronisation en cours…" : syncStatus[d.orderId]}</div>}
                     </td>
                     <td style={{ whiteSpace: "nowrap" }}>
                       {d.source === "site" && <><button disabled={!!busy} onClick={() => setSuiviEdit({ demande: d, etape: etapeSuivante(d.suivi?.etape), commentaire: "", datePrevue: d.suivi?.datePrevue || "", prevenir: !!d.email })}
-                        style={{ ...btn("#6d28d9"), padding: "3px 8px" }}>Suivi…</button>{" "}</>}
+                        style={{ ...btn("#6d28d9", "#fff"), padding: "3px 8px" }}>Suivi…</button>{" "}</>}
                       {d.commande && !d.commande.processed && !d.commande.commandeTraitee && d.commande.lignes > 0 && onSync && <><button disabled={!!busy || syncStatus[d.orderId] === "pending"}
                         onClick={() => { if (window.confirm(`Synchroniser vers PharmaML, commande n° ${d.orderId} (${d.pharmacie?.nom}) :\n${d.lignes.map(l => `  ${l.qte} × ${l.produit}`).join("\n")}\n\nSeules ces lignes (${cfg.labs[d.lab]?.nom || d.lab}) partent. À faire quand la marchandise est reçue chez Elixir : elle part en préparation et la pharmacie la voit « expédiée ».`)) { onSync(d.orderId, d.lignes.map(l => String(l.cip))); plusTard(8000); } }}
                         style={{ ...btn(T.petrol), padding: "3px 8px" }}>🔄 Synchroniser</button>{" "}</>}
@@ -292,7 +292,7 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
                 datePrevue: suiviEdit.etape === "acceptee" && suiviEdit.datePrevue ? suiviEdit.datePrevue : null, prevenir: suiviEdit.prevenir }, (j) => {
                   setSuiviEdit(null); chargerDemandes();
                   flash?.(j.mail?.a ? `✓ Suivi mis à jour, e-mail envoyé à ${j.mail.a}` : j.mail?.erreur ? `Suivi mis à jour — ⚠ e-mail non envoyé : ${j.mail.erreur}` : "✓ Suivi mis à jour");
-                })} style={{ ...btn("#6d28d9"), opacity: busy ? 0.5 : 1 }}>{busy === "suivi" ? "Enregistrement…" : "Enregistrer"}</button>
+                })} style={{ ...btn("#6d28d9", "#fff"), opacity: busy ? 0.5 : 1 }}>{busy === "suivi" ? "Enregistrement…" : "Enregistrer"}</button>
             </div>
           </div>
         </div>

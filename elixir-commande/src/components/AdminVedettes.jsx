@@ -492,7 +492,7 @@ function Vignette({ it, menu, offre, couleur, outil }) {
   const remise = it.type === "outil" ? (it.outil === "peremption" ? outil?.chiffres?.jusqua : 0)
     : it.type === "menu" ? Math.max(0, ...produitsVisibles(menu).map(p => Math.abs(num(p.pct) ?? 0)).filter(x => x < 100)) : offre?.pct;
   return (
-    <span aria-hidden="true" style={{ position: "relative", width: 112, height: 63, flexShrink: 0, borderRadius: 8, overflow: "hidden", opacity: it.actif ? 1 : 0.5,
+    <span aria-hidden="true" className="ex-on-dark" style={{ position: "relative", width: 112, height: 63, flexShrink: 0, borderRadius: 8, overflow: "hidden", opacity: it.actif ? 1 : 0.5,
       background: `radial-gradient(60% 90% at 66% 50%, ${t.sombre}, transparent 75%), linear-gradient(180deg, var(--deep), var(--petrol))` }}>
       <span style={{ position: "absolute", left: 44, top: 7, right: 6, bottom: 7, borderRadius: 5, background: `radial-gradient(70% 70% at 50% 45%, var(--paper) 45%, ${t.claire})`,
         display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -505,7 +505,7 @@ function Vignette({ it, menu, offre, couleur, outil }) {
       <span style={{ position: "absolute", left: 7, top: 22, width: 22, height: 4, borderRadius: 2, background: "rgba(251,248,242,.55)" }} />
       <span style={{ position: "absolute", left: 7, bottom: 12, width: 26, height: 7, borderRadius: 4, background: "var(--paper)" }} />
       {remise >= 1 && <span style={{ position: "absolute", right: 2, top: 2, width: 15, height: 15, borderRadius: "50%", background: "var(--or)" }} />}
-      {illisible && <span style={{ position: "absolute", left: 44, right: 6, bottom: 3, padding: "1px 4px", borderRadius: 4, background: T.danger, color: "#fff", fontSize: 9, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>illisible</span>}
+      {illisible && <span style={{ position: "absolute", left: 44, right: 6, bottom: 3, padding: "1px 4px", borderRadius: 4, background: T.danger, color: T.paper, fontSize: 9, fontWeight: 700, textAlign: "center", lineHeight: 1.3 }}>illisible</span>}
     </span>
   );
 }

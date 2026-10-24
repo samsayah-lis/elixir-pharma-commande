@@ -18,6 +18,8 @@ export const T = {
   // statuts
   ok: "var(--ok)", okBg: "var(--ok-bg)", danger: "var(--danger)", dangerBg: "var(--danger-bg)",
   warn: "var(--warn)", warnBg: "var(--warn-bg)", tierBg: "var(--tier-bg)", acting: "var(--orange-acting)",
+  actingBg: "var(--acting-bg)", laboBg: "var(--labo-bg)", violet: "var(--violet)",
+  inkFixe: "var(--ink-fixe)",   // encre sur or : reste foncée dans le thème sombre
   // effets
   scrim: "var(--scrim)", shadow1: "var(--shadow-1)", shadow2: "var(--shadow-2)", shadow3: "var(--shadow-3)",
   sans: "var(--sans)", mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', ease: "var(--ease)",
@@ -39,17 +41,18 @@ export function alpha(couleur, a) {
 }
 
 // ── Tons de statut : { bg, fg, border } ──
-// Toujours accompagnés d'un libellé ou d'une icône (jamais la couleur seule). Contrastes texte/fond ≥ 4,5:1.
+// Toujours accompagnés d'un libellé ou d'une icône (jamais la couleur seule). Contrastes texte/fond ≥ 4,5:1 (ratios du thème clair
+// ci-dessous ; thème sombre : src/styles/tokens.css).
 const TONS = {
   neutral: { bg: T.surface2, fg: T.inkSoft, border: T.line },
-  ok:      { bg: T.okBg, fg: T.ok, border: "rgba(6,95,70,.28)" },             // 6,16:1
-  danger:  { bg: T.dangerBg, fg: T.danger, border: "rgba(185,28,28,.28)" },   // 5,29:1
-  warn:    { bg: T.warnBg, fg: T.warn, border: "rgba(146,64,14,.28)" },       // 5,85:1 (palier à viser, note produit, péremption proche)
+  ok:      { bg: T.okBg, fg: T.ok, border: "var(--ok-line)" },                // 6,16:1
+  danger:  { bg: T.dangerBg, fg: T.danger, border: "var(--danger-line)" },    // 5,29:1
+  warn:    { bg: T.warnBg, fg: T.warn, border: "var(--warn-line)" },          // 5,85:1 (palier à viser, note produit, péremption proche)
   info:    { bg: T.mint, fg: T.teal, border: T.mint2 },                       // 6,39:1 (contingentement en cours)
-  promo:   { bg: T.or, fg: T.ink, border: T.or },                             // 5,82:1 (or + encre : promos et remises)
+  promo:   { bg: T.or, fg: T.inkFixe, border: T.or },                           // 5,82:1 (or + encre : promos et remises)
   tier:    { bg: T.tierBg, fg: T.ink, border: T.or },                         // palier atteint
-  labo:    { bg: "#e4ecee", fg: T.teal, border: T.teal2 },                    // 6,94:1 (justificatif, précommande : sarcelle)
-  acting:  { bg: "#fff7ed", fg: T.acting, border: "rgba(154,52,18,.3)" },     // 6,88:1 (« Commander pour une pharmacie »)
+  labo:    { bg: T.laboBg, fg: T.teal, border: T.teal2 },                     // 6,94:1 (justificatif, précommande : sarcelle)
+  acting:  { bg: T.actingBg, fg: T.acting, border: "var(--acting-line)" },    // 6,88:1 (« Commander pour une pharmacie »)
 };
 export const tone = (nom) => TONS[nom] || TONS.neutral;
 
@@ -58,10 +61,10 @@ export const tone = (nom) => TONS[nom] || TONS.neutral;
 const HAUTEUR_BTN = { s: 32, m: 36, l: 48 };   // listes : 32-36 px ; actions principales et tactile : 48 px
 const BTN = {
   primaire: { background: T.petrol, color: T.paper },                                  // « + », « Ajouter », « + Panier »
-  or:       { background: T.or, color: T.ink },                                         // « Envoyer la commande » seulement
+  or:       { background: T.or, color: T.inkFixe },                                       // « Envoyer la commande » seulement
   ligne:    { background: "transparent", color: T.ink, boxShadow: `inset 0 0 0 1.5px ${T.line}` },
   doux:     { background: T.sand, color: T.ink },
-  danger:   { background: T.danger, color: "#fff" },
+  danger:   { background: T.danger, color: T.paper },
   lien:     { background: "none", color: T.danger, padding: 0, height: "auto", textDecoration: "underline", textUnderlineOffset: 3 },
 };
 export const ui = {
@@ -84,14 +87,14 @@ export const ui = {
     fontSize: 13, fontWeight: 600, fontFamily: "inherit", whiteSpace: "nowrap", cursor: "pointer",
     background: on ? T.ink : T.sand, color: on ? T.paper : T.ink,
   }),
-  // badge en teinte ; plein = fond de la couleur du ton (rupture : danger + blanc)
+  // badge en teinte ; plein = fond de la couleur du ton (rupture : danger + paper)
   badge: (nom = "neutral", plein = false) => {
     const t = tone(nom);
     const pleinFond = plein && nom !== "promo" && nom !== "tier";
     return {
       display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: R.pill, fontSize: 11, fontWeight: 700,
       lineHeight: 1.4, letterSpacing: "0.02em", whiteSpace: "nowrap",
-      background: pleinFond ? t.fg : t.bg, color: pleinFond ? "#fff" : t.fg,
+      background: pleinFond ? t.fg : t.bg, color: pleinFond ? T.paper : t.fg,
     };
   },
   th: { padding: "10px 14px", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", color: T.inkMute,

@@ -1137,7 +1137,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
             </>)}
           </div>
           <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
-            <button onClick={publierMaVersion} style={{background:T.warn,color:"white",border:"none",borderRadius:R.pill,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Publier la version de ce navigateur</button>
+            <button onClick={publierMaVersion} style={{background:T.warn,color:T.paper,border:"none",borderRadius:R.pill,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Publier la version de ce navigateur</button>
             {!configEcart.erreurSeule && <button onClick={reprendreVersionEnLigne} style={{background:T.surface,color:T.warn,border:`1px solid ${tone("warn").border}`,borderRadius:R.pill,padding:"7px 14px",fontSize:12,fontWeight:700,cursor:"pointer"}}>Reprendre la version en ligne</button>}
           </div>
         </div>
@@ -1155,7 +1155,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
               style={{display:"flex",alignItems:"center",gap:10,padding:"11px 20px",border:"none",background:tab===t.k?T.mint:undefined,color:tab===t.k?T.teal:T.inkSoft,fontWeight:tab===t.k?700:500,fontSize:13,cursor:"pointer",textAlign:"left",borderLeft:tab===t.k?`3px solid ${T.teal}`:"3px solid transparent",position:"relative"}}>
               <span style={{fontSize:16}}>{t.icon}</span>
               <span className="ex-admin-libelle" style={{flex:1}}>{t.label.replace(/^[^\s]+\s/,"")}</span>
-              {t.badge ? <span className="num ex-admin-badge" style={{background:T.danger,color:"white",borderRadius:99,fontSize:11,fontWeight:700,padding:"1px 6px",minWidth:18,textAlign:"center"}}>{t.badge}</span> : null}
+              {t.badge ? <span className="num ex-admin-badge" style={{background:T.danger,color:T.paper,borderRadius:99,fontSize:11,fontWeight:700,padding:"1px 6px",minWidth:18,textAlign:"center"}}>{t.badge}</span> : null}
             </button>
           ))}
         </nav>
@@ -1319,7 +1319,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           <span style={{fontSize:12,fontWeight:700,color:T.ok}}>{prod.pn?.toFixed(2)} €</span>
-                          {prod.pct&&<span style={{fontSize:11,color:"#7c3aed"}}>{prod.pct}</span>}
+                          {prod.pct&&<span style={{fontSize:11,color:T.violet}}>{prod.pct}</span>}
                           <button onClick={()=>editerProduitPromo(ps.id,prod)} title="Modifier" style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px"}}>✏️</button>
                           <button onClick={()=>{ if (window.confirm(`Retirer « ${prod.name} » du menu ?`)) removeProductFromPromo(ps.id,prod.id); }} style={{background:"none",border:"none",cursor:"pointer",color:T.danger,fontSize:14,padding:"0 2px"}}>🗑</button>
                         </div>
@@ -1343,11 +1343,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 <span style={{fontWeight:700,color:T.petrol}}>{orders.filter(o=>!o.processed).length}</span> en attente · <span style={{color:T.inkMute}}>{orders.filter(o=>o.processed).length} traitée(s)</span>
               </div>
               <div style={{display:"flex",gap:6}}>
-                <button onClick={syncAllPending} disabled={syncingAll||bulkPending.length===0} title="Commandes en attente sans envoi partiel (le reste d'une commande partielle part par son bouton « Sync le reste »)" style={{background:T.petrol,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white",opacity:syncingAll||bulkPending.length===0?0.4:1}}>
+                <button onClick={syncAllPending} disabled={syncingAll||bulkPending.length===0} title="Commandes en attente sans envoi partiel (le reste d'une commande partielle part par son bouton « Sync le reste »)" style={{background:T.petrol,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.paper,opacity:syncingAll||bulkPending.length===0?0.4:1}}>
                   {syncingAll ? "⏳ Sync en cours…" : `🔁 Sync toutes (${bulkPending.length})`}
                 </button>
                 <button onClick={refreshOrders} style={{background:T.surface2,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.inkSoft}}>🔄 Actualiser</button>
-                <button onClick={exportOrdersXlsx} style={{background:T.ok,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:"white"}}>📥 Export Excel</button>
+                <button onClick={exportOrdersXlsx} style={{background:T.ok,border:"none",borderRadius:8,padding:"5px 12px",cursor:"pointer",fontSize:12,fontWeight:700,color:T.paper}}>📥 Export Excel</button>
               </div>
             </div>
             {orders.length===0&&(
@@ -1421,11 +1421,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         </button>
                       )}
                       {!o.processed && syncStatus[o.id]!=="pending" && (
-                        <button onClick={()=>syncOrder(o)} title="Envoyer toutes les lignes pas encore transmises" style={{background:T.teal,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>
+                        <button onClick={()=>syncOrder(o)} title="Envoyer toutes les lignes pas encore transmises" style={{background:T.teal,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:T.paper,fontWeight:700}}>
                           🔁 {(o.items||[]).some(lineDone) ? `Sync le reste (${(o.items||[]).filter(it=>!lineDone(it)).length})` : "Sync"}
                         </button>
                       )}
-                      <button onClick={()=>downloadCsv(o)} title="Télécharger CSV" style={{background:T.petrol,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:"white",fontWeight:700}}>⬇ CSV</button>
+                      <button onClick={()=>downloadCsv(o)} title="Télécharger CSV" style={{background:T.petrol,border:"none",borderRadius:8,padding:"6px 12px",cursor:"pointer",fontSize:12,color:T.paper,fontWeight:700}}>⬇ CSV</button>
                       <button onClick={()=>toggleProcessed(o.id)} style={{
                         background:o.processed?T.surface2:T.okBg,border:"none",borderRadius:8,
                         padding:"6px 10px",cursor:"pointer",fontSize:12,fontWeight:700,
@@ -1532,7 +1532,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 placeholder="ex: ulabs"
                 style={{...IS,width:140,display:"inline-block"}}/>
               <button onClick={()=>fetchGroupCampaignOrders(selectedCampaign)} style={{
-                background:T.petrol,color:"white",border:"none",borderRadius:8,
+                background:T.petrol,color:T.paper,border:"none",borderRadius:8,
                 padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13
               }}>🔄 Charger</button>
               {gcOrders.length>0&&(
@@ -1546,7 +1546,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   a.href = URL.createObjectURL(blob);
                   a.download = `groupement_${selectedCampaign}_${new Date().toISOString().slice(0,10)}.csv`;
                   a.click();
-                }} style={{background:T.ok,color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                }} style={{background:T.ok,color:T.paper,border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
                   ⬇️ Exporter CSV
                 </button>
               )}
@@ -1558,7 +1558,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     await adminFetch(`/.netlify/functions/group-order?fournisseur=${encodeURIComponent(selectedCampaign)}&pharmacy_cip=${encodeURIComponent(pc)}`,{method:"DELETE"});
                   }
                   fetchGroupCampaignOrders(selectedCampaign);
-                }} style={{background:T.danger,color:"white",border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
+                }} style={{background:T.danger,color:T.paper,border:"none",borderRadius:8,padding:"9px 16px",cursor:"pointer",fontWeight:700,fontSize:13}}>
                   🗑️ Vider la campagne
                 </button>
               )}
@@ -1601,8 +1601,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                     {pharmacies.map(ph=>(
                       <div key={ph.cip} style={{border:"1px solid var(--line)",borderRadius:12,overflow:"hidden"}}>
                         <div style={{background:T.petrol,padding:"10px 16px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                          <div style={{fontWeight:700,color:"white",fontSize:14}}>{ph.name}</div>
-                          <div style={{color:"rgba(255,255,255,0.6)",fontSize:12}}>
+                          <div style={{fontWeight:700,color:T.paper,fontSize:14}}>{ph.name}</div>
+                          <div style={{color:T.paperMute,fontSize:12}}>
                             {ph.lines.length} réf. · {ph.lines.reduce((s,r)=>s+(parseInt(r.qty)||0),0)} unités
                           </div>
                         </div>
@@ -1701,7 +1701,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 <div style={{fontWeight:700,fontSize:14,color:T.ok}}>🔄 Synchronisation depuis Odoo</div>
                 <div style={{fontSize:11,color:T.ok,marginTop:2}}>Met à jour toutes les pharmacies depuis Odoo (partenaires actifs avec email)</div>
               </div>
-              <button onClick={syncPharmacies} disabled={pharmSyncing} style={{background:T.ok,color:"white",border:"none",borderRadius:10,padding:"9px 18px",fontWeight:700,fontSize:13,cursor:"pointer",opacity:pharmSyncing?0.6:1}}>
+              <button onClick={syncPharmacies} disabled={pharmSyncing} style={{background:T.ok,color:T.paper,border:"none",borderRadius:10,padding:"9px 18px",fontWeight:700,fontSize:13,cursor:"pointer",opacity:pharmSyncing?0.6:1}}>
                 {pharmSyncing?"⏳ Sync…":"🔄 Lancer la sync"}
               </button>
             </div>
@@ -1713,7 +1713,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                 <input value={pharmSearch} onChange={e=>setPharmSearch(e.target.value)}
                   onKeyDown={e=>e.key==="Enter"&&searchPharm(pharmSearch)}
                   placeholder="Email ou nom…" style={{...IS,flex:1}}/>
-                <button onClick={()=>searchPharm(pharmSearch)} disabled={pharmSearching} style={{background:T.teal,color:"white",border:"none",borderRadius:10,padding:"9px 16px",fontWeight:700,cursor:"pointer"}}>
+                <button onClick={()=>searchPharm(pharmSearch)} disabled={pharmSearching} style={{background:T.teal,color:T.paper,border:"none",borderRadius:10,padding:"9px 16px",fontWeight:700,cursor:"pointer"}}>
                   {pharmSearching?"…":"Chercher"}
                 </button>
               </div>
@@ -1868,7 +1868,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                   {/* Tableau */}
                   <div style={{maxHeight:480,overflow:"auto",border:"1px solid var(--line)",borderRadius:8}}>
                     <table style={{width:"100%",fontSize:12,borderCollapse:"collapse"}}>
-                      <thead style={{position:"sticky",top:0,background:T.petrol,color:"white",zIndex:1}}>
+                      <thead style={{position:"sticky",top:0,background:T.petrol,color:T.paper,zIndex:1}}>
                         <tr>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Statut</th>
                           <th style={{padding:"8px 10px",textAlign:"left"}}>Emplacement</th>

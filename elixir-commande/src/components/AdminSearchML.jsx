@@ -64,7 +64,7 @@ export default function AdminSearchML({ adminFetch }) {
           <div style={{fontSize:12,color:T.inkMute,marginTop:4}}>Analyse des recherches des pharmacies — trending, produits manquants, conversion</div>
         </div>
         <button onClick={loadSearchML} disabled={searchML.loading}
-          style={{background:T.petrol,color:"white",border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:searchML.loading?"default":"pointer",opacity:searchML.loading?0.6:1}}>
+          style={{background:T.petrol,color:T.paper,border:"none",borderRadius:10,padding:"10px 20px",fontSize:13,fontWeight:700,cursor:searchML.loading?"default":"pointer",opacity:searchML.loading?0.6:1}}>
           {searchML.loading ? "⏳ Chargement..." : "📊 Charger les données"}
         </button>
       </div>
@@ -95,7 +95,7 @@ export default function AdminSearchML({ adminFetch }) {
           <div style={{display:"flex",alignItems:"center",gap:8}}>
             {[
               { label:"Recherches", value:searchML.funnel.total_searches, color:T.teal },
-              { label:"Avec résultats", value:searchML.funnel.with_results, color:"#6d28d9" },
+              { label:"Avec résultats", value:searchML.funnel.with_results, color:T.violet },
               { label:"Clics produit", value:searchML.funnel.clicked, color:T.warn },
               { label:"Ajout panier", value:searchML.funnel.added_to_cart, color:T.ok },
             ].map((step, i) => {
@@ -106,7 +106,7 @@ export default function AdminSearchML({ adminFetch }) {
                   <div style={{fontSize:11,color:T.inkMute,fontWeight:600,marginBottom:4}}>{step.label}</div>
                   <div style={{background:T.surface2,borderRadius:6,height:32,position:"relative",overflow:"hidden"}}>
                     <div style={{background:step.color,height:"100%",width:`${Math.max(pct,3)}%`,borderRadius:6,transition:"width 0.5s"}} />
-                    <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:pct>40?"white":T.ink}}>{step.value}</div>
+                    <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",fontSize:12,fontWeight:700,color:pct>40?T.paper:T.ink}}>{step.value}</div>
                   </div>
                   <div style={{fontSize:11,color:T.inkMute,textAlign:"center",marginTop:2}}>{pct}%</div>
                 </div>
@@ -184,7 +184,7 @@ export default function AdminSearchML({ adminFetch }) {
               { label:"Patterns", value:mlCompute.result.patterns?.computed || 0, color:T.warn },
               { label:"Ruptures", value:mlCompute.result.ruptures?.rupture || 0, color:T.danger },
               { label:"Critiques (<7j)", value:mlCompute.result.ruptures?.critical || 0, color:T.acting },   // orange #9a3412 (6:1 ; #f97316 : 2,7:1)
-              { label:"Pharmacies segm.", value:mlCompute.result.segments?.computed || 0, color:"#6d28d9" },
+              { label:"Pharmacies segm.", value:mlCompute.result.segments?.computed || 0, color:T.violet },
             ].map((kpi, i) => (
               <div key={i} style={{textAlign:"center"}}>
                 <div style={{fontSize:22,fontWeight:700,color:kpi.color}}>{kpi.value}</div>
@@ -201,7 +201,7 @@ export default function AdminSearchML({ adminFetch }) {
       {/* Load predictions button */}
       <div style={{display:"flex",gap:8,marginTop:20,marginBottom:12}}>
         <button onClick={loadMLData}
-          style={{background:T.petrol,color:"white",border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
+          style={{background:T.petrol,color:T.paper,border:"none",borderRadius:8,padding:"8px 16px",fontSize:12,fontWeight:700,cursor:"pointer"}}>
           📊 Charger prédictions & segments
         </button>
       </div>

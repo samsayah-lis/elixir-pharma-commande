@@ -27,7 +27,7 @@ export default function AdminOrderKPIs({ orders }) {
           { label:"CA total", value:totalCA.toFixed(0)+" €", color:T.ok },
           { label:"Commandes", value:orders.length, color:T.teal },
           { label:"Panier moyen", value:panierMoyen.toFixed(0)+" €", color:T.warn },   // ambre #f59e0b à 2,1:1 sur blanc → --warn
-          { label:"Aujourd'hui", value:todayOrders.length+" cmd · "+todayCA.toFixed(0)+" €", color:"#6d28d9" },   // violet assombri : 7,1:1 (#8b5cf6 : 4,2:1)
+          { label:"Aujourd'hui", value:todayOrders.length+" cmd · "+todayCA.toFixed(0)+" €", color:T.violet },   // violet assombri : 7,1:1 (#8b5cf6 : 4,2:1)
           { label:"En attente", value:orders.filter(o=>!o.processed).length, color:T.danger },
         ].map((kpi, i) => (
           <div key={i} style={{background:T.surface,borderRadius:12,padding:"14px 16px",border:"1px solid var(--line)",textAlign:"center"}}>

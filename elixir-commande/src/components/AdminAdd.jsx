@@ -267,7 +267,7 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                             <td style={{padding:"5px 8px"}}><CipCopy cip={r.cip||""}/></td>
                             <td style={{padding:"5px 8px",fontWeight:600,color:r._valid?T.petrol:T.danger}}>{r.name||<em>manquant</em>}</td>
                             <td style={{padding:"5px 8px",textAlign:"right"}}>{r.pv!=null?r.pv.toFixed(2)+" €":"—"}</td>
-                            <td style={{padding:"5px 8px",textAlign:"right",color:"#7c3aed"}}>{r.pct||"—"}</td>
+                            <td style={{padding:"5px 8px",textAlign:"right",color:T.violet}}>{r.pct||"—"}</td>
                             <td style={{padding:"5px 8px",textAlign:"right",fontWeight:700,color:r.pn!=null?T.ok:T.danger}}>{r.pn!=null?r.pn.toFixed(2)+" €":"—"}</td>
                             <td style={{padding:"5px 8px",textAlign:"right",color:T.inkMute}}>{r.palier||"—"}</td>
                             <td style={{padding:"5px 8px"}}>{r._valid?"✅":"⚠️"}</td>
@@ -411,7 +411,7 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                       <button onClick={()=>{
                         if(m.name && !form.name) setForm(f=>({...f, name: m.name}));
                         if(m.image_url) setForm(f=>({...f, _medipim_image: m.image_url}));
-                      }} style={{fontSize:11,background:T.teal,color:"white",border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:700}}>
+                      }} style={{fontSize:11,background:T.teal,color:T.paper,border:"none",borderRadius:6,padding:"4px 10px",cursor:"pointer",whiteSpace:"nowrap",fontWeight:700}}>
                         ⬇️ Importer
                       </button>
                     </div>
@@ -460,7 +460,7 @@ export default function AdminAdd({ allSectionsList, adminFetch, flash, fetchProd
                       flex:1,padding:"9px",borderRadius:10,fontWeight:700,fontSize:13,cursor:"pointer",
                       border:form.hasPalier===opt.v?"2px solid var(--petrol)":"2px solid var(--line)",
                       background:form.hasPalier===opt.v?T.petrol:T.surface,
-                      color:form.hasPalier===opt.v?"white":T.inkSoft,
+                      color:form.hasPalier===opt.v?T.paper:T.inkSoft,
                     }}>{opt.l}</button>
                   ))}
                 </div>

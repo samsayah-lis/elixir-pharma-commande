@@ -292,7 +292,7 @@ export default function Vitrine({ slides, periode, isMobile, reduit, finPointer,
           })}
         </div>
       </>) : (<>
-        <div ref={lineaire} role="tablist" aria-label="Choisir un produit du classement" className="acc-lineaire">
+        <div ref={lineaire} role="tablist" aria-label="Choisir un produit du classement" className="acc-lineaire ex-clair">
           {slides.map((sl, i) => {
             const p = offreDe(sl), deja = dejaAuPanier(sl);   // dosage choisi (prix, boîte), pas seulement le principal
             return (
@@ -343,7 +343,7 @@ export function SceneCarte({ slide, offre, position, actif = true, reduit, arriv
     return () => { cancelAnimationFrame(r1); cancelAnimationFrame(r2); };
   }, [actif]);   // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <div className="acc-carte-scene">
+    <div className="acc-carte-scene ex-clair">
       <span className="acc-scene-fond" aria-hidden="true">
         <span className="acc-projecteur" />
         <span className={`acc-rang-geant num${net ? " acc-rouleau--net" : ""}`}><Rouleau texte={rang} decalage={40} /></span>
