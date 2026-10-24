@@ -1,0 +1,1782 @@
+# API Elixir Pharma pour les pharmacies — description OpenAPI 3.1 (servie telle quelle à /api/openapi.yaml)
+# Source unique : ce fichier. scripts/test-api-openapi.mjs le confronte au code (routes, droits, limites, codes d'erreur,
+# contraintes de la commande) et aux réponses RÉELLES du routeur pendant les tests ; la page /api/ (public/api/index.html)
+# en reprend les règles. Dépôt public : exemples FICTIFS uniquement (CIP 3400000000011, « PHARMACIE EXEMPLE »,
+# commande 1790000000001), jamais de clé complète, jamais de plomberie interne.
+openapi: "3.1.0"
+info:
+  title: API Elixir Pharma pour les pharmacies
+  version: "1.0.0"
+  summary: Catalogue à vos prix, disponibilités, contingents, commandes, factures et bons de livraison.
+  description: |
+    Réservée aux pharmacies clientes d'Elixir Pharma dont l'accès a été ouvert à leur demande, et qui ont accepté les
+    conditions d'utilisation de l'API. Service gratuit. Guide complet, en français : https://elixir-commande.expepharma.com/api/
+
+    **Authentification.** Clé dans l'en-tête `Authorization: Bearer elx_live_…` (production) ou `elx_test_…` (test),
+    jamais dans l'adresse. La clé se crée dans le compte de la pharmacie (« Mes commandes » → « Accès API »). L'identité
+    vient toujours de la clé : aucun identifiant de pharmacie n'est lu dans la requête.
+
+    **Formats.** JSON en UTF-8. Montants en euros hors taxes, 2 décimales. Dates ISO 8601 à l'heure de Paris, avec le
+    décalage (`2026-11-16T09:30:12+01:00`) ; jours au format `AAAA-MM-JJ`. CIP : 13 chiffres (CIP13 ou code-barres).
+
+    **Prix.** Prix HT de votre liste, hors offres du site (menus, précommandes, péremption courte, commandes groupées) :
+    le prix que votre facture applique, c'est-à-dire le plus bas des tarifs de votre liste valables pour la quantité.
+    Indicatifs : la facture applique vos conditions au jour de la livraison.
+
+    **Commandes.** `Idempotency-Key` obligatoire. Une commande acceptée part seule vers notre système de préparation à la
+    fin du délai d'annulation (10 minutes par défaut), sauf anomalie nette : elle est alors gardée « à vérifier » par
+    Elixir Pharma (`etat: en_attente_elixir`). Les commandes réelles ouvrent à une date communiquée par Elixir Pharma ;
+    d'ici là, `POST /v1/commandes` avec une clé de production répond `503 ecriture_suspendue` et tout fonctionne en test.
+
+    **Erreurs.** RFC 9457 (`application/problem+json`) avec un `code` stable ; chaque réponse porte `X-Request-Id`, à
+    donner au support. Les codes sont expliqués sur https://elixir-commande.expepharma.com/api/#erreurs.
+
+    **Versions.** Dans `/v1`, seulement des ajouts compatibles (champ, route, valeur annoncée) : ignorez les champs que
+    vous ne connaissez pas. Une rupture ouvrira `/v2`, avec six mois de préavis.
+  contact:
+    name: Elixir Pharma
+    email: pharmacien@elixirpharma.fr
+    url: https://elixir-commande.expepharma.com/api/
+  x-derniere-modification: "2026-10-24"
+  # Débits par clé (fenêtres fixes : minute et jour) ; avant authentification : par adresse IP (IPv6 : par /64)
+  x-limites:
+    ip: { par_minute: 120 }
+    refus_cle: { max: 20, fenetre_s: 600 }
+    lecture: { par_minute: 60, par_jour: 5000 }
+    disponibilites: { par_minute: 30, par_jour: 5000 }
+    documents: { par_minute: 20, par_jour: 300 }
+    commande: { par_minute: 6, par_jour: 30 }
+    simulation: { par_minute: 10, par_jour: 500 }
+    suivi_par_pharmacie_par_minute: 30
+  # Plafonds d'une pharmacie à l'ouverture de son accès (réglables par Elixir Pharma, pharmacie par pharmacie)
+  x-plafonds-defaut:
+    delai_annulation_min: 10
+    plafond_lignes: 100
+    plafond_boites: 1000
+    plafond_montant_ht: 3000
+    plafond_commandes_jour: 10
+    anomalie_facteur: 10
+    anomalie_doublon_min: 30
+  # Statut HTTP de chaque code d'erreur
+  x-codes-erreur:
+    json_invalide: 400
+    idempotency_key_absente: 400
+    cle_dans_url: 400
+    cle_absente: 401
+    cle_invalide: 401
+    cle_revoquee: 401
+    cle_expiree: 401
+    portee_insuffisante: 403
+    ip_non_autorisee: 403
+    acces_suspendu: 403
+    compte_bloque: 403
+    cgu_a_accepter: 403
+    test_requis: 403
+    commandes_bloquees: 403
+    introuvable: 404
+    methode_non_autorisee: 405
+    requete_en_cours: 409
+    reference_deja_utilisee: 409
+    trop_tard: 409
+    trop_long: 413
+    requete_invalide: 422
+    idempotency_key_reutilisee: 422
+    aucune_ligne_acceptee: 422
+    commande_refusee: 422
+    plafond_depasse: 422
+    debit: 429
+    plafond_journalier: 429
+    plafond_commandes_jour: 429
+    api_suspendue: 503
+    ecriture_suspendue: 503
+    contingent_indisponible: 503
+    indisponible: 503
+  # Réponses possibles sur toute adresse, avant même la clé : adresse inconnue (404 introuvable), méthode non prévue
+  # (405 methode_non_autorisee, en-tête Allow), corps de plus de 256 Ko (413 trop_long), clé dans l'adresse (400
+  # cle_dans_url), trop de requêtes depuis un même réseau (429 debit).
+  x-erreurs-globales: [introuvable, methode_non_autorisee, trop_long, cle_dans_url, debit]
+
+servers:
+  - url: https://elixir-commande.expepharma.com/api
+    description: Production (clés elx_live_ et elx_test_ ; une clé de test n'écrit jamais de vraie commande)
+
+security:
+  - cle: []
+
+tags:
+  - name: Connexion
+    description: Test de la clé et réglages de votre accès.
+  - name: Catalogue
+    description: Catalogue au prix de votre liste, disponibilités et contingents (droit « lecture »).
+  - name: Commandes
+    description: Suivi (droit « lecture »), simulation, commande et annulation (droit « commande »).
+  - name: Documents
+    description: Factures, avoirs et bons de livraison, en liste et en PDF (droit « lecture »).
+
+paths:
+  /v1/etat:
+    get:
+      operationId: lireEtat
+      tags: [Connexion]
+      summary: Tester la connexion
+      description: |
+        Pharmacie de la clé, environnement, droits, réglages des commandes (délai d'annulation, plafonds, contrôles
+        d'anomalie), limites de débit et version de l'API. Ouverte à toute clé valide, même pendant une suspension du
+        service (`etat_service: suspendu`). Première étape du parcours de test.
+      x-droit: null
+      x-classe-debit: lecture
+      responses:
+        "200":
+          description: Clé valide.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Etat" }
+              examples:
+                test:
+                  summary: Clé de test, commandes réelles pas encore ouvertes
+                  value:
+                    pharmacie: PHARMACIE EXEMPLE
+                    environnement: test
+                    cle: { prefixe: "elx_test_Ab3d…k9Qz", libelle: Tableur de réassort, expire_le: null }
+                    portees: [lecture, commande]
+                    etat_service: normal
+                    commandes:
+                      disponibles: true
+                      mode: auto
+                      production: fermees
+                      delai_annulation_min: 10
+                      plafonds: { lignes_par_commande: 100, boites_par_commande: 1000, montant_ht_par_commande: 3000, commandes_par_jour: 10 }
+                      verification: { active: true, facteur_habitude_mensuelle: 10, quasi_doublon_min: 30 }
+                    prix: { base: liste_pharmacie, mention: "Prix HT de votre liste, hors offres du site" }
+                    limites:
+                      lecture: { par_minute: 60, par_jour: 5000 }
+                      disponibilites: { par_minute: 30, par_jour: 5000 }
+                      documents: { par_minute: 20, par_jour: 300 }
+                      commande: { par_minute: 6, par_jour: 30 }
+                      simulation: { par_minute: 10, par_jour: 500 }
+                    cgu: { version_en_vigueur: "2026-10-24-projet", acceptee: true }
+                    version_api: "1.0.0"
+                    derniere_modification: "2026-10-24"
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403Etat" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503Etat" }
+
+  /v1/catalogue:
+    get:
+      operationId: listerCatalogue
+      tags: [Catalogue]
+      summary: Catalogue au prix de votre liste
+      description: |
+        Produits du catalogue, triés par CIP, avec le prix HT de VOTRE liste (calculé comme votre facture : le plus bas
+        des tarifs applicables), ses paliers de quantité, un niveau de disponibilité et l'indication « contingenté ».
+        Hors offres du site. Prix recalculés chaque nuit : une synchronisation par heure suffit. Réponse identique →
+        `304` avec `If-None-Match` (l'appel compte quand même dans le débit).
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ParPageCatalogue"
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Une page du catalogue.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageCatalogue" }
+              examples:
+                page:
+                  summary: Fiche sur une liste avec paliers
+                  value:
+                    donnees:
+                      - { cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, prix_ht: 3.86, paliers: [{ a_partir_de: 12, prix_ht: 3.7 }], disponibilite: en_stock, contingente: false }
+                      - { cip: "3400000000028", nom: PRODUIT EXEMPLE B, prix_ht: 9.4, paliers: [], disponibilite: stock_faible, contingente: true }
+                    page: 1
+                    par_page: 2
+                    total: 3
+                    suivante: /api/v1/catalogue?page=2&par_page=2
+                    prix: { base: liste_pharmacie, etat: a_jour, calcule_le: "2026-11-16T03:10:00+01:00" }
+                    disponibilite_maj: "2026-11-16T06:40:00+01:00"
+                    mention: "Prix HT de votre liste, hors offres du site (menus, précommandes, péremption courte, commandes groupées). Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+                    avertissements: []
+        "304": { $ref: "#/components/responses/NonModifie" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/catalogue/{cip}:
+    get:
+      operationId: lireProduit
+      tags: [Catalogue]
+      summary: Un produit
+      description: Un produit par son CIP13 ou son code-barres, au prix de votre liste. `404 introuvable` s'il n'est pas au catalogue.
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/CipChemin"
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Le produit.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            ETag: { $ref: "#/components/headers/ETag" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProduitDetail" }
+              examples:
+                produit:
+                  value:
+                    cip: "3400000000011"
+                    nom: PRODUIT EXEMPLE A 30 CPR
+                    prix_ht: 3.86
+                    paliers: [{ a_partir_de: 12, prix_ht: 3.7 }]
+                    disponibilite: en_stock
+                    contingente: false
+                    prix: { base: liste_pharmacie, etat: a_jour, calcule_le: "2026-11-16T03:10:00+01:00" }
+                    disponibilite_maj: "2026-11-16T06:40:00+01:00"
+                    mention: "Prix HT de votre liste, hors offres du site (menus, précommandes, péremption courte, commandes groupées). Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+                    avertissements: []
+        "304": { $ref: "#/components/responses/NonModifie" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "404": { $ref: "#/components/responses/E404" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/disponibilites:
+    get:
+      operationId: lireDisponibilites
+      tags: [Catalogue]
+      summary: Disponibilité de produits, lue à l'instant
+      description: |
+        Niveau de disponibilité de 1 à 200 produits, lu au moment de l'appel : `en_stock`, `stock_faible` ou `rupture`
+        (jamais de quantité). Indicatif et non engageant. Produit inconnu : `disponibilite: null`, `inconnu: true`.
+      x-droit: lecture
+      x-classe-debit: disponibilites
+      parameters:
+        - name: cips
+          in: query
+          required: true
+          description: CIP13 ou codes-barres séparés par des virgules (200 au plus, doublons ignorés).
+          schema: { type: string }
+          example: "3400000000011,3400000000028"
+      responses:
+        "200":
+          description: Niveaux de disponibilité, dans l'ordre demandé.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Disponibilites" }
+              examples:
+                deux:
+                  value:
+                    donnees:
+                      - { cip: "3400000000011", disponibilite: en_stock }
+                      - { cip: "3400000000028", disponibilite: stock_faible }
+                      - { cip: "3400000000099", disponibilite: null, inconnu: true }
+                    lu_le: "2026-11-16T09:28:00+01:00"
+                    mention: "Disponibilité indicative au moment de la lecture, non engageante : elle peut changer avant la préparation de votre commande."
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/contingents:
+    get:
+      operationId: lireContingents
+      tags: [Catalogue]
+      summary: Reste à commander sur les produits contingentés
+      description: |
+        Pour chaque produit contingenté : quantité permise sur la période, déjà commandée (tous canaux : site, API,
+        logiciel d'officine) et reste. Même calcul que le panier du site. `exempte: true` si votre pharmacie n'a pas de
+        contingent.
+      x-droit: lecture
+      x-classe-debit: lecture
+      responses:
+        "200":
+          description: Contingents de votre pharmacie.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Contingents" }
+              examples:
+                un:
+                  value:
+                    exempte: false
+                    jour: "2026-11-16"
+                    donnees:
+                      - { cip: "3400000000028", nom: PRODUIT EXEMPLE B, quota: 6, periode: semaine, jours_glissants: null, libelle: 6 par semaine,
+                          debut: "2026-11-16", fin: "2026-11-22", deja_commande: 5, reste: 1 }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/commandes:
+    get:
+      operationId: listerCommandes
+      tags: [Commandes]
+      summary: Vos commandes du site et de l'API
+      description: |
+        Commandes passées sur le site et par l'API sur la période (92 jours au plus, 30 derniers jours par défaut), les
+        plus récentes d'abord, avec leur état. Avec une clé de test, vos commandes de test (`T…`) s'y ajoutent. Les
+        commandes passées depuis votre logiciel d'officine ne sont pas listées en V1.
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/DebutCommandes"
+        - $ref: "#/components/parameters/Fin"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ParPageListe"
+      responses:
+        "200":
+          description: Une page de commandes.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageCommandes" }
+              examples:
+                deux:
+                  value:
+                    donnees:
+                      - { id: "1790000000002", environnement: live, canal: api, reference_client: REASSORT-2026-11-17-A, etat: recue, motif: null,
+                          cree_le: "2026-11-17T09:30:00+01:00", annulable_jusqu_a: "2026-11-17T09:40:00+01:00", lignes: 3, commandes_elixir: [] }
+                      - { id: "1790000000001", environnement: live, canal: api, reference_client: REASSORT-2026-11-16-A, etat: sortie_entrepot, motif: null,
+                          cree_le: "2026-11-16T09:30:12+01:00", annulable_jusqu_a: null, lignes: 2, commandes_elixir: [S00000] }
+                    page: 1
+                    par_page: 20
+                    suivante: null
+                    periode: { debut: "2026-10-19", fin: "2026-11-17" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+    post:
+      operationId: passerCommande
+      tags: [Commandes]
+      summary: Passer une commande
+      description: |
+        Commande au prix de votre liste, recalculé par le serveur (aucun prix n'est lu dans la requête). Ordre des
+        contrôles : accès ouvert aux commandes, conditions d'utilisation, ouverture des commandes réelles (clé de
+        production), `Idempotency-Key`, structure, commandes du jour, puis chaque ligne (catalogue, produits hors API,
+        prix, contingent, disponibilité), `tout_ou_rien`, plafonds, anomalies.
+
+        - Ligne au-delà du contingent : ramenée au reste (`motif: contingentement`), refusée à 0.
+        - Produit en rupture : ligne retirée (`si_rupture: retirer`, défaut) ou gardée en attente du stock (`garder`).
+        - Plafond dépassé (lignes, boîtes, montant) : `422 plafond_depasse`, rien n'est enregistré.
+        - Anomalie nette (quantité de plus de 10 fois votre quantité mensuelle habituelle du produit, ou commande presque
+          identique à une commande reçue depuis moins de 30 minutes, tous canaux) : `201` avec
+          `etat: en_attente_elixir`. La commande ne part qu'après vérification par Elixir Pharma.
+        - Sinon : `201` avec `etat: recue` ; annulable jusqu'à `annulable_jusqu_a`, puis envoyée seule.
+
+        Même `Idempotency-Key` et même corps : réponse d'origine rejouée (`Idempotent-Replayed: true`), y compris un refus.
+      x-droit: commande
+      x-classe-debit: commande
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/XElixirSimulation"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommandeDemande" }
+            examples:
+              reassort:
+                value:
+                  reference_client: REASSORT-2026-11-16-A
+                  lignes: [{ cip: "3400000000011", quantite: 12 }, { cip: "3400000000028", quantite: 3 }, { cip: "3400000000035", quantite: 6 }]
+                  si_rupture: retirer
+      responses:
+        "201":
+          description: Commande enregistrée (ou réponse d'origine rejouée).
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Location: { $ref: "#/components/headers/Location" }
+            Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Commande" }
+              examples:
+                recue:
+                  summary: Une ligne ramenée au contingent, une ligne hors API
+                  value:
+                    id: T1790000000001
+                    environnement: test
+                    reference_client: REASSORT-2026-11-16-A
+                    canal: api
+                    etat: recue
+                    motif: null
+                    cree_le: "2026-11-16T09:30:12+01:00"
+                    annulable_jusqu_a: "2026-11-16T09:40:12+01:00"
+                    si_rupture: retirer
+                    total_indicatif_ht: 53.8
+                    lignes:
+                      - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 12, quantite: 12, prix_unitaire_ht: 3.7,
+                          total_ht: 44.4, etat: acceptee, motif: null, detail: null }
+                      - { ligne: 2, cip: "3400000000028", nom: PRODUIT EXEMPLE B, quantite_demandee: 3, quantite: 1, prix_unitaire_ht: 9.4, total_ht: 9.4,
+                          etat: acceptee, motif: contingentement, detail: "Quantité ramenée au reste du contingent : 1 boîte(s) (6 par semaine, du 16/11/2026 au 22/11/2026)." }
+                      - { ligne: 3, cip: "3400000000035", nom: PRODUIT EXEMPLE C, quantite_demandee: 6, quantite: 0, prix_unitaire_ht: null, total_ht: 0,
+                          etat: refusee, motif: produit_sur_justificatif, detail: "À commander sur le site, page « Commande labo sur justificatif »." }
+                    anomalies: []
+                    avertissements: ["Mode test : commande contrôlée comme en production, mais jamais envoyée ni facturée."]
+                    mention: "Prix HT de votre liste, hors offres du site. Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+                a_verifier:
+                  summary: Gardée « à vérifier » (quantité inhabituelle)
+                  value:
+                    id: "1790000000003"
+                    environnement: live
+                    reference_client: null
+                    canal: api
+                    etat: en_attente_elixir
+                    motif: anomalie_quantite
+                    cree_le: "2026-11-18T10:05:00+01:00"
+                    annulable_jusqu_a: null
+                    si_rupture: retirer
+                    total_indicatif_ht: 154.4
+                    lignes:
+                      - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 40, quantite: 40, prix_unitaire_ht: 3.86,
+                          total_ht: 154.4, etat: acceptee, motif: null, detail: null, anomalie: anomalie_quantite }
+                    anomalies: [{ type: anomalie_quantite, cip: "3400000000011", detail: "40 boîte(s) : plus de 10 fois votre quantité mensuelle habituelle de ce produit." }]
+                    avertissements: ["Commande gardée « à vérifier » par Elixir Pharma (quantité très supérieure à vos habitudes pour ce produit) : elle ne part qu'après sa validation, et reste annulable d'ici là."]
+                    mention: "Prix HT de votre liste, hors offres du site. Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+        "400": { $ref: "#/components/responses/E400Commande" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403Commande" }
+        "409": { $ref: "#/components/responses/E409Commande" }
+        "413": { $ref: "#/components/responses/E413" }
+        "422": { $ref: "#/components/responses/E422Commande" }
+        "429": { $ref: "#/components/responses/E429Commande" }
+        "503": { $ref: "#/components/responses/E503Commande" }
+
+  /v1/commandes/simulation:
+    post:
+      operationId: simulerCommande
+      tags: [Commandes]
+      summary: Simuler une commande (rien n'est enregistré)
+      description: |
+        Mêmes contrôles que `POST /v1/commandes`, sans rien enregistrer et sans `Idempotency-Key` : prix, contingents,
+        disponibilité, plafonds, anomalies. Un refus est rendu en `200` avec `resultat: refusee` et `refus` (statut et code
+        que la commande aurait reçus), y compris la fermeture des commandes réelles pour une clé de production.
+      x-droit: commande
+      x-classe-debit: simulation
+      parameters:
+        - $ref: "#/components/parameters/XElixirSimulation"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CommandeDemande" }
+            examples:
+              une_ligne:
+                value: { lignes: [{ cip: "3400000000011", quantite: 12 }] }
+      responses:
+        "200":
+          description: Ce que la commande donnerait.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+              examples:
+                acceptee:
+                  value:
+                    simulation: true
+                    resultat: acceptee
+                    refus: null
+                    environnement: test
+                    etat: recue
+                    motif: null
+                    delai_annulation_min: 10
+                    si_rupture: retirer
+                    total_indicatif_ht: 44.4
+                    lignes:
+                      - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 12, quantite: 12, prix_unitaire_ht: 3.7,
+                          total_ht: 44.4, etat: acceptee, motif: null, detail: null }
+                    anomalies: []
+                    avertissements: ["Mode test : commande contrôlée comme en production, mais jamais envoyée ni facturée."]
+                    mention: "Prix HT de votre liste, hors offres du site. Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+                fermee:
+                  summary: Clé de production avant l'ouverture des commandes réelles
+                  value:
+                    simulation: true
+                    resultat: refusee
+                    refus: { statut: 503, code: ecriture_suspendue, titre: Commandes momentanément fermées,
+                             detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : rien n'a été enregistré. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles." }
+                    environnement: live
+                    etat: null
+                    motif: null
+                    delai_annulation_min: null
+                    si_rupture: retirer
+                    total_indicatif_ht: 44.4
+                    lignes:
+                      - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 12, quantite: 12, prix_unitaire_ht: 3.7,
+                          total_ht: 44.4, etat: acceptee, motif: null, detail: null }
+                    anomalies: []
+                    avertissements: []
+                    mention: "Prix HT de votre liste, hors offres du site. Prix indicatifs : la facture applique vos conditions au jour de la livraison."
+        "400": { $ref: "#/components/responses/E400Simulation" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "413": { $ref: "#/components/responses/E413" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503Simulation" }
+
+  /v1/commandes/{id}:
+    get:
+      operationId: lireCommande
+      tags: [Commandes]
+      summary: Détail et état d'une commande
+      description: |
+        État de la commande et de chaque ligne : quantité demandée, acceptée, puis, une fois prise en charge, `suivi`
+        (commandée, acceptée, servie, non servie, reste à livrer, facturée), numéros de nos commandes, factures et bons de
+        livraison. Une commande d'une autre pharmacie répond `404`, comme une commande inconnue.
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/IdCommande"
+      responses:
+        "200":
+          description: La commande.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DetailCommande" }
+              examples:
+                sortie:
+                  summary: Sortie de l'entrepôt, une ligne servie en partie
+                  value:
+                    id: "1790000000001"
+                    environnement: live
+                    canal: api
+                    reference_client: REASSORT-2026-11-16-A
+                    etat: sortie_entrepot
+                    motif: null
+                    cree_le: "2026-11-16T09:30:12+01:00"
+                    annulable_jusqu_a: null
+                    total_indicatif_ht: 53.8
+                    commandes_elixir:
+                      - numero: S00000
+                        etat: sortie_entrepot
+                        sortie_le: "2026-11-16T21:40:00+01:00"
+                        factures: []
+                        avoirs: []
+                        livraisons: [{ id: 900001, numero: BL/EXEMPLE/0001, sortie_le: "2026-11-16T21:40:00+01:00" }]
+                    lignes:
+                      - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 12, quantite: 12, prix_unitaire_ht: 3.7,
+                          total_ht: 44.4, etat: acceptee, motif: null, detail: null,
+                          suivi: { commandee: 12, acceptee: 12, servie: 10, non_servie: 2, a_livrer: 0, facturee: 0 } }
+                      - { ligne: 2, cip: "3400000000028", nom: PRODUIT EXEMPLE B, quantite_demandee: 3, quantite: 1, prix_unitaire_ht: 9.4, total_ht: 9.4,
+                          etat: acceptee, motif: contingentement, detail: "Quantité ramenée au reste du contingent : 1 boîte(s) (6 par semaine, du 16/11/2026 au 22/11/2026).",
+                          suivi: { commandee: 1, acceptee: 1, servie: 1, non_servie: 0, a_livrer: 0, facturee: 0 } }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "404": { $ref: "#/components/responses/E404" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+    delete:
+      operationId: annulerCommande
+      tags: [Commandes]
+      summary: Annuler une commande passée par l'API
+      description: |
+        Possible pendant le délai d'annulation (`annulable_jusqu_a`), ou tant qu'une commande gardée « à vérifier » n'est
+        pas partie. Ensuite : `409 trop_tard` (réclamations et retours selon les conditions générales de vente).
+        Idempotente : une commande déjà annulée répond de nouveau `200`.
+      x-droit: commande
+      x-classe-debit: commande
+      parameters:
+        - $ref: "#/components/parameters/IdCommande"
+      responses:
+        "200":
+          description: Commande annulée.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Annulation" }
+              examples:
+                annulee:
+                  value: { id: T1790000000001, environnement: test, etat: annulee, annulee_le: "2026-11-16T09:33:40+01:00" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "404": { $ref: "#/components/responses/E404" }
+        "409": { $ref: "#/components/responses/E409Annulation" }
+        "413": { $ref: "#/components/responses/E413" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/factures:
+    get:
+      operationId: listerFactures
+      tags: [Documents]
+      summary: Factures et avoirs
+      description: Factures et avoirs de la période (366 jours au plus, 90 derniers jours par défaut), les plus récents d'abord.
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/DebutFactures"
+        - $ref: "#/components/parameters/Fin"
+        - name: type
+          in: query
+          required: false
+          description: Pièces voulues.
+          schema: { type: string, enum: [tous, factures, avoirs], default: tous }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ParPageListe"
+      responses:
+        "200":
+          description: Une page de pièces.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageFactures" }
+              examples:
+                deux:
+                  value:
+                    donnees:
+                      - { id: 900002, type: avoir, numero: AV/EXEMPLE/0001, date: "2026-11-20", montant_ht: -9.4, montant_tva: -0.2, montant_ttc: -9.6,
+                          commandes_elixir: [], pdf_disponible: true, avoir_de: FAC/EXEMPLE/0001, motif: Produit abîmé }
+                      - { id: 900001, type: facture, numero: FAC/EXEMPLE/0001, date: "2026-11-17", montant_ht: 53.8, montant_tva: 1.13, montant_ttc: 54.93,
+                          commandes_elixir: [S00000], pdf_disponible: true }
+                    page: 1
+                    par_page: 20
+                    total: 2
+                    suivante: null
+                    periode: { debut: "2026-08-23", fin: "2026-11-20" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/factures/{id}/pdf:
+    get:
+      operationId: telechargerFacture
+      tags: [Documents]
+      summary: PDF d'une facture ou d'un avoir
+      description: "Le PDF d'origine de la pièce. `404` si la pièce n'est pas à votre pharmacie ou si son PDF n'est pas encore prêt (`pdf_disponible: false`)."
+      x-droit: lecture
+      x-classe-debit: documents
+      parameters:
+        - $ref: "#/components/parameters/IdDocument"
+      responses:
+        "200":
+          description: Le PDF.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Content-Disposition: { $ref: "#/components/headers/ContentDisposition" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/pdf:
+              schema: { type: string, contentMediaType: application/pdf }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "404": { $ref: "#/components/responses/E404" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/livraisons:
+    get:
+      operationId: listerLivraisons
+      tags: [Documents]
+      summary: Bons de livraison
+      description: |
+        Bons de livraison de la période (366 jours au plus, 30 derniers jours par défaut), les plus récents d'abord. La
+        date est celle de la sortie de l'entrepôt (jamais une date de réception).
+      x-droit: lecture
+      x-classe-debit: lecture
+      parameters:
+        - $ref: "#/components/parameters/DebutLivraisons"
+        - $ref: "#/components/parameters/Fin"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/ParPageListe"
+      responses:
+        "200":
+          description: Une page de bons.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PageLivraisons" }
+              examples:
+                un:
+                  value:
+                    donnees:
+                      - { id: 900001, numero: BL/EXEMPLE/0001, sortie_le: "2026-11-16T21:40:00+01:00", commande_elixir: S00000, renvoi: false, reste_a_livrer: false,
+                          produits: [{ cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR }, { cip: "3400000000028", nom: PRODUIT EXEMPLE B }] }
+                    page: 1
+                    par_page: 20
+                    total: 1
+                    suivante: null
+                    periode: { debut: "2026-10-19", fin: "2026-11-17" }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "422": { $ref: "#/components/responses/E422" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+  /v1/livraisons/{id}/pdf:
+    get:
+      operationId: telechargerLivraison
+      tags: [Documents]
+      summary: Duplicata d'un bon de livraison
+      description: Duplicata établi par Elixir Pharma à partir des données de la livraison (PDF).
+      x-droit: lecture
+      x-classe-debit: documents
+      parameters:
+        - $ref: "#/components/parameters/IdDocument"
+      responses:
+        "200":
+          description: Le PDF.
+          headers:
+            X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+            Content-Disposition: { $ref: "#/components/headers/ContentDisposition" }
+            RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+            RateLimit: { $ref: "#/components/headers/RateLimit" }
+          content:
+            application/pdf:
+              schema: { type: string, contentMediaType: application/pdf }
+        "400": { $ref: "#/components/responses/E400Cle" }
+        "401": { $ref: "#/components/responses/E401" }
+        "403": { $ref: "#/components/responses/E403" }
+        "404": { $ref: "#/components/responses/E404" }
+        "429": { $ref: "#/components/responses/E429" }
+        "503": { $ref: "#/components/responses/E503" }
+
+components:
+  securitySchemes:
+    cle:
+      type: http
+      scheme: bearer
+      bearerFormat: "elx_live_… / elx_test_… (56 caractères)"
+      description: |
+        Clé de votre pharmacie, créée dans « Mes commandes » → « Accès API » : `elx_live_` (production) ou `elx_test_`
+        (test), 40 caractères, `_` et une somme de contrôle de 6 caractères. Montrée une seule fois : gardez-la côté
+        serveur, jamais dans une page web, un tableur partagé ou un message. Une clé envoyée dans l'adresse est refusée
+        (`400 cle_dans_url`) et doit être remplacée.
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Identifiant unique de CETTE commande, choisi par vous (un UUID v4 conseillé). Renvoyez la même valeur pour un
+        nouvel essai après une coupure : la commande n'est jamais créée deux fois. Valable pour votre pharmacie et
+        l'environnement (test ou production), quelle que soit la clé.
+      schema: { type: string, pattern: '^[A-Za-z0-9_.:-]{8,128}$' }
+      example: 6f1c2b9e-0d4a-4c1e-9a57-2b8f0c3d1e42
+    XElixirSimulation:
+      name: X-Elixir-Simulation
+      in: header
+      required: false
+      description: |
+        Clé de test seulement (ignoré en production) : force un cas difficile pour que votre outil le gère —
+        `rupture` (toutes les lignes en rupture), `contingent` (première ligne contingentée, ramenée à la moitié),
+        `indisponible` (503 rejouable), `doublon` (commande gardée « à vérifier » pour quasi-doublon).
+      schema: { type: string, enum: [rupture, contingent, indisponible, doublon] }
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: ETag d'une réponse précédente ; contenu inchangé → `304` sans corps.
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      required: false
+      description: Numéro de page, à partir de 1.
+      schema: { type: integer, minimum: 1, maximum: 100000, default: 1 }
+    ParPageCatalogue:
+      name: par_page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    ParPageListe:
+      name: par_page
+      in: query
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+    DebutCommandes:
+      name: debut
+      in: query
+      required: false
+      description: Premier jour (AAAA-MM-JJ, heure de Paris). Par défaut, 30 jours avant `fin` (période de 92 jours au plus).
+      schema: { type: string, format: date }
+      example: "2026-11-01"
+    DebutFactures:
+      name: debut
+      in: query
+      required: false
+      description: Premier jour (AAAA-MM-JJ). Par défaut, 90 jours avant `fin` (période de 366 jours au plus).
+      schema: { type: string, format: date }
+      example: "2026-09-01"
+    DebutLivraisons:
+      name: debut
+      in: query
+      required: false
+      description: Premier jour (AAAA-MM-JJ). Par défaut, 30 jours avant `fin` (période de 366 jours au plus).
+      schema: { type: string, format: date }
+      example: "2026-11-01"
+    Fin:
+      name: fin
+      in: query
+      required: false
+      description: Dernier jour compris (AAAA-MM-JJ, heure de Paris). Par défaut, aujourd'hui.
+      schema: { type: string, format: date }
+      example: "2026-11-30"
+    CipChemin:
+      name: cip
+      in: path
+      required: true
+      description: CIP13 ou code-barres du produit.
+      schema: { $ref: "#/components/schemas/Cip" }
+      example: "3400000000011"
+    IdCommande:
+      name: id
+      in: path
+      required: true
+      description: Numéro de la commande (13 chiffres ; `T` devant pour une commande de test).
+      schema: { $ref: "#/components/schemas/IdCommande" }
+      example: "1790000000001"
+    IdDocument:
+      name: id
+      in: path
+      required: true
+      description: Identifiant `id` d'une pièce (`GET /v1/factures`) ou d'un bon (`GET /v1/livraisons`).
+      schema: { type: integer, minimum: 1 }
+      example: 900001
+
+  headers:
+    XRequestId:
+      required: true
+      description: Identifiant de la requête (aussi dans `instance` des erreurs). À donner au support.
+      schema: { type: string, format: uuid }
+    RateLimitPolicy:
+      description: 'Débits de la classe de la route (brouillon IETF), par exemple `"minute";q=60;w=60, "jour";q=5000;w=86400`.'
+      schema: { type: string }
+    RateLimit:
+      description: 'Reste de la minute en cours, par exemple `"minute";r=59;t=42`. Indicatif : fiez-vous à `Retry-After`.'
+      schema: { type: string }
+    RetryAfter:
+      required: true
+      description: Secondes à attendre avant de renvoyer la même requête.
+      schema: { type: integer, minimum: 1 }
+    Location:
+      required: true
+      description: Adresse de la commande (`/api/v1/commandes/{id}`).
+      schema: { type: string }
+    IdempotentReplayed:
+      description: '`true` : réponse d''origine rejouée (même Idempotency-Key, même corps) ; rien de nouveau n''a été créé. Le corps est celui de la première réponse (son `instance` compris) ; `X-Request-Id` est celui de la nouvelle requête.'
+      schema: { type: string, enum: ["true"] }
+    ETag:
+      required: true
+      description: Version du contenu, à renvoyer dans `If-None-Match`.
+      schema: { type: string }
+    WWWAuthenticate:
+      description: Schéma d'authentification attendu (Bearer).
+      schema: { type: string }
+    ContentDisposition:
+      required: true
+      description: 'Pièce jointe et nom du fichier (`attachment; filename="…pdf"`).'
+      schema: { type: string }
+
+  responses:
+    NonModifie:
+      description: Contenu inchangé depuis l'ETag de `If-None-Match` (sans corps).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        ETag: { $ref: "#/components/headers/ETag" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+    E400Cle:
+      description: Clé transmise dans l'adresse (à remplacer).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [cle_dans_url] } }
+    E400Commande:
+      description: Clé dans l'adresse, corps JSON illisible, ou Idempotency-Key absente ou mal formée.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [cle_dans_url, json_invalide, idempotency_key_absente] } }
+          examples:
+            idempotence:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-idempotency_key_absente
+                title: En-tête Idempotency-Key absent
+                status: 400
+                code: idempotency_key_absente
+                detail: "Ajoutez un en-tête Idempotency-Key (8 à 128 caractères, un UUID par exemple) : il évite toute commande en double en cas de nouvel essai."
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+    E400Simulation:
+      description: Clé dans l'adresse, ou corps JSON illisible.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [cle_dans_url, json_invalide] } }
+    E401:
+      description: Clé absente, invalide, révoquée ou expirée.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        WWW-Authenticate: { $ref: "#/components/headers/WWWAuthenticate" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [cle_absente, cle_invalide, cle_revoquee, cle_expiree] } }
+          examples:
+            absente:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-cle_absente
+                title: Clé d'API absente
+                status: 401
+                code: cle_absente
+                detail: "Envoyez votre clé dans l'en-tête « Authorization: Bearer elx_… »."
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+    E403Etat:
+      description: Accès suspendu, réseau non autorisé, ou accès momentanément indisponible.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque] } }
+    E403:
+      description: Accès suspendu, réseau non autorisé, accès momentanément indisponible, ou droit de la clé insuffisant.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante] } }
+    E403Commande:
+      description: Comme toute route, plus — commandes par API suspendues pour votre pharmacie, ou conditions d'utilisation à accepter.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante, commandes_bloquees, cgu_a_accepter] } }
+    E404:
+      description: Ressource inconnue, ou appartenant à une autre pharmacie (même réponse).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [introuvable] } }
+    E409Commande:
+      description: |
+        `requete_en_cours` : la même requête est encore en traitement (réessayez après `Retry-After`) ;
+        `reference_deja_utilisee` : cette `reference_client` a déjà servi (champ `id` : la commande existante).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After:
+          description: Présent pour `requete_en_cours`.
+          schema: { type: integer, minimum: 1 }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [requete_en_cours, reference_deja_utilisee] } }
+          examples:
+            reference:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-reference_deja_utilisee
+                title: Référence déjà utilisée
+                status: 409
+                code: reference_deja_utilisee
+                detail: La reference_client « REASSORT-2026-11-16-A » a déjà servi pour une autre commande.
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+                id: "1790000000001"
+    E409Annulation:
+      description: |
+        `trop_tard` : la commande est déjà partie (champ `etat`) ; `requete_en_cours` : la commande est encore en cours
+        d'enregistrement.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After:
+          description: Présent pour `requete_en_cours`.
+          schema: { type: integer, minimum: 1 }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [requete_en_cours, trop_tard] } }
+    E413:
+      description: Corps de plus de 256 Ko.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [trop_long] } }
+    E422:
+      description: "Paramètre ou corps invalide (`erreurs` : le détail par champ)."
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [requete_invalide] } }
+          examples:
+            periode:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-requete_invalide
+                title: Requête invalide
+                status: 422
+                code: requete_invalide
+                detail: Période de 92 jours au plus.
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+                erreurs: [{ champ: fin, message: Période de 92 jours au plus. }]
+    E422Commande:
+      description: |
+        Rien n'est enregistré. `requete_invalide` (structure, `erreurs` par champ), `idempotency_key_reutilisee` (même clé,
+        autre corps), `aucune_ligne_acceptee`, `commande_refusee` (`tout_ou_rien`), `plafond_depasse` (`plafond`). Les
+        trois derniers donnent aussi `lignes` (le sort de chaque ligne) et sont rejoués à l'identique avec la même clé.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Idempotent-Replayed: { $ref: "#/components/headers/IdempotentReplayed" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [requete_invalide, idempotency_key_reutilisee, aucune_ligne_acceptee, commande_refusee, plafond_depasse] } }
+          examples:
+            plafond:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-plafond_depasse
+                title: Plafond de commande dépassé
+                status: 422
+                code: plafond_depasse
+                detail: "La commande dépasse le plafond de votre accès : 1200 boîte(s) pour 1000 au plus par commande. Rien n'a été enregistré : scindez-la, ou demandez à Elixir Pharma d'ajuster vos plafonds."
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+                plafond: { nom: boites, limite: 1000, valeur: 1200 }
+                lignes:
+                  - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 1200, quantite: 1200, prix_unitaire_ht: 3.7,
+                      total_ht: 4440, etat: acceptee, motif: null, detail: null }
+    E429:
+      description: Trop de requêtes (`debit`) ou plafond du jour de la clé atteint (`plafond_journalier`).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [debit, plafond_journalier] } }
+    E429Commande:
+      description: Comme toute route, plus `plafond_commandes_jour` (commandes par API du jour de votre pharmacie atteintes, jusqu'à minuit).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [debit, plafond_journalier, plafond_commandes_jour] } }
+    E503Etat:
+      description: Service momentanément indisponible ; renvoyez la même requête après `Retry-After`.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [indisponible] } }
+    E503:
+      description: Service suspendu (`api_suspendue`) ou momentanément indisponible (`indisponible`) ; renvoyez la même requête après `Retry-After`.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [api_suspendue, indisponible] } }
+    E503Simulation:
+      description: Comme toute route, plus `contingent_indisponible` (produit contingenté, contingent impossible à vérifier).
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [api_suspendue, indisponible, contingent_indisponible] } }
+    E503Commande:
+      description: |
+        Rien n'est enregistré : `ecriture_suspendue` (commandes réelles pas encore ouvertes, ou fermées),
+        `contingent_indisponible`, `indisponible`, `api_suspendue`. Renvoyez la même requête (même Idempotency-Key)
+        après `Retry-After` : jamais de doublon.
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [api_suspendue, indisponible, ecriture_suspendue, contingent_indisponible] } }
+          examples:
+            fermee:
+              value:
+                type: https://elixir-commande.expepharma.com/api/#erreur-ecriture_suspendue
+                title: Commandes momentanément fermées
+                status: 503
+                code: ecriture_suspendue
+                detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : rien n'a été enregistré. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles."
+                instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
+
+  schemas:
+    Cip:
+      type: string
+      pattern: '^\d{13}$'
+      description: CIP13 ou code-barres (13 chiffres), en texte.
+    IdCommande:
+      type: string
+      pattern: '^T?1[7-9]\d{11}$'
+      description: Numéro de commande (13 chiffres) ; `T` devant pour une commande de test.
+    DateHeure:
+      type: string
+      format: date-time
+      description: ISO 8601 à l'heure de Paris, avec le décalage.
+    Jour:
+      type: string
+      format: date
+    Montant:
+      type: number
+      description: Euros HT, 2 décimales.
+    Disponibilite:
+      type: string
+      enum: [en_stock, stock_faible, rupture]
+      description: Niveau indicatif, jamais une quantité.
+    Environnement:
+      type: string
+      enum: [live, test]
+    EtatCommande:
+      type: string
+      description: |
+        `recue` (délai d'annulation en cours) · `en_attente_elixir` (voir `motif`) · `en_transmission` (part vers notre
+        système de préparation) · `transmise` (envoyée, prise en charge sous 2 heures environ) · `en_preparation` ·
+        `partiellement_sortie` · `sortie_entrepot` (jamais « livrée » : date de sortie d'entrepôt) · `facturee` ·
+        `non_servie` (rien n'a pu être servi : rupture, contingent…) · `annulee`.
+      enum: [recue, en_attente_elixir, en_transmission, transmise, en_preparation, partiellement_sortie, sortie_entrepot, facturee, non_servie, annulee]
+    MotifCommande:
+      type: [string, "null"]
+      description: |
+        Précise l'état. `en_attente_elixir` : `anomalie_quantite`, `quasi_doublon` (anomalies nettes, gardée pour
+        vérification) ; `verification`, `campagne`, `justificatif` (commandes du site) ; `envoi_manuel`, `envoi_manque`,
+        `envoi_suspendu`, `doublon_recent`, `precommande`, `rupture_envoi`, `commande_modifiee`, `erreur_transmission`,
+        `envoi_a_verifier`, `reprise` (Elixir Pharma termine l'envoi elle-même). `non_servie` : `rupture`. `annulee` :
+        `annulee_par_la_pharmacie`. D'autres valeurs pourront s'ajouter.
+    Palier:
+      type: object
+      additionalProperties: false
+      required: [a_partir_de, prix_ht]
+      properties:
+        a_partir_de: { type: integer, minimum: 2, description: Quantité à partir de laquelle ce prix s'applique (par ligne). }
+        prix_ht: { $ref: "#/components/schemas/Montant" }
+    EtatPrix:
+      type: object
+      additionalProperties: false
+      required: [base, etat, calcule_le]
+      properties:
+        base: { type: string, enum: [liste_pharmacie], description: Prix de VOTRE liste de prix. }
+        etat:
+          type: string
+          enum: [a_jour, ancien, en_calcul, indisponible]
+          description: "`ancien` : calcul de plus de 48 h ; `en_calcul` : prix pas encore calculés (moins d'une heure) ; `indisponible` : liste illisible."
+        calcule_le: { type: [string, "null"], format: date-time }
+    Produit:
+      type: object
+      additionalProperties: false
+      required: [cip, nom, prix_ht, paliers, disponibilite, contingente]
+      properties:
+        cip: { $ref: "#/components/schemas/Cip" }
+        nom: { type: [string, "null"] }
+        prix_ht: { type: [number, "null"], description: "Prix HT à l'unité de votre liste ; null : pas encore calculé." }
+        paliers: { type: array, items: { $ref: "#/components/schemas/Palier" }, description: Prix plus bas à partir d'une quantité (vide si aucun). }
+        disponibilite: { $ref: "#/components/schemas/Disponibilite" }
+        contingente: { type: [boolean, "null"], description: "Produit contingenté (voir GET /v1/contingents) ; null : momentanément inconnu." }
+    PageCatalogue:
+      type: object
+      additionalProperties: false
+      required: [donnees, page, par_page, total, suivante, prix, disponibilite_maj, mention, avertissements]
+      properties:
+        donnees: { type: array, items: { $ref: "#/components/schemas/Produit" } }
+        page: { type: integer }
+        par_page: { type: integer }
+        total: { type: [integer, "null"] }
+        suivante: { type: [string, "null"], description: Adresse de la page suivante ; null à la dernière. }
+        prix: { $ref: "#/components/schemas/EtatPrix" }
+        disponibilite_maj: { type: [string, "null"], format: date-time, description: Mise à jour des niveaux du catalogue (plusieurs fois par jour). }
+        mention: { type: string }
+        avertissements: { type: array, items: { type: string } }
+    ProduitDetail:
+      type: object
+      additionalProperties: false
+      required: [cip, nom, prix_ht, paliers, disponibilite, contingente, prix, disponibilite_maj, mention, avertissements]
+      properties:
+        cip: { $ref: "#/components/schemas/Cip" }
+        nom: { type: [string, "null"] }
+        prix_ht: { type: [number, "null"] }
+        paliers: { type: array, items: { $ref: "#/components/schemas/Palier" } }
+        disponibilite: { $ref: "#/components/schemas/Disponibilite" }
+        contingente: { type: [boolean, "null"] }
+        prix: { $ref: "#/components/schemas/EtatPrix" }
+        disponibilite_maj: { type: [string, "null"], format: date-time }
+        mention: { type: string }
+        avertissements: { type: array, items: { type: string } }
+    Disponibilites:
+      type: object
+      additionalProperties: false
+      required: [donnees, lu_le, mention]
+      properties:
+        donnees:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [cip, disponibilite]
+            properties:
+              cip: { $ref: "#/components/schemas/Cip" }
+              disponibilite: { type: [string, "null"], enum: [en_stock, stock_faible, rupture, null] }
+              inconnu: { type: boolean, enum: [true], description: Produit inconnu. }
+        lu_le: { $ref: "#/components/schemas/DateHeure" }
+        mention: { type: string }
+    Contingents:
+      type: object
+      additionalProperties: false
+      required: [exempte, jour, donnees]
+      properties:
+        exempte: { type: boolean, description: Votre pharmacie n'a aucun contingent. }
+        jour: { type: [string, "null"], format: date }
+        donnees:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [cip, nom, quota, periode, jours_glissants, libelle, debut, fin, deja_commande, reste]
+            properties:
+              cip: { $ref: "#/components/schemas/Cip" }
+              nom: { type: [string, "null"] }
+              quota: { type: integer, description: Quantité permise sur la période. }
+              periode: { type: [string, "null"], enum: [semaine, décade, quinzaine, mois, jours glissants, null] }
+              jours_glissants: { type: [integer, "null"], description: "Nombre de jours (période « jours glissants »)." }
+              libelle: { type: string }
+              debut: { type: [string, "null"], format: date }
+              fin: { type: [string, "null"], format: date, description: Dernier jour compris. }
+              deja_commande: { type: integer, description: "Déjà commandé sur la période, tous canaux." }
+              reste: { type: integer, minimum: 0 }
+    LigneDemande:
+      type: object
+      additionalProperties: false
+      required: [cip, quantite]
+      properties:
+        cip: { $ref: "#/components/schemas/Cip" }
+        quantite: { type: integer, minimum: 1, maximum: 999 }
+    CommandeDemande:
+      type: object
+      additionalProperties: false
+      required: [lignes]
+      description: Un produit une seule fois (ni deux fois le même CIP, ni le CIP et le code-barres d'un même produit). Aucun prix n'est accepté.
+      properties:
+        reference_client:
+          type: [string, "null"]
+          pattern: '^[\p{L}\p{N} _.:/#+-]{1,40}$'
+          description: Votre référence (40 caractères au plus), unique pour votre pharmacie (hors commandes refusées).
+        lignes:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items: { $ref: "#/components/schemas/LigneDemande" }
+        si_rupture:
+          type: string
+          enum: [retirer, garder]
+          default: retirer
+          description: "Produit en rupture : `retirer` la ligne (commandez ailleurs), ou la `garder` en attente du retour du stock."
+        tout_ou_rien:
+          type: boolean
+          default: false
+          description: "`true` : refuser toute la commande si une ligne est refusée, retirée ou réduite."
+        commentaire:
+          type: [string, "null"]
+          maxLength: 200
+          description: Texte libre sur une ligne (200 caractères au plus).
+    LigneCommande:
+      type: object
+      additionalProperties: false
+      required: [ligne, cip, nom, quantite_demandee, quantite, prix_unitaire_ht, total_ht, etat, motif, detail]
+      properties:
+        ligne: { type: integer, minimum: 1, description: Rang de la ligne dans votre demande. }
+        cip: { $ref: "#/components/schemas/Cip" }
+        code_demande: { $ref: "#/components/schemas/Cip", description: "Code envoyé, quand c'était le code-barres du produit." }
+        nom: { type: [string, "null"] }
+        quantite_demandee: { type: integer }
+        quantite: { type: integer, minimum: 0, description: Quantité acceptée. }
+        prix_unitaire_ht: { type: [number, "null"], description: "Prix de votre liste pour cette quantité (palier compris)." }
+        total_ht: { $ref: "#/components/schemas/Montant" }
+        etat: { type: string, enum: [acceptee, refusee, rupture] }
+        motif:
+          type: [string, "null"]
+          description: |
+            `produit_inconnu`, `produit_non_commandable` (à commander sur le site), `produit_sur_justificatif`,
+            `prix_indisponible`, `contingentement` (réduite ou refusée), `rupture`, `en_attente_stock` (`si_rupture: garder`).
+        detail: { type: [string, "null"] }
+        anomalie: { type: string, enum: [anomalie_quantite], description: Ligne à l'origine de la mise « à vérifier ». }
+    Anomalie:
+      type: object
+      additionalProperties: false
+      required: [type, detail]
+      properties:
+        type: { type: string, enum: [anomalie_quantite, quasi_doublon] }
+        cip: { $ref: "#/components/schemas/Cip" }
+        detail: { type: string }
+    Commande:
+      type: object
+      additionalProperties: false
+      required: [id, environnement, reference_client, canal, etat, motif, cree_le, annulable_jusqu_a, si_rupture, total_indicatif_ht, lignes, anomalies, avertissements, mention]
+      properties:
+        id: { $ref: "#/components/schemas/IdCommande" }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        reference_client: { type: [string, "null"] }
+        canal: { type: string, enum: [api] }
+        etat: { type: string, enum: [recue, en_attente_elixir] }
+        motif: { $ref: "#/components/schemas/MotifCommande" }
+        cree_le: { $ref: "#/components/schemas/DateHeure" }
+        annulable_jusqu_a: { type: [string, "null"], format: date-time, description: "Fin du délai d'annulation ; null pour une commande gardée « à vérifier » (annulable tant qu'elle n'est pas partie)." }
+        si_rupture: { type: string, enum: [retirer, garder] }
+        total_indicatif_ht: { $ref: "#/components/schemas/Montant" }
+        lignes: { type: array, items: { $ref: "#/components/schemas/LigneCommande" } }
+        anomalies: { type: array, items: { $ref: "#/components/schemas/Anomalie" } }
+        avertissements: { type: array, items: { type: string } }
+        mention: { type: string }
+    Refus:
+      type: object
+      additionalProperties: false
+      required: [statut, code, titre, detail]
+      properties:
+        statut: { type: integer }
+        code: { $ref: "#/components/schemas/CodeErreur" }
+        titre: { type: string }
+        detail: { type: string }
+        plafond: { $ref: "#/components/schemas/Plafond" }
+    Simulation:
+      type: object
+      additionalProperties: false
+      required: [simulation, resultat, refus, environnement, etat, motif, delai_annulation_min, si_rupture, total_indicatif_ht, lignes, anomalies, avertissements, mention]
+      properties:
+        simulation: { type: boolean, enum: [true] }
+        resultat: { type: string, enum: [acceptee, refusee] }
+        refus: { oneOf: [{ $ref: "#/components/schemas/Refus" }, { type: "null" }] }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        etat: { type: [string, "null"], enum: [recue, en_attente_elixir, null] }
+        motif: { $ref: "#/components/schemas/MotifCommande" }
+        delai_annulation_min: { type: [integer, "null"] }
+        si_rupture: { type: string, enum: [retirer, garder] }
+        total_indicatif_ht: { $ref: "#/components/schemas/Montant" }
+        lignes: { type: array, items: { $ref: "#/components/schemas/LigneCommande" } }
+        anomalies: { type: array, items: { $ref: "#/components/schemas/Anomalie" } }
+        avertissements: { type: array, items: { type: string } }
+        mention: { type: string }
+    Annulation:
+      type: object
+      additionalProperties: false
+      required: [id, environnement, etat, annulee_le]
+      properties:
+        id: { $ref: "#/components/schemas/IdCommande" }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        etat: { type: string, enum: [annulee] }
+        annulee_le: { type: [string, "null"], format: date-time }
+    Periode:
+      type: object
+      additionalProperties: false
+      required: [debut, fin]
+      properties:
+        debut: { $ref: "#/components/schemas/Jour" }
+        fin: { $ref: "#/components/schemas/Jour" }
+    ResumeCommande:
+      type: object
+      additionalProperties: false
+      required: [id, environnement, canal, reference_client, etat, motif, cree_le, annulable_jusqu_a, lignes, commandes_elixir]
+      properties:
+        id: { $ref: "#/components/schemas/IdCommande" }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        canal: { type: string, enum: [api, site] }
+        reference_client: { type: [string, "null"] }
+        etat: { $ref: "#/components/schemas/EtatCommande" }
+        motif: { $ref: "#/components/schemas/MotifCommande" }
+        cree_le: { type: [string, "null"], format: date-time }
+        annulable_jusqu_a: { type: [string, "null"], format: date-time }
+        lignes: { type: integer, description: Nombre de lignes acceptées. }
+        commandes_elixir: { type: array, items: { type: string }, description: Numéros de nos commandes (imprimés sur le bon de livraison et la facture). }
+    PageCommandes:
+      type: object
+      additionalProperties: false
+      required: [donnees, page, par_page, suivante, periode]
+      properties:
+        donnees: { type: array, items: { $ref: "#/components/schemas/ResumeCommande" } }
+        page: { type: integer }
+        par_page: { type: integer }
+        suivante: { type: [string, "null"] }
+        periode: { $ref: "#/components/schemas/Periode" }
+    Suivi:
+      type: object
+      additionalProperties: false
+      required: [commandee, acceptee, servie, non_servie, a_livrer, facturee]
+      description: Quantités de la ligne une fois prise en charge par notre système de préparation.
+      properties:
+        commandee: { type: number }
+        acceptee: { type: number }
+        servie: { type: number }
+        non_servie: { type: number }
+        a_livrer: { type: number }
+        facturee: { type: number }
+    LigneSuivi:
+      type: object
+      additionalProperties: false
+      required: [cip, nom, quantite_demandee, suivi]
+      description: |
+        Ligne d'une commande. Commande de l'API : mêmes champs qu'à la création, `etat` à jour (`annulee`, `rupture` si
+        retirée à l'envoi, `traitee_par_elixir`), plus `suivi`. Commande du site : `cip`, `nom`, `quantite_demandee`,
+        `suivi`. Une ligne servie sous une autre référence apparaît à part (`quantite_demandee: null`).
+      properties:
+        ligne: { type: integer, minimum: 1 }
+        cip: { type: [string, "null"] }
+        code_demande: { $ref: "#/components/schemas/Cip" }
+        nom: { type: [string, "null"] }
+        quantite_demandee: { type: [integer, "null"] }
+        quantite: { type: integer, minimum: 0 }
+        prix_unitaire_ht: { type: [number, "null"] }
+        total_ht: { $ref: "#/components/schemas/Montant" }
+        etat: { type: string, enum: [acceptee, refusee, rupture, annulee, traitee_par_elixir] }
+        motif: { type: [string, "null"] }
+        detail: { type: [string, "null"] }
+        anomalie: { type: string, enum: [anomalie_quantite] }
+        suivi: { oneOf: [{ $ref: "#/components/schemas/Suivi" }, { type: "null" }] }
+    CommandeElixir:
+      type: object
+      additionalProperties: false
+      required: [numero, etat, sortie_le, factures, avoirs, livraisons]
+      properties:
+        numero: { type: string, description: Numéro de notre commande. }
+        etat: { type: string, enum: [en_preparation, partiellement_sortie, sortie_entrepot, facturee, non_servie, annulee] }
+        sortie_le: { type: [string, "null"], format: date-time }
+        factures: { type: array, items: { type: string } }
+        avoirs: { type: array, items: { type: string } }
+        livraisons:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, numero, sortie_le]
+            properties:
+              id: { type: integer, description: "Pour GET /v1/livraisons/{id}/pdf." }
+              numero: { type: string }
+              sortie_le: { type: [string, "null"], format: date-time }
+    DetailCommande:
+      type: object
+      additionalProperties: false
+      required: [id, environnement, canal, reference_client, etat, motif, cree_le, annulable_jusqu_a, total_indicatif_ht, commandes_elixir, lignes]
+      properties:
+        id: { $ref: "#/components/schemas/IdCommande" }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        canal: { type: string, enum: [api, site] }
+        reference_client: { type: [string, "null"] }
+        etat: { $ref: "#/components/schemas/EtatCommande" }
+        motif: { $ref: "#/components/schemas/MotifCommande" }
+        cree_le: { type: [string, "null"], format: date-time }
+        annulable_jusqu_a: { type: [string, "null"], format: date-time }
+        total_indicatif_ht: { type: [number, "null"], description: Commandes de l'API seulement. }
+        commandes_elixir: { type: array, items: { $ref: "#/components/schemas/CommandeElixir" } }
+        lignes: { type: array, items: { $ref: "#/components/schemas/LigneSuivi" } }
+    Facture:
+      type: object
+      additionalProperties: false
+      required: [id, type, numero, date, montant_ht, montant_tva, montant_ttc, commandes_elixir, pdf_disponible]
+      properties:
+        id: { type: integer, description: "Pour GET /v1/factures/{id}/pdf." }
+        type: { type: string, enum: [facture, avoir] }
+        numero: { type: string }
+        date: { type: [string, "null"], format: date }
+        montant_ht: { type: number, description: Négatif pour un avoir. }
+        montant_tva: { type: number }
+        montant_ttc: { type: number }
+        commandes_elixir: { type: array, items: { type: string } }
+        pdf_disponible: { type: boolean }
+        avoir_de: { type: [string, "null"], description: "Avoir : numéro de la facture d'origine." }
+        motif: { type: [string, "null"], description: "Avoir : motif." }
+    PageFactures:
+      type: object
+      additionalProperties: false
+      required: [donnees, page, par_page, total, suivante, periode]
+      properties:
+        donnees: { type: array, items: { $ref: "#/components/schemas/Facture" } }
+        page: { type: integer }
+        par_page: { type: integer }
+        total: { type: integer }
+        suivante: { type: [string, "null"] }
+        periode: { $ref: "#/components/schemas/Periode" }
+    Livraison:
+      type: object
+      additionalProperties: false
+      required: [id, numero, sortie_le, commande_elixir, renvoi, reste_a_livrer, produits]
+      properties:
+        id: { type: integer, description: "Pour GET /v1/livraisons/{id}/pdf." }
+        numero: { type: string }
+        sortie_le: { type: [string, "null"], format: date-time, description: "Sortie de l'entrepôt." }
+        commande_elixir: { type: [string, "null"] }
+        renvoi: { type: boolean, description: Renvoi après un retour. }
+        reste_a_livrer: { type: boolean, description: Un reliquat reste à livrer. }
+        produits:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [cip, nom]
+            properties:
+              cip: { type: [string, "null"] }
+              nom: { type: [string, "null"] }
+    PageLivraisons:
+      type: object
+      additionalProperties: false
+      required: [donnees, page, par_page, total, suivante, periode]
+      properties:
+        donnees: { type: array, items: { $ref: "#/components/schemas/Livraison" } }
+        page: { type: integer }
+        par_page: { type: integer }
+        total: { type: integer }
+        suivante: { type: [string, "null"] }
+        periode: { $ref: "#/components/schemas/Periode" }
+    Etat:
+      type: object
+      additionalProperties: false
+      required: [pharmacie, environnement, cle, portees, etat_service, commandes, prix, limites, cgu, version_api, derniere_modification]
+      properties:
+        pharmacie: { type: [string, "null"] }
+        environnement: { $ref: "#/components/schemas/Environnement" }
+        cle:
+          type: object
+          additionalProperties: false
+          required: [prefixe, libelle, expire_le]
+          properties:
+            prefixe: { type: string, description: Début et fin de la clé (jamais la clé entière). }
+            libelle: { type: string, description: Nom donné à la clé (l'outil qui l'utilise). }
+            expire_le: { type: [string, "null"], format: date-time, description: "Clé remplacée : encore valide jusqu'à cette date." }
+        portees: { type: array, items: { type: string, enum: [lecture, commande] }, description: Droits de la clé. }
+        etat_service: { type: string, enum: [normal, suspendu] }
+        commandes:
+          type: object
+          additionalProperties: false
+          required: [disponibles, mode, production, delai_annulation_min, plafonds, verification]
+          properties:
+            disponibles: { type: boolean, description: Cette clé peut passer des commandes maintenant. }
+            mode: { type: string, enum: [auto, bloque], description: "`bloque` : commandes par API suspendues pour votre pharmacie." }
+            production: { type: string, enum: [ouvertes, fermees], description: Commandes réelles (clés de production) ouvertes ou non. }
+            delai_annulation_min: { type: integer }
+            plafonds:
+              type: object
+              additionalProperties: false
+              required: [lignes_par_commande, boites_par_commande, montant_ht_par_commande, commandes_par_jour]
+              properties:
+                lignes_par_commande: { type: integer }
+                boites_par_commande: { type: integer }
+                montant_ht_par_commande: { type: number }
+                commandes_par_jour: { type: integer }
+            verification:
+              type: object
+              additionalProperties: false
+              required: [active, facteur_habitude_mensuelle, quasi_doublon_min]
+              description: Contrôles d'anomalie nette (commande gardée « à vérifier »).
+              properties:
+                active: { type: boolean }
+                facteur_habitude_mensuelle: { type: [number, "null"] }
+                quasi_doublon_min: { type: [integer, "null"] }
+        prix:
+          type: object
+          additionalProperties: false
+          required: [base, mention]
+          properties:
+            base: { type: string, enum: [liste_pharmacie] }
+            mention: { type: string }
+        limites:
+          type: object
+          additionalProperties: false
+          required: [lecture, disponibilites, documents, commande, simulation]
+          properties:
+            lecture: { $ref: "#/components/schemas/Debit" }
+            disponibilites: { $ref: "#/components/schemas/Debit" }
+            documents: { $ref: "#/components/schemas/Debit" }
+            commande: { $ref: "#/components/schemas/Debit" }
+            simulation: { $ref: "#/components/schemas/Debit" }
+        cgu:
+          type: object
+          additionalProperties: false
+          required: [version_en_vigueur, acceptee]
+          properties:
+            version_en_vigueur: { type: string }
+            acceptee: { type: boolean, description: "Version en vigueur acceptée (sinon : 403 cgu_a_accepter sur les commandes)." }
+        version_api: { type: string }
+        derniere_modification: { $ref: "#/components/schemas/Jour" }
+    Debit:
+      type: object
+      additionalProperties: false
+      required: [par_minute, par_jour]
+      properties:
+        par_minute: { type: integer }
+        par_jour: { type: integer }
+    Plafond:
+      type: object
+      additionalProperties: false
+      required: [nom, limite, valeur]
+      properties:
+        nom: { type: string, enum: [lignes, boites, montant_ht, commandes_jour] }
+        limite: { type: number }
+        valeur: { type: number }
+    ErreurChamp:
+      type: object
+      additionalProperties: false
+      required: [champ, message]
+      properties:
+        champ: { type: string, description: "Champ en cause (lignes[2].quantite, page, Idempotency-Key…)." }
+        message: { type: string }
+    CodeErreur:
+      type: string
+      description: Code stable de l'erreur (voir https://elixir-commande.expepharma.com/api/#erreurs).
+      enum: [json_invalide, idempotency_key_absente, cle_dans_url, cle_absente, cle_invalide, cle_revoquee, cle_expiree, portee_insuffisante,
+             ip_non_autorisee, acces_suspendu, compte_bloque, cgu_a_accepter, test_requis, commandes_bloquees, introuvable, methode_non_autorisee,
+             requete_en_cours, reference_deja_utilisee, trop_tard, trop_long, requete_invalide, idempotency_key_reutilisee, aucune_ligne_acceptee,
+             commande_refusee, plafond_depasse, debit, plafond_journalier, plafond_commandes_jour, api_suspendue, ecriture_suspendue,
+             contingent_indisponible, indisponible]
+    Probleme:
+      type: object
+      additionalProperties: false
+      required: [type, title, status, code, detail, instance]
+      description: Erreur au format RFC 9457 (application/problem+json).
+      properties:
+        type: { type: string, format: uri, description: "Explication de l'erreur dans la documentation (…/api/#erreur-<code>)." }
+        title: { type: string }
+        status: { type: integer }
+        code: { $ref: "#/components/schemas/CodeErreur" }
+        detail: { type: string, description: "Explication en français, à afficher telle quelle." }
+        instance: { type: string, description: "urn:uuid: suivi de X-Request-Id (réponse rejouée : celui de la première requête)." }
+        erreurs: { type: array, items: { $ref: "#/components/schemas/ErreurChamp" }, description: "requete_invalide : détail par champ." }
+        id: { type: [string, "null"], description: "reference_deja_utilisee : la commande qui porte déjà cette référence." }
+        etat: { type: string, description: "trop_tard : état de la commande." }
+        plafond: { $ref: "#/components/schemas/Plafond" }
+        lignes: { type: array, items: { $ref: "#/components/schemas/LigneCommande" }, description: "Refus d'une commande : sort de chaque ligne." }

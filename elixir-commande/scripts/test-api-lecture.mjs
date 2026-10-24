@@ -28,6 +28,7 @@ process.env.ADMIN_EMAIL = "admin@elixir.test";
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const { fauxPostgrestApi } = await import("./api-faux.mjs");
+const { capturer } = await import("./api-capture.mjs");
 const { creerOdooApi, montantOdoo } = await import("./api-odoo-faux.mjs");
 const { jeuOdoo, COMPTES, COMMANDES_SITE, TACHES, controlerAppels, INJECTION } = await import("./test-chat-perimetre.mjs");
 
@@ -314,10 +315,12 @@ const cle = async (id, env, portees = ["lecture", "commande"]) => (await cles.cr
 const K = { aTest: await cle(100, "test"), aLive: await cle(100, "live"), bLive: await cle(200, "live"), gLive: await cle(700, "live"), aCommande: await cle(100, "live", ["commande"]) };
 const nouveauRouteur = (extra = {}) => creerRouteur({ stock, maintenant, verifierFiche: (id) => ficheVerifiee(id, { odoo: faux.odoo }), odoo: faux.odoo, log: silence, hasard: () => 0.5, ...extra });
 let ip = 1;
+// (capturer : transparent, sauf pour scripts/test-api-openapi.mjs qui confronte les réponses à docs/api/openapi.yaml)
 const requete = (h, chemin, { cle: k = K.aLive, host = "elixir-commande.expepharma.com", entetes = {}, query = null } = {}) => {
   const [p, qs] = chemin.split("?");
-  return h({ httpMethod: "GET", path: `/api/v1${p}`, headers: { host, "x-nf-client-connection-ip": `198.51.${ip}.10`, ...(k ? { authorization: `Bearer ${k}` } : {}), ...entetes },
-    queryStringParameters: query || (qs ? Object.fromEntries(new URLSearchParams(qs)) : null) });
+  const event = { httpMethod: "GET", path: `/api/v1${p}`, headers: { host, "x-nf-client-connection-ip": `198.51.${ip}.10`, ...(k ? { authorization: `Bearer ${k}` } : {}), ...entetes },
+    queryStringParameters: query || (qs ? Object.fromEntries(new URLSearchParams(qs)) : null) };
+  return capturer(event, h(event));
 };
 const corps = (r) => JSON.parse(r.body);
 const debutMinute = () => avancer(60 - (Math.floor(T / 1000) % 60));

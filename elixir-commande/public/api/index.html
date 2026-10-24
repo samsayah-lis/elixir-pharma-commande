@@ -1,0 +1,502 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<title>API Elixir Pharma</title>
+<meta name="description" content="Documentation de l'API Elixir Pharma pour les pharmacies clientes : catalogue à vos prix, disponibilités, contingents, commandes, factures et bons de livraison.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<!-- Page statique servie à /api/ (hors bundle du site). Source de vérité : docs/api/openapi.yaml ; cohérence contrôlée par
+     scripts/test-api-openapi.mjs (une ancre par code d'erreur, routes, débits, valeurs par défaut). Exemples FICTIFS. -->
+<style>
+@font-face { font-family: "Inter Variable"; src: url("/api/inter.woff2") format("woff2-variations"), url("/api/inter.woff2") format("woff2");
+  font-weight: 100 900; font-style: normal; font-display: swap; }
+:root {
+  --cream: #f4efe4; --paper: #fbf8f2; --surface: #fff; --sand: #ebe6dc; --ink: #201917; --ink-soft: #4b4440; --ink-mute: #6f6863;
+  --teal: #285557; --teal-2: #3c7782; --petrol: #0f2d3d; --deep: #0a1d22; --mint: #d3e6df; --mint-2: #a9cdc2; --or: #b5904a; --or-clair: #d7bb7f;
+  --line: rgba(32,25,23,.14); --line-soft: rgba(32,25,23,.08); --paper-mute: rgba(251,248,242,.72);
+  --ok: #065f46; --ok-bg: #dce9e5; --warn: #92400e; --warn-bg: #f4e7dd; --danger: #b91c1c; --danger-bg: #f7e4e4;
+  --sans: "Inter Variable", "Inter", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 16px; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body { margin: 0; font-family: var(--sans); font-size: 16px; line-height: 1.6; background: var(--cream); color: var(--ink); -webkit-font-smoothing: antialiased; }
+i, em { font-style: normal; }
+a { color: var(--teal); text-underline-offset: 3px; }
+a:hover { color: var(--petrol); }
+:focus-visible { outline: 3px solid var(--teal-2); outline-offset: 2px; }
+::selection { background: var(--or); color: var(--ink); }
+code, pre, kbd { font-family: var(--mono); font-size: .88em; }
+:not(pre) > code { background: var(--sand); border-radius: 6px; padding: .1em .35em; overflow-wrap: anywhere; }
+pre { margin: 12px 0 18px; padding: 14px 16px; background: var(--petrol); color: var(--paper); border-radius: 12px; overflow-x: auto; line-height: 1.5; max-width: 100%; }
+pre .c { color: var(--or-clair); }
+.entete { background: var(--petrol); color: var(--paper); }
+.entete .bande { max-width: 1180px; margin: 0 auto; padding: 32px 16px 28px; }
+.marque { font-size: 13px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--or-clair); margin: 0 0 8px; }
+.entete h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 40px); line-height: 1.15; letter-spacing: -.01em; }
+.entete p { margin: 0; color: var(--paper-mute); max-width: 720px; }
+.entete .liens { margin-top: 18px; display: flex; flex-wrap: wrap; gap: 10px; }
+.bouton { display: inline-flex; align-items: center; min-height: 40px; padding: 0 16px; border-radius: 999px; font-weight: 700; font-size: 14px; text-decoration: none; }
+.bouton.or { background: var(--or); color: var(--ink); }
+.bouton.ligne { box-shadow: inset 0 0 0 1.5px rgba(251,248,242,.4); color: var(--paper); }
+.bouton.or:hover { color: var(--ink); background: var(--or-clair); }
+.bouton.ligne:hover { color: var(--paper); background: rgba(251,248,242,.1); }
+.page { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 28px; }
+@media (min-width: 1000px) { .page { grid-template-columns: 240px minmax(0, 1fr); } .sommaire { position: sticky; top: 16px; align-self: start; max-height: calc(100vh - 32px); overflow-y: auto; } }
+.sommaire { font-size: 14px; }
+.sommaire h2 { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--petrol); margin: 0 0 8px; }
+.sommaire ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+@media (max-width: 999px) { .sommaire ol { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); column-gap: 12px; } }
+.sommaire a { display: block; padding: 4px 8px; border-radius: 8px; color: var(--ink-soft); text-decoration: none; }
+.sommaire a:hover { background: var(--sand); color: var(--ink); }
+main { min-width: 0; max-width: 820px; }
+section { margin: 0 0 40px; }
+h2 { font-size: 24px; line-height: 1.25; color: var(--petrol); margin: 0 0 12px; letter-spacing: -.01em; }
+h3 { font-size: 17px; color: var(--ink); margin: 22px 0 8px; }
+p, li { overflow-wrap: break-word; }
+ul, ol { padding-left: 22px; }
+li { margin: 4px 0; }
+.encart { border-radius: 14px; padding: 14px 16px; margin: 14px 0; border: 1px solid var(--line); background: var(--paper); }
+.encart.info { background: var(--mint); border-color: var(--mint-2); }
+.encart.attention { background: var(--warn-bg); border-color: rgba(146,64,14,.28); }
+.encart > :first-child { margin-top: 0; } .encart > :last-child { margin-bottom: 0; }
+.tableau { overflow-x: auto; margin: 12px 0 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line-soft); }
+th { background: var(--paper); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-soft); white-space: nowrap; }
+tr:last-child td { border-bottom: none; }
+td code { white-space: nowrap; }
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr:target, tr:target td { background: #f0e9da; }
+/* tableaux empilés sur téléphone : une carte par ligne, libellés des nombres rappelés */
+@media (max-width: 640px) {
+  .empile thead { display: none; }
+  .empile tr { display: block; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+  .empile tr:last-child { border-bottom: none; }
+  .empile td { display: block; padding: 2px 0; border: none; }
+  .empile td:first-child { font-weight: 600; }
+  .empile td.num { display: inline-block; margin-right: 14px; }
+  .empile td[data-label]::before { content: attr(data-label) " : "; color: var(--ink-mute); font-size: 12px; }
+}
+.etapes { counter-reset: e; list-style: none; padding: 0; }
+.etapes li { counter-increment: e; position: relative; padding-left: 40px; margin: 10px 0; }
+.etapes li::before { content: counter(e); position: absolute; left: 0; top: 0; width: 28px; height: 28px; border-radius: 999px; background: var(--petrol); color: var(--paper);
+  font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+.routes { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.routes li { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; margin: 0; }
+.routes .ligne1 { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; }
+.verbe { font-family: var(--mono); font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--mint); color: var(--teal); }
+.verbe.post { background: #f0e9da; color: #6b5226; } .verbe.delete { background: var(--danger-bg); color: var(--danger); }
+.routes code { background: none; padding: 0; font-weight: 600; }
+.routes .droit { font-size: 12px; color: var(--ink-mute); margin-left: auto; }
+.routes p { margin: 4px 0 0; font-size: 14px; color: var(--ink-soft); }
+.pied { border-top: 1px solid var(--line); color: var(--ink-mute); font-size: 14px; }
+.pied .bande { max-width: 1180px; margin: 0 auto; padding: 20px 16px 32px; }
+</style>
+</head>
+<body>
+<header class="entete">
+  <div class="bande">
+    <p class="marque">Elixir Pharma · documentation</p>
+    <h1>API pour les pharmacies</h1>
+    <p>Votre catalogue à vos prix, la disponibilité, vos contingents, vos commandes, factures et bons de livraison, depuis l'outil de votre choix. Réservée aux pharmacies clientes, sur demande, gratuite. API version 1.0.0, mise à jour le 24/10/2026.</p>
+    <div class="liens">
+      <a class="bouton or" href="#demarrage">Démarrage rapide</a>
+      <a class="bouton ligne" href="/api/openapi.yaml" download>Description OpenAPI (openapi.yaml)</a>
+      <a class="bouton ligne" href="#support">Support</a>
+    </div>
+  </div>
+</header>
+
+<div class="page">
+  <nav class="sommaire" aria-labelledby="titre-sommaire">
+    <h2 id="titre-sommaire">Sommaire</h2>
+    <ol>
+      <li><a href="#en-bref">En bref</a></li>
+      <li><a href="#acces">Obtenir un accès</a></li>
+      <li><a href="#demarrage">Démarrage rapide</a></li>
+      <li><a href="#securite">Clés et sécurité</a></li>
+      <li><a href="#prix">Catalogue et prix</a></li>
+      <li><a href="#commandes">Passer une commande</a></li>
+      <li><a href="#delai">Délai d'annulation</a></li>
+      <li><a href="#verification">Commandes « à vérifier »</a></li>
+      <li><a href="#idempotence">Nouveaux essais</a></li>
+      <li><a href="#etats">États d'une commande</a></li>
+      <li><a href="#suivi">Suivi et documents</a></li>
+      <li><a href="#test">Mode test</a></li>
+      <li><a href="#limites">Limites de débit</a></li>
+      <li><a href="#erreurs">Erreurs</a></li>
+      <li><a href="#reference">Référence des routes</a></li>
+      <li><a href="#hors-v1">Hors de la V1</a></li>
+      <li><a href="#versions">Versions</a></li>
+      <li><a href="#support">Support</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <section id="en-bref" aria-labelledby="t-en-bref">
+      <h2 id="t-en-bref">En bref</h2>
+      <p>L'API permet à un outil de votre pharmacie (tableur, logiciel de gestion d'un groupement, outil de plusieurs officines, assistant…) de :</p>
+      <ul>
+        <li>lire le catalogue au <strong>prix HT de votre liste</strong>, avec ses paliers, la disponibilité et les produits contingentés ;</li>
+        <li>connaître votre <strong>reste à commander</strong> sur les produits contingentés ;</li>
+        <li><strong>passer une commande</strong>, l'annuler pendant le délai d'annulation, puis suivre son état jusqu'à la facture ;</li>
+        <li>lister et télécharger vos <strong>factures, avoirs et bons de livraison</strong>.</li>
+      </ul>
+      <div class="encart info">
+        <p><strong>Pour le réassort courant, votre logiciel d'officine reste le meilleur canal.</strong> La commande PharmaML depuis votre logiciel (seuils, envoi programmé) n'a pas besoin de l'API : vérifiez d'abord qu'Elixir Pharma y est paramétré. L'API sert à ce que votre logiciel ne donne pas : vos prix, vos contingents, le suivi détaillé, et la commande depuis un outil qui ne parle pas PharmaML.</p>
+      </div>
+      <p>Adresse de l'API : <code>https://elixir-commande.expepharma.com/api/v1</code>. Échanges en JSON (UTF-8). Montants en euros hors taxes, 2 décimales. Dates à l'heure de Paris avec leur décalage (<code>2026-11-16T09:30:12+01:00</code>), jours au format <code>AAAA-MM-JJ</code>. CIP : 13 chiffres (CIP13 ou code-barres), toujours en texte.</p>
+    </section>
+
+    <section id="acces" aria-labelledby="t-acces">
+      <h2 id="t-acces">Obtenir un accès</h2>
+      <ol class="etapes">
+        <li><strong>Demandez l'accès à Elixir Pharma</strong> (<a href="#support">contact</a>) en précisant l'outil qui appellera l'API et ce que vous voulez automatiser. Elixir Pharma l'ouvre pour votre pharmacie, avec les droits utiles : « lecture » (catalogue, disponibilités, contingents, commandes, documents) et « commande » (passer et annuler).</li>
+        <li><strong>Connectez-vous au site de commande</strong>, puis ouvrez « Mes commandes » → « Accès API ». Il faut une adresse e-mail encore enregistrée sur votre fiche client ; sinon, demandez à Elixir Pharma de la mettre à jour.</li>
+        <li><strong>Acceptez les conditions d'utilisation de l'API.</strong> Une nouvelle version devra être acceptée de nouveau avant de commander (sinon <a href="#erreur-cgu_a_accepter"><code>cgu_a_accepter</code></a>).</li>
+        <li><strong>Créez une clé de test</strong> (<code>elx_test_…</code>). Elle n'est montrée qu'une fois : copiez-la tout de suite dans votre outil.</li>
+        <li><strong>Faites le parcours de test</strong> avec cette clé (voir <a href="#test">Mode test</a>) :
+          <ul>
+            <li data-etape="etat">tester la connexion : <code>GET /v1/etat</code> ;</li>
+            <li data-etape="simulation">simuler une commande : <code>POST /v1/commandes/simulation</code> ;</li>
+            <li data-etape="commande">passer une commande de test : <code>POST /v1/commandes</code> ;</li>
+            <li data-etape="relecture">relire son état : <code>GET /v1/commandes/{id}</code> ;</li>
+            <li data-etape="annulation">l'annuler pendant le délai : <code>DELETE /v1/commandes/{id}</code> ;</li>
+            <li data-etape="rejeu">renvoyer la même commande avec la même <code>Idempotency-Key</code> : la réponse d'origine revient, sans doublon.</li>
+          </ul>
+          « Accès API » coche chaque étape réussie. Les six faites, le test est validé de lui-même.</li>
+        <li><strong>Créez votre clé de production</strong> (<code>elx_live_…</code>). Une clé par outil : vous la révoquez sans toucher aux autres.</li>
+      </ol>
+      <div class="encart attention">
+        <p><strong>Commandes réelles : ouverture à une date que vous communiquera Elixir Pharma.</strong> D'ici là, la lecture fonctionne avec une clé de production, tout fonctionne avec une clé de test, et <code>POST /v1/commandes</code> avec une clé de production répond <a href="#erreur-ecriture_suspendue"><code>503 ecriture_suspendue</code></a> sans rien enregistrer. <code>GET /v1/etat</code> l'indique : <code>commandes.production</code> vaut <code>fermees</code> ou <code>ouvertes</code>.</p>
+      </div>
+    </section>
+
+    <section id="demarrage" aria-labelledby="t-demarrage">
+      <h2 id="t-demarrage">Démarrage rapide</h2>
+      <p>Exemples en <code>curl</code>, avec une clé de test gardée dans une variable d'environnement (jamais dans un fichier partagé). Produits et numéros fictifs.</p>
+      <h3>1. Tester la connexion</h3>
+<pre><code>export ELIXIR_CLE="elx_test_…"   <span class="c"># votre clé de test, entière</span>
+curl -s https://elixir-commande.expepharma.com/api/v1/etat \
+  -H "Authorization: Bearer $ELIXIR_CLE"</code></pre>
+      <p>La réponse donne votre pharmacie, l'environnement (<code>test</code>), les droits de la clé, le délai d'annulation, vos plafonds et les limites de débit.</p>
+      <h3>2. Lire le catalogue à vos prix</h3>
+<pre><code>curl -s "https://elixir-commande.expepharma.com/api/v1/catalogue?page=1&amp;par_page=500" \
+  -H "Authorization: Bearer $ELIXIR_CLE"</code></pre>
+<pre><code>{ "donnees": [
+    { "cip": "3400000000011", "nom": "PRODUIT EXEMPLE A 30 CPR", "prix_ht": 3.86,
+      "paliers": [ { "a_partir_de": 12, "prix_ht": 3.70 } ], "disponibilite": "en_stock", "contingente": false },
+    { "cip": "3400000000028", "nom": "PRODUIT EXEMPLE B", "prix_ht": 9.40,
+      "paliers": [], "disponibilite": "stock_faible", "contingente": true } ],
+  "page": 1, "par_page": 500, "total": 2, "suivante": null,
+  "prix": { "base": "liste_pharmacie", "etat": "a_jour", "calcule_le": "2026-11-16T03:10:00+01:00" },
+  "mention": "Prix HT de votre liste, hors offres du site (…). Prix indicatifs : …", … }</code></pre>
+      <h3>3. Simuler, puis passer une commande</h3>
+<pre><code>curl -s https://elixir-commande.expepharma.com/api/v1/commandes/simulation \
+  -H "Authorization: Bearer $ELIXIR_CLE" -H "Content-Type: application/json" \
+  -d '{"lignes":[{"cip":"3400000000011","quantite":12},{"cip":"3400000000028","quantite":3}]}'
+
+CLE_IDEM=$(uuidgen)   <span class="c"># une par commande, gardée pour tout nouvel essai de CETTE commande</span>
+curl -s -i https://elixir-commande.expepharma.com/api/v1/commandes \
+  -H "Authorization: Bearer $ELIXIR_CLE" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $CLE_IDEM" \
+  -d '{"reference_client":"REASSORT-2026-11-16-A",
+       "lignes":[{"cip":"3400000000011","quantite":12},{"cip":"3400000000028","quantite":3},{"cip":"3400000000035","quantite":6}]}'</code></pre>
+      <p>Réponse <code>201 Created</code>, en-tête <code>Location: /api/v1/commandes/T1790000000001</code> :</p>
+<pre><code>{ "id": "T1790000000001", "environnement": "test", "reference_client": "REASSORT-2026-11-16-A", "canal": "api",
+  "etat": "recue", "motif": null, "cree_le": "2026-11-16T09:30:12+01:00", "annulable_jusqu_a": "2026-11-16T09:40:12+01:00",
+  "si_rupture": "retirer", "total_indicatif_ht": 53.80,
+  "lignes": [
+    { "ligne": 1, "cip": "3400000000011", "nom": "PRODUIT EXEMPLE A 30 CPR", "quantite_demandee": 12, "quantite": 12,
+      "prix_unitaire_ht": 3.70, "total_ht": 44.40, "etat": "acceptee", "motif": null, "detail": null },
+    { "ligne": 2, "cip": "3400000000028", "nom": "PRODUIT EXEMPLE B", "quantite_demandee": 3, "quantite": 1,
+      "prix_unitaire_ht": 9.40, "total_ht": 9.40, "etat": "acceptee", "motif": "contingentement",
+      "detail": "Quantité ramenée au reste du contingent : 1 boîte(s) (6 par semaine, du 16/11/2026 au 22/11/2026)." },
+    { "ligne": 3, "cip": "3400000000035", "nom": "PRODUIT EXEMPLE C", "quantite_demandee": 6, "quantite": 0,
+      "prix_unitaire_ht": null, "total_ht": 0, "etat": "refusee", "motif": "produit_sur_justificatif",
+      "detail": "À commander sur le site, page « Commande labo sur justificatif »." } ],
+  "anomalies": [], "avertissements": [ "Mode test : commande contrôlée comme en production, mais jamais envoyée ni facturée." ],
+  "mention": "Prix HT de votre liste, hors offres du site. Prix indicatifs : …" }</code></pre>
+      <p>Le total vaut 12 × 3,70 + 1 × 9,40 = 53,80 € HT : le palier de 12 s'applique à la première ligne.</p>
+      <h3>4. Relire, annuler, renvoyer</h3>
+<pre><code>curl -s https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -H "Authorization: Bearer $ELIXIR_CLE"
+curl -s -X DELETE https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -H "Authorization: Bearer $ELIXIR_CLE"
+<span class="c"># même commande, même Idempotency-Key : réponse d'origine, en-tête « Idempotent-Replayed: true », aucun doublon</span></code></pre>
+    </section>
+
+    <section id="securite" aria-labelledby="t-securite">
+      <h2 id="t-securite">Clés et sécurité</h2>
+      <ul>
+        <li>La clé s'envoie <strong>uniquement</strong> dans l'en-tête <code>Authorization: Bearer elx_…</code>. Une clé placée dans l'adresse est refusée (<a href="#erreur-cle_dans_url"><code>cle_dans_url</code></a>) : elle s'est retrouvée dans des journaux, remplacez-la.</li>
+        <li>Gardez-la <strong>côté serveur</strong> : jamais dans une page web, une macro de tableur partagé, un message ou un dépôt de code. L'API n'accepte pas les appels depuis un navigateur.</li>
+        <li><strong>Une clé par outil</strong>, au plus 3 clés actives par environnement (test, production). Chaque clé porte des droits : « lecture », « commande », ou les deux. Donnez à chaque outil le moins de droits possible.</li>
+        <li><strong>Remplacer</strong> une clé (« Accès API ») en crée une nouvelle ; l'ancienne reste valide 7 jours, le temps de mettre votre outil à jour, puis s'arrête seule.</li>
+        <li><strong>Révoquer</strong> une clé l'arrête aussitôt (moins d'une minute). En cas de doute ou de fuite : révoquez-la, créez-en une autre et prévenez Elixir Pharma.</li>
+        <li>Sur demande, Elixir Pharma peut limiter vos clés aux réseaux de votre pharmacie (<a href="#erreur-ip_non_autorisee"><code>ip_non_autorisee</code></a> ailleurs).</li>
+        <li>L'identité vient <strong>toujours de la clé</strong> : aucun identifiant de pharmacie n'est lu dans la requête, et une ressource d'une autre pharmacie répond <code>404</code>, comme une ressource inconnue.</li>
+        <li>Toute requête faite avec une clé valide est réputée faite par votre pharmacie (conditions d'utilisation de l'API).</li>
+      </ul>
+    </section>
+
+    <section id="prix" aria-labelledby="t-prix">
+      <h2 id="t-prix">Catalogue et prix</h2>
+      <div class="encart info">
+        <p><strong>Prix HT de votre liste, hors offres du site.</strong> Ce sont les prix de VOTRE liste de prix, calculés comme votre facture : pour chaque produit et chaque quantité, le plus bas des tarifs de votre liste qui s'appliquent. Ils sont indicatifs : la facture applique vos conditions au jour de la livraison.</p>
+      </div>
+      <ul>
+        <li><code>prix_ht</code> : prix à l'unité ; <code>paliers</code> : prix plus bas à partir d'une quantité par ligne (<code>a_partir_de</code>). La commande applique d'elle-même le palier atteint.</li>
+        <li>Les prix sont recalculés chaque nuit ; <code>prix.etat</code> vaut <code>a_jour</code>, <code>ancien</code> (calcul de plus de 48 heures), <code>en_calcul</code> (premiers prix de votre liste, moins d'une heure) ou <code>indisponible</code>. Un produit sans prix calculé est refusé à la commande (<code>prix_indisponible</code>) plutôt que vendu à un prix faux.</li>
+        <li>Les <strong>offres du site</strong> ne passent pas par l'API : menus promotionnels, précommandes, péremption courte, commandes groupées, campagnes. Leurs remises ne s'appliquent jamais aux commandes par API.</li>
+        <li>Une synchronisation du catalogue par heure suffit : renvoyez l'<code>ETag</code> reçu dans <code>If-None-Match</code>, la réponse est alors <code>304</code> sans corps si rien n'a changé.</li>
+        <li><strong>Disponibilité</strong> : <code>en_stock</code>, <code>stock_faible</code> (stock limité : la quantité pourrait ne pas être servie en entier) ou <code>rupture</code>, jamais une quantité. <code>GET /v1/disponibilites</code> la lit à l'instant, pour 200 produits au plus par appel. Elle reste indicative et non engageante.</li>
+        <li><strong>Contingents</strong> : <code>GET /v1/contingents</code> donne, pour chaque produit contingenté, la quantité permise sur la période, ce que vous avez déjà commandé (site, API et logiciel d'officine) et le reste. Même calcul que le panier du site.</li>
+      </ul>
+    </section>
+
+    <section id="commandes" aria-labelledby="t-commandes">
+      <h2 id="t-commandes">Passer une commande</h2>
+<pre><code>POST /api/v1/commandes
+Authorization: Bearer elx_live_…
+Idempotency-Key: 6f1c2b9e-0d4a-4c1e-9a57-2b8f0c3d1e42
+Content-Type: application/json
+
+{ "reference_client": "REASSORT-2026-11-16-A",
+  "lignes": [ { "cip": "3400000000011", "quantite": 12 }, { "cip": "3400000000028", "quantite": 3 } ],
+  "si_rupture": "retirer", "tout_ou_rien": false, "commentaire": "facultatif" }</code></pre>
+      <div class="tableau"><table>
+        <thead><tr><th>Champ</th><th>Règle</th></tr></thead>
+        <tbody>
+          <tr><td><code>lignes</code></td><td>Obligatoire : de 1 à 200 lignes <code>{ "cip", "quantite" }</code>. <code>cip</code> : texte de 13 chiffres (CIP13 ou code-barres) ; <code>quantite</code> : entier de 1 à 999. Un produit une seule fois (ni deux fois le même CIP, ni son CIP et son code-barres).</td></tr>
+          <tr><td><code>reference_client</code></td><td>Facultative : votre référence, 40 caractères au plus, unique pour votre pharmacie (sinon <a href="#erreur-reference_deja_utilisee"><code>reference_deja_utilisee</code></a>).</td></tr>
+          <tr><td><code>si_rupture</code></td><td><code>retirer</code> (défaut) : une ligne en rupture est retirée, vous commandez ailleurs ; <code>garder</code> : elle attend le retour du stock.</td></tr>
+          <tr><td><code>tout_ou_rien</code></td><td><code>true</code> : toute la commande est refusée si une ligne est refusée, retirée ou réduite (<a href="#erreur-commande_refusee"><code>commande_refusee</code></a>). Défaut : <code>false</code>.</td></tr>
+          <tr><td><code>commentaire</code></td><td>Facultatif : 200 caractères au plus, sur une ligne.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Aucun autre champ n'est accepté : <strong>aucun prix n'est lu dans la requête</strong>, le serveur recalcule tout. Le corps ne dépasse pas 256 Ko.</p>
+      <h3>Contrôles, dans l'ordre</h3>
+      <ol>
+        <li>accès ouvert aux commandes (<a href="#erreur-commandes_bloquees"><code>commandes_bloquees</code></a>), conditions d'utilisation en vigueur acceptées, commandes réelles ouvertes pour une clé de production ;</li>
+        <li><code>Idempotency-Key</code>, puis structure de la demande (<a href="#erreur-requete_invalide"><code>requete_invalide</code></a>, détail par champ dans <code>erreurs</code>) ;</li>
+        <li>commandes par API du jour de votre pharmacie : 10 commandes par jour par défaut, toutes clés confondues (<a href="#erreur-plafond_commandes_jour"><code>plafond_commandes_jour</code></a> jusqu'à minuit, heure de Paris) ;</li>
+        <li>chaque ligne :
+          <ul>
+            <li>absente du catalogue : refusée, <code>produit_inconnu</code> ;</li>
+            <li>produit que seul le site sait servir : refusé, <code>produit_non_commandable</code> (« à commander sur le site ») — article livré sous plusieurs références (fauteuils), produit d'une campagne, produit exclu par Elixir Pharma ;</li>
+            <li>produit sur justificatif laboratoire : refusé, <code>produit_sur_justificatif</code> (page dédiée du site) ;</li>
+            <li>contingent : quantité ramenée au reste (<code>motif: contingentement</code>), refusée à 0 ;</li>
+            <li>rupture : retirée (<code>etat: rupture</code>) ou gardée (<code>motif: en_attente_stock</code>) selon <code>si_rupture</code> ;</li>
+            <li>prix : celui de votre liste pour la quantité acceptée.</li>
+          </ul></li>
+        <li><code>tout_ou_rien</code>, puis au moins une ligne acceptée (<a href="#erreur-aucune_ligne_acceptee"><code>aucune_ligne_acceptee</code></a>) ;</li>
+        <li><strong>plafonds de votre accès</strong>, sur ce qui serait envoyé : par défaut 100 lignes, 1 000 boîtes et 3 000 € HT par commande, réglables par Elixir Pharma pour votre pharmacie. Au-delà : refus explicite <a href="#erreur-plafond_depasse"><code>plafond_depasse</code></a> (champ <code>plafond</code> : nom, limite, valeur), rien n'est enregistré ; scindez la commande ;</li>
+        <li>anomalies nettes : commande acceptée mais gardée « à vérifier » (voir <a href="#verification">plus bas</a>).</li>
+      </ol>
+      <p>Si le contingent d'un produit contingenté ne peut pas être vérifié, la commande est refusée (<a href="#erreur-contingent_indisponible"><code>contingent_indisponible</code></a>) et rien n'est enregistré : renvoyez la même requête un peu plus tard. Deux commandes passées au même instant peuvent lire le même reste : la quantité finalement servie fait foi (<code>suivi.non_servie</code>).</p>
+      <p><code>POST /v1/commandes/simulation</code> fait les mêmes contrôles sans rien enregistrer et sans <code>Idempotency-Key</code> : <code>resultat</code> vaut <code>acceptee</code> ou <code>refusee</code>, avec <code>refus</code> (statut et code que la commande aurait reçus).</p>
+    </section>
+
+    <section id="delai" aria-labelledby="t-delai">
+      <h2 id="t-delai">Délai d'annulation et envoi</h2>
+      <ul>
+        <li>Une commande acceptée (<code>etat: recue</code>) reste <strong>annulable 10 minutes</strong> (délai par défaut, réglable par Elixir Pharma pour votre pharmacie, 20 minutes au plus) : <code>annulable_jusqu_a</code> donne l'heure exacte.</li>
+        <li>À la fin du délai, elle part <strong>seule</strong> vers notre système de préparation, sans validation par Elixir Pharma (sauf anomalie nette, ci-dessous). Les lignes encore sans stock au moment de l'envoi sont retirées si <code>si_rupture</code> vaut <code>retirer</code>.</li>
+        <li><code>DELETE /v1/commandes/{id}</code> l'annule pendant le délai. Une commande déjà annulée répond de nouveau <code>200</code>. Une fois partie : <a href="#erreur-trop_tard"><code>409 trop_tard</code></a> ; les réclamations et retours suivent alors les conditions générales de vente.</li>
+        <li>Une commande ne se modifie pas : annulez-la pendant le délai, puis passez-en une autre (nouvelle <code>Idempotency-Key</code>).</li>
+      </ul>
+    </section>
+
+    <section id="verification" aria-labelledby="t-verification">
+      <h2 id="t-verification">Commandes gardées « à vérifier »</h2>
+      <p>Il n'y a pas de validation manuelle par défaut. Une commande n'est gardée pour vérification par Elixir Pharma qu'en cas d'<strong>anomalie nette</strong> (réglable pour votre pharmacie) :</p>
+      <ul>
+        <li><code>anomalie_quantite</code> : une ligne dépasse <strong>10 fois votre quantité mensuelle habituelle</strong> de ce produit (moyenne des 6 derniers mois, tous canaux ; au moins 3 boîtes par mois pour un produit peu ou jamais commandé, soit 30 boîtes pour une première commande) ;</li>
+        <li><code>quasi_doublon</code> : au moins 80 % des produits de la commande figurent déjà dans une commande reçue depuis <strong>moins de 30 minutes</strong>, quel que soit le canal (site, API, logiciel d'officine). Une commande annulée puis repassée n'est pas un doublon.</li>
+      </ul>
+      <p>La réponse est alors <code>201</code> avec <code>etat: en_attente_elixir</code>, <code>motif</code> (<code>anomalie_quantite</code> ou <code>quasi_doublon</code>), le détail dans <code>anomalies</code> et <code>annulable_jusqu_a: null</code>. La commande ne part qu'après vérification par Elixir Pharma, qui peut aussi retirer une ligne ; vous pouvez l'annuler tant qu'elle n'est pas partie.</p>
+      <p>Plus rarement, une commande passe <code>en_attente_elixir</code> après le délai pour une raison de notre côté (envoi automatique momentanément indisponible, commande identique très récente, lignes en attente de stock…) : Elixir Pharma termine alors l'envoi. Rien n'est à faire de votre côté.</p>
+    </section>
+
+    <section id="idempotence" aria-labelledby="t-idempotence">
+      <h2 id="t-idempotence">Idempotence et nouveaux essais</h2>
+      <ul>
+        <li><code>Idempotency-Key</code> est <strong>obligatoire</strong> sur <code>POST /v1/commandes</code> : 8 à 128 caractères parmi <code>A-Z a-z 0-9 _ . : -</code> ; un UUID v4 convient. Une valeur par commande, jamais réutilisée pour une autre.</li>
+        <li>Après une coupure, un délai dépassé ou un <code>503</code> : <strong>renvoyez exactement la même requête avec la même clé</strong>. La commande n'est jamais créée deux fois ; la réponse d'origine revient avec <code>Idempotent-Replayed: true</code> (y compris un refus <code>422</code>). Son corps est celui de la première réponse ; <code>X-Request-Id</code> est celui de la nouvelle requête.</li>
+        <li>Même clé, contenu différent : <a href="#erreur-idempotency_key_reutilisee"><code>422 idempotency_key_reutilisee</code></a>. Requête encore en traitement : <a href="#erreur-requete_en_cours"><code>409 requete_en_cours</code></a>, renvoyez-la après <code>Retry-After</code>.</li>
+        <li>La clé vaut pour votre pharmacie et l'environnement (test ou production), quelle que soit la clé d'API : une clé d'API remplacée entre deux essais retrouve la même commande.</li>
+        <li><code>reference_client</code> est une seconde barrière : si un script relancé change d'<code>Idempotency-Key</code> mais garde sa référence, la commande est refusée (<code>409 reference_deja_utilisee</code>, champ <code>id</code> : la commande existante).</li>
+        <li><strong>Un seul canal par besoin</strong> : ne commandez pas le même besoin à la fois par votre logiciel d'officine et par l'API ; les deux commandes ne peuvent pas être reconnues comme une seule.</li>
+      </ul>
+    </section>
+
+    <section id="etats" aria-labelledby="t-etats">
+      <h2 id="t-etats">États d'une commande</h2>
+      <div class="tableau"><table>
+        <thead><tr><th>etat</th><th>Sens</th></tr></thead>
+        <tbody>
+          <tr><td><code>recue</code></td><td>Enregistrée ; délai d'annulation en cours.</td></tr>
+          <tr><td><code>en_attente_elixir</code></td><td>Gardée par Elixir Pharma (voir <code>motif</code>) : <code>anomalie_quantite</code>, <code>quasi_doublon</code>, ou une raison de notre côté. Commande du site : <code>verification</code>, <code>campagne</code>, <code>justificatif</code>.</td></tr>
+          <tr><td><code>en_transmission</code></td><td>En cours d'envoi vers notre système de préparation.</td></tr>
+          <tr><td><code>transmise</code></td><td>Envoyée ; prise en charge en général dans les deux heures.</td></tr>
+          <tr><td><code>en_preparation</code></td><td>Prise en charge, en préparation.</td></tr>
+          <tr><td><code>partiellement_sortie</code></td><td>Une partie est sortie de l'entrepôt, un reliquat reste à livrer.</td></tr>
+          <tr><td><code>sortie_entrepot</code></td><td>Sortie de l'entrepôt (la date est celle de la sortie, jamais une date de réception).</td></tr>
+          <tr><td><code>facturee</code></td><td>Sortie et facturée.</td></tr>
+          <tr><td><code>non_servie</code></td><td>Rien n'a pu être servi (rupture, contingent…).</td></tr>
+          <tr><td><code>annulee</code></td><td>Annulée (par vous : <code>motif: annulee_par_la_pharmacie</code>).</td></tr>
+        </tbody>
+      </table></div>
+      <p>Chaque ligne a un <code>etat</code> : <code>acceptee</code>, <code>refusee</code>, <code>rupture</code>, <code>annulee</code> ou <code>traitee_par_elixir</code> (retirée par Elixir Pharma), avec <code>motif</code> et <code>detail</code>. Une fois la commande prise en charge, <code>suivi</code> donne les quantités commandée, acceptée, servie, non servie, à livrer et facturée. <code>commandes_elixir</code> donne les numéros de nos commandes (imprimés sur le bon de livraison et la facture) : plusieurs commandes d'une même journée peuvent être regroupées dans une seule.</p>
+      <p>De nouvelles valeurs de <code>motif</code> pourront s'ajouter : traitez une valeur inconnue comme une simple information.</p>
+    </section>
+
+    <section id="suivi" aria-labelledby="t-suivi">
+      <h2 id="t-suivi">Suivi, factures et bons de livraison</h2>
+      <ul>
+        <li><code>GET /v1/commandes?debut=&amp;fin=</code> : vos commandes du site et de l'API (92 jours au plus, 30 derniers jours par défaut), les plus récentes d'abord, 20 par page (50 au plus). Les commandes passées depuis votre logiciel d'officine ne sont pas listées en V1.</li>
+        <li><code>GET /v1/commandes/{id}</code> : détail, état et quantités de chaque ligne.</li>
+        <li><code>GET /v1/factures?debut=&amp;fin=&amp;type=</code> : factures et avoirs (366 jours au plus, 90 derniers jours par défaut ; <code>type</code> : <code>tous</code>, <code>factures</code>, <code>avoirs</code>) ; <code>GET /v1/factures/{id}/pdf</code> : le PDF d'origine, quand <code>pdf_disponible</code> vaut <code>true</code>.</li>
+        <li><code>GET /v1/livraisons?debut=&amp;fin=</code> : bons de livraison (366 jours au plus, 30 derniers jours par défaut), datés de la sortie de l'entrepôt ; <code>GET /v1/livraisons/{id}/pdf</code> : duplicata établi par Elixir Pharma.</li>
+        <li>Pages : <code>page</code> (à partir de 1) et <code>par_page</code> ; <code>suivante</code> donne l'adresse de la page suivante, <code>null</code> à la dernière.</li>
+      </ul>
+    </section>
+
+    <section id="test" aria-labelledby="t-test">
+      <h2 id="t-test">Mode test</h2>
+      <ul>
+        <li>Une clé <code>elx_test_</code> fait les <strong>vrais contrôles</strong> : vos prix, vos contingents, la disponibilité, vos plafonds, les anomalies. Les lectures (catalogue, commandes, documents) sont les vraies.</li>
+        <li>Une commande de test porte un numéro <code>T…</code>. Elle n'est <strong>jamais envoyée ni facturée</strong> et ne compte pas dans vos contingents. Son état est simulé : <code>recue</code> pendant le délai d'annulation, puis <code>transmise</code>, puis <code>sortie_entrepot</code> 10 minutes plus tard.</li>
+        <li>L'en-tête <code>X-Elixir-Simulation</code> (clé de test seulement, ignoré en production) force un cas difficile pour que votre outil le gère : <code>rupture</code> (lignes en rupture), <code>contingent</code> (première ligne contingentée, ramenée à la moitié), <code>indisponible</code> (<code>503</code> à renvoyer), <code>doublon</code> (commande gardée « à vérifier »).</li>
+        <li>Le parcours de test (six étapes, voir <a href="#acces">Obtenir un accès</a>) est obligatoire avant la clé de production.</li>
+      </ul>
+    </section>
+
+    <section id="limites" aria-labelledby="t-limites">
+      <h2 id="t-limites">Limites de débit</h2>
+      <p>Par clé, en fenêtres fixes (minute et jour). Au-delà : <a href="#erreur-debit"><code>429 debit</code></a> ou <a href="#erreur-plafond_journalier"><code>plafond_journalier</code></a>, avec <code>Retry-After</code> (secondes). Les en-têtes <code>RateLimit-Policy</code> et <code>RateLimit</code> donnent le reste à titre indicatif.</p>
+      <div class="tableau empile"><table>
+        <thead><tr><th>Classe</th><th>Routes</th><th>Par minute</th><th>Par jour</th></tr></thead>
+        <tbody>
+          <tr data-classe="lecture" data-par-minute="60" data-par-jour="5000"><td>Lecture</td><td>état, catalogue, contingents, commandes, factures et livraisons (listes)</td><td class="num" data-label="Par minute">60</td><td class="num" data-label="Par jour">5 000</td></tr>
+          <tr data-classe="disponibilites" data-par-minute="30" data-par-jour="5000"><td>Disponibilités</td><td><code>GET /v1/disponibilites</code> (200 produits par appel)</td><td class="num" data-label="Par minute">30</td><td class="num" data-label="Par jour">5 000</td></tr>
+          <tr data-classe="documents" data-par-minute="20" data-par-jour="300"><td>Documents</td><td>PDF des factures et des bons de livraison</td><td class="num" data-label="Par minute">20</td><td class="num" data-label="Par jour">300</td></tr>
+          <tr data-classe="commande" data-par-minute="6" data-par-jour="30"><td>Commande</td><td><code>POST /v1/commandes</code>, <code>DELETE /v1/commandes/{id}</code></td><td class="num" data-label="Par minute">6</td><td class="num" data-label="Par jour">30</td></tr>
+          <tr data-classe="simulation" data-par-minute="10" data-par-jour="500"><td>Simulation</td><td><code>POST /v1/commandes/simulation</code></td><td class="num" data-label="Par minute">10</td><td class="num" data-label="Par jour">500</td></tr>
+        </tbody>
+      </table></div>
+      <ul>
+        <li>Avant même la clé, par réseau : 120 requêtes par minute ; après 20 clés refusées en 10 minutes depuis un même réseau, <code>429</code> pendant quelques minutes.</li>
+        <li>Lectures en direct de notre système (commandes, factures, livraisons, disponibilités, contingents, contrôles d'une commande) : 30 par minute pour votre pharmacie, toutes clés confondues.</li>
+        <li>Commandes : en plus, le plafond de commandes du jour de votre accès (10 commandes par jour par défaut).</li>
+      </ul>
+    </section>
+
+    <section id="erreurs" aria-labelledby="t-erreurs">
+      <h2 id="t-erreurs">Erreurs</h2>
+      <p>Les erreurs suivent la RFC 9457 (<code>application/problem+json</code>). Fiez-vous au champ <code>code</code>, stable ; <code>detail</code> est une explication en français, à afficher telle quelle. Chaque réponse, réussie ou non, porte <code>X-Request-Id</code> (repris dans <code>instance</code>) : donnez-le au support.</p>
+<pre><code>{ "type": "https://elixir-commande.expepharma.com/api/#erreur-contingent_indisponible",
+  "title": "Contingent impossible à vérifier", "status": 503, "code": "contingent_indisponible",
+  "detail": "La commande contient un produit contingenté et notre système ne répond pas. Rien n'a été enregistré : renvoyez la même requête (même Idempotency-Key) dans une minute.",
+  "instance": "urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b" }</code></pre>
+      <p>Règle générale : <code>4xx</code> = corrigez la requête (sauf <code>409 requete_en_cours</code> et <code>429</code> : attendez) ; <code>503</code> = rien n'a été enregistré, renvoyez la même requête après <code>Retry-After</code>.</p>
+      <div class="tableau empile"><table>
+        <thead><tr><th>Code</th><th>Statut</th><th>Sens et que faire</th></tr></thead>
+        <tbody>
+          <tr id="erreur-json_invalide" data-statut="400"><td><code>json_invalide</code></td><td class="num" data-label="Statut">400</td><td>Corps illisible : vérifiez le JSON (UTF-8).</td></tr>
+          <tr id="erreur-idempotency_key_absente" data-statut="400"><td><code>idempotency_key_absente</code></td><td class="num" data-label="Statut">400</td><td>En-tête <code>Idempotency-Key</code> absent ou mal formé : 8 à 128 caractères, un UUID par exemple.</td></tr>
+          <tr id="erreur-cle_dans_url" data-statut="400"><td><code>cle_dans_url</code></td><td class="num" data-label="Statut">400</td><td>Clé placée dans l'adresse : envoyez-la dans <code>Authorization</code> et remplacez-la (elle est dans des journaux).</td></tr>
+          <tr id="erreur-cle_absente" data-statut="401"><td><code>cle_absente</code></td><td class="num" data-label="Statut">401</td><td>Pas d'en-tête <code>Authorization: Bearer elx_…</code>.</td></tr>
+          <tr id="erreur-cle_invalide" data-statut="401"><td><code>cle_invalide</code></td><td class="num" data-label="Statut">401</td><td>Clé inconnue ou mal recopiée : recopiez-la en entier, sans espace ; une clé de test commence par <code>elx_test_</code>.</td></tr>
+          <tr id="erreur-cle_revoquee" data-statut="401"><td><code>cle_revoquee</code></td><td class="num" data-label="Statut">401</td><td>Clé révoquée : créez-en une nouvelle dans « Accès API ».</td></tr>
+          <tr id="erreur-cle_expiree" data-statut="401"><td><code>cle_expiree</code></td><td class="num" data-label="Statut">401</td><td>Clé remplacée depuis plus de 7 jours : utilisez la nouvelle.</td></tr>
+          <tr id="erreur-portee_insuffisante" data-statut="403"><td><code>portee_insuffisante</code></td><td class="num" data-label="Statut">403</td><td>La clé n'a pas le droit nécessaire (« lecture » ou « commande ») : créez une clé avec ce droit, ou demandez-le à Elixir Pharma.</td></tr>
+          <tr id="erreur-ip_non_autorisee" data-statut="403"><td><code>ip_non_autorisee</code></td><td class="num" data-label="Statut">403</td><td>Appel depuis un réseau non déclaré pour votre pharmacie.</td></tr>
+          <tr id="erreur-acces_suspendu" data-statut="403"><td><code>acces_suspendu</code></td><td class="num" data-label="Statut">403</td><td>Accès API suspendu : contactez Elixir Pharma.</td></tr>
+          <tr id="erreur-compte_bloque" data-statut="403"><td><code>compte_bloque</code></td><td class="num" data-label="Statut">403</td><td>Accès momentanément indisponible : contactez Elixir Pharma.</td></tr>
+          <tr id="erreur-cgu_a_accepter" data-statut="403"><td><code>cgu_a_accepter</code></td><td class="num" data-label="Statut">403</td><td>Nouvelle version des conditions d'utilisation : acceptez-la dans « Accès API ».</td></tr>
+          <tr id="erreur-test_requis" data-statut="403"><td><code>test_requis</code></td><td class="num" data-label="Statut">403</td><td>Clé de production demandée avant la fin du parcours de test (indiqué dans « Accès API »).</td></tr>
+          <tr id="erreur-commandes_bloquees" data-statut="403"><td><code>commandes_bloquees</code></td><td class="num" data-label="Statut">403</td><td>Commandes par API suspendues pour votre pharmacie ; la lecture continue. Le site et votre logiciel restent disponibles.</td></tr>
+          <tr id="erreur-introuvable" data-statut="404"><td><code>introuvable</code></td><td class="num" data-label="Statut">404</td><td>Adresse, produit, commande ou document inconnu — ou d'une autre pharmacie (même réponse).</td></tr>
+          <tr id="erreur-methode_non_autorisee" data-statut="405"><td><code>methode_non_autorisee</code></td><td class="num" data-label="Statut">405</td><td>Méthode non prévue pour cette adresse : voir l'en-tête <code>Allow</code>.</td></tr>
+          <tr id="erreur-requete_en_cours" data-statut="409"><td><code>requete_en_cours</code></td><td class="num" data-label="Statut">409</td><td>La même requête est encore en traitement : renvoyez-la à l'identique après <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-reference_deja_utilisee" data-statut="409"><td><code>reference_deja_utilisee</code></td><td class="num" data-label="Statut">409</td><td>Cette <code>reference_client</code> a déjà servi (champ <code>id</code>) : relisez cette commande plutôt que de la repasser.</td></tr>
+          <tr id="erreur-trop_tard" data-statut="409"><td><code>trop_tard</code></td><td class="num" data-label="Statut">409</td><td>Commande déjà partie (champ <code>etat</code>) : plus annulable par l'API.</td></tr>
+          <tr id="erreur-trop_long" data-statut="413"><td><code>trop_long</code></td><td class="num" data-label="Statut">413</td><td>Corps de plus de 256 Ko : scindez la commande.</td></tr>
+          <tr id="erreur-requete_invalide" data-statut="422"><td><code>requete_invalide</code></td><td class="num" data-label="Statut">422</td><td>Format non respecté : <code>erreurs</code> donne chaque champ en cause (<code>lignes[2].quantite</code>, <code>page</code>…).</td></tr>
+          <tr id="erreur-idempotency_key_reutilisee" data-statut="422"><td><code>idempotency_key_reutilisee</code></td><td class="num" data-label="Statut">422</td><td>Cette <code>Idempotency-Key</code> a servi pour un autre contenu : une clé par commande.</td></tr>
+          <tr id="erreur-aucune_ligne_acceptee" data-statut="422"><td><code>aucune_ligne_acceptee</code></td><td class="num" data-label="Statut">422</td><td>Aucune ligne acceptée (voir <code>lignes</code>) ; rien n'est enregistré.</td></tr>
+          <tr id="erreur-commande_refusee" data-statut="422"><td><code>commande_refusee</code></td><td class="num" data-label="Statut">422</td><td><code>tout_ou_rien</code> demandé et une ligne refusée, retirée ou réduite (voir <code>lignes</code>) ; rien n'est enregistré.</td></tr>
+          <tr id="erreur-plafond_depasse" data-statut="422"><td><code>plafond_depasse</code></td><td class="num" data-label="Statut">422</td><td>Plafond de lignes, de boîtes ou de montant dépassé (champ <code>plafond</code>) : scindez la commande ou demandez un ajustement.</td></tr>
+          <tr id="erreur-debit" data-statut="429"><td><code>debit</code></td><td class="num" data-label="Statut">429</td><td>Trop de requêtes : attendez <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-plafond_journalier" data-statut="429"><td><code>plafond_journalier</code></td><td class="num" data-label="Statut">429</td><td>Plafond du jour de la clé atteint : attendez <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-plafond_commandes_jour" data-statut="429"><td><code>plafond_commandes_jour</code></td><td class="num" data-label="Statut">429</td><td>Commandes par API du jour de votre pharmacie atteintes, jusqu'à minuit (heure de Paris). Le site et votre logiciel restent disponibles.</td></tr>
+          <tr id="erreur-api_suspendue" data-statut="503"><td><code>api_suspendue</code></td><td class="num" data-label="Statut">503</td><td>API momentanément suspendue (sauf <code>GET /v1/etat</code>) : réessayez plus tard.</td></tr>
+          <tr id="erreur-ecriture_suspendue" data-statut="503"><td><code>ecriture_suspendue</code></td><td class="num" data-label="Statut">503</td><td>Commandes réelles pas encore ouvertes, ou momentanément fermées : rien n'est enregistré. Les clés de test fonctionnent.</td></tr>
+          <tr id="erreur-contingent_indisponible" data-statut="503"><td><code>contingent_indisponible</code></td><td class="num" data-label="Statut">503</td><td>Contingent d'un produit impossible à vérifier : renvoyez la même requête (même <code>Idempotency-Key</code>) après <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-indisponible" data-statut="503"><td><code>indisponible</code></td><td class="num" data-label="Statut">503</td><td>Service momentanément indisponible : renvoyez la même requête après <code>Retry-After</code>, sans risque de doublon.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="reference" aria-labelledby="t-reference">
+      <h2 id="t-reference">Référence des routes</h2>
+      <p>Toutes les routes sont sous <code>https://elixir-commande.expepharma.com/api</code>. Le détail des champs, des paramètres et des réponses est dans la <a href="/api/openapi.yaml" download>description OpenAPI 3.1</a>, lisible par la plupart des outils (Postman, Insomnia, générateurs de clients).</p>
+      <ul class="routes">
+        <li data-route="GET /v1/etat"><div class="ligne1"><span class="verbe">GET</span><code>/v1/etat</code><span class="droit">toute clé</span></div><p>Test de connexion : pharmacie, environnement, droits, délai d'annulation, plafonds, limites, version.</p></li>
+        <li data-route="GET /v1/catalogue"><div class="ligne1"><span class="verbe">GET</span><code>/v1/catalogue</code><span class="droit">lecture</span></div><p>Catalogue au prix de votre liste (<code>page</code>, <code>par_page</code> ≤ 500), <code>ETag</code>.</p></li>
+        <li data-route="GET /v1/catalogue/{cip}"><div class="ligne1"><span class="verbe">GET</span><code>/v1/catalogue/{cip}</code><span class="droit">lecture</span></div><p>Un produit par son CIP13 ou son code-barres.</p></li>
+        <li data-route="GET /v1/disponibilites"><div class="ligne1"><span class="verbe">GET</span><code>/v1/disponibilites?cips=…</code><span class="droit">lecture</span></div><p>Niveaux de disponibilité lus à l'instant, 200 produits au plus.</p></li>
+        <li data-route="GET /v1/contingents"><div class="ligne1"><span class="verbe">GET</span><code>/v1/contingents</code><span class="droit">lecture</span></div><p>Reste à commander sur les produits contingentés.</p></li>
+        <li data-route="POST /v1/commandes/simulation"><div class="ligne1"><span class="verbe post">POST</span><code>/v1/commandes/simulation</code><span class="droit">commande</span></div><p>Que donnerait cette commande ? Rien n'est enregistré.</p></li>
+        <li data-route="POST /v1/commandes"><div class="ligne1"><span class="verbe post">POST</span><code>/v1/commandes</code><span class="droit">commande</span></div><p>Passer une commande (<code>Idempotency-Key</code> obligatoire).</p></li>
+        <li data-route="GET /v1/commandes"><div class="ligne1"><span class="verbe">GET</span><code>/v1/commandes</code><span class="droit">lecture</span></div><p>Vos commandes du site et de l'API (<code>debut</code>, <code>fin</code> ≤ 92 jours, <code>page</code>).</p></li>
+        <li data-route="GET /v1/commandes/{id}"><div class="ligne1"><span class="verbe">GET</span><code>/v1/commandes/{id}</code><span class="droit">lecture</span></div><p>Détail, état et quantités servies d'une commande.</p></li>
+        <li data-route="DELETE /v1/commandes/{id}"><div class="ligne1"><span class="verbe delete">DELETE</span><code>/v1/commandes/{id}</code><span class="droit">commande</span></div><p>Annuler pendant le délai d'annulation.</p></li>
+        <li data-route="GET /v1/factures"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures</code><span class="droit">lecture</span></div><p>Factures et avoirs (<code>debut</code>, <code>fin</code> ≤ 366 jours, <code>type</code>).</p></li>
+        <li data-route="GET /v1/factures/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures/{id}/pdf</code><span class="droit">lecture</span></div><p>PDF d'origine d'une facture ou d'un avoir.</p></li>
+        <li data-route="GET /v1/livraisons"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons</code><span class="droit">lecture</span></div><p>Bons de livraison (<code>debut</code>, <code>fin</code> ≤ 366 jours).</p></li>
+        <li data-route="GET /v1/livraisons/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons/{id}/pdf</code><span class="droit">lecture</span></div><p>Duplicata d'un bon de livraison.</p></li>
+      </ul>
+    </section>
+
+    <section id="hors-v1" aria-labelledby="t-hors-v1">
+      <h2 id="t-hors-v1">Ce qui n'est pas dans la V1</h2>
+      <ul>
+        <li>Les offres du site et leurs prix : menus promotionnels, précommandes, péremption courte, commandes groupées. Un produit présent dans un menu se commande par l'API au prix de votre liste, jamais au prix du menu : pour profiter de l'offre, commandez sur le site.</li>
+        <li>Les produits des campagnes (dont U-Labs), les produits sur justificatif laboratoire et les articles livrés sous plusieurs références (fauteuils) : seulement sur le site (ligne refusée par l'API, avec le motif).</li>
+        <li>La liste des commandes passées depuis votre logiciel d'officine (elles restent visibles dans vos factures et bons de livraison).</li>
+        <li>La modification d'une commande : annulez-la pendant le délai, puis repassez-la.</li>
+        <li>Les quantités de stock exactes (niveaux seulement), les règlements et l'encours.</li>
+        <li>Les notifications envoyées à votre outil (webhooks) et l'accès d'un éditeur pour plusieurs pharmacies : à la demande, dans une version suivante.</li>
+      </ul>
+    </section>
+
+    <section id="versions" aria-labelledby="t-versions">
+      <h2 id="t-versions">Versions et journal des changements</h2>
+      <p>Toutes les routes commencent par <code>/v1</code>. Dans une version, seuls des ajouts compatibles sont faits (nouveau champ, nouvelle route, nouvelle valeur annoncée) : ignorez les champs que vous ne connaissez pas. Un changement incompatible ouvrira <code>/v2</code>, avec six mois de préavis. <code>GET /v1/etat</code> donne <code>version_api</code> et <code>derniere_modification</code>.</p>
+      <div class="tableau"><table>
+        <thead><tr><th>Version</th><th>Date</th><th>Changements</th></tr></thead>
+        <tbody>
+          <tr><td>version 1.0.0</td><td class="num">24/10/2026</td><td>Première version : catalogue à vos prix, disponibilités, contingents, commande (simulation, délai d'annulation, annulation), suivi, factures et bons de livraison, mode test.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <section id="support" aria-labelledby="t-support">
+      <h2 id="t-support">Support</h2>
+      <p>Elixir Pharma · <a href="mailto:pharmacien@elixirpharma.fr">pharmacien@elixirpharma.fr</a> · <a href="tel:+33186043995">01 86 04 39 95</a></p>
+      <p>Pour une question sur un appel, donnez l'en-tête <code>X-Request-Id</code> de la réponse, l'heure et la route. <strong>N'envoyez jamais votre clé</strong> : Elixir Pharma ne vous la demandera jamais. Le site de commande, votre logiciel d'officine et le téléphone restent disponibles si l'API ne l'est pas.</p>
+    </section>
+  </main>
+</div>
+
+<footer class="pied">
+  <div class="bande">API Elixir Pharma pour les pharmacies · version 1.0.0 · réservée aux pharmacies clientes, selon les conditions d'utilisation de l'API acceptées dans « Accès API ».</div>
+</footer>
+</body>
+</html>

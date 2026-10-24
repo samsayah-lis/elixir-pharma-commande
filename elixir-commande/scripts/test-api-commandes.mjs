@@ -33,6 +33,7 @@ process.env.ADMIN_EMAIL = "admin@elixir.test";
 const APP = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE = "fb2a76b";   // production d'où part la branche api-pharmacies
 const { fauxPostgrestApi } = await import("./api-faux.mjs");
+const { capturer } = await import("./api-capture.mjs");
 const { creerOdooApi } = await import("./api-odoo-faux.mjs");
 const { jeuOdoo, COMPTES } = await import("./test-chat-perimetre.mjs");
 
@@ -160,9 +161,11 @@ const routeur = (extra = {}) => creerRouteur({ stock, maintenant, verifierFiche:
 let ip = 1;
 const textes = [];
 const appel = async (h, methode, chemin, { cle: k, corps, idem: cleIdem, entetes = {}, host = "elixir-commande.expepharma.com" } = {}) => {
-  const r = await h({ httpMethod: methode, path: `/api/v1${chemin}`, headers: { host, "x-nf-client-connection-ip": `198.51.${(ip++ % 200) + 1}.10`,
+  // (capturer : transparent, sauf pour scripts/test-api-openapi.mjs qui confronte les réponses à docs/api/openapi.yaml)
+  const event = { httpMethod: methode, path: `/api/v1${chemin}`, headers: { host, "x-nf-client-connection-ip": `198.51.${(ip++ % 200) + 1}.10`,
     ...(k ? { authorization: `Bearer ${k}` } : {}), ...(cleIdem ? { "idempotency-key": cleIdem } : {}), ...entetes },
-    body: corps === undefined ? undefined : typeof corps === "string" ? corps : JSON.stringify(corps) });
+    body: corps === undefined ? undefined : typeof corps === "string" ? corps : JSON.stringify(corps) };
+  const r = await capturer(event, h(event));
   if (r.body && !r.isBase64Encoded) textes.push(r.body);
   return r;
 };

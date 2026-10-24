@@ -39,6 +39,14 @@
     Cache-Control = "no-cache"
     Content-Type = "application/manifest+json; charset=utf-8"
 
+# API des pharmacies : description OpenAPI de la documentation publique /api/ (docs/api/openapi.yaml, copiée au build par
+# scripts/api-doc-plugin.mjs), toujours relue à la visite suivante
+[[headers]]
+  for = "/api/openapi.yaml"
+  [headers.values]
+    Cache-Control = "no-cache"
+    Content-Type = "application/yaml; charset=utf-8"
+
 [[redirects]]
   from = "/*"
   to = "/index.html"

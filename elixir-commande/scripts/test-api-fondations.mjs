@@ -26,6 +26,7 @@ const conf = await import("../netlify/functions/_api-config.js");
 const http = await import("../netlify/functions/_api-http.js");
 const { creerStockApi } = await import("../netlify/functions/_api-stock.js");
 const { fauxPostgrestApi } = await import("./api-faux.mjs");
+const { capturer } = await import("./api-capture.mjs");
 const routeur = await import("../netlify/functions/api-v1.js");
 const compte = await import("../netlify/functions/api-compte.js");
 const admin = await import("../netlify/functions/api-admin.js");
@@ -53,9 +54,12 @@ const silence = () => {};
 
 // requête sur le routeur
 const IP_A = "203.0.113.9";
-const requete = (h, { path = "/api/v1/etat", methode = "GET", cle = null, ip = IP_A, host = "elixir-commande.expepharma.com", query = null, body = undefined, entetes = {} } = {}) =>
-  h({ httpMethod: methode, path, headers: { host, "x-nf-client-connection-ip": ip, ...(cle ? { authorization: `Bearer ${cle}` } : {}), ...entetes },
-    queryStringParameters: query, body });
+// (capturer : transparent, sauf pour scripts/test-api-openapi.mjs qui confronte les réponses à docs/api/openapi.yaml)
+const requete = (h, { path = "/api/v1/etat", methode = "GET", cle = null, ip = IP_A, host = "elixir-commande.expepharma.com", query = null, body = undefined, entetes = {} } = {}) => {
+  const event = { httpMethod: methode, path, headers: { host, "x-nf-client-connection-ip": ip, ...(cle ? { authorization: `Bearer ${cle}` } : {}), ...entetes },
+    queryStringParameters: query, body };
+  return capturer(event, h(event));
+};
 const corps = (r) => JSON.parse(r.body);
 const nouveauRouteur = (extra = {}) => routeur.creerHandler({ stock, maintenant, verifierFiche, log: silence, hasard: () => 0.5, ...extra });
 

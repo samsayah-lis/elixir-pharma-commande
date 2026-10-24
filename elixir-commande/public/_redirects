@@ -1,3 +1,5 @@
 # API des pharmacies (netlify/functions/api-v1.js) : AVANT la règle « /* », sinon /api/v1/… servirait index.html
 /api/v1/*  /.netlify/functions/api-v1/:splat  200!
+# Documentation de l'API (public/api/index.html, servie à /api/ ; docs/api/openapi.yaml à /api/openapi.yaml) : adresse courte
+/api/docs  /api/  301
 /*    /index.html   200

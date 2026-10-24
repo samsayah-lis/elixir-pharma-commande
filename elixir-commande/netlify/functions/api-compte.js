@@ -91,7 +91,7 @@ export function creerHandler(deps = {}) {
           test_parcours: acces.test_valide_le ? null : await parcoursPublic(stock, ctx.odooId),
           commandes_production: commandesLiveOuvertes(fusionnerReglages(reglages.valeur), now) ? "ouvertes" : "fermees",
           cles: cles.map(c => clePublique(c, now)),
-          documentation: null,   // page publique /api/ : lot « documentation »
+          documentation: "/api/",   // page publique (public/api/index.html) ; description OpenAPI : /api/openapi.yaml
         });
       }
       if (body.action === "journal") {

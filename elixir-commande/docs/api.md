@@ -1,8 +1,10 @@
 # API des pharmacies (`/api/v1`) — contrat interne
 
 Dépôt PUBLIC : aucun secret, aucune donnée réelle. Les exemples sont fictifs (CIP `3400000000011`, « Pharmacie Exemple »,
-numéros `1790000000001`). La page de documentation publique pour les pharmacies viendra au lot « documentation » ; ce
-fichier fixe les règles que le code applique et que cette page reprendra.
+numéros `1790000000001`). Ce fichier fixe les règles que le code applique. Pour les pharmacies : page `/api/`
+(`public/api/index.html`) et description OpenAPI 3.1 `/api/openapi.yaml` (source : `docs/api/openapi.yaml`), confrontées
+au code et aux réponses réelles du routeur par `scripts/test-api-openapi.mjs`. Pour la mise en service (SQL, prérequis,
+interrupteurs, surveillance, projet de CGU) : `docs/api/mise-en-service.md`.
 
 Décisions de Zineb (24/10/2026) :
 
@@ -26,6 +28,10 @@ Décisions de Zineb (24/10/2026) :
 | `netlify/functions/api-envoi-background.js` | Envoi d'une commande par le relais existant (`envoiAuto`) |
 | `netlify/functions/_api-stock.js` | Tables privées `api_*` (clé serveur), commandes du site écrites par l'API |
 | `sql/api-schema.sql` | Tables `api_*` : RLS sans policy, droits retirés à anon et authenticated |
+| `docs/api/openapi.yaml` | Description OpenAPI 3.1 (servie à `/api/openapi.yaml` par `scripts/api-doc-plugin.mjs`) |
+| `public/api/index.html` | Documentation des pharmacies (page statique `/api/`, hors bundle ; `/api/docs` y renvoie) |
+| `docs/api/mise-en-service.md` | Mise en service : SQL, prérequis P1–P8, ouverture d'une pharmacie, interrupteurs, surveillance, projet de CGU |
+| `scripts/test-api-openapi.mjs` | OpenAPI et page confrontées au code (routes, droits, limites, codes) et aux réponses réelles des trois tests de l'API |
 
 ## 2. Interrupteur « Commandes par API »
 
@@ -182,5 +188,15 @@ complète, ni numéro de commande dans la route.
 
 ## 9. À faire par Zineb avant la mise en service
 
+Voir `docs/api/mise-en-service.md` (pas à pas) :
+
 - rejouer `sql/api-schema.sql` (colonne `api_acces.test_parcours` ; le fichier se rejoue sans effet) ;
 - cocher les prérequis P1, P3, P4, P7 quand ils sont faits, puis ouvrir « Commandes par API ».
+
+## 10. Documentation : garder la page et l'OpenAPI justes
+
+Toute évolution d'une route, d'un champ de réponse, d'un code d'erreur, d'une limite ou d'une valeur par défaut doit être
+reportée dans `docs/api/openapi.yaml` ET dans `public/api/index.html` : `scripts/test-api-openapi.mjs` échoue sinon
+(champ non documenté, statut ou code non prévu, ancre `#erreur-<code>` absente, débit ou plafond différent du code). Seuls
+des ajouts compatibles dans `/v1` ; une rupture ouvre `/v2` avec six mois de préavis. Mettre à jour `VERSION_API`,
+`DERNIERE_MODIFICATION` (`_api-config.js`), `info.version` de l'OpenAPI et le journal des changements de la page.
