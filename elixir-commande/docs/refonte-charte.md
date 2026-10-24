@@ -1092,4 +1092,4 @@ Trois relectures contradictoires de la branche (invariants, rendu, production) o
 
 **Vérifié (banc, 24/10/2026)** : audit de contraste automatique, texte par texte, en clair puis en sombre, sur mobile (390 px) et ordinateur (1 280 px). Vues couvertes : connexion, accueil, menus, Saisie, Péremption courte, fauteuil, justificatif, panier, Mes commandes, Notifications, Assistant, menu mobile, recherche de l'en-tête, et les 17 onglets de l'admin. Aucune régression : aucun texte qui passait en clair ne descend sous 4,5:1 (3:1 pour les grands textes) en sombre. `npm run lint`, `npm run build`, `verifie-zones` et les tests concernés passent (test-appli-admin, test-peremption-mention, test-peremption-panier, test-push-client, test-push-messages).
 
-**Budget du bundle** : +1 912 octets (938 338 → 940 250), au-delà de la marge de 1 662 octets. Le budget de `verifie-zones` passe de 940 000 à 942 000 octets : **à confirmer par Zineb**.
+**Budget du bundle** : +1 912 octets (938 338 → 940 250), au-delà de la marge de 1 662 octets. Le budget de `verifie-zones` passe de 940 000 à 942 000 octets, avec l'accord de Zineb (24/10/2026).
