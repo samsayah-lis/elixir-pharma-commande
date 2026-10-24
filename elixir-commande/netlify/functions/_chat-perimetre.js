@@ -716,7 +716,7 @@ export async function suiviCommandesOdoo(ctx, ids, { detail = false } = {}, deps
     const { factures: f, avoirs } = pieces2(factures);
     const sortie = sorties.derniere.get(so.id) || ((so.delivery_status === "full" || so.delivery_status === "partial") ? so.effective_date : null) || null;
     return { id: so.id, numero: so.name, etat: codeEtatCommande(so, ls, factures), sortie_le: sortie ? dateOdoo(sortie).toISOString() : null,
-      factures: f.map(x => x.name), avoirs: avoirs.map(x => x.name),
+      factures: f.map(x => ({ id: x.id, numero: x.name })), avoirs: avoirs.map(x => ({ id: x.id, numero: x.name })),
       ...(detail ? { livraisons: (livraisons.get(so.id) || []).filter(p => p.state === "done").map(p => ({ id: p.id, numero: p.name, sortie_le: p.date_done ? dateOdoo(p.date_done).toISOString() : null })) } : {}) };
   });
   if (!detail) return { commandes, lignes: [] };

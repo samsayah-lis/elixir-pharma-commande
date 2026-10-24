@@ -17,6 +17,18 @@ const CHAMPS = [
   ["plafond_montant_ht", "Montant HT par commande (€)"], ["plafond_commandes_jour", "Commandes par jour"],
   ["anomalie_facteur", "Anomalie : × la quantité mensuelle habituelle"], ["anomalie_doublon_min", "Anomalie : quasi-doublon sur (min)"],
 ];
+// valeur d'API « ouvertes » / « fermees » → libellé affiché (avec l'accent)
+const LIB_PROD = { ouvertes: "ouvertes", fermees: "fermées" };
+const NOMS_DROITS = { lecture: "Lecture", commande: "Commande", documents: "Documents" };
+// historique d'un accès : type d'événement → libellé ; détail → texte court (jamais de JSON brut)
+const TYPES_EVT = { acces_ouvert: "Accès ouvert", acces_modifie: "Réglages modifiés", acces_suspendu: "Accès suspendu", acces_reactive: "Accès réactivé", fiche_rafraichie: "Fiche relue dans Odoo",
+  cgu_acceptees: "Conditions acceptées en ligne", cgu_signees: "Conditions signées (hors ligne)", cle_creee: "Clé créée par la pharmacie", cle_creee_admin: "Clé créée dans l'admin",
+  cle_remplacee: "Clé remplacée", cle_revoquee: "Clé révoquée", test_valide: "Mode test validé (parcours complet)", test_valide_admin: "Mode test validé par l'admin",
+  reglages: "Réglages du service", prerequis: "Prérequis", tout_couper: "Tout couper", prix_recalcul_demande: "Recalcul des prix demandé" };
+const CHAMPS_EVT = { environnement: (v) => (v === "live" ? "production" : v === "test" ? "test" : v), libelle: (v) => `« ${v} »`, portees: (v) => [].concat(v).map(p => NOMS_DROITS[p] || p).join(" + "),
+  prefixe: (v) => v, motif: (v) => `motif : ${v}`, version: (v) => `version ${v}`, reference: (v) => `référence : ${v}`, mode: (v) => `mode ${v}`, vue_par: (v) => `vue par ${v}`,
+  ancienne_expire_le: (v) => `ancienne valide jusqu'au ${dt(v)}`, reseau: (v) => `réseau ${v}` };
+const texteEvt = (d) => (d && typeof d === "object" ? Object.entries(d).filter(([k, v]) => CHAMPS_EVT[k] && v != null && v !== "").map(([k, v]) => CHAMPS_EVT[k](v)).join(" · ") : "");
 const carte = { ...ui.card, marginBottom: 16 };
 const grille = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 };
 // bouton désactivé : visible comme tel (ui.btn n'a pas d'état désactivé)
@@ -34,7 +46,7 @@ function SecretUnique({ secret, onFermer }) {
         <p style={{ fontSize: 13, color: T.inkSoft, lineHeight: 1.5 }}>Elle ne sera plus jamais affichée (seule son empreinte est gardée). Remise à la pharmacie <b>de vive voix</b>, jamais par e-mail ni message. Ce que vous voyez est tracé dans le journal de l'accès.</p>
         <code style={{ display: "block", wordBreak: "break-all", background: T.surface2, padding: "12px 14px", borderRadius: R.s, fontFamily: T.mono, fontSize: 13, userSelect: "all" }}>{secret}</code>
         <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end", flexWrap: "wrap" }}>
-          <button style={ui.btn("ligne")} onClick={() => navigator.clipboard?.writeText(secret).then(() => setCopie(true), () => setCopie(false))}>{copie ? "Copiée ✓" : "Copier"}</button>
+          <button style={ui.btn("ligne")} onClick={() => { const p = navigator.clipboard?.writeText(secret); if (p) p.then(() => setCopie(true), () => setCopie(false)); else window.alert("Copie impossible ici : sélectionnez la clé et copiez-la."); }}>{copie ? "Copiée ✓" : "Copier"}</button>
           <button style={ui.btn("primaire")} onClick={onFermer}>J'ai remis la clé, fermer</button>
         </div>
       </div>
@@ -51,7 +63,7 @@ function EtatService({ t, poster }) {
       <h2 id="api-service" style={ui.h2}>État du service</h2>
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 14 }}>
         {r.actif ? <Badge ton="ok">API en service</Badge> : <Badge ton="danger" plein>API coupée (503 sauf /v1/etat)</Badge>}
-        <Badge ton={t.commandes_production === "ouvertes" ? "ok" : "warn"}>Commandes par API : {t.commandes_production}</Badge>
+        <Badge ton={t.commandes_production === "ouvertes" ? "ok" : "warn"}>Commandes par API : {LIB_PROD[t.commandes_production] || t.commandes_production}</Badge>
         <span style={{ fontSize: 12, color: T.inkMute }}>Version {t.version_api} · CGU {t.cgu_version}</span>
         <span style={{ flex: 1 }} />
         {r.actif
@@ -59,7 +71,7 @@ function EtatService({ t, poster }) {
           : <button style={ui.btn("primaire")} onClick={() => basculer({ action: "reglages", actif: true }, "Remettre l'API en service ?")}>Remettre en service</button>}
       </div>
       <div style={{ ...ui.encart(t.commandes_production === "ouvertes" ? "ok" : "warn"), marginBottom: 12 }}>
-        <b>Commandes par API (production) : {t.commandes_production}.</b> Les clés de test (elx_test_) fonctionnent dès la mise en ligne : elles n'écrivent que dans les tables privées de l'API.
+        <b>Commandes par API (production) : {LIB_PROD[t.commandes_production] || t.commandes_production}.</b> Les clés de test (elx_test_) fonctionnent dès la mise en ligne : elles n'écrivent que dans les tables privées de l'API.
         Les commandes réelles ne s'ouvrent qu'une fois TOUS les prérequis cochés ; décocher une case les referme.
       </div>
       <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
@@ -69,7 +81,7 @@ function EtatService({ t, poster }) {
               onChange={(e) => { const note = e.target.checked ? window.prompt(`${p.id} fait : note (facultative, ex. date, qui a vérifié)`, "") : ""; if (note !== null) poster({ action: "prerequis", id: p.id, fait: e.target.checked, note, base: t.updated_at }); }} />
             <label htmlFor={`api-pre-${p.id}`} style={{ lineHeight: 1.45 }}>
               <b>{p.id}</b> · {p.libelle}
-              {!p.cochable && <span style={{ color: T.warn }}> — pas avant le {p.pas_avant.split("-").reverse().join("/")}</span>}
+              {!p.cochable && <span style={{ color: T.warn }}> — {p.indisponible ? p.indisponible : `pas avant le ${String(p.pas_avant).split("-").reverse().join("/")}`}</span>}
               {p.le && <span style={{ color: T.inkMute }}> — {p.fait ? "coché" : "décoché"} le {dt(p.le)} par {p.par}{p.note ? ` (${p.note})` : ""}</span>}
             </label>
           </li>
@@ -110,7 +122,7 @@ const ETATS_CMD = { recue: ["Délai d'annulation", "info"], a_verifier: ["À vé
 const MOTIFS_CMD = { anomalie_quantite: "quantité inhabituelle", quasi_doublon: "quasi-doublon", doublon_recent: "identique à une commande de moins de 2 h",
   envoi_manuel: "envoi automatique du relais coupé", envoi_manque: "envoi automatique manqué", envoi_suspendu: "API ou accès coupé", precommande: "lignes en rupture gardées", rupture_envoi: "lignes sans stock à l'envoi (à retirer)", commande_modifiee: "lignes ou pharmacie modifiées depuis l'acceptation",
   erreur_transmission: "envoi impossible", envoi_a_verifier: "envoi interrompu", reprise: "reprise après coupure", rupture: "rupture", annulee_par_la_pharmacie: "par la pharmacie" };
-function CommandesApi({ adminFetch }) {
+function CommandesApi({ adminFetch, onVoirCommande }) {
   const [rows, setRows] = useState(null), [test, setTest] = useState(false);
   const charger = useCallback(async () => {
     setRows(null);
@@ -139,7 +151,10 @@ function CommandesApi({ adminFetch }) {
                   <tr key={c.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
                     <td style={ui.td}>{dt(c.recu_le)}{c.environnement === "test" && <div><Badge ton="info">Test</Badge></div>}</td>
                     <td style={ui.td}>{c.pharmacie || `n° ${c.odoo_id}`}<div style={{ fontSize: 11, color: T.inkMute, fontFamily: T.mono }}>{c.cle || ""}</div></td>
-                    <td style={{ ...ui.td, fontFamily: T.mono }}>{c.numero || "–"}</td>
+                    <td style={{ ...ui.td, fontFamily: T.mono }}>{c.numero && c.environnement === "live" && onVoirCommande
+                      ? <button className="ex-btn-discret" style={{ background: "none", border: "none", padding: 0, color: T.petrol, textDecoration: "underline", cursor: "pointer", fontFamily: T.mono, fontSize: 12 }}
+                        title="Voir la commande dans l'onglet Commandes (validation : « Sync », refus d'une ligne : « Traiter sans envoi »)" onClick={() => onVoirCommande(c.numero)}>{c.numero}</button>
+                      : c.numero || "–"}</td>
                     <td style={ui.td}>{c.reference_client || "–"}{c.commentaire && <div style={{ fontSize: 11, color: T.inkMute }}>« {c.commentaire} »</div>}</td>
                     <td style={ui.td}><Badge ton={ton} plein={c.etat === "a_verifier"}>{lib}</Badge>
                       {(c.motif || c.anomalies.length > 0) && c.motif !== "annulee_par_la_pharmacie" && <div style={{ fontSize: 11, color: T.inkSoft }}>{MOTIFS_CMD[c.motif] || c.motif || c.anomalies.map(a => MOTIFS_CMD[a] || a).join(", ")}</div>}
@@ -259,6 +274,7 @@ function OuvrirAcces({ adminFetch, t, poster, onFermer }) {
 function DetailAcces({ d, t, poster, recharger }) {
   const a = d.acces;
   const [f, setF] = useState(null);
+  const [cleForm, setCleForm] = useState(null);   // formulaire « Créer une clé (sans compte) »
   useEffect(() => {
     setF({ portees: a.portees, mode: a.mode, anomalie_active: a.anomalie_active, ip_autorisees: (a.ip_autorisees || []).join("\n"), note: a.note || "",
       ...Object.fromEntries(CHAMPS.map(([k]) => [k, String(a[k])])) });
@@ -272,12 +288,8 @@ function DetailAcces({ d, t, poster, recharger }) {
     poster({ ...corps, odoo_id: a.odoo_id, ...(champ ? { [corps.action === "cgu_signees" ? "reference" : "motif"]: extra } : {}) }).then(recharger);
   };
   const creerCle = () => {
-    const environnement = a.test_valide_le && window.confirm("Clé de PRODUCTION ?\n\nOK : production · Annuler : test") ? "live" : "test";
-    const libelle = window.prompt("Nom de la clé (l'outil qui l'utilise)", "");
-    if (!libelle?.trim()) return;
-    const motif = window.prompt("Motif (obligatoire, tracé) : ex. « pharmacie sans compte du site »", "pharmacie sans compte du site");
-    if (!motif?.trim()) return;
-    poster({ action: "creer_cle_admin", odoo_id: a.odoo_id, environnement, libelle, portees: a.portees, motif }, { secret: true }).then(recharger);
+    poster({ action: "creer_cle_admin", odoo_id: a.odoo_id, environnement: cleForm.environnement, libelle: cleForm.libelle, portees: cleForm.portees, motif: cleForm.motif }, { secret: true })
+      .then(ok => { if (ok) setCleForm(null); recharger(); });
   };
   return (
     <section style={{ ...carte, borderColor: T.teal2 }} aria-labelledby="api-detail">
@@ -296,9 +308,9 @@ function DetailAcces({ d, t, poster, recharger }) {
         <div>
           <span style={ui.label}>Droits</span>
           {t.portees.map(p => (
-            <label key={p} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13, marginBottom: 4 }}>
+            <label key={p} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13, marginBottom: 4 }} title={t.libelles_portees?.[p] || ""}>
               <input type="checkbox" checked={f.portees.includes(p)} onChange={e => set("portees", e.target.checked ? [...new Set([...f.portees, p])] : f.portees.filter(x => x !== p))} />
-              {p === "lecture" ? "Lecture" : "Commande"}
+              {NOMS_DROITS[p] || p}
             </label>
           ))}
         </div>
@@ -335,8 +347,37 @@ function DetailAcces({ d, t, poster, recharger }) {
         <button style={ui.btn("ligne")} onClick={() => action({ action: "rafraichir_fiche" })}>Relire la fiche dans Odoo</button>
         {!a.cgu_a_jour && <button style={ui.btn("ligne")} onClick={() => action({ action: "cgu_signees" }, null, "CGU acceptées hors ligne : référence du document signé (tracée)")}>CGU signées (PDF)</button>}
         {!a.test_valide_le && <button style={ui.btn("ligne")} onClick={() => action({ action: "valider_test" }, "Valider le test sans le parcours complet ?\n\nLa pharmacie pourra créer des clés de production.", "Motif (tracé) :")}>Valider le test (passer outre)</button>}
-        <button style={ui.btn("doux")} onClick={creerCle} title="Pour une pharmacie sans compte du site : la clé est montrée une fois, à remettre de vive voix">Créer une clé (sans compte)</button>
+        <button style={ui.btn("doux")} onClick={() => setCleForm(cleForm ? null : { environnement: "test", libelle: "", portees: a.portees.filter(p => p !== "documents"), motif: "pharmacie sans compte du site" })}
+          aria-expanded={!!cleForm} title="Pour une pharmacie sans compte du site : la clé est montrée une fois, à remettre de vive voix">Créer une clé (sans compte)</button>
       </div>
+      {cleForm && (
+        <div style={{ ...ui.panel, marginTop: 12 }}>
+          <b>Clé pour une pharmacie sans compte du site</b>
+          <fieldset style={{ border: "none", padding: 0, margin: "8px 0", display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+            <legend style={{ ...ui.label, marginBottom: 4 }}>Environnement</legend>
+            <label style={{ display: "flex", gap: 6, alignItems: "center" }}><input type="radio" name="api-cle-env" checked={cleForm.environnement === "test"} onChange={() => setCleForm({ ...cleForm, environnement: "test" })} />Test (rien n'est commandé)</label>
+            <label style={{ display: "flex", gap: 6, alignItems: "center", color: a.test_valide_le ? T.ink : T.inkMute }}><input type="radio" name="api-cle-env" disabled={!a.test_valide_le} checked={cleForm.environnement === "live"} onChange={() => setCleForm({ ...cleForm, environnement: "live" })} />Production{a.test_valide_le ? "" : " (après validation du mode test)"}</label>
+          </fieldset>
+          <fieldset style={{ border: "none", padding: 0, margin: "8px 0", display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13 }}>
+            <legend style={{ ...ui.label, marginBottom: 4 }}>Droits de la clé</legend>
+            {a.portees.map(p => (
+              <label key={p} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="checkbox" checked={cleForm.portees.includes(p)} onChange={e => setCleForm({ ...cleForm, portees: e.target.checked ? [...new Set([...cleForm.portees, p])] : cleForm.portees.filter(x => x !== p) })} />
+                {t.libelles_portees?.[p] || NOMS_DROITS[p] || p}
+              </label>
+            ))}
+          </fieldset>
+          <label style={ui.label} htmlFor="api-cle-libelle">Nom de la clé (l'outil qui l'utilise)</label>
+          <input id="api-cle-libelle" style={{ ...ui.input, maxWidth: 360, marginBottom: 8 }} maxLength={60} value={cleForm.libelle} onChange={e => setCleForm({ ...cleForm, libelle: e.target.value })} placeholder="ex. Logiciel de réassort" />
+          <label style={ui.label} htmlFor="api-cle-motif">Motif (obligatoire, tracé)</label>
+          <input id="api-cle-motif" style={{ ...ui.input, marginBottom: 10 }} maxLength={300} value={cleForm.motif} onChange={e => setCleForm({ ...cleForm, motif: e.target.value })} />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button style={{ ...ui.btn("primaire", "s"), ...off(!cleForm.libelle.trim() || cleForm.motif.trim().length < 5 || !cleForm.portees.length) }} disabled={!cleForm.libelle.trim() || cleForm.motif.trim().length < 5 || !cleForm.portees.length}
+              onClick={creerCle}>Créer la clé {cleForm.environnement === "live" ? "de production" : "de test"}</button>
+            <button style={ui.btn("ligne", "s")} onClick={() => setCleForm(null)}>Annuler</button>
+          </div>
+        </div>
+      )}
 
       <h3 style={{ ...ui.h2, marginTop: 22 }}>Clés ({d.cles.length})</h3>
       <div style={{ overflowX: "auto" }}>
@@ -348,7 +389,7 @@ function DetailAcces({ d, t, poster, recharger }) {
               <tr key={c.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
                 <td style={{ ...ui.td, fontFamily: T.mono, fontSize: 12 }}>{c.prefixe}</td>
                 <td style={ui.td}><Badge ton={ENV[c.environnement][1]}>{ENV[c.environnement][0]}</Badge></td>
-                <td style={ui.td}>{c.libelle}<div style={{ fontSize: 11, color: T.inkMute }}>{c.portees.join(" + ")}</div></td>
+                <td style={ui.td}>{c.libelle}<div style={{ fontSize: 11, color: T.inkMute }}>{c.portees.map(p => NOMS_DROITS[p] || p).join(" + ")}</div></td>
                 <td style={ui.td}><Badge ton={ETATS_CLE[c.etat][1]}>{ETATS_CLE[c.etat][0]}</Badge>{c.etat === "remplacee" && <div style={{ fontSize: 11, color: T.inkMute }}>jusqu'au {dt(c.expire_le)}</div>}{c.motif_revocation && <div style={{ fontSize: 11, color: T.inkMute }}>{c.motif_revocation} ({c.revoquee_par})</div>}</td>
                 <td style={ui.td}>{dt(c.created_at)}<div style={{ fontSize: 11, color: T.inkMute }}>{c.creee_par_role === "admin" ? "admin : " : ""}{c.creee_par}</div></td>
                 <td style={ui.td}>{dt(c.derniere_utilisation)}<div style={{ fontSize: 11, color: T.inkMute, fontFamily: T.mono }}>{c.dernier_reseau || ""}</div></td>
@@ -363,7 +404,7 @@ function DetailAcces({ d, t, poster, recharger }) {
       <details style={{ marginTop: 16 }}>
         <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Historique de l'accès ({d.evenements.length})</summary>
         <ul style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.6 }}>
-          {d.evenements.map(e => <li key={e.id}>{dt(e.at)} · <b>{e.type}</b> · {e.role === "admin" ? "admin " : ""}{e.par || "–"}{e.detail ? ` · ${JSON.stringify(e.detail)}` : ""}</li>)}
+          {d.evenements.map(e => <li key={e.id}>{dt(e.at)} · <b>{TYPES_EVT[e.type] || e.type}</b> · {e.role === "admin" ? "admin " : e.role === "systeme" ? "automatique" : ""}{e.role === "systeme" ? "" : e.par || "–"}{texteEvt(e.detail) ? ` · ${texteEvt(e.detail)}` : ""}</li>)}
         </ul>
       </details>
     </section>
@@ -373,11 +414,13 @@ function DetailAcces({ d, t, poster, recharger }) {
 // ── Journal des appels (500 derniers, jamais de corps) et export CSV ──
 function Journal({ adminFetch, odooId }) {
   const [lignes, setLignes] = useState(null), [erreurs, setErreurs] = useState(false), [toutes, setToutes] = useState(false);
+  const [requete, setRequete] = useState(""), [cherchee, setCherchee] = useState(""), [copie, setCopie] = useState(null);
   const charger = useCallback(async () => {
     setLignes(null);
-    const p = new URLSearchParams({ vue: "journal", ...(odooId && !toutes ? { odoo_id: String(odooId) } : {}), ...(erreurs ? { erreurs: "1" } : {}) });
-    try { setLignes((await lire(await adminFetch(`${API}?${p}`))).lignes); } catch { setLignes([]); }
-  }, [adminFetch, odooId, toutes, erreurs]);
+    const p = new URLSearchParams(cherchee ? { vue: "journal", request_id: cherchee } : { vue: "journal", ...(odooId && !toutes ? { odoo_id: String(odooId) } : {}), ...(erreurs ? { erreurs: "1" } : {}) });
+    try { setLignes((await lire(await adminFetch(`${API}?${p}`))).lignes); } catch (e) { setLignes([]); if (cherchee) window.alert(e.message); }
+  }, [adminFetch, odooId, toutes, erreurs, cherchee]);
+  const copier = (id) => { const p = navigator.clipboard?.writeText(id); if (p) p.then(() => setCopie(id), () => setCopie(null)); };
   useEffect(() => { charger(); }, [charger]);
   const csv = () => {
     const cols = ["at", "request_id", "odoo_id", "cle", "environnement", "methode", "route", "statut", "code", "duree_ms", "reseau"];
@@ -391,6 +434,12 @@ function Journal({ adminFetch, odooId }) {
   return (
     <section style={carte} aria-labelledby="api-journal">
       <h2 id="api-journal" style={ui.h2}>Journal des appels</h2>
+      <form style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }} onSubmit={(e) => { e.preventDefault(); setCherchee(requete.trim()); }}>
+        <label htmlFor="api-requete" style={{ ...ui.label, width: "100%", marginBottom: 0 }}>Rechercher un X-Request-Id (donné par la pharmacie, quel que soit son âge)</label>
+        <input id="api-requete" style={{ ...ui.input, flex: "1 1 280px", fontFamily: T.mono, fontSize: 12 }} value={requete} onChange={e => setRequete(e.target.value)} placeholder="ex. 0f8e2c1a-…" spellCheck={false} />
+        <button type="submit" style={ui.btn("ligne", "s")}>Rechercher</button>
+        {cherchee && <button type="button" style={ui.btn("ligne", "s")} onClick={() => { setRequete(""); setCherchee(""); }}>Tout le journal</button>}
+      </form>
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         {odooId && <button style={ui.pill(!toutes)} aria-pressed={!toutes} onClick={() => setToutes(!toutes)}>Cette pharmacie</button>}
         <button style={ui.pill(erreurs)} aria-pressed={erreurs} onClick={() => setErreurs(!erreurs)}>Erreurs seulement</button>
@@ -406,12 +455,13 @@ function Journal({ adminFetch, odooId }) {
               {lignes.map(l => (
                 <tr key={l.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
                   <td style={ui.td}>{dt(l.at)}</td><td style={ui.td}>{l.odoo_id || "–"}</td>
-                  <td style={{ ...ui.td, fontFamily: T.mono }}>{l.cle || "–"}{l.environnement === "test" ? " (test)" : ""}</td>
+                  <td style={{ ...ui.td, fontFamily: T.mono }}>{l.cle || "–"}{l.environnement === "test" ? " (test)" : l.environnement === "apercu" ? " (aperçu)" : ""}</td>
                   <td style={ui.td}>{l.methode} {l.route}</td>
                   <td style={{ ...ui.td, color: l.statut >= 400 ? T.danger : T.ok, fontWeight: 700 }}>{l.statut}</td>
                   <td style={ui.td}>{l.code || ""}</td><td style={ui.td}>{l.duree_ms} ms</td>
                   <td style={{ ...ui.td, fontFamily: T.mono }}>{l.reseau || ""}</td>
-                  <td style={{ ...ui.td, fontFamily: T.mono, fontSize: 11, color: T.inkMute }}>{String(l.request_id).slice(0, 8)}</td>
+                  <td style={{ ...ui.td, fontFamily: T.mono, fontSize: 11, color: T.inkMute, whiteSpace: "nowrap" }}><span style={{ userSelect: "all" }}>{l.request_id}</span>{" "}
+                    <button className="ex-btn-discret" style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: T.petrol, fontSize: 11 }} onClick={() => copier(l.request_id)} aria-label="Copier l'identifiant de la requête">{copie === l.request_id ? "copié ✓" : "copier"}</button></td>
                 </tr>
               ))}
             </tbody>
@@ -422,7 +472,7 @@ function Journal({ adminFetch, odooId }) {
   );
 }
 
-export default function AdminApi({ adminFetch, flash }) {
+export default function AdminApi({ adminFetch, flash, onVoirCommande }) {
   const [t, setT] = useState(null), [erreur, setErreur] = useState(null);
   const [selection, setSelection] = useState(null), [detail, setDetail] = useState(null);
   const [ouvrir, setOuvrir] = useState(false), [secret, setSecret] = useState(null);
@@ -489,7 +539,7 @@ export default function AdminApi({ adminFetch, flash }) {
         </div>
       </section>
       {selection && detail?.acces?.odoo_id === selection && <DetailAcces d={detail} t={t} poster={poster} recharger={() => chargerDetail(selection)} />}
-      <CommandesApi adminFetch={adminFetch} />
+      <CommandesApi adminFetch={adminFetch} onVoirCommande={onVoirCommande} />
       <PrixListes t={t} poster={poster} />
       <Journal adminFetch={adminFetch} odooId={selection} />
     </div>

@@ -156,7 +156,7 @@ tr:target, tr:target td { background: #f0e9da; }
     <section id="acces" aria-labelledby="t-acces">
       <h2 id="t-acces">Obtenir un accès</h2>
       <ol class="etapes">
-        <li><strong>Demandez l'accès à Elixir Pharma</strong> (<a href="#support">contact</a>) en précisant l'outil qui appellera l'API et ce que vous voulez automatiser. Elixir Pharma l'ouvre pour votre pharmacie, avec les droits utiles : « lecture » (catalogue, disponibilités, contingents, commandes, documents) et « commande » (passer et annuler).</li>
+        <li><strong>Demandez l'accès à Elixir Pharma</strong> (<a href="#support">contact</a>) en précisant l'outil qui appellera l'API et ce que vous voulez automatiser. Elixir Pharma l'ouvre pour votre pharmacie, avec les droits utiles : « lecture » (catalogue, disponibilités, contingents, commandes), « commande » (passer et annuler) et « documents » (factures, avoirs et bons de livraison).</li>
         <li><strong>Connectez-vous au site de commande</strong>, puis ouvrez « Mes commandes » → « Accès API ». Il faut une adresse e-mail encore enregistrée sur votre fiche client ; sinon, demandez à Elixir Pharma de la mettre à jour.</li>
         <li><strong>Acceptez les conditions d'utilisation de l'API.</strong> Une nouvelle version devra être acceptée de nouveau avant de commander (sinon <a href="#erreur-cgu_a_accepter"><code>cgu_a_accepter</code></a>).</li>
         <li><strong>Créez une clé de test</strong> (<code>elx_test_…</code>). Elle n'est montrée qu'une fois : copiez-la tout de suite dans votre outil.</li>
@@ -169,11 +169,11 @@ tr:target, tr:target td { background: #f0e9da; }
             <li data-etape="annulation">l'annuler pendant le délai : <code>DELETE /v1/commandes/{id}</code> ;</li>
             <li data-etape="rejeu">renvoyer la même commande avec la même <code>Idempotency-Key</code> : la réponse d'origine revient, sans doublon.</li>
           </ul>
-          « Accès API » coche chaque étape réussie. Les six faites, le test est validé de lui-même.</li>
+          « Accès API » coche chaque étape réussie. Les six faites, le test est validé de lui-même : la création d'une clé de production devient possible (les commandes réelles, elles, s'ouvrent à la date communiquée par Elixir Pharma).</li>
         <li><strong>Créez votre clé de production</strong> (<code>elx_live_…</code>). Une clé par outil : vous la révoquez sans toucher aux autres.</li>
       </ol>
       <div class="encart attention">
-        <p><strong>Commandes réelles : ouverture à une date que vous communiquera Elixir Pharma.</strong> D'ici là, la lecture fonctionne avec une clé de production, tout fonctionne avec une clé de test, et <code>POST /v1/commandes</code> avec une clé de production répond <a href="#erreur-ecriture_suspendue"><code>503 ecriture_suspendue</code></a> sans rien enregistrer. <code>GET /v1/etat</code> l'indique : <code>commandes.production</code> vaut <code>fermees</code> ou <code>ouvertes</code>.</p>
+        <p><strong>Commandes réelles : ouverture à une date que vous communiquera Elixir Pharma.</strong> D'ici là, la lecture fonctionne avec une clé de production, tout fonctionne avec une clé de test, et <code>POST /v1/commandes</code> avec une clé de production répond <a href="#erreur-ecriture_suspendue"><code>503 ecriture_suspendue</code></a> sans enregistrer de nouvelle commande. <code>GET /v1/etat</code> l'indique : <code>commandes.production</code> vaut <code>fermees</code> ou <code>ouvertes</code>.</p>
       </div>
     </section>
 
@@ -226,7 +226,14 @@ curl -s -i https://elixir-commande.expepharma.com/api/v1/commandes \
       <h3>4. Relire, annuler, renvoyer</h3>
 <pre><code>curl -s https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -H "Authorization: Bearer $ELIXIR_CLE"
 curl -s -X DELETE https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -H "Authorization: Bearer $ELIXIR_CLE"
-<span class="c"># même commande, même Idempotency-Key : réponse d'origine, en-tête « Idempotent-Replayed: true », aucun doublon</span></code></pre>
+
+<span class="c"># même commande, même Idempotency-Key, même corps : réponse d'origine, « Idempotent-Replayed: true », aucun doublon</span>
+curl -s -i https://elixir-commande.expepharma.com/api/v1/commandes   -H "Authorization: Bearer $ELIXIR_CLE" -H "Content-Type: application/json"   -H "Idempotency-Key: $CLE_IDEM"   -d '{"reference_client":"REASSORT-2026-11-16-A",
+       "lignes":[{"cip":"3400000000011","quantite":12},{"cip":"3400000000028","quantite":3},{"cip":"3400000000035","quantite":6}]}'
+
+<span class="c"># le corps rejoué décrit la commande à sa création : son état actuel (ici « annulee ») se relit par GET</span>
+curl -s https://elixir-commande.expepharma.com/api/v1/commandes/T1790000000001 -H "Authorization: Bearer $ELIXIR_CLE"</code></pre>
+      <p>Pour repasser une commande annulée, envoyez-la avec une <strong>nouvelle</strong> <code>Idempotency-Key</code> ; sa <code>reference_client</code> peut être la même (une commande annulée libère sa référence).</p>
     </section>
 
     <section id="securite" aria-labelledby="t-securite">
@@ -234,9 +241,10 @@ curl -s -X DELETE https://elixir-commande.expepharma.com/api/v1/commandes/T17900
       <ul>
         <li>La clé s'envoie <strong>uniquement</strong> dans l'en-tête <code>Authorization: Bearer elx_…</code>. Une clé placée dans l'adresse est refusée (<a href="#erreur-cle_dans_url"><code>cle_dans_url</code></a>) : elle s'est retrouvée dans des journaux, remplacez-la.</li>
         <li>Gardez-la <strong>côté serveur</strong> : jamais dans une page web, une macro de tableur partagé, un message ou un dépôt de code. L'API n'accepte pas les appels depuis un navigateur.</li>
-        <li><strong>Une clé par outil</strong>, au plus 3 clés actives par environnement (test, production). Chaque clé porte des droits : « lecture », « commande », ou les deux. Donnez à chaque outil le moins de droits possible.</li>
+        <li><strong>Une clé par outil</strong>, au plus 3 clés actives par environnement (test, production). Chaque clé porte des droits : « lecture », « commande », « documents » (factures, avoirs, bons de livraison). Donnez à chaque outil le moins de droits possible : un outil de disponibilités n'a besoin que de « lecture ».</li>
         <li><strong>Remplacer</strong> une clé (« Accès API ») en crée une nouvelle ; l'ancienne reste valide 7 jours, le temps de mettre votre outil à jour, puis s'arrête seule.</li>
-        <li><strong>Révoquer</strong> une clé l'arrête aussitôt (moins d'une minute). En cas de doute ou de fuite : révoquez-la, créez-en une autre et prévenez Elixir Pharma.</li>
+        <li><strong>Révoquer</strong> une clé l'arrête aussitôt pour les commandes et les annulations, en moins d'une minute pour les lectures. En cas de doute ou de fuite : révoquez-la, créez-en une autre et prévenez Elixir Pharma.</li>
+        <li>Les clés de production ne fonctionnent qu'à l'adresse du service, <code>https://elixir-commande.expepharma.com/api/v1</code> ; toute autre adresse les refuse (<a href="#erreur-cle_production_hors_site"><code>cle_production_hors_site</code></a>).</li>
         <li>Sur demande, Elixir Pharma peut limiter vos clés aux réseaux de votre pharmacie (<a href="#erreur-ip_non_autorisee"><code>ip_non_autorisee</code></a> ailleurs).</li>
         <li>L'identité vient <strong>toujours de la clé</strong> : aucun identifiant de pharmacie n'est lu dans la requête, et une ressource d'une autre pharmacie répond <code>404</code>, comme une ressource inconnue.</li>
         <li>Toute requête faite avec une clé valide est réputée faite par votre pharmacie (conditions d'utilisation de l'API).</li>
@@ -272,7 +280,7 @@ Content-Type: application/json
         <thead><tr><th>Champ</th><th>Règle</th></tr></thead>
         <tbody>
           <tr><td><code>lignes</code></td><td>Obligatoire : de 1 à 200 lignes <code>{ "cip", "quantite" }</code>. <code>cip</code> : texte de 13 chiffres (CIP13 ou code-barres) ; <code>quantite</code> : entier de 1 à 999. Un produit une seule fois (ni deux fois le même CIP, ni son CIP et son code-barres).</td></tr>
-          <tr><td><code>reference_client</code></td><td>Facultative : votre référence, 40 caractères au plus, unique pour votre pharmacie (sinon <a href="#erreur-reference_deja_utilisee"><code>reference_deja_utilisee</code></a>).</td></tr>
+          <tr><td><code>reference_client</code></td><td>Facultative : votre référence, 40 caractères au plus, unique pour votre pharmacie parmi les commandes enregistrées (sinon <a href="#erreur-reference_deja_utilisee"><code>reference_deja_utilisee</code></a>) ; une commande refusée ou annulée libère sa référence.</td></tr>
           <tr><td><code>si_rupture</code></td><td><code>retirer</code> (défaut) : une ligne en rupture est retirée, vous commandez ailleurs ; <code>garder</code> : elle attend le retour du stock.</td></tr>
           <tr><td><code>tout_ou_rien</code></td><td><code>true</code> : toute la commande est refusée si une ligne est refusée, retirée ou réduite (<a href="#erreur-commande_refusee"><code>commande_refusee</code></a>). Défaut : <code>false</code>.</td></tr>
           <tr><td><code>commentaire</code></td><td>Facultatif : 200 caractères au plus, sur une ligne.</td></tr>
@@ -281,9 +289,9 @@ Content-Type: application/json
       <p>Aucun autre champ n'est accepté : <strong>aucun prix n'est lu dans la requête</strong>, le serveur recalcule tout. Le corps ne dépasse pas 256 Ko.</p>
       <h3>Contrôles, dans l'ordre</h3>
       <ol>
-        <li>accès ouvert aux commandes (<a href="#erreur-commandes_bloquees"><code>commandes_bloquees</code></a>), conditions d'utilisation en vigueur acceptées, commandes réelles ouvertes pour une clé de production ;</li>
+        <li>accès ouvert aux commandes (<a href="#erreur-commandes_bloquees"><code>commandes_bloquees</code></a>), conditions d'utilisation en vigueur acceptées, commandes réelles ouvertes pour une clé de production — sauf pour renvoyer une commande déjà enregistrée (même <code>Idempotency-Key</code>), toujours rendue telle quelle ;</li>
         <li><code>Idempotency-Key</code>, puis structure de la demande (<a href="#erreur-requete_invalide"><code>requete_invalide</code></a>, détail par champ dans <code>erreurs</code>) ;</li>
-        <li>commandes par API du jour de votre pharmacie : 10 commandes par jour par défaut, toutes clés confondues (<a href="#erreur-plafond_commandes_jour"><code>plafond_commandes_jour</code></a> jusqu'à minuit, heure de Paris) ;</li>
+        <li>commandes par API du jour de votre pharmacie : 10 commandes par jour par défaut, toutes clés confondues, annulées comprises (<a href="#erreur-plafond_commandes_jour"><code>plafond_commandes_jour</code></a> jusqu'à minuit, heure de Paris) ; en test, 100 commandes de test par jour au moins ;</li>
         <li>chaque ligne :
           <ul>
             <li>absente du catalogue : refusée, <code>produit_inconnu</code> ;</li>
@@ -306,8 +314,9 @@ Content-Type: application/json
       <ul>
         <li>Une commande acceptée (<code>etat: recue</code>) reste <strong>annulable 10 minutes</strong> (délai par défaut, réglable par Elixir Pharma pour votre pharmacie, 20 minutes au plus) : <code>annulable_jusqu_a</code> donne l'heure exacte.</li>
         <li>À la fin du délai, elle part <strong>seule</strong> vers notre système de préparation, sans validation par Elixir Pharma (sauf anomalie nette, ci-dessous). Les lignes encore sans stock au moment de l'envoi sont retirées si <code>si_rupture</code> vaut <code>retirer</code>.</li>
-        <li><code>DELETE /v1/commandes/{id}</code> l'annule pendant le délai. Une commande déjà annulée répond de nouveau <code>200</code>. Une fois partie : <a href="#erreur-trop_tard"><code>409 trop_tard</code></a> ; les réclamations et retours suivent alors les conditions générales de vente.</li>
-        <li>Une commande ne se modifie pas : annulez-la pendant le délai, puis passez-en une autre (nouvelle <code>Idempotency-Key</code>).</li>
+        <li><code>DELETE /v1/commandes/{id}</code> l'annule pendant le délai. Une commande déjà annulée répond de nouveau <code>200</code> ; un <code>503</code> se renvoie sans risque. L'annulation a son propre débit (une rafale de commandes ne l'empêche jamais) et reste servie pendant une suspension du service. Une fois partie, ou si Elixir Pharma l'a déjà prise en main : <a href="#erreur-trop_tard"><code>409 trop_tard</code></a> ; les réclamations et retours suivent alors les conditions générales de vente.</li>
+        <li>Le délai écoulé, la commande passe <code>en_transmission</code> : <code>GET</code> et <code>DELETE</code> disent la même chose.</li>
+        <li>Une commande ne se modifie pas : annulez-la pendant le délai, puis passez-en une autre (nouvelle <code>Idempotency-Key</code> ; la même <code>reference_client</code> est possible).</li>
       </ul>
     </section>
 
@@ -316,7 +325,7 @@ Content-Type: application/json
       <p>Il n'y a pas de validation manuelle par défaut. Une commande n'est gardée pour vérification par Elixir Pharma qu'en cas d'<strong>anomalie nette</strong> (réglable pour votre pharmacie) :</p>
       <ul>
         <li><code>anomalie_quantite</code> : une ligne dépasse <strong>10 fois votre quantité mensuelle habituelle</strong> de ce produit (moyenne des 6 derniers mois, tous canaux ; au moins 3 boîtes par mois pour un produit peu ou jamais commandé, soit 30 boîtes pour une première commande) ;</li>
-        <li><code>quasi_doublon</code> : au moins 80 % des produits de la commande figurent déjà dans une commande reçue depuis <strong>moins de 30 minutes</strong>, quel que soit le canal (site, API, logiciel d'officine). Une commande annulée puis repassée n'est pas un doublon.</li>
+        <li><code>quasi_doublon</code> : la commande porte presque les mêmes produits qu'une commande reçue depuis <strong>moins de 30 minutes</strong>, quel que soit le canal (site, API, logiciel d'officine) — au moins 80 % de produits communs, en comptant les produits des <strong>deux</strong> commandes. Un complément d'une ou deux lignes après une grosse commande n'est donc pas un doublon ; une commande annulée puis repassée non plus.</li>
       </ul>
       <p>La réponse est alors <code>201</code> avec <code>etat: en_attente_elixir</code>, <code>motif</code> (<code>anomalie_quantite</code> ou <code>quasi_doublon</code>), le détail dans <code>anomalies</code> et <code>annulable_jusqu_a: null</code>. La commande ne part qu'après vérification par Elixir Pharma, qui peut aussi retirer une ligne ; vous pouvez l'annuler tant qu'elle n'est pas partie.</p>
       <p>Plus rarement, une commande passe <code>en_attente_elixir</code> après le délai pour une raison de notre côté (envoi automatique momentanément indisponible, commande identique très récente, lignes en attente de stock…) : Elixir Pharma termine alors l'envoi. Rien n'est à faire de votre côté.</p>
@@ -326,10 +335,10 @@ Content-Type: application/json
       <h2 id="t-idempotence">Idempotence et nouveaux essais</h2>
       <ul>
         <li><code>Idempotency-Key</code> est <strong>obligatoire</strong> sur <code>POST /v1/commandes</code> : 8 à 128 caractères parmi <code>A-Z a-z 0-9 _ . : -</code> ; un UUID v4 convient. Une valeur par commande, jamais réutilisée pour une autre.</li>
-        <li>Après une coupure, un délai dépassé ou un <code>503</code> : <strong>renvoyez exactement la même requête avec la même clé</strong>. La commande n'est jamais créée deux fois ; la réponse d'origine revient avec <code>Idempotent-Replayed: true</code> (y compris un refus <code>422</code>). Son corps est celui de la première réponse ; <code>X-Request-Id</code> est celui de la nouvelle requête.</li>
+        <li>Après une coupure, un délai dépassé ou un <code>503</code> : <strong>renvoyez exactement la même requête avec la même clé</strong>. La commande n'est jamais créée deux fois ; la réponse d'origine revient avec <code>Idempotent-Replayed: true</code> (y compris un refus <code>422</code>), même si l'accès a été fermé depuis (seule une nouvelle commande serait refusée). Le corps rejoué décrit la commande <strong>à sa création</strong> : son état actuel se lit par <code>GET /v1/commandes/{id}</code> (en-tête <code>Location</code>) ; <code>X-Request-Id</code> est celui de la nouvelle requête.</li>
         <li>Même clé, contenu différent : <a href="#erreur-idempotency_key_reutilisee"><code>422 idempotency_key_reutilisee</code></a>. Requête encore en traitement : <a href="#erreur-requete_en_cours"><code>409 requete_en_cours</code></a>, renvoyez-la après <code>Retry-After</code>.</li>
         <li>La clé vaut pour votre pharmacie et l'environnement (test ou production), quelle que soit la clé d'API : une clé d'API remplacée entre deux essais retrouve la même commande.</li>
-        <li><code>reference_client</code> est une seconde barrière : si un script relancé change d'<code>Idempotency-Key</code> mais garde sa référence, la commande est refusée (<code>409 reference_deja_utilisee</code>, champ <code>id</code> : la commande existante).</li>
+        <li><code>reference_client</code> est une seconde barrière : si un script relancé change d'<code>Idempotency-Key</code> mais garde sa référence, la commande est refusée (<code>409 reference_deja_utilisee</code>, champ <code>id</code> : la commande existante). Si l'autre requête de même référence est encore en traitement : <code>409 requete_en_cours</code>, renvoyez après <code>Retry-After</code>.</li>
         <li><strong>Un seul canal par besoin</strong> : ne commandez pas le même besoin à la fois par votre logiciel d'officine et par l'API ; les deux commandes ne peuvent pas être reconnues comme une seule.</li>
       </ul>
     </section>
@@ -341,7 +350,7 @@ Content-Type: application/json
         <tbody>
           <tr><td><code>recue</code></td><td>Enregistrée ; délai d'annulation en cours.</td></tr>
           <tr><td><code>en_attente_elixir</code></td><td>Gardée par Elixir Pharma (voir <code>motif</code>) : <code>anomalie_quantite</code>, <code>quasi_doublon</code>, ou une raison de notre côté. Commande du site : <code>verification</code>, <code>campagne</code>, <code>justificatif</code>.</td></tr>
-          <tr><td><code>en_transmission</code></td><td>En cours d'envoi vers notre système de préparation.</td></tr>
+          <tr><td><code>en_transmission</code></td><td>Délai d'annulation écoulé : en cours d'envoi vers notre système de préparation (plus annulable).</td></tr>
           <tr><td><code>transmise</code></td><td>Envoyée ; prise en charge en général dans les deux heures.</td></tr>
           <tr><td><code>en_preparation</code></td><td>Prise en charge, en préparation.</td></tr>
           <tr><td><code>partiellement_sortie</code></td><td>Une partie est sortie de l'entrepôt, un reliquat reste à livrer.</td></tr>
@@ -352,7 +361,7 @@ Content-Type: application/json
         </tbody>
       </table></div>
       <p>Chaque ligne a un <code>etat</code> : <code>acceptee</code>, <code>refusee</code>, <code>rupture</code>, <code>annulee</code> ou <code>traitee_par_elixir</code> (retirée par Elixir Pharma), avec <code>motif</code> et <code>detail</code>. Une fois la commande prise en charge, <code>suivi</code> donne les quantités commandée, acceptée, servie, non servie, à livrer et facturée. <code>commandes_elixir</code> donne les numéros de nos commandes (imprimés sur le bon de livraison et la facture) : plusieurs commandes d'une même journée peuvent être regroupées dans une seule.</p>
-      <p>De nouvelles valeurs de <code>motif</code> pourront s'ajouter : traitez une valeur inconnue comme une simple information.</p>
+      <p>De nouvelles valeurs de <code>motif</code>, d'<code>etat</code> ou d'autres listes pourront s'ajouter (elles sont marquées <code>x-extensible-enum</code> dans la description OpenAPI) : traitez une valeur inconnue comme une simple information, sans erreur.</p>
     </section>
 
     <section id="suivi" aria-labelledby="t-suivi">
@@ -360,9 +369,11 @@ Content-Type: application/json
       <ul>
         <li><code>GET /v1/commandes?debut=&amp;fin=</code> : vos commandes du site et de l'API (92 jours au plus, 30 derniers jours par défaut), les plus récentes d'abord, 20 par page (50 au plus). Les commandes passées depuis votre logiciel d'officine ne sont pas listées en V1.</li>
         <li><code>GET /v1/commandes/{id}</code> : détail, état et quantités de chaque ligne.</li>
+        <li>Factures, avoirs et bons de livraison demandent le droit « documents ».</li>
+        <li><code>GET /v1/commandes/{id}</code> donne, pour chaque commande Elixir, ses <code>factures</code> et <code>avoirs</code> (<code>id</code> et <code>numero</code> : <code>id</code> sert à <code>GET /v1/factures/{id}/pdf</code>) et ses <code>livraisons</code>.</li>
         <li><code>GET /v1/factures?debut=&amp;fin=&amp;type=</code> : factures et avoirs (366 jours au plus, 90 derniers jours par défaut ; <code>type</code> : <code>tous</code>, <code>factures</code>, <code>avoirs</code>) ; <code>GET /v1/factures/{id}/pdf</code> : le PDF d'origine, quand <code>pdf_disponible</code> vaut <code>true</code>.</li>
         <li><code>GET /v1/livraisons?debut=&amp;fin=</code> : bons de livraison (366 jours au plus, 30 derniers jours par défaut), datés de la sortie de l'entrepôt ; <code>GET /v1/livraisons/{id}/pdf</code> : duplicata établi par Elixir Pharma.</li>
-        <li>Pages : <code>page</code> (à partir de 1) et <code>par_page</code> ; <code>suivante</code> donne l'adresse de la page suivante, <code>null</code> à la dernière.</li>
+        <li>Pages : <code>page</code> (à partir de 1) et <code>par_page</code> ; <code>suivante</code> donne la page suivante, <code>null</code> à la dernière. C'est un chemin depuis la racine du site (<code>/api/v1/…</code>) : ajoutez-le à <code>https://elixir-commande.expepharma.com</code>. Il reprend la période résolue (<code>debut</code>, <code>fin</code>), pour qu'elle ne glisse pas quand minuit passe. <code>total</code> donne le nombre d'éléments (<code>null</code> pour les commandes, qui se comptent page par page).</li>
       </ul>
     </section>
 
@@ -370,7 +381,9 @@ Content-Type: application/json
       <h2 id="t-test">Mode test</h2>
       <ul>
         <li>Une clé <code>elx_test_</code> fait les <strong>vrais contrôles</strong> : vos prix, vos contingents, la disponibilité, vos plafonds, les anomalies. Les lectures (catalogue, commandes, documents) sont les vraies.</li>
-        <li>Une commande de test porte un numéro <code>T…</code>. Elle n'est <strong>jamais envoyée ni facturée</strong> et ne compte pas dans vos contingents. Son état est simulé : <code>recue</code> pendant le délai d'annulation, puis <code>transmise</code>, puis <code>sortie_entrepot</code> 10 minutes plus tard.</li>
+        <li>Une commande de test porte un numéro <code>T…</code>. Elle n'est <strong>jamais envoyée ni facturée</strong> et ne compte pas dans vos contingents. Son état est simulé : <code>recue</code> pendant le délai d'annulation, puis <code>transmise</code>, puis <code>sortie_entrepot</code> 10 minutes plus tard. Gardée « à vérifier » (anomalie) : <code>en_attente_elixir</code> pendant le délai, puis validation simulée (<code>transmise</code>) — en production, elle attendrait la validation d'Elixir Pharma.</li>
+        <li>Le plafond de commandes du jour et les contrôles d'anomalie s'appliquent aussi en test (100 commandes de test par jour au moins). Une même commande de test renvoyée avec une <strong>nouvelle</strong> <code>Idempotency-Key</code> dans les 30 minutes est un quasi-doublon : variez les produits, ou annulez la précédente.</li>
+        <li>Débits des clés de test : 30 commandes par minute (500 par jour) et 30 simulations par minute (1 000 par jour) ; les autres classes sont celles de la production.</li>
         <li>L'en-tête <code>X-Elixir-Simulation</code> (clé de test seulement, ignoré en production) force un cas difficile pour que votre outil le gère : <code>rupture</code> (lignes en rupture), <code>contingent</code> (première ligne contingentée, ramenée à la moitié), <code>indisponible</code> (<code>503</code> à renvoyer), <code>doublon</code> (commande gardée « à vérifier »).</li>
         <li>Le parcours de test (six étapes, voir <a href="#acces">Obtenir un accès</a>) est obligatoire avant la clé de production.</li>
       </ul>
@@ -378,19 +391,20 @@ Content-Type: application/json
 
     <section id="limites" aria-labelledby="t-limites">
       <h2 id="t-limites">Limites de débit</h2>
-      <p>Par clé, en fenêtres fixes (minute et jour). Au-delà : <a href="#erreur-debit"><code>429 debit</code></a> ou <a href="#erreur-plafond_journalier"><code>plafond_journalier</code></a>, avec <code>Retry-After</code> (secondes). Les en-têtes <code>RateLimit-Policy</code> et <code>RateLimit</code> donnent le reste à titre indicatif.</p>
+      <p>Par clé, en fenêtres fixes : la minute, et le jour de minuit à minuit (heure de Paris). Au-delà : <a href="#erreur-debit"><code>429 debit</code></a> ou <a href="#erreur-plafond_journalier"><code>plafond_journalier</code></a>, avec <code>Retry-After</code> (secondes). Une requête refusée par le débit (<code>429</code>) n'est pas comptée ; toute autre requête l'est, refus <code>400</code> et <code>422</code> compris. Les en-têtes <code>RateLimit-Policy</code> et <code>RateLimit</code> donnent le reste à titre indicatif. Le tableau donne les débits des clés de production (clés de test : voir <a href="#test">Mode test</a>).</p>
       <div class="tableau empile"><table>
         <thead><tr><th>Classe</th><th>Routes</th><th>Par minute</th><th>Par jour</th></tr></thead>
         <tbody>
           <tr data-classe="lecture" data-par-minute="60" data-par-jour="5000"><td>Lecture</td><td>état, catalogue, contingents, commandes, factures et livraisons (listes)</td><td class="num" data-label="Par minute">60</td><td class="num" data-label="Par jour">5 000</td></tr>
           <tr data-classe="disponibilites" data-par-minute="30" data-par-jour="5000"><td>Disponibilités</td><td><code>GET /v1/disponibilites</code> (200 produits par appel)</td><td class="num" data-label="Par minute">30</td><td class="num" data-label="Par jour">5 000</td></tr>
           <tr data-classe="documents" data-par-minute="20" data-par-jour="300"><td>Documents</td><td>PDF des factures et des bons de livraison</td><td class="num" data-label="Par minute">20</td><td class="num" data-label="Par jour">300</td></tr>
-          <tr data-classe="commande" data-par-minute="6" data-par-jour="30"><td>Commande</td><td><code>POST /v1/commandes</code>, <code>DELETE /v1/commandes/{id}</code></td><td class="num" data-label="Par minute">6</td><td class="num" data-label="Par jour">30</td></tr>
+          <tr data-classe="commande" data-par-minute="6" data-par-jour="30"><td>Commande</td><td><code>POST /v1/commandes</code></td><td class="num" data-label="Par minute">6</td><td class="num" data-label="Par jour">30</td></tr>
+          <tr data-classe="annulation" data-par-minute="30" data-par-jour="1000"><td>Annulation</td><td><code>DELETE /v1/commandes/{id}</code></td><td class="num" data-label="Par minute">30</td><td class="num" data-label="Par jour">1 000</td></tr>
           <tr data-classe="simulation" data-par-minute="10" data-par-jour="500"><td>Simulation</td><td><code>POST /v1/commandes/simulation</code></td><td class="num" data-label="Par minute">10</td><td class="num" data-label="Par jour">500</td></tr>
         </tbody>
       </table></div>
       <ul>
-        <li>Avant même la clé, par réseau : 120 requêtes par minute ; après 20 clés refusées en 10 minutes depuis un même réseau, <code>429</code> pendant quelques minutes.</li>
+        <li>Avant même la clé, par réseau : 120 requêtes par minute ; après 20 clés inconnues ou mal recopiées en 10 minutes depuis un même réseau, <code>429</code> pendant quelques minutes (une clé révoquée ou expirée ne compte pas contre le réseau). Plusieurs pharmacies derrière un même serveur (éditeur) partagent les 120 requêtes par minute : dites-le à Elixir Pharma.</li>
         <li>Lectures en direct de notre système (commandes, factures, livraisons, disponibilités, contingents, contrôles d'une commande) : 30 par minute pour votre pharmacie, toutes clés confondues.</li>
         <li>Commandes : en plus, le plafond de commandes du jour de votre accès (10 commandes par jour par défaut).</li>
       </ul>
@@ -403,7 +417,7 @@ Content-Type: application/json
   "title": "Contingent impossible à vérifier", "status": 503, "code": "contingent_indisponible",
   "detail": "La commande contient un produit contingenté et notre système ne répond pas. Rien n'a été enregistré : renvoyez la même requête (même Idempotency-Key) dans une minute.",
   "instance": "urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b" }</code></pre>
-      <p>Règle générale : <code>4xx</code> = corrigez la requête (sauf <code>409 requete_en_cours</code> et <code>429</code> : attendez) ; <code>503</code> = rien n'a été enregistré, renvoyez la même requête après <code>Retry-After</code>.</p>
+      <p>Règle générale : <code>4xx</code> = corrigez la requête (sauf <code>409 requete_en_cours</code> et <code>429</code> : attendez) ; <code>503</code> = aucune nouvelle commande n'a été enregistrée, renvoyez la même requête (même <code>Idempotency-Key</code>) après <code>Retry-After</code>.</p>
       <div class="tableau empile"><table>
         <thead><tr><th>Code</th><th>Statut</th><th>Sens et que faire</th></tr></thead>
         <tbody>
@@ -414,7 +428,8 @@ Content-Type: application/json
           <tr id="erreur-cle_invalide" data-statut="401"><td><code>cle_invalide</code></td><td class="num" data-label="Statut">401</td><td>Clé inconnue ou mal recopiée : recopiez-la en entier, sans espace ; une clé de test commence par <code>elx_test_</code>.</td></tr>
           <tr id="erreur-cle_revoquee" data-statut="401"><td><code>cle_revoquee</code></td><td class="num" data-label="Statut">401</td><td>Clé révoquée : créez-en une nouvelle dans « Accès API ».</td></tr>
           <tr id="erreur-cle_expiree" data-statut="401"><td><code>cle_expiree</code></td><td class="num" data-label="Statut">401</td><td>Clé remplacée depuis plus de 7 jours : utilisez la nouvelle.</td></tr>
-          <tr id="erreur-portee_insuffisante" data-statut="403"><td><code>portee_insuffisante</code></td><td class="num" data-label="Statut">403</td><td>La clé n'a pas le droit nécessaire (« lecture » ou « commande ») : créez une clé avec ce droit, ou demandez-le à Elixir Pharma.</td></tr>
+          <tr id="erreur-cle_production_hors_site" data-statut="403"><td><code>cle_production_hors_site</code></td><td class="num" data-label="Statut">403</td><td>Clé de production envoyée à une autre adresse que <code>https://elixir-commande.expepharma.com/api/v1</code> : corrigez l'adresse (seules les clés de test y sont acceptées).</td></tr>
+          <tr id="erreur-portee_insuffisante" data-statut="403"><td><code>portee_insuffisante</code></td><td class="num" data-label="Statut">403</td><td>La clé n'a pas le droit nécessaire (« lecture », « commande » ou « documents ») : créez une clé avec ce droit, ou demandez-le à Elixir Pharma.</td></tr>
           <tr id="erreur-ip_non_autorisee" data-statut="403"><td><code>ip_non_autorisee</code></td><td class="num" data-label="Statut">403</td><td>Appel depuis un réseau non déclaré pour votre pharmacie.</td></tr>
           <tr id="erreur-acces_suspendu" data-statut="403"><td><code>acces_suspendu</code></td><td class="num" data-label="Statut">403</td><td>Accès API suspendu : contactez Elixir Pharma.</td></tr>
           <tr id="erreur-compte_bloque" data-statut="403"><td><code>compte_bloque</code></td><td class="num" data-label="Statut">403</td><td>Accès momentanément indisponible : contactez Elixir Pharma.</td></tr>
@@ -423,9 +438,9 @@ Content-Type: application/json
           <tr id="erreur-commandes_bloquees" data-statut="403"><td><code>commandes_bloquees</code></td><td class="num" data-label="Statut">403</td><td>Commandes par API suspendues pour votre pharmacie ; la lecture continue. Le site et votre logiciel restent disponibles.</td></tr>
           <tr id="erreur-introuvable" data-statut="404"><td><code>introuvable</code></td><td class="num" data-label="Statut">404</td><td>Adresse, produit, commande ou document inconnu — ou d'une autre pharmacie (même réponse).</td></tr>
           <tr id="erreur-methode_non_autorisee" data-statut="405"><td><code>methode_non_autorisee</code></td><td class="num" data-label="Statut">405</td><td>Méthode non prévue pour cette adresse : voir l'en-tête <code>Allow</code>.</td></tr>
-          <tr id="erreur-requete_en_cours" data-statut="409"><td><code>requete_en_cours</code></td><td class="num" data-label="Statut">409</td><td>La même requête est encore en traitement : renvoyez-la à l'identique après <code>Retry-After</code>.</td></tr>
-          <tr id="erreur-reference_deja_utilisee" data-statut="409"><td><code>reference_deja_utilisee</code></td><td class="num" data-label="Statut">409</td><td>Cette <code>reference_client</code> a déjà servi (champ <code>id</code>) : relisez cette commande plutôt que de la repasser.</td></tr>
-          <tr id="erreur-trop_tard" data-statut="409"><td><code>trop_tard</code></td><td class="num" data-label="Statut">409</td><td>Commande déjà partie (champ <code>etat</code>) : plus annulable par l'API.</td></tr>
+          <tr id="erreur-requete_en_cours" data-statut="409"><td><code>requete_en_cours</code></td><td class="num" data-label="Statut">409</td><td>La même requête (ou une requête de même <code>reference_client</code>) est encore en traitement : renvoyez-la à l'identique après <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-reference_deja_utilisee" data-statut="409"><td><code>reference_deja_utilisee</code></td><td class="num" data-label="Statut">409</td><td>Cette <code>reference_client</code> porte une commande enregistrée (champ <code>id</code>) : relisez cette commande plutôt que de la repasser. Pour la corriger : annulez-la pendant le délai (sa référence est alors libérée), puis repassez-la.</td></tr>
+          <tr id="erreur-trop_tard" data-statut="409"><td><code>trop_tard</code></td><td class="num" data-label="Statut">409</td><td>Commande déjà partie, ou prise en main par Elixir Pharma (champ <code>etat</code>) : plus annulable par l'API.</td></tr>
           <tr id="erreur-trop_long" data-statut="413"><td><code>trop_long</code></td><td class="num" data-label="Statut">413</td><td>Corps de plus de 256 Ko : scindez la commande.</td></tr>
           <tr id="erreur-requete_invalide" data-statut="422"><td><code>requete_invalide</code></td><td class="num" data-label="Statut">422</td><td>Format non respecté : <code>erreurs</code> donne chaque champ en cause (<code>lignes[2].quantite</code>, <code>page</code>…).</td></tr>
           <tr id="erreur-idempotency_key_reutilisee" data-statut="422"><td><code>idempotency_key_reutilisee</code></td><td class="num" data-label="Statut">422</td><td>Cette <code>Idempotency-Key</code> a servi pour un autre contenu : une clé par commande.</td></tr>
@@ -433,10 +448,10 @@ Content-Type: application/json
           <tr id="erreur-commande_refusee" data-statut="422"><td><code>commande_refusee</code></td><td class="num" data-label="Statut">422</td><td><code>tout_ou_rien</code> demandé et une ligne refusée, retirée ou réduite (voir <code>lignes</code>) ; rien n'est enregistré.</td></tr>
           <tr id="erreur-plafond_depasse" data-statut="422"><td><code>plafond_depasse</code></td><td class="num" data-label="Statut">422</td><td>Plafond de lignes, de boîtes ou de montant dépassé (champ <code>plafond</code>) : scindez la commande ou demandez un ajustement.</td></tr>
           <tr id="erreur-debit" data-statut="429"><td><code>debit</code></td><td class="num" data-label="Statut">429</td><td>Trop de requêtes : attendez <code>Retry-After</code>.</td></tr>
-          <tr id="erreur-plafond_journalier" data-statut="429"><td><code>plafond_journalier</code></td><td class="num" data-label="Statut">429</td><td>Plafond du jour de la clé atteint : attendez <code>Retry-After</code>.</td></tr>
+          <tr id="erreur-plafond_journalier" data-statut="429"><td><code>plafond_journalier</code></td><td class="num" data-label="Statut">429</td><td>Plafond du jour de la clé atteint : attendez <code>Retry-After</code> (minuit, heure de Paris).</td></tr>
           <tr id="erreur-plafond_commandes_jour" data-statut="429"><td><code>plafond_commandes_jour</code></td><td class="num" data-label="Statut">429</td><td>Commandes par API du jour de votre pharmacie atteintes, jusqu'à minuit (heure de Paris). Le site et votre logiciel restent disponibles.</td></tr>
-          <tr id="erreur-api_suspendue" data-statut="503"><td><code>api_suspendue</code></td><td class="num" data-label="Statut">503</td><td>API momentanément suspendue (sauf <code>GET /v1/etat</code>) : réessayez plus tard.</td></tr>
-          <tr id="erreur-ecriture_suspendue" data-statut="503"><td><code>ecriture_suspendue</code></td><td class="num" data-label="Statut">503</td><td>Commandes réelles pas encore ouvertes, ou momentanément fermées : rien n'est enregistré. Les clés de test fonctionnent.</td></tr>
+          <tr id="erreur-api_suspendue" data-statut="503"><td><code>api_suspendue</code></td><td class="num" data-label="Statut">503</td><td>API momentanément suspendue (sauf <code>GET /v1/etat</code> et l'annulation) : réessayez plus tard.</td></tr>
+          <tr id="erreur-ecriture_suspendue" data-statut="503"><td><code>ecriture_suspendue</code></td><td class="num" data-label="Statut">503</td><td>Commandes réelles pas encore ouvertes, ou momentanément fermées : aucune nouvelle commande n'est enregistrée (une commande déjà enregistrée, renvoyée avec la même <code>Idempotency-Key</code>, est rendue telle quelle). Les clés de test fonctionnent.</td></tr>
           <tr id="erreur-contingent_indisponible" data-statut="503"><td><code>contingent_indisponible</code></td><td class="num" data-label="Statut">503</td><td>Contingent d'un produit impossible à vérifier : renvoyez la même requête (même <code>Idempotency-Key</code>) après <code>Retry-After</code>.</td></tr>
           <tr id="erreur-indisponible" data-statut="503"><td><code>indisponible</code></td><td class="num" data-label="Statut">503</td><td>Service momentanément indisponible : renvoyez la même requête après <code>Retry-After</code>, sans risque de doublon.</td></tr>
         </tbody>
@@ -456,11 +471,11 @@ Content-Type: application/json
         <li data-route="POST /v1/commandes"><div class="ligne1"><span class="verbe post">POST</span><code>/v1/commandes</code><span class="droit">commande</span></div><p>Passer une commande (<code>Idempotency-Key</code> obligatoire).</p></li>
         <li data-route="GET /v1/commandes"><div class="ligne1"><span class="verbe">GET</span><code>/v1/commandes</code><span class="droit">lecture</span></div><p>Vos commandes du site et de l'API (<code>debut</code>, <code>fin</code> ≤ 92 jours, <code>page</code>).</p></li>
         <li data-route="GET /v1/commandes/{id}"><div class="ligne1"><span class="verbe">GET</span><code>/v1/commandes/{id}</code><span class="droit">lecture</span></div><p>Détail, état et quantités servies d'une commande.</p></li>
-        <li data-route="DELETE /v1/commandes/{id}"><div class="ligne1"><span class="verbe delete">DELETE</span><code>/v1/commandes/{id}</code><span class="droit">commande</span></div><p>Annuler pendant le délai d'annulation.</p></li>
-        <li data-route="GET /v1/factures"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures</code><span class="droit">lecture</span></div><p>Factures et avoirs (<code>debut</code>, <code>fin</code> ≤ 366 jours, <code>type</code>).</p></li>
-        <li data-route="GET /v1/factures/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures/{id}/pdf</code><span class="droit">lecture</span></div><p>PDF d'origine d'une facture ou d'un avoir.</p></li>
-        <li data-route="GET /v1/livraisons"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons</code><span class="droit">lecture</span></div><p>Bons de livraison (<code>debut</code>, <code>fin</code> ≤ 366 jours).</p></li>
-        <li data-route="GET /v1/livraisons/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons/{id}/pdf</code><span class="droit">lecture</span></div><p>Duplicata d'un bon de livraison.</p></li>
+        <li data-route="DELETE /v1/commandes/{id}"><div class="ligne1"><span class="verbe delete">DELETE</span><code>/v1/commandes/{id}</code><span class="droit">commande</span></div><p>Annuler pendant le délai d'annulation (classe de débit « annulation »).</p></li>
+        <li data-route="GET /v1/factures"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures</code><span class="droit">documents</span></div><p>Factures et avoirs (<code>debut</code>, <code>fin</code> ≤ 366 jours, <code>type</code>).</p></li>
+        <li data-route="GET /v1/factures/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/factures/{id}/pdf</code><span class="droit">documents</span></div><p>PDF d'origine d'une facture ou d'un avoir.</p></li>
+        <li data-route="GET /v1/livraisons"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons</code><span class="droit">documents</span></div><p>Bons de livraison (<code>debut</code>, <code>fin</code> ≤ 366 jours).</p></li>
+        <li data-route="GET /v1/livraisons/{id}/pdf"><div class="ligne1"><span class="verbe">GET</span><code>/v1/livraisons/{id}/pdf</code><span class="droit">documents</span></div><p>Duplicata d'un bon de livraison.</p></li>
       </ul>
     </section>
 
@@ -490,7 +505,7 @@ Content-Type: application/json
     <section id="support" aria-labelledby="t-support">
       <h2 id="t-support">Support</h2>
       <p>Elixir Pharma · <a href="mailto:pharmacien@elixirpharma.fr">pharmacien@elixirpharma.fr</a> · <a href="tel:+33186043995">01 86 04 39 95</a></p>
-      <p>Pour une question sur un appel, donnez l'en-tête <code>X-Request-Id</code> de la réponse, l'heure et la route. <strong>N'envoyez jamais votre clé</strong> : Elixir Pharma ne vous la demandera jamais. Le site de commande, votre logiciel d'officine et le téléphone restent disponibles si l'API ne l'est pas.</p>
+      <p>Pour une question sur un appel, donnez l'en-tête <code>X-Request-Id</code> de la réponse (aussi dans « Accès API » → « Derniers appels »), l'heure et la route. <strong>N'envoyez jamais votre clé</strong> : Elixir Pharma ne vous la demandera jamais. Le site de commande, votre logiciel d'officine et le téléphone restent disponibles si l'API ne l'est pas.</p>
     </section>
   </main>
 </div>

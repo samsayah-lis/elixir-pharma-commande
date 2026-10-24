@@ -13,6 +13,7 @@
 //   GET /v1/commandes/{id}                   détail : état, quantités demandées, acceptées, servies, non servies, facturées
 //   GET /v1/factures?debut=&fin=&type=       factures et avoirs (≤ 366 jours)        GET /v1/factures/{id}/pdf : PDF d'origine
 //   GET /v1/livraisons?debut=&fin=           bons de livraison (≤ 366 jours)          GET /v1/livraisons/{id}/pdf : duplicata
+//   (factures, avoirs et bons de livraison : droit « documents », séparé de « lecture »)
 //
 // Charge d'Odoo : chaque route qui lit vraiment Odoo (cache manqué) est comptée par fiche (30/min, toutes clés) et pour
 // toutes les pharmacies (240/min) en plus du débit par clé ; caches par instance : liste de prix de la fiche et produits
@@ -30,7 +31,7 @@ import { resteContingents, cipsContingentes, formerContingents } from "./_api-co
 import { listerCommandesApi, detailCommandeApi, ORDRE_SITE, ORDRE_TEST } from "./_api-suivi.js";
 import { noterParcours } from "./_api-parcours.js";
 import { lecteurOdoo, listesDesFiches } from "./_api-prix.js";
-import { LIMITES, PAGES, PRIX, MENTION_PRIX_DETAIL, MENTION_DISPONIBILITE, niveauStock } from "./_api-config.js";
+import { ANOMALIE, LIMITES, PAGES, PRIX, MENTION_PRIX_DETAIL, MENTION_DISPONIBILITE, niveauStock } from "./_api-config.js";
 import { erreurApi, reponseJson, reponseFichier, isoParis } from "./_api-http.js";
 
 const LISTE_MS = 10 * 60e3, QUOTA_MS = 10 * 60e3, DISPO_MS = 60e3, CONTINGENTS_MS = 60e3;
@@ -174,18 +175,29 @@ export function creerServicesLecture({ stock, odoo, horloge = () => Date.now(), 
     for (const r of rows) for (const c of [r.default_code, r.barcode]) if (c && xs.includes(c) && !out.has(c)) out.set(c, { id: r.id, free_qty: Number(r.free_qty) || 0 });
     return out;
   }
-  // Lignes de commande Odoo de la fiche (toutes origines, non annulées) sur ces produits depuis une date Odoo (« AAAA-MM-JJ hh:mm:ss ») :
-  // historique (quantité mensuelle habituelle) et commandes reçues dans les dernières minutes (quasi-doublons du logiciel)
-  async function lignesOdoo(odooId, codes, depuisOdoo) {
+  // Historique de la fiche (toutes origines, commandes non annulées) sur ces produits depuis une date Odoo (« AAAA-MM-JJ
+  // hh:mm:ss ») : quantité commandée par produit, SOMME GROUPÉE par Odoo (read_group : aucune limite de lignes, une grosse
+  // pharmacie qui commande tous les jours n'a jamais d'historique tronqué) → Map(product.product id → quantité)
+  async function historiqueOdoo(odooId, codes, depuisOdoo) {
     const xs = [...new Set(codes)].filter(c => CIP13.test(c));
-    if (!xs.length) return [];
-    return (await lire("sale.order.line", "search_read", [[["company_id", "=", COMPANY_ID], ["order_partner_id", "child_of", Number(odooId)], ["state", "!=", "cancel"],
+    const out = new Map();
+    if (!xs.length) return out;
+    const rows = (await lire("sale.order.line", "read_group", [[["company_id", "=", COMPANY_ID], ["order_partner_id", "child_of", Number(odooId)], ["state", "!=", "cancel"],
       "|", ["product_id.default_code", "in", xs], ["product_id.barcode", "in", xs], ["order_id.date_order", ">=", depuisOdoo]]],
-      { fields: ["product_id", "product_uom_qty", "order_id", "create_date"], limit: 5000 })) || [];
+      { fields: ["product_uom_qty:sum"], groupby: ["product_id"], lazy: false })) || [];
+    for (const r of rows) { const pid = Array.isArray(r.product_id) ? r.product_id[0] : Number(r.product_id) || 0; if (pid) out.set(pid, (out.get(pid) || 0) + (Number(r.product_uom_qty) || 0)); }
+    return out;
+  }
+  // Lignes des commandes Odoo de la fiche CRÉÉES depuis une date Odoo (quasi-doublons du logiciel d'officine), tous produits
+  // (la mesure de ressemblance compare les deux commandes entières), les plus récentes d'abord → { lignes, tronque }
+  async function lignesRecentesOdoo(odooId, depuisOdoo, max = ANOMALIE.recentes_max) {
+    const lignes = (await lire("sale.order.line", "search_read", [[["company_id", "=", COMPANY_ID], ["order_partner_id", "child_of", Number(odooId)], ["state", "!=", "cancel"],
+      ["create_date", ">=", depuisOdoo]]], { fields: ["product_id", "order_id", "create_date"], order: "id desc", limit: max })) || [];
+    return { lignes, tronque: lignes.length >= max };
   }
 
   return { deps, chargerOdoo, listeDeFiche, contingentes, disponibilites, contingents, contingentsBruts, oublierContingents, produitsJustificatif, produitsHorsApi,
-    produitsOdoo, lignesOdoo };
+    produitsOdoo, historiqueOdoo, lignesRecentesOdoo };
 }
 
 // ── Paramètres ──
@@ -219,9 +231,13 @@ function periode(q, conf, now) {
   if (erreurs.length) throw invalide(erreurs);
   return { debut, fin };
 }
-const suivante = (route, q, page, parPage, encore) => {
+// page suivante : chemin depuis la racine du site (« /api/v1/… », à ajouter à https://elixir-commande.expepharma.com) ;
+// periode : debut et fin RÉSOLUS (valeurs par défaut comprises) — la page suivante ne glisse pas quand minuit passe
+const suivante = (route, q, page, parPage, encore, periode = null) => {
   if (!encore) return null;
-  const p = new URLSearchParams({ ...Object.fromEntries(Object.entries(q).filter(([k]) => !["page", "par_page"].includes(k) && typeof q[k] === "string")), page: String(page + 1), par_page: String(parPage) });
+  const p = new URLSearchParams({ ...Object.fromEntries(Object.entries(q).filter(([k]) => !["page", "par_page", "debut", "fin"].includes(k) && typeof q[k] === "string")),
+    ...(periode ? { debut: periode.debut, fin: periode.fin } : Object.fromEntries(["debut", "fin"].filter(k => typeof q[k] === "string").map(k => [k, q[k]]))),
+    page: String(page + 1), par_page: String(parPage) });
   return `/api/v1/${route}?${p}`;
 };
 // fiche de la clé pour les lectures de _chat-perimetre.js (CIP relu dans Odoo, sinon celui de l'accès)
@@ -324,7 +340,8 @@ async function routeCommandes({ event, acces, fiche, stock, services, environnem
   await services.chargerOdoo(acces.odoo_id);
   const r = await listerCommandesApi(ctx, { debutIso: minuitParisIso(debut), finIso: minuitParisIso(jourPlus(fin, 1)), page, parPage, environnement, now: maintenant },
     stock, services.deps);
-  return { donnees: r.donnees, page, par_page: parPage, suivante: suivante("commandes", q, page, parPage, r.suivante), periode: { debut, fin } };
+  // total : null (les commandes du site et de l'API se comptent page par page) — même forme que les autres listes
+  return { donnees: r.donnees, page, par_page: parPage, total: null, suivante: suivante("commandes", q, page, parPage, r.suivante, { debut, fin }), periode: { debut, fin } };
 }
 async function routeCommande(arg) {
   const { acces, fiche, stock, services, environnement, maintenant, params } = arg;
@@ -350,7 +367,7 @@ async function routeFactures({ event, acces, fiche, services, maintenant }) {
   return {
     donnees: r.pieces.map(x => ({ id: x.id, type: x.piece, numero: x.numero, date: x.date, montant_ht: x.montant_ht, montant_tva: x.montant_tva, montant_ttc: x.montant_ttc,
       commandes_elixir: x.commandes, pdf_disponible: x.pdf_disponible, ...(x.piece === "avoir" ? { avoir_de: x.avoir_de || null, motif: x.motif || null } : {}) })),
-    page, par_page: parPage, total: r.total, suivante: suivante("factures", q, page, parPage, offset + r.pieces.length < r.total), periode: { debut, fin },
+    page, par_page: parPage, total: r.total, suivante: suivante("factures", q, page, parPage, offset + r.pieces.length < r.total, { debut, fin }), periode: { debut, fin },
   };
 }
 async function routeFacturePdf({ acces, fiche, services, requestId, params }) {
@@ -372,7 +389,7 @@ async function routeLivraisons({ event, acces, fiche, services, maintenant }) {
   return {
     donnees: r.bons.map(b => ({ id: b.id, numero: b.numero, sortie_le: depuisParis(b.date, b.heure),
       commande_elixir: b.commande, renvoi: b.renvoi, reste_a_livrer: b.reste_a_livrer, produits: b.produits.map(p => ({ cip: p.cip, nom: p.produit })) })),
-    page, par_page: parPage, total: r.total, suivante: suivante("livraisons", q, page, parPage, offset + r.bons.length < r.total), periode: { debut, fin },
+    page, par_page: parPage, total: r.total, suivante: suivante("livraisons", q, page, parPage, offset + r.bons.length < r.total, { debut, fin }), periode: { debut, fin },
   };
 }
 // jour et heure de Paris (« 2026-09-02 », « 21:30 », forme des bons de livraison) → date ISO avec son décalage
@@ -404,8 +421,8 @@ export const ROUTES_LECTURE = [
   { methode: "GET", gabarit: "/v1/contingents", re: /^\/v1\/contingents$/, portee: "lecture", classe: "lecture", traiter: routeContingents },
   { methode: "GET", gabarit: "/v1/commandes", re: /^\/v1\/commandes$/, portee: "lecture", classe: "lecture", traiter: routeCommandes },
   { methode: "GET", gabarit: "/v1/commandes/{id}", re: /^\/v1\/commandes\/([^/]+)$/, portee: "lecture", classe: "lecture", traiter: routeCommande },
-  { methode: "GET", gabarit: "/v1/factures", re: /^\/v1\/factures$/, portee: "lecture", classe: "lecture", traiter: routeFactures },
-  { methode: "GET", gabarit: "/v1/factures/{id}/pdf", re: /^\/v1\/factures\/([^/]+)\/pdf$/, portee: "lecture", classe: "documents", traiter: routeFacturePdf },
-  { methode: "GET", gabarit: "/v1/livraisons", re: /^\/v1\/livraisons$/, portee: "lecture", classe: "lecture", traiter: routeLivraisons },
-  { methode: "GET", gabarit: "/v1/livraisons/{id}/pdf", re: /^\/v1\/livraisons\/([^/]+)\/pdf$/, portee: "lecture", classe: "documents", traiter: routeLivraisonPdf },
+  { methode: "GET", gabarit: "/v1/factures", re: /^\/v1\/factures$/, portee: "documents", classe: "lecture", traiter: routeFactures },
+  { methode: "GET", gabarit: "/v1/factures/{id}/pdf", re: /^\/v1\/factures\/([^/]+)\/pdf$/, portee: "documents", classe: "documents", traiter: routeFacturePdf },
+  { methode: "GET", gabarit: "/v1/livraisons", re: /^\/v1\/livraisons$/, portee: "documents", classe: "lecture", traiter: routeLivraisons },
+  { methode: "GET", gabarit: "/v1/livraisons/{id}/pdf", re: /^\/v1\/livraisons\/([^/]+)\/pdf$/, portee: "documents", classe: "documents", traiter: routeLivraisonPdf },
 ];

@@ -24,9 +24,10 @@
 import crypto from "node:crypto";
 import { COMPANY_ID } from "./_odoo-rpc.js";
 import { jourParis, jourPlus, jourFr, minuitParisIso } from "./_chat-perimetre.js";
-import { ANOMALIE, CGU, COMMANDE, MENTION_COMMANDE, MOTIFS_ANOMALIE, PRIX, commandesLiveOuvertes } from "./_api-config.js";
+import { ANOMALIE, CGU, COMMANDE, MENTION_COMMANDE, MOTIFS_ANOMALIE, PRIX, commandesLiveOuvertes, plafondJour } from "./_api-config.js";
 import { CODES, erreurApi, isoParis, probleme } from "./_api-http.js";
 import { noterParcours } from "./_api-parcours.js";
+import { etatTest } from "./_api-suivi.js";
 
 const CIP13 = /^\d{13}$/;
 export const ORDRE_SITE = /^1[7-9]\d{11}$/;
@@ -122,7 +123,7 @@ export function refusAcces(acces, environnement, reglages, maintenant) {
   if (acces.mode === "bloque") return { code: "commandes_bloquees" };
   if (acces.cgu_version !== CGU.version) return { code: "cgu_a_accepter" };
   if (environnement === "live" && !commandesLiveOuvertes(reglages, maintenant)) return { code: "ecriture_suspendue", retry: 3600,
-    detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : rien n'a été enregistré. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles." };
+    detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : aucune nouvelle commande n'a été enregistrée. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles." };
   return null;
 }
 const ctxDe = (acces, fiche) => ({ odooId: acces.odoo_id, cip: String(fiche?.cip || acces.cip || "").trim(), nom: nettoyer(fiche?.name) || acces.nom || null });
@@ -190,11 +191,15 @@ export async function evaluer({ demande, acces, ctx, test, stock, services, regl
   const contingente = (l) => !contingentes || contingentes.has(l.cip) || (!!l._r.barcode && contingentes.has(l._r.barcode));
   const avecQuota = cand.some(contingente);
   const depuisHisto = now.getTime() - ANOMALIE.historique_jours * 86400e3;
-  const [produits, quota, lignesOdoo] = cand.length ? await Promise.all([
+  const minutes = acces.anomalie_active ? Number(acces.anomalie_doublon_min) || 0 : 0;
+  const depuisDoublon = now.getTime() - minutes * 60e3;
+  // historique : somme groupée par produit (jamais tronquée) ; commandes du logiciel des dernières minutes : lecture à part
+  const [produits, quota, histo, recentesOdoo] = cand.length ? await Promise.all([
     services.produitsOdoo(codesOdoo).catch(() => { throw indispo(); }),
     avecQuota ? services.contingentsBruts(ctx).catch(() => { throw erreurApi("contingent_indisponible", { retry: 60 }); }) : null,
-    acces.anomalie_active ? services.lignesOdoo(acces.odoo_id, codesOdoo, odooDt(depuisHisto)).catch(() => { throw indispo(); }) : [],
-  ]) : [new Map(), null, []];
+    acces.anomalie_active ? services.historiqueOdoo(acces.odoo_id, codesOdoo, odooDt(depuisHisto)).catch(() => { throw indispo(); }) : new Map(),
+    !test && minutes > 0 ? services.lignesRecentesOdoo(acces.odoo_id, odooDt(depuisDoublon)).catch(() => { throw indispo(); }) : null,
+  ]) : [new Map(), null, new Map(), null];
 
   // 3. par ligne : produit connu d'Odoo, contingent, disponibilité, prix de la quantité
   let simContingent = simulation === "contingent";
@@ -247,8 +252,6 @@ export async function evaluer({ demande, acces, ctx, test, stock, services, regl
   const anomalies = [];
   if (!refus && (acces.anomalie_active || simulation === "doublon")) {
     if (acces.anomalie_active) {
-      const histo = new Map();
-      for (const x of lignesOdoo) histo.set(m2o(x.product_id), (histo.get(m2o(x.product_id)) || 0) + (Number(x.product_uom_qty) || 0));
       const facteur = Number(acces.anomalie_facteur) || 10;
       for (const l of acceptees) {
         const seuil = facteur * Math.max((histo.get(l._id) || 0) / ANOMALIE.mois, ANOMALIE.base_min_boites);
@@ -258,34 +261,46 @@ export async function evaluer({ demande, acces, ctx, test, stock, services, regl
         }
       }
     }
-    const minutes = acces.anomalie_active ? Number(acces.anomalie_doublon_min) || 0 : 0;
     const mes = new Set(acceptees.map(l => l._id));
     let doublon = simulation === "doublon";
     if (!doublon && minutes > 0 && mes.size) {
-      const depuis = now.getTime() - minutes * 60e3;
-      const idDe = (code) => produits.get(String(code || ""))?.id ?? null;
+      // produit d'une autre commande : son id Odoo s'il est aussi dans celle-ci (CIP ou code-barres), sinon son code
+      const cleDe = (code) => produits.get(String(code || ""))?.id ?? `c:${code}`;
       const autres = [];   // ensembles de produits des commandes récentes
       if (test) {
         // mode test : parmi les commandes de TEST de la pharmacie (jamais ses commandes réelles)
-        for (const row of await stock.commandes.recentesTest(acces.odoo_id, new Date(depuis).toISOString())) {
+        for (const row of await stock.commandes.recentesTest(acces.odoo_id, new Date(depuisDoublon).toISOString())) {
           const rep = lireJson(row.reponse, null);
-          autres.push(new Set((rep?.lignes || []).filter(x => x.etat === "acceptee" && x.quantite > 0).map(x => idDe(x.cip)).filter(Boolean)));
+          autres.push(new Set((rep?.lignes || []).filter(x => x.etat === "acceptee" && x.quantite > 0 && x.cip).map(x => cleDe(x.cip))));
         }
       } else {
         // site et API (elixir_orders : CIP et comptes de la fiche, lignes annulées ou traitées exclues), logiciel d'officine (Odoo)
         const [emails] = await Promise.all([stock.site.comptes(acces.odoo_id)]);
-        for (const o of await stock.site.recentes(ctx.cip, emails, new Date(depuis).toISOString())) {
-          autres.push(new Set((o.items || []).filter(it => it && !it.handled_at).map(it => idDe(it.cip)).filter(Boolean)));
+        for (const o of await stock.site.recentes(ctx.cip, emails, new Date(depuisDoublon).toISOString())) {
+          autres.push(new Set((o.items || []).filter(it => it && !it.handled_at && it.cip).map(it => cleDe(it.cip))));
         }
         const parSo = new Map();
-        for (const x of lignesOdoo) if (dateOdoo(x.create_date) >= depuis) { const so = m2o(x.order_id); (parSo.get(so) || parSo.set(so, new Set()).get(so)).add(m2o(x.product_id)); }
+        const lignes = recentesOdoo?.lignes || [];
+        // lecture pleine : la commande la plus ancienne lue peut être incomplète, elle est écartée
+        const plusAncienne = recentesOdoo?.tronque && lignes.length ? Math.min(...lignes.map(x => m2o(x.order_id))) : null;
+        for (const x of lignes) {
+          const so = m2o(x.order_id);
+          if (so === plusAncienne || !(dateOdoo(x.create_date) >= depuisDoublon)) continue;
+          (parSo.get(so) || parSo.set(so, new Set()).get(so)).add(m2o(x.product_id));
+        }
         autres.push(...parSo.values());
       }
-      doublon = autres.some(s => { let n = 0; for (const id of mes) if (s.has(id)) n++; return n / mes.size >= ANOMALIE.part_doublon; });
+      // ressemblance symétrique (Jaccard) : produits communs / produits des deux commandes réunis
+      doublon = autres.some(s => { if (!s.size) return false; let n = 0; for (const id of mes) if (s.has(id)) n++; return n / (mes.size + s.size - n) >= ANOMALIE.part_doublon; });
     }
-    if (doublon) anomalies.push({ type: "quasi_doublon", detail: `Au moins ${Math.round(ANOMALIE.part_doublon * 100)} % de ces produits figurent déjà dans une commande reçue il y a moins de ${minutes || 30} min.` });
+    if (doublon) anomalies.push({ type: "quasi_doublon", detail: `Presque les mêmes produits (${Math.round(ANOMALIE.part_doublon * 100)} % au moins, en comptant les produits des deux commandes) qu'une commande reçue il y a moins de ${minutes || 30} min.` });
   }
-  if (anomalies.length) avertissements.push(`Commande gardée « à vérifier » par Elixir Pharma (${[...new Set(anomalies.map(a => MOTIFS_ANOMALIE[a.type]))].join(" ; ")}) : elle ne part qu'après sa validation, et reste annulable d'ici là.`);
+  if (anomalies.length) {
+    const motifs = [...new Set(anomalies.map(a => MOTIFS_ANOMALIE[a.type]))].join(" ; ");
+    avertissements.push(test
+      ? `Commande gardée « à vérifier » (${motifs}) : en production, elle attendrait la validation d'Elixir Pharma et resterait annulable d'ici là ; en mode test, sa validation est simulée à la fin du délai d'annulation (${Math.min(Number(acces.delai_annulation_min) || 0, COMMANDE.delai_envoi_max_min)} min).`
+      : `Commande gardée « à vérifier » par Elixir Pharma (${motifs}) : elle ne part qu'après sa validation, et reste annulable d'ici là.`);
+  }
   const enAttente = !refus && anomalies.length > 0;
   return { lignes: lignes.map(sortieLigne), total, boites, refus, anomalies, avertissements, etat: enAttente ? "en_attente_elixir" : "recue", motif: enAttente ? anomalies[0].type : null };
 }
@@ -323,11 +338,13 @@ function rejeu(row, requestId) {
 }
 
 // Insertion dans elixir_orders (réelle) puis fin de la réservation → { row, corps } (row null : quelqu'un d'autre a terminé)
-async function enregistrer({ stock, row, corps, ctx, test, now }) {
+// avantEcriture() : lève si l'échéance de la requête est passée (une instance gelée qui reprend n'insère plus rien)
+async function enregistrer({ stock, row, corps, ctx, test, now, delaiMin = 0, avantEcriture = () => {} }) {
   let r = row, c = corps;
   if (!test) {
     for (let essai = 0; ; essai++) {
       const ligne = ligneSite(c, ctx);
+      avantEcriture();
       const res = await stock.site.inserer(ligne);
       if (res.ok) break;
       const deja = await stock.site.lire(c.id);
@@ -340,14 +357,21 @@ async function enregistrer({ stock, row, corps, ctx, test, now }) {
     }
   }
   const verifier = c.etat === "en_attente_elixir";
+  // test gardée « à vérifier » : envoi_apres = validation simulée (fin du délai) ; réelle gardée : jamais d'envoi seul
+  const envoiApres = verifier ? (test ? new Date(now.getTime() + Math.min(Number(delaiMin) || 0, COMMANDE.delai_envoi_max_min) * 60e3).toISOString() : null)
+    : c.annulable_jusqu_a ? new Date(Date.parse(c.annulable_jusqu_a)).toISOString() : null;
   const fin = await stock.commandes.ecrire(r, { etat: verifier ? "a_verifier" : "recue", motif: verifier ? c.motif : null, statut_http: 201, reponse: JSON.stringify(c),
-    envoi_apres: verifier || !c.annulable_jusqu_a ? null : new Date(Date.parse(c.annulable_jusqu_a)).toISOString() });
+    envoi_apres: envoiApres });
   return { row: fin, corps: c };
 }
 
 // Marques de l'API sur les lignes d'une commande du site (rupture retirée, annulation) : handled_at + api_motif, comme
-// « Traiter sans envoi » de l'admin (le contingent ne les compte plus, le relais ne les envoie pas) → nombre de lignes marquées
+// « Traiter sans envoi » de l'admin (le contingent ne les compte plus, le relais ne les envoie pas) → nombre de lignes marquées.
+// Par la fonction SQL api_marquer_lignes (une transaction, lignes sans synced_at ni handled_at) ; tant qu'elle n'existe pas,
+// relecture puis réécriture des lignes (idempotent : une ligne déjà marquée ou partie n'est jamais touchée).
 export async function marquerLignes(stock, ordre, idx, motif, now) {
+  const parBase = stock.site.marquer ? await stock.site.marquer(ordre, idx, motif, now.toISOString()) : null;
+  if (parBase != null) return Math.max(0, parBase);
   const o = await stock.site.lire(ordre);
   if (!o) return 0;
   const its = o.items.map(x => (x && typeof x === "object" ? { ...x } : x));
@@ -374,6 +398,8 @@ export async function stockLibreLots(lire, cips) {
 }
 
 const secondesAvantMinuit = (now) => { const j = jourParis(now); return Math.max(1, Math.ceil((Date.parse(minuitParisIso(jourPlus(j, 1))) - now.getTime()) / 1000)); };
+// X-Elixir-Simulation sans erreur (rejeu : l'empreinte d'origine en tient compte)
+const simulationSure = (event) => { try { return simulationDe(event); } catch { return undefined; } };
 const refusVu = (refus) => {
   const [statut, titre, defaut] = CODES[refus.code] || CODES.indisponible;
   return { statut, code: refus.code, titre, detail: refus.detail || defaut, ...(refus.extra || {}) };
@@ -389,8 +415,9 @@ async function routeSimulation(arg) {
   const ev = await evaluer({ demande, acces, ctx: ctxDe(acces, fiche), test, stock, services, reglages, now, simulation: sim, apercu });
   let refus = refusAcces(acces, environnement, reglages, now) || ev.refus;
   if (!refus) {
+    const plafond = plafondJour(acces, test);
     const n = await stock.commandes.compterDepuis(acces.odoo_id, test, minuitParisIso(jourParis(now)));
-    if (n >= acces.plafond_commandes_jour) refus = { code: "plafond_commandes_jour", extra: { plafond: { nom: "commandes_jour", limite: acces.plafond_commandes_jour, valeur: n } } };
+    if (n >= plafond) refus = { code: "plafond_commandes_jour", extra: { plafond: { nom: "commandes_jour", limite: plafond, valeur: n } } };
   }
   await noterParcours(arg, "simulation");
   return { simulation: true, resultat: refus ? "refusee" : "acceptee", refus: refus ? refusVu(refus) : null, environnement,
@@ -399,24 +426,44 @@ async function routeSimulation(arg) {
 }
 
 // ── POST /v1/commandes ──
+// Durée : l'échéance (arg.echeance, 7 s après l'ARRIVÉE de la requête) est vérifiée avant de noter le numéro et avant
+// chaque insertion dans elixir_orders ; passée, rien n'est plus écrit (503 rejouable, même Idempotency-Key).
 async function routeCommander(arg) {
   const { event, acces, reglages, environnement, maintenant: now, stock, services, fiche, cle, requestId, apercu } = arg;
-  const t0 = Date.now();
+  const horloge = arg.horloge || (() => Date.now());
+  const echeance = arg.echeance ?? horloge() + COMMANDE.budget_ms;
+  const lent = () => erreurApi("indisponible", { retry: 5, detail: `Notre système est lent. ${REJOUER}` });
   const test = environnement === "test";
-  const porte = refusAcces(acces, environnement, reglages, now);
-  if (porte) throw erreurApi(porte.code, { detail: porte.detail, retry: porte.retry });
   const cleIdem = String(entete(event, "idempotency-key") ?? "").trim();
+  const porte = refusAcces(acces, environnement, reglages, now);
+  if (porte) {
+    // rejeu d'une commande déjà enregistrée (réponse perdue) : rendue à l'identique même si l'accès s'est fermé depuis
+    // (interrupteur refermé, nouvelles conditions, accès bloqué) ; seule une NOUVELLE commande est refusée
+    const ex = COMMANDE.idempotence.test(cleIdem) ? await stock.commandes.parIdempotence(acces.odoo_id, test, cleIdem).catch(() => null) : null;
+    if (ex?.statut_http) {
+      let d = null;
+      try { d = lireDemande(event); } catch { /* corps illisible : refus de l'accès */ }
+      const sim = test ? simulationSure(event) : null;
+      if (d && sim !== undefined) {
+        if (ex.empreinte_requete !== empreinteDemande(d, sim)) throw erreurApi("idempotency_key_reutilisee");
+        await noterParcours(arg, "rejeu");
+        return rejeu(ex, requestId);
+      }
+    }
+    throw erreurApi(porte.code, { detail: porte.detail, retry: porte.retry });
+  }
   if (!cleIdem) throw erreurApi("idempotency_key_absente");
   if (!COMMANDE.idempotence.test(cleIdem)) throw erreurApi("idempotency_key_absente", { detail: "Idempotency-Key : 8 à 128 caractères parmi A-Z a-z 0-9 _ . : - (un UUID par exemple)." });
   const demande = lireDemande(event);
   const sim = test ? simulationDe(event) : null;
   const empreinte = empreinteDemande(demande, sim);
   const ctx = ctxDe(acces, fiche);
+  const avantEcriture = () => { if (horloge() > echeance) throw Object.assign(new Error("échéance de la requête dépassée"), { code: "echeance" }); };
 
   // Fin commune (première fois, ou reprise d'une réservation dont le numéro est déjà noté) : insertion puis 201
   const finir = async (corps, r) => {
     let fin;
-    try { fin = await enregistrer({ stock, row: r, corps, ctx, test, now }); }
+    try { fin = await enregistrer({ stock, row: r, corps, ctx, test, now, delaiMin: acces.delai_annulation_min, avantEcriture }); }
     catch { throw erreurApi("indisponible", { retry: 60, detail: "Enregistrement interrompu : renvoyez la même requête (même Idempotency-Key) dans une minute ; elle sera terminée sans doublon." }); }
     if (!fin.row) {
       const lu = await stock.commandes.parId(r.id);
@@ -441,8 +488,15 @@ async function routeCommander(arg) {
   if (res.conflit) {
     const ex = await stock.commandes.parIdempotence(acces.odoo_id, test, cleIdem);
     if (!ex) {
-      const autre = demande.reference_client ? await stock.commandes.parReference(acces.odoo_id, test, demande.reference_client) : null;
-      if (autre) throw erreurApi("reference_deja_utilisee", { detail: `La reference_client « ${demande.reference_client} » a déjà servi pour une autre commande.`, extra: { id: autre.order_id || null } });
+      const ref = demande.reference_client;
+      const autre = ref ? await stock.commandes.parReference(acces.odoo_id, test, ref) : null;
+      // autre requête de même référence encore en cours (elle peut finir refusée) : pas encore « déjà utilisée »
+      if (autre && (autre.etat === "en_cours" || !autre.statut_http)) throw erreurApi("requete_en_cours", { retry: 2,
+        detail: `Une autre requête avec la reference_client « ${ref} » est en cours de traitement : réessayez dans quelques secondes.` });
+      if (autre?.etat === "annulee") throw erreurApi("reference_deja_utilisee", { extra: { id: autre.order_id || null },
+        detail: `La reference_client « ${ref} » porte une commande annulée (n° ${autre.order_id}) : donnez une nouvelle reference_client à la commande corrigée.` });
+      if (autre) throw erreurApi("reference_deja_utilisee", { detail: `La reference_client « ${ref} » a déjà servi pour la commande n° ${autre.order_id} (relisez-la avec GET /v1/commandes/${autre.order_id}).`,
+        extra: { id: autre.order_id || null } });
       throw erreurApi("requete_en_cours", { retry: 2 });
     }
     if (ex.empreinte_requete !== empreinte) throw erreurApi("idempotency_key_reutilisee");
@@ -456,13 +510,15 @@ async function routeCommander(arg) {
   } else row = res.row;
 
   // 2. contrôles (aucune écriture) ; erreur passagère ou plafond du jour : réservation rendue (la même clé repart de zéro)
+  const plafond = plafondJour(acces, test);
+  const refusJour = (n) => erreurApi("plafond_commandes_jour", { retry: secondesAvantMinuit(now), extra: { plafond: { nom: "commandes_jour", limite: plafond, valeur: Math.min(n, plafond) } } });
   let ev;
   try {
     if (sim === "indisponible") throw erreurApi("indisponible", { retry: 30, detail: `Simulation (X-Elixir-Simulation: indisponible) : notre système ne répond pas. ${REJOUER}` });
     const n = await stock.commandes.compterDepuis(acces.odoo_id, test, minuitParisIso(jourParis(now)));
-    if (n >= acces.plafond_commandes_jour) throw erreurApi("plafond_commandes_jour", { retry: secondesAvantMinuit(now), extra: { plafond: { nom: "commandes_jour", limite: acces.plafond_commandes_jour, valeur: n } } });
+    if (n >= plafond) throw refusJour(n);
     ev = await evaluer({ demande, acces, ctx, test, stock, services, reglages, now, simulation: sim, apercu });
-    if (!ev.refus && Date.now() - t0 > COMMANDE.budget_ms) throw erreurApi("indisponible", { retry: 5, detail: `Notre système est lent. ${REJOUER}` });
+    if (!ev.refus && horloge() > echeance) throw lent();
   } catch (e) {
     await stock.commandes.liberer(row).catch(() => {});
     if (e?.api) throw e;
@@ -476,7 +532,14 @@ async function routeCommander(arg) {
     return rep;
   }
 
-  // 4. numéro choisi par le serveur et noté AVANT l'insertion, puis insertion et fin
+  // 4. place du jour prise ATOMIQUEMENT (compteur api_compter de la fiche, jour de Paris) : des requêtes simultanées ne
+  // dépassent jamais le plafond (le contrôle du 2 n'est qu'un premier filtre) ; une place prise n'est pas rendue (prudent).
+  // Puis numéro choisi par le serveur et noté AVANT l'insertion (échéance vérifiée juste avant), insertion et fin.
+  let place;
+  try { place = await stock.compteurs.compter(`cmdjour:${acces.odoo_id}:${test ? "test" : "live"}:${jourParis(now)}`, 86400); }
+  catch { await stock.commandes.liberer(row).catch(() => {}); throw erreurApi("indisponible", { retry: 30, detail: `Notre système ne répond pas. ${REJOUER}` }); }
+  if (place > plafond) { await stock.commandes.liberer(row).catch(() => {}); throw refusJour(place); }
+  if (horloge() > echeance) { await stock.commandes.liberer(row).catch(() => {}); throw lent(); }
   const corps = corpsCommande({ id: nouveauNumero(test, now), test, demande, ev, now, acces });
   const prepare = await stock.commandes.ecrire(row, { order_id: corps.id, reponse: JSON.stringify(corps) });
   if (!prepare) throw erreurApi("requete_en_cours", { retry: 2 });
@@ -485,8 +548,11 @@ async function routeCommander(arg) {
 
 // ── DELETE /v1/commandes/{id} ──
 // Possible pendant le délai d'annulation (commande reçue, pas encore prise par l'envoi), ou tant qu'une commande gardée
-// « à vérifier » n'est pas partie ; jamais si une ligne est envoyée ou si une tâche du relais est en cours ou faite.
+// « à vérifier » n'est pas partie ; jamais si une ligne est envoyée, si une tâche du relais est en cours ou faite, ou si
+// Elixir a déjà pris une ligne en main (« Traiter sans envoi », saisie directe dans Odoo).
 // La transition est conditionnelle (état et version lus) : l'envoi et l'annulation ne peuvent pas passer tous les deux.
+// Aucune lecture d'Odoo (la clé et l'accès suffisent) ; servie même quand l'API est suspendue (« Tout couper ») : annuler ne
+// fait que réduire le risque. Rejeu d'une annulation : les marques des lignes du site sont reposées si elles manquent.
 async function routeAnnuler(arg) {
   const { acces, environnement, maintenant: now, stock, params } = arg;
   const id = params[0];
@@ -495,28 +561,40 @@ async function routeAnnuler(arg) {
   const row = await stock.commandes.parOrdre(acces.odoo_id, test, id);
   if (!row) throw erreurApi("introuvable");
   const annulee = (r) => ({ id, environnement, etat: "annulee", annulee_le: isoParis(r.updated_at) });
-  const tropTard = (etat) => erreurApi("trop_tard", { extra: { etat } });
-  if (row.etat === "annulee") { await noterParcours(arg, "annulation"); return annulee(row); }
+  const tropTard = (etat, detail) => erreurApi("trop_tard", { extra: { etat }, ...(detail ? { detail } : {}) });
+  const finaliser = async () => {
+    if (test) return;
+    try { await marquerLignes(stock, id, null, "annulee", now); }
+    catch { throw erreurApi("indisponible", { retry: 30, detail: "Annulation enregistrée, finalisation interrompue : renvoyez la même requête (DELETE) dans un instant." }); }
+  };
+  if (row.etat === "annulee") { await finaliser(); await noterParcours(arg, "annulation"); return annulee(row); }
   if (row.etat === "en_cours") throw erreurApi("requete_en_cours", { retry: 2 });
-  const dansDelai = row.etat === "recue" && row.envoi_apres && now.getTime() < Date.parse(row.envoi_apres);
-  if (!dansDelai && row.etat !== "a_verifier") throw tropTard(row.etat === "non_servie" ? "non_servie" : row.etat === "recue" || row.etat === "envoi_demande" ? "en_transmission" : "transmise");
-  if (!test) {
+  if (test) {
+    // commande de test : état simulé (validation d'une commande gardée simulée à la fin du délai)
+    const e = etatTest(row, now);
+    if (!["recue", "en_attente_elixir"].includes(e.etat)) throw tropTard(e.etat === "sortie_entrepot" ? "transmise" : e.etat);
+  } else {
+    const dansDelai = row.etat === "recue" && row.envoi_apres && now.getTime() < Date.parse(row.envoi_apres);
+    if (!dansDelai && row.etat !== "a_verifier") throw tropTard(row.etat === "non_servie" ? "non_servie" : row.etat === "recue" || row.etat === "envoi_demande" ? "en_transmission" : "transmise");
     const [o, taches] = await Promise.all([stock.site.lire(id), stock.relais.taches(id)]);
     if (!o || o.items.some(it => it?.synced_at) || taches.some(t => !TACHES_LIBEREES.has(t.etat))) throw tropTard("en_transmission");
+    if (o.items.some(it => it?.handled_at && !it.api_motif)) throw tropTard("transmise", "Elixir Pharma a déjà pris cette commande en main (ligne traitée) : elle ne peut plus être annulée par l'API. Contactez Elixir Pharma.");
   }
   const fin = await stock.commandes.ecrire(row, { etat: "annulee", motif: "annulee_par_la_pharmacie", envoi_apres: null });
   if (!fin) {
     const lu = await stock.commandes.parOrdre(acces.odoo_id, test, id);
-    if (lu?.etat === "annulee") return annulee(lu);
+    if (lu?.etat === "annulee") { await finaliser(); return annulee(lu); }
     throw tropTard("en_transmission");
   }
-  if (!test) await marquerLignes(stock, id, null, "annulee", now);
+  await finaliser();
   await noterParcours(arg, "annulation");
   return annulee(fin);
 }
 
+// cle_fraiche : clé et accès relus en base à chaque appel ; DELETE : classe de débit à part (une rafale de commandes n'empêche
+// jamais d'annuler), sans lecture de la fiche, servie même quand l'API est suspendue
 export const ROUTES_COMMANDE = [
-  { methode: "POST", gabarit: "/v1/commandes/simulation", re: /^\/v1\/commandes\/simulation$/, portee: "commande", classe: "simulation", fiche_fraiche: true, traiter: routeSimulation },
-  { methode: "POST", gabarit: "/v1/commandes", re: /^\/v1\/commandes$/, portee: "commande", classe: "commande", fiche_fraiche: true, traiter: routeCommander },
-  { methode: "DELETE", gabarit: "/v1/commandes/{id}", re: /^\/v1\/commandes\/([^/]+)$/, portee: "commande", classe: "commande", fiche_fraiche: true, traiter: routeAnnuler },
+  { methode: "POST", gabarit: "/v1/commandes/simulation", re: /^\/v1\/commandes\/simulation$/, portee: "commande", classe: "simulation", fiche_fraiche: true, cle_fraiche: true, traiter: routeSimulation },
+  { methode: "POST", gabarit: "/v1/commandes", re: /^\/v1\/commandes$/, portee: "commande", classe: "commande", fiche_fraiche: true, cle_fraiche: true, traiter: routeCommander },
+  { methode: "DELETE", gabarit: "/v1/commandes/{id}", re: /^\/v1\/commandes\/([^/]+)$/, portee: "commande", classe: "annulation", sans_fiche: true, cle_fraiche: true, toujours: true, traiter: routeAnnuler },
 ];

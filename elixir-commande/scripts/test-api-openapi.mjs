@@ -9,7 +9,8 @@
 //     identiques au code ;
 //  3. réponses RÉELLES : test-api-fondations, test-api-lecture et test-api-commandes relancés avec API_CAPTURE
 //     (scripts/api-capture.mjs) ; chaque réponse du routeur est rapportée à son opération : statut documenté, type de
-//     contenu, corps conforme au schéma (champs non documentés refusés : additionalProperties false), code d'erreur
+//     contenu, corps conforme au schéma (champs non documentés refusés : le test FERME les schémas d'objet, que le fichier
+//     publie ouverts pour les clients générés — règle des versions), code d'erreur
 //     permis pour ce statut, en-têtes obligatoires présents et aucun en-tête non documenté ; chaque opération doit avoir
 //     au moins une réponse de succès vérifiée ;
 //  4. page /api/ : une ancre par code d'erreur (« type » des problem+json) avec le bon statut, chaque route citée,
@@ -69,6 +70,10 @@ const FORMATS = {
 };
 const estType = (t, v) => t === "null" ? v === null : t === "integer" ? Number.isInteger(v) : t === "number" ? typeof v === "number" && Number.isFinite(v)
   : t === "array" ? Array.isArray(v) : t === "object" ? !!v && typeof v === "object" && !Array.isArray(v) : typeof v === t;
+// Le fichier publie des schémas de réponse OUVERTS (un champ ajouté en V1 ne casse pas un client généré) ; le test les
+// FERME (tout objet typé « object » avec des propriétés refuse un champ non documenté) : le code ne rend jamais un champ
+// absent de la documentation.
+const STRICT = true;
 function valider(s, v, ch = "$", errs = []) {
   if (s == null || s === true) return errs;
   if (s.$ref) {
@@ -102,7 +107,8 @@ function valider(s, v, ch = "$", errs = []) {
     for (const k of s.required || []) if (!(k in v)) errs.push(`${ch} : « ${k} » absent`);
     for (const [k, x] of Object.entries(v)) {
       if (s.properties?.[k]) valider(s.properties[k], x, `${ch}.${k}`, errs);
-      else if (s.additionalProperties === false) errs.push(`${ch} : champ « ${k} » non documenté`);
+      else if (s.additionalProperties === false || (STRICT && s.additionalProperties === undefined && s.properties && [].concat(s.type || []).includes("object")))
+        errs.push(`${ch} : champ « ${k} » non documenté`);
       else if (s.additionalProperties && typeof s.additionalProperties === "object") valider(s.additionalProperties, x, `${ch}.${k}`, errs);
     }
   }
@@ -190,7 +196,15 @@ for (const [p, item] of Object.entries(DOC.paths)) for (const m of METHODES) if 
   // limites et plafonds
   const L = conf.LIMITES;
   eq("x-limites = LIMITES", DOC.info["x-limites"], { ip: L.ip, refus_cle: L.refus_cle, lecture: L.lecture, disponibilites: L.disponibilites, documents: L.documents,
-    commande: L.commande, simulation: L.simulation, suivi_par_pharmacie_par_minute: L.odoo.fiche_par_minute });
+    commande: L.commande, annulation: L.annulation, simulation: L.simulation, suivi_par_pharmacie_par_minute: L.odoo.fiche_par_minute });
+  eq("x-limites-test = LIMITES_TEST", DOC.info["x-limites-test"], { ...conf.LIMITES_TEST, commandes_test_par_jour_minimum: conf.COMMANDES_TEST_JOUR_MIN });
+  // règle des versions : réponses ouvertes (seule la demande de commande est fermée), listes de valeurs extensibles
+  const fermes = Object.entries(DOC.components.schemas).filter(([, x]) => x.additionalProperties === false).map(([k]) => k);
+  eq("schémas fermés : la demande de commande seulement (réponses ouvertes)", fermes.sort(), ["CommandeDemande", "LigneDemande"]);
+  const imbriques = [];
+  (function marcher(x, ch) { if (x && typeof x === "object") for (const [k, y] of Object.entries(x)) { if (k === "additionalProperties" && y === false && !/CommandeDemande|LigneDemande/.test(ch)) imbriques.push(ch); marcher(y, `${ch}.${k}`); } })(DOC.components.schemas, "schemas");
+  eq("aucun objet de réponse fermé (imbriqué)", imbriques, []);
+  for (const nom of ["EtatCommande", "Disponibilite", "CodeErreur"]) vrai(`${nom} : liste de valeurs marquée extensible`, DOC.components.schemas[nom]["x-extensible-enum"] === true);
   eq("x-plafonds-defaut = ACCES_DEFAUT", DOC.info["x-plafonds-defaut"], Object.fromEntries(Object.keys(DOC.info["x-plafonds-defaut"]).map(k => [k, conf.ACCES_DEFAUT[k]])));
   eq("x-plafonds-defaut : tous les réglages numériques", Object.keys(DOC.info["x-plafonds-defaut"]).sort(), Object.keys(conf.BORNES).sort());
   // pages et périodes
@@ -341,7 +355,7 @@ const fr = (n) => Number(n).toLocaleString("fr-FR").replace(/[  ]/g, " ");
   }
   eq("page : chaque route citée (data-route)", ROUTES.map(r => `${r.methode} ${r.gabarit}`).filter(n => !PAGE.includes(`data-route="${n}"`)), []);
   eq("page : aucune route inexistante", [...PAGE.matchAll(/data-route="([^"]+)"/g)].map(m => m[1]).filter(n => !ROUTES.some(r => `${r.methode} ${r.gabarit}` === n)), []);
-  for (const k of ["lecture", "disponibilites", "documents", "commande", "simulation"]) {
+  for (const k of ["lecture", "disponibilites", "documents", "commande", "annulation", "simulation"]) {
     const m = PAGE.match(new RegExp(`data-classe="${k}"[^>]*`));
     eq(`page : débits ${k}`, m ? [m[0].match(/data-par-minute="(\d+)"/)?.[1], m[0].match(/data-par-jour="(\d+)"/)?.[1]] : null,
       [String(conf.LIMITES[k].par_minute), String(conf.LIMITES[k].par_jour)]);
@@ -389,7 +403,7 @@ const fr = (n) => Number(n).toLocaleString("fr-FR").replace(/[  ]/g, " ");
   vrai("« Accès API » : lien vers la documentation /api/", /documentation: "\/api\/"/.test(lire("netlify/functions/api-compte.js")));
   // mise en service (Zineb) : prérequis, SQL, interrupteurs, projet de CGU identique au texte affiché
   const mes = lire("docs/api/mise-en-service.md");
-  eq("mise en service : prérequis P1 à P8", ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"].filter(p => !mes.includes(`**${p}**`)), []);
+  eq("mise en service : prérequis P1 à P9", ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"].filter(p => !mes.includes(`**${p}**`)), []);
   vrai("mise en service : prérequis de l'interrupteur (code)", conf.PREREQUIS.every(p => mes.includes(p.libelle)));
   vrai("mise en service : SQL, interrupteurs", ["sql/api-schema.sql", "Tout couper", "Fermer les commandes par API", "Suspendre l'accès", "Révoquer"].every(x => mes.includes(x)));
   vrai("mise en service : version des CGU", mes.includes(conf.CGU.version));

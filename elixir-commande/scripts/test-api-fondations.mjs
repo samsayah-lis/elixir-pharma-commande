@@ -62,6 +62,17 @@ const requete = (h, { path = "/api/v1/etat", methode = "GET", cle = null, ip = I
 };
 const corps = (r) => JSON.parse(r.body);
 const nouveauRouteur = (extra = {}) => routeur.creerHandler({ stock, maintenant, verifierFiche, log: silence, hasard: () => 0.5, ...extra });
+// début du jour de Paris (fenêtre d'un jour des compteurs, comme api_fenetre du SQL)
+const minuitParis = (ms) => {
+  const jour = new Date(ms).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+  return ["+01:00", "+02:00"].map(o => Date.parse(`${jour}T00:00:00${o}`)).find(m => new Date(m).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" }) === jour
+    && new Date(m - 1000).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" }) !== jour);
+};
+// P9 (avis par e-mail et alertes) : impossible à cocher tant que le développement n'est pas livré ; les essais qui ouvrent les
+// commandes réelles simulent sa livraison
+const P9 = conf.PREREQUIS.find(p => p.id === "P9");
+const P9_INDISPONIBLE = P9.indisponible;
+const livrerP9 = (oui) => { if (oui) delete P9.indisponible; else P9.indisponible = P9_INDISPONIBLE; };
 
 // ═══ 1. Clés ═══
 {
@@ -137,7 +148,11 @@ const nouveauRouteur = (extra = {}) => routeur.creerHandler({ stock, maintenant,
   eq("JSON illisible : défauts", conf.fusionnerReglages("{oups").commandes_live, false);
   const avant = new Date("2026-11-01T22:59:00Z"), apres = new Date("2026-11-01T23:00:00Z");   // minuit à Paris le 02/11
   const tous = { commandes_live: true, prerequis: Object.fromEntries(conf.PREREQUIS.map(p => [p.id, { fait: true }])) };
-  eq("rien de coché", conf.commandesOuvrables({}, apres).manquants, ["P1", "P3", "P4", "P7"]);
+  eq("rien de coché", conf.commandesOuvrables({}, apres).manquants, ["P1", "P3", "P4", "P7", "P9"]);
+  eq("P9 : jamais cochable tant que le développement n'est pas livré", [conf.prerequisEtat({}, apres).find(p => p.id === "P9").cochable, !!P9_INDISPONIBLE], [false, true]);
+  eq("tout coché à la date, P9 compris : FERMÉ tant que P9 n'est pas livré", conf.commandesOuvrables(tous, apres), { ok: false, manquants: ["P9"] });
+  eq("…commandes réelles refusées", conf.commandesLiveOuvertes(tous, apres), false);
+  livrerP9(true);
   eq("P3 pas cochable avant le 02/11 (Paris)", conf.prerequisEtat({}, avant).find(p => p.id === "P3").cochable, false);
   eq("P3 cochable le 02/11 à minuit (Paris)", conf.prerequisEtat({}, apres).find(p => p.id === "P3").cochable, true);
   eq("tout coché mais avant la date : fermé", conf.commandesOuvrables(tous, avant), { ok: false, manquants: ["P3"] });
@@ -145,6 +160,16 @@ const nouveauRouteur = (extra = {}) => routeur.creerHandler({ stock, maintenant,
   eq("interrupteur ouvert + prérequis : commandes réelles", conf.commandesLiveOuvertes(tous, apres), true);
   eq("interrupteur fermé : non", conf.commandesLiveOuvertes({ ...tous, commandes_live: false }, apres), false);
   eq("une case décochée : non", conf.commandesLiveOuvertes({ ...tous, prerequis: { ...tous.prerequis, P4: { fait: false } } }, apres), false);
+  livrerP9(false);
+  eq("droits : lecture, commande, documents (factures et bons à part)", conf.PORTEES, ["lecture", "commande", "documents"]);
+  eq("limites des clés de test : plus de marge pour développer", [conf.limiteDe("commande", "test").par_minute, conf.limiteDe("commande", "live").par_minute, conf.limiteDe("annulation", "test").par_minute],
+    [conf.LIMITES_TEST.commande.par_minute, conf.LIMITES.commande.par_minute, conf.LIMITES.annulation.par_minute]);
+  eq("secondes jusqu'à minuit (Paris), hiver et été", [conf.secondesAvantMinuitParis(new Date("2026-11-16T22:00:00Z")), conf.secondesAvantMinuitParis(new Date("2026-07-16T21:00:00Z"))], [3600, 3600]);
+  eq("secret des fonctions d'arrière-plan : comparaison exacte", [http.cronAutorise({ headers: { "x-cron-secret": "s3cret" } }, "s3cret"), http.cronAutorise({ headers: { "X-Cron-Secret": "s3cret" } }, "s3cret"),
+    http.cronAutorise({ headers: { "x-cron-secret": "s3cre" } }, "s3cret"), http.cronAutorise({ headers: {} }, "s3cret"), http.cronAutorise({ headers: { "x-cron-secret": "" } }, ""),
+    http.cronAutorise({ headers: { "x-cron-secret": "x" } }, undefined)], [true, true, false, false, false, false]);
+  eq("adresse du client : en-tête de Netlify seulement (jamais X-Forwarded-For)", [http.ipClient({ headers: { "x-nf-client-connection-ip": " 192.0.2.1 " } }),
+    http.ipClient({ headers: { "x-forwarded-for": "192.0.2.50" } }), http.ipClient({ headers: { "X-NF-Client-Connection-IP": "192.0.2.2" } })], ["192.0.2.1", null, "192.0.2.2"]);
   eq("CGU : empreinte stable", conf.empreinteCgu(), conf.empreinteCgu());
   vrai("textes vus par les pharmacies sans plomberie interne", !/supabase|odoo|pharmaml|relais|infosoft|\bmac\b/i.test(JSON.stringify([conf.CGU, http.CODES, conf.MENTION_PRIX, conf.LIBELLES_PORTEES])));
   eq("codes : statuts du contrat", ["cle_absente", "portee_insuffisante", "introuvable", "requete_en_cours", "trop_long", "requete_invalide", "debit", "api_suspendue"].map(c => http.CODES[c][0]),
@@ -174,6 +199,7 @@ eq("droits gardés dans l'ordre", cleTest.cle.portees, ["lecture", "commande"]);
   routeur.ROUTES.push(
     { methode: "GET", gabarit: "/v1/essai-lecture", re: /^\/v1\/essai-lecture$/, portee: "lecture", classe: "lecture", traiter: async () => ({ ok: true }) },
     { methode: "POST", gabarit: "/v1/essai-commande", re: /^\/v1\/essai-commande$/, portee: "commande", classe: "commande", fiche_fraiche: true, traiter: async () => ({ ok: true }) },
+    { methode: "POST", gabarit: "/v1/essai-commande-fraiche", re: /^\/v1\/essai-commande-fraiche$/, portee: "commande", classe: "simulation", fiche_fraiche: true, cle_fraiche: true, traiter: async () => ({ ok: true }) },
   );
   let h = nouveauRouteur();
 
@@ -329,16 +355,23 @@ eq("droits gardés dans l'ordre", cleTest.cle.portees, ["lecture", "commande"]);
   eq("61e lecture de la minute : 429 debit", [dernier.statusCode, corps(dernier).code], [429, "debit"]);
   vrai("…Retry-After jusqu'à la minute suivante", Number(dernier.headers["Retry-After"]) === 60);
   avancer(60);
-  const jour = new Date(Math.floor(T / 86400e3) * 86400e3).toISOString();
+  const jour = new Date(minuitParis(T)).toISOString();
   db.tables.api_compteurs.find(c => c.cle === `cle:${cleTest.cle.id}:lecture:86400` && c.fenetre === jour).n = 5000;
   r = await requete(h, { path: "/api/v1/essai-lecture", cle: cleTest.secret });
   eq("5001e lecture du jour : 429 plafond_journalier", [r.statusCode, corps(r).code], [429, "plafond_journalier"]);
+  eq("…Retry-After jusqu'à minuit, heure de Paris", Number(r.headers["Retry-After"]), conf.secondesAvantMinuitParis(maintenant()));
+  eq("…refus non compté (le compteur du jour ne bouge pas)", db.tables.api_compteurs.find(c => c.cle === `cle:${cleTest.cle.id}:lecture:86400` && c.fenetre === jour).n, 5000);
   r = await requete(h, { path: "/api/v1/essai-lecture", cle: cleLive.secret });
   eq("…l'autre clé n'est pas touchée", r.statusCode, 200);
   r = await requete(h, { methode: "POST", path: "/api/v1/essai-commande", cle: cleTest.secret, body: "{}" });
   eq("…ni la classe « commande »", r.statusCode, 200);
-  for (let i = 0; i < 6; i++) r = await requete(h, { methode: "POST", path: "/api/v1/essai-commande", cle: cleTest.secret, body: "{}" });
-  eq("7e écriture de la minute : 429", corps(r).code, "debit");
+  const nTest = conf.LIMITES_TEST.commande.par_minute;
+  for (let i = 0; i < nTest; i++) r = await requete(h, { methode: "POST", path: "/api/v1/essai-commande", cle: cleTest.secret, body: "{}" });
+  eq(`clé de test : ${nTest + 1}e écriture de la minute → 429`, corps(r).code, "debit");
+  const kMin = `cle:${cleTest.cle.id}:commande:60`;
+  const nAvant = db.tables.api_compteurs.filter(c => c.cle === kMin).reduce((x, c) => x + c.n, 0);
+  r = await requete(h, { methode: "POST", path: "/api/v1/essai-commande", cle: cleTest.secret, body: "{}" });
+  eq("…une requête refusée par le débit n'est pas comptée", [corps(r).code, db.tables.api_compteurs.filter(c => c.cle === kMin).reduce((x, c) => x + c.n, 0)], ["debit", nAvant]);
   db.tables.api_compteurs.find(c => c.cle === `cle:${cleTest.cle.id}:lecture:86400` && c.fenetre === jour).n = 0;
 
   // débit par IP, avant toute lecture de clé
@@ -372,16 +405,53 @@ eq("droits gardés dans l'ordre", cleTest.cle.portees, ["lecture", "commande"]);
   r = await requete(h, { ip: "198.51.100.60", cle: cleTest.secret });
   eq("20 clés refusées : 429", [r.statusCode, corps(r).code], [429, "debit"]);
   vrai("…message explicite", /clés refusées/.test(corps(r).detail));
-
-  // aperçu Netlify : toute clé = test ; ni journal ni dernière utilisation
+  // clé RÉVOQUÉE répétée depuis un réseau partagé (serveur d'un éditeur) : comptée sur la clé, jamais sur le réseau — la
+  // clé valide d'une autre pharmacie derrière la même adresse passe
   avancer(600);
+  const revoquee = await cles.creerCle(stock, { acces: acces595, environnement: "test", libelle: "Ancien outil", portees: ["lecture"], par: "compte@pharmacie-exemple.test", role: "pharmacie", maintenant: maintenant() });
+  await stock.cles.revoquer(revoquee.cle.id, 595, { par: "compte@pharmacie-exemple.test", motif: "essai" });
   h = nouveauRouteur();
-  n0 = db.tables.api_journal.length;
-  avant = patchs();
-  r = await requete(h, { cle: cleLive.secret, host: "deploy-preview-12--commandes-elixir.netlify.app" });
-  eq("aperçu : clé de production vue comme test", corps(r).environnement, "test");
-  eq("aperçu : pas de journal", db.tables.api_journal.length, n0);
-  eq("aperçu : pas d'écriture sur la clé", patchs(), avant);
+  for (let i = 0; i < 25; i++) r = await requete(h, { ip: "198.51.100.61", cle: revoquee.secret });
+  eq("clé révoquée ×25 : toujours 401 cle_revoquee", [r.statusCode, corps(r).code], [401, "cle_revoquee"]);
+  r = await requete(h, { ip: "198.51.100.61", cle: cleTest.secret });
+  eq("…une clé valide derrière la même adresse passe (réseau non puni)", r.statusCode, 200);
+  vrai("…refus comptés sur la clé (cleko), pas sur le réseau", db.tables.api_compteurs.some(c => c.cle === `cleko:${revoquee.cle.id}` && c.n >= 25)
+    && db.tables.api_compteurs.filter(c => c.cle.startsWith("ipko:")).every(c => c.n <= 20));
+
+  // hôte d'aperçu ET lien permanent d'un déploiement (ancien code compris) : clés de TEST seulement ; journal tenu ;
+  // jamais de dernière utilisation
+  avancer(600);
+  for (const host of ["deploy-preview-12--commandes-elixir.netlify.app", "0123abcd--commandes-elixir.netlify.app"]) {
+    h = nouveauRouteur();
+    n0 = db.tables.api_journal.length;
+    avant = patchs();
+    r = await requete(h, { cle: cleLive.secret, host });
+    eq(`${host} : clé de production refusée (403 cle_production_hors_site)`, [r.statusCode, corps(r).code], [403, "cle_production_hors_site"]);
+    eq(`${host} : ligne de journal (clé, environnement « apercu »)`, [db.tables.api_journal.length - n0, db.tables.api_journal.at(-1).cle_id, db.tables.api_journal.at(-1).environnement, db.tables.api_journal.at(-1).code],
+      [1, cleLive.cle.id, "apercu", "cle_production_hors_site"]);
+    r = await requete(h, { cle: cleTest.secret, host });
+    eq(`${host} : clé de test acceptée, journal tenu`, [r.statusCode, corps(r).environnement, db.tables.api_journal.length - n0, db.tables.api_journal.at(-1).environnement], [200, "test", 2, "apercu"]);
+    eq(`${host} : aucune écriture sur la clé`, patchs(), avant);
+  }
+  // adresse : seul l'en-tête de Netlify compte (X-Forwarded-For est écrit par le client)
+  await stock.acces.modifier(595, { ip_autorisees: ["192.0.2.50/32"] });
+  h = nouveauRouteur();
+  const sansNetlify = (entetes) => { const event = { httpMethod: "GET", path: "/api/v1/etat", headers: { host: "elixir-commande.expepharma.com", authorization: `Bearer ${cleTest.secret}`, ...entetes } };
+    return capturer(event, h(event)); };
+  r = await sansNetlify({ "x-forwarded-for": "192.0.2.50" });
+  eq("réseaux autorisés : X-Forwarded-For seul (sans en-tête Netlify) → 403", [r.statusCode, corps(r).code], [403, "ip_non_autorisee"]);
+  r = await requete(h, { cle: cleTest.secret, ip: "192.0.2.50", entetes: { "x-forwarded-for": "198.51.100.1" } });
+  eq("…l'adresse vue par Netlify fait foi", r.statusCode, 200);
+  await stock.acces.modifier(595, { ip_autorisees: null });
+  avancer(31);
+  // écritures : clé et accès relus en base à chaque appel (une clé révoquée ne passe plus, même dans les 30 s du cache)
+  const fraiche = await cles.creerCle(stock, { acces: acces595, environnement: "test", libelle: "Outil frais", portees: ["lecture", "commande"], par: "compte@pharmacie-exemple.test", role: "pharmacie", maintenant: maintenant() });
+  h = nouveauRouteur();
+  eq("écriture avec la clé : 200", (await requete(h, { methode: "POST", path: "/api/v1/essai-commande-fraiche", cle: fraiche.secret, body: "{}" })).statusCode, 200);
+  eq("lecture avec la clé : 200 (mise en cache 30 s)", (await requete(h, { path: "/api/v1/essai-lecture", cle: fraiche.secret })).statusCode, 200);
+  await stock.cles.revoquer(fraiche.cle.id, 595, { par: "compte@pharmacie-exemple.test", motif: "compromise" });
+  r = await requete(h, { methode: "POST", path: "/api/v1/essai-commande-fraiche", cle: fraiche.secret, body: "{}" });
+  eq("révoquée il y a 1 s : écriture refusée aussitôt (401 cle_revoquee)", [r.statusCode, corps(r).code], [401, "cle_revoquee"]);
 
   // Supabase injoignable : 503
   db.etat.panne = true;
@@ -483,7 +553,8 @@ const poste = (h, qui, body, host = "elixir-commande.expepharma.com") => h({ htt
   r = await poste(hc, "autre", { action: "journal" });
   const ap = corps(r).appels;
   vrai("journal : appels de la fiche", ap.length > 0 && ap.every(l => [k.info.prefixe, k2.info.prefixe].includes(l.cle)));
-  vrai("journal : sans réseau ni identifiant de requête", !/reseau|request_id/.test(r.body));
+  vrai("journal : sans réseau", !/reseau/.test(r.body));
+  vrai("journal : identifiant de requête (à donner au support)", ap.every(l => /^[0-9a-f-]{36}$/.test(l.request_id)));
 
   // lecture seule : admin en saisie, adresse plus sur la fiche, aperçu
   r = await poste(hc, "admin", { action: "etat" });
@@ -492,6 +563,10 @@ const poste = (h, qui, body, host = "elixir-commande.expepharma.com") => h({ htt
   eq("admin en saisie : création refusée", [r.statusCode, corps(r).error], [403, "lecture_seule"]);
   r = await poste(hc, "adresse", { action: "revoquer_cle", id: cleTest.cle.id });
   eq("adresse plus sur la fiche : refus", [r.statusCode, corps(r).raison], [403, "adresse"]);
+  r = await poste(hc, "adresse", { action: "etat" });
+  eq("adresse plus sur la fiche : « etat » réduit (ni plafonds, ni clés, ni parcours)", corps(r), { ouvert: true, lecture_seule: "adresse" });
+  r = await poste(hc, "adresse", { action: "journal" });
+  eq("adresse plus sur la fiche : journal refusé", [r.statusCode, corps(r).error], [403, "lecture_seule"]);
   r = await poste(hc, "pharmacie", { action: "creer_cle", environnement: "test", libelle: "x", portees: ["lecture"] }, "deploy-preview-3--commandes-elixir.netlify.app");
   eq("aperçu : refus", corps(r).raison, "apercu");
   // identité
@@ -525,7 +600,8 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   r = await vue({ vue: "tableau" });
   let t = corps(r);
   eq("tableau : réglages", [t.reglages.actif, t.reglages.commandes_live, t.commandes_production], [true, false, "fermees"]);
-  eq("tableau : 4 prérequis", t.prerequis.map(p => p.id), ["P1", "P3", "P4", "P7"]);
+  eq("tableau : 5 prérequis", t.prerequis.map(p => p.id), ["P1", "P3", "P4", "P7", "P9"]);
+  eq("tableau : P9 indisponible (texte affiché)", [t.prerequis.find(p => p.id === "P9").cochable, !!t.prerequis.find(p => p.id === "P9").indisponible], [false, true]);
   eq("tableau : P3 pas encore cochable", t.prerequis.find(p => p.id === "P3").cochable, false);
   eq("tableau : défauts d'un accès", [t.defauts.mode, t.defauts.delai_annulation_min, t.defauts.plafond_lignes, t.defauts.plafond_boites, t.defauts.plafond_montant_ht,
     t.defauts.plafond_commandes_jour, t.defauts.anomalie_facteur, t.defauts.anomalie_doublon_min], ["auto", 10, 100, 1000, 3000, 10, 10, 30]);
@@ -534,13 +610,19 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   vrai("tableau : ni empreinte ni preuve brute", !/empreinte|cgu_preuve/.test(r.body));
 
   r = await adm({ action: "reglages", commandes_live: true, base: t.updated_at });
-  eq("ouvrir les commandes sans prérequis : 409", [r.statusCode, corps(r).manquants], [409, ["P1", "P3", "P4", "P7"]]);
+  eq("ouvrir les commandes sans prérequis : 409", [r.statusCode, corps(r).manquants], [409, ["P1", "P3", "P4", "P7", "P9"]]);
   r = await adm({ action: "prerequis", id: "P3", fait: true, base: t.updated_at });
   eq("P3 avant le 02/11 : 409", r.statusCode, 409);
   for (const id of ["P1", "P4", "P7"]) { t = corps(await vue({ vue: "tableau" })); r = await adm({ action: "prerequis", id, fait: true, note: "vérifié", base: t.updated_at }); }
   eq("P1, P4, P7 cochés", r.statusCode, 200);
-  r = await adm({ action: "prerequis", id: "P9", fait: true });
+  r = await adm({ action: "prerequis", id: "P0", fait: true });
   eq("prérequis inconnu : 400", r.statusCode, 400);
+  t = corps(await vue({ vue: "tableau" }));
+  r = await adm({ action: "prerequis", id: "P9", fait: true, base: t.updated_at });
+  eq("P9 tant que le développement n'est pas livré : 409, message clair", [r.statusCode, /livrer/.test(corps(r).error)], [409, true]);
+  livrerP9(true);   // la suite simule sa livraison
+  t = corps(await vue({ vue: "tableau" }));
+  r = await adm({ action: "prerequis", id: "P9", fait: true, note: "livré", base: t.updated_at });
   r = await adm({ action: "reglages", commandes_live: true, base: "2020-01-01T00:00:00.000Z" });
   eq("réglages lus périmés : 409 conflit", corps(r).conflit, true);
   T = Date.parse("2026-11-01T23:00:00Z");   // 02/11/2026, minuit à Paris
@@ -565,6 +647,7 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   vrai("événement tout_couper tracé", db.tables.api_evenements.some(v => v.type === "tout_couper" && v.par === "equipe@elixir.test"));
   r = await adm({ action: "reglages", actif: true, base: t.updated_at });
   eq("remise en service", r.statusCode, 200);
+  livrerP9(false);
 
   // ouverture d'un accès : fiche revérifiée dans Odoo
   odooEtat.fiches[595] = FICHES[595];
@@ -643,6 +726,11 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   r = await vue({ vue: "journal", erreurs: "1" });
   vrai("journal : erreurs seulement", corps(r).lignes.every(l => l.statut >= 400) && corps(r).lignes.length > 0);
   vrai("journal : préfixe de la clé", corps(r).lignes.some(l => l.cle && l.cle.startsWith("elx_")));
+  const cherche = db.tables.api_journal.find(l => l.cle_id === cleTest.cle.id);
+  r = await vue({ vue: "journal", request_id: cherche.request_id.toUpperCase() });
+  eq("journal : recherche par X-Request-Id (support)", corps(r).lignes.map(l => l.request_id), [cherche.request_id]);
+  r = await vue({ vue: "journal", request_id: "pas-un-uuid" });
+  eq("journal : X-Request-Id illisible → 400", r.statusCode, 400);
   r = await adm({ action: "tout_couper" }, { host: "deploy-preview-9--commandes-elixir.netlify.app" });
   eq("aperçu : aucune modification", r.statusCode, 409);
   r = await vue({ vue: "inconnue" });
@@ -673,6 +761,9 @@ const vue = (q, qui = "admin") => ha({ httpMethod: "GET", headers: { host: "elix
   const revoke = /revoke all on table ([\s\S]*?) from anon, authenticated;/.exec(sql)?.[1] || "";
   vrai("SQL : droits retirés à anon et authenticated sur chaque table", tablesSql.every(t => revoke.split(/[\s,]+/).includes(t)));
   vrai("SQL : aucune policy", !/create policy/i.test(sql));
+  vrai("SQL : fenêtre d'un jour = jour de Paris", /api_fenetre[\s\S]*p_fenetre_s = 86400 then \(date_trunc\('day', now\(\) at time zone 'Europe\/Paris'\) at time zone 'Europe\/Paris'\)/.test(sql));
+  vrai("SQL : droit « documents » dans les contraintes, migration une seule fois", /array\['lecture', 'commande', 'documents'\]/.test(sql) && /type = 'migration_documents'/.test(sql));
+  vrai("SQL : marques des lignes en une transaction, réservées à service_role", /function api_marquer_lignes[\s\S]*for update[\s\S]*grant execute on function api_marquer_lignes\(text, int\[\], text, text\) to service_role/.test(sql));
   vrai("SQL : fonctions réservées à service_role", /revoke all on function api_compter\(text, int\) from public, anon, authenticated/.test(sql)
     && /grant execute on function api_compter\(text, int\) to service_role/.test(sql) && /revoke all on function api_lire_compteur/.test(sql));
   vrai("SQL : empreinte seule (64 hex), jamais de colonne « secret »", /empreinte\s+text not null unique check \(empreinte ~ '\^\[0-9a-f\]\{64\}\$'\)/.test(sql) && !/\bsecret\b\s+text/.test(sql));

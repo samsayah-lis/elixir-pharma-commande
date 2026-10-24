@@ -5,9 +5,9 @@
 //   2. revérifications : API en service, « Commandes par API » ouvertes, accès actif et non bloqué — sinon gardée
 //      « à vérifier » (envoi_suspendu), rien ne part ; commande déjà prise en main par Elixir pendant le délai (« Sync » de
 //      l'onglet Commandes : ligne envoyée ou tâche du relais en cours) → rien n'est touché, l'état suit le relais ;
-//   2 bis. intégrité (défense en profondeur tant que la base n'est pas fermée, prérequis P1) : la commande du site doit porter
-//      exactement les lignes acceptées par l'API (CIP, quantité, rang) et le CIP de la fiche Odoo de l'accès — sinon gardée
-//      « à vérifier » (commande_modifiee), rien ne part ;
+//   2 bis. intégrité (défense en profondeur) : la commande du site doit porter exactement les lignes acceptées par l'API
+//      (CIP, quantité, rang) et le CIP de la fiche Odoo de l'accès — sinon gardée « à vérifier » (commande_modifiee), rien
+//      ne part ;
 //   3. si_rupture « retirer » (défaut) : lignes sans stock libre suffisant (Odoo, société 2, moins ce qui part déjà par le
 //      relais) marquées « rupture : retirée » (handled_at + api_motif) AVANT l'envoi — aucune écriture de lignes après la mise
 //      en file (le relais y pose ses marques d'envoi) ; « garder » : elles restent en attente, pour Elixir ;
@@ -15,8 +15,11 @@
 //      fiche cliente non bloquée, commande de moins de 30 min ; tout le reste (doublon, envoi automatique coupé, retard)
 //      → « à vérifier » avec un motif, et une notification à Elixir ;
 //   5. stock affiché du site décrémenté pour les lignes mises en file (decrement_stock, comme order-save).
-// Jamais d'appel à PharmaML ici : l'agent du Mac reste le seul émetteur.
-import { isCronAuthorized } from "./auth.js";
+// Erreur passagère AVANT toute mise en file (Odoo ou base muets) : nouvel essai 3 min plus tard (la commande redevient
+// « recue », le passage planifié la reprend), tant qu'elle a moins de 22 min ; ensuite « à vérifier » (envoi_manque).
+// Exception APRÈS la mise en file (réponse perdue) : la file du relais fait foi (tâche active → « envoyee »).
+// Jamais d'appel à PharmaML ici : le relais reste le seul chemin.
+import { cronAutorise } from "./_api-http.js";
 import { odoo as odooReel } from "./_odoo-rpc.js";
 import { envoiAuto as envoiAutoReel, enVolRelais as enVolRelaisReel } from "./_relais.js";
 import { ficheVerifiee } from "./_chat-perimetre.js";
@@ -35,6 +38,11 @@ export const LIBELLES_ENVOI = { envoi_suspendu: "envoi suspendu (API, commandes 
   envoi_manuel: "envoi automatique du relais désactivé : synchro manuelle", envoi_manque: "envoi automatique manqué (plus de 30 min) : synchro manuelle",
   precommande: "lignes en rupture gardées (si_rupture « garder »)", erreur_transmission: "envoi impossible : à vérifier" };
 
+// nouvel essai après une erreur passagère : 3 min plus tard, tant que la commande a moins de 22 min (envoiAuto refuse au-delà
+// de 30 min)
+export const REESSAI = { apres_ms: 3 * 60e3, age_max_ms: 22 * 60e3 };
+const heureParis = (d) => new Date(d).toLocaleTimeString("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", minute: "2-digit" });
+
 // deps (doublures des tests) : autoriser, stock, odoo, envoiAuto, enVolRelais, verifierFiche(odooId), maintenant, journal
 export function creerHandler(deps = {}) {
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-envoi-background", ...o })));
@@ -43,7 +51,7 @@ export function creerHandler(deps = {}) {
   const enVolRelais = deps.enVolRelais || enVolRelaisReel;
   const verifierFiche = deps.verifierFiche || ((id) => ficheVerifiee(id, { odoo: deps.odoo || odooReel }));
   return async (event) => {
-    if (!(deps.autoriser || isCronAuthorized)(event)) return { statusCode: 403, body: "" };
+    if (!(deps.autoriser || ((e) => cronAutorise(e)))(event)) return { statusCode: 403, body: "" };
     const id = lireJson(event.body || "{}", {})?.id;
     if (!estUuid(id)) return { statusCode: 400, body: "" };
     const stock = deps.stock || creerStockApi();
@@ -60,6 +68,21 @@ export function creerHandler(deps = {}) {
       await finir({ etat: "a_verifier", motif, envoi_resultat: String(resultat || motif).slice(0, 300) });
       await avis(motif);
       journal({ code: "a_verifier", id, motif });
+    };
+    // erreur passagère, rien en file : nouvel essai dans 3 min (la commande redevient « recue ») tant qu'elle est récente
+    const essais = Number(/^nouvel essai n° (\d+)/.exec(String(row.envoi_resultat || ""))?.[1] || 0);
+    const reessayer = async (raison) => {
+      const recu = Date.parse(row.recu_le);
+      if (!(now.getTime() - recu < REESSAI.age_max_ms)) return false;
+      const quand = new Date(now.getTime() + REESSAI.apres_ms);
+      const r = await finir({ etat: "recue", envoi_apres: quand.toISOString(), envoi_resultat: `nouvel essai n° ${essais + 1} à ${heureParis(quand)} : ${String(raison).slice(0, 200)}` });
+      if (r) journal({ code: "nouvel_essai", id, essai: essais + 1 });
+      return !!r;
+    };
+    // la file du relais fait foi après une réponse perdue : une tâche active → la commande est partie
+    const dejaEnFile = async () => {
+      const t = await stock.relais.taches(row.order_id).catch(() => null);
+      return t == null ? null : t.some(x => !TACHES_LIBEREES.has(x.etat));
     };
     try {
       const [acces, lu] = await Promise.all([stock.acces.lire(row.odoo_id), stock.reglages.lire()]);
@@ -107,7 +130,17 @@ export function creerHandler(deps = {}) {
       }
       let r;
       try { r = await envoiAuto({ orderId: row.order_id, user: { api: true, cip: String(o.pharmacy_cip || "") } }); }
-      catch (e) { r = { ok: false, code: "exception", error: String(e?.message || e).slice(0, 200) }; }
+      catch (e) {
+        const erreur = String(e?.message || e).slice(0, 200);
+        const enFile = await dejaEnFile();
+        if (enFile) {
+          await finir({ etat: "envoyee", envoi_resultat: `mis en file, réponse perdue (${erreur}) : l'état suit le relais`.slice(0, 300) });
+          journal({ code: "en_file_reponse_perdue", id });
+          return { statusCode: 200, body: "" };
+        }
+        if (enFile === false && await reessayer(`envoi interrompu (${erreur})`)) return { statusCode: 200, body: "" };
+        r = { ok: false, code: "exception", error: erreur };
+      }
       if (r.ok) {
         // lignes que le relais n'a pas envoyées faute de stock (stock tombé entre la vérification et l'envoi, ou « garder ») :
         // jamais réécrites ici après la mise en file (le relais pose ses marques sur les mêmes lignes) → Elixir les traite
@@ -134,8 +167,14 @@ export function creerHandler(deps = {}) {
         } else await aVerifier("precommande", r.error);
       } else await aVerifier(MOTIF_ENVOI[r.code] || "erreur_transmission", `${r.code} : ${r.error || ""}`);
     } catch (e) {
-      journal({ code: "erreur", id, erreur: String(e?.message || e).slice(0, 160) });
-      await aVerifier("erreur_transmission", `erreur : ${String(e?.message || e).slice(0, 200)}`).catch(() => {});
+      const erreur = String(e?.message || e).slice(0, 200);
+      journal({ code: "erreur", id, erreur: erreur.slice(0, 160) });
+      try {
+        // la commande est-elle déjà dans la file du relais ? (une erreur après la mise en file ne la renvoie jamais)
+        const enFile = await dejaEnFile();
+        if (enFile) await finir({ etat: "envoyee", envoi_resultat: `mis en file, suite interrompue (${erreur}) : l'état suit le relais`.slice(0, 300) });
+        else if (!(enFile === false && await reessayer(erreur))) await aVerifier(enFile === false ? "envoi_manque" : "erreur_transmission", `erreur : ${erreur}`);
+      } catch { /* base muette : le passage planifié la reprend (envoi_demande de plus de 20 min → à vérifier) */ }
     }
     return { statusCode: 200, body: "" };
   };

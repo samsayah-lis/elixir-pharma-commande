@@ -32,8 +32,8 @@ create table if not exists api_acces (
   cip                     text,
   ville                   text,
   actif                   boolean not null default true,   -- false : accès suspendu (403 acces_suspendu)
-  portees                 text[] not null default '{lecture,commande}'
-                          check (portees <@ array['lecture', 'commande']::text[]),
+  portees                 text[] not null default '{lecture,commande,documents}'
+                          check (portees <@ array['lecture', 'commande', 'documents']::text[]),
   -- auto   : commande acceptée, mise en file après le délai d'annulation (sauf anomalie : « à vérifier ») ;
   -- bloque : nouvelles commandes refusées (403 commandes_bloquees), celles en attente ne partent pas
   mode                    text not null default 'auto' check (mode in ('auto', 'bloque')),
@@ -76,7 +76,7 @@ create table if not exists api_cles (
   empreinte             text not null unique check (empreinte ~ '^[0-9a-f]{64}$'),   -- sha256 hex de la clé
   prefixe               text not null,                 -- affichage : « elx_live_Ab3d…k9Qz »
   libelle               text not null check (char_length(libelle) between 1 and 60),
-  portees               text[] not null check (portees <@ array['lecture', 'commande']::text[] and cardinality(portees) > 0),
+  portees               text[] not null check (portees <@ array['lecture', 'commande', 'documents']::text[] and cardinality(portees) > 0),
   creee_par             text not null,
   creee_par_role        text not null check (creee_par_role in ('pharmacie', 'admin')),
   created_at            timestamptz not null default now(),
@@ -112,8 +112,11 @@ create table if not exists api_commandes (
   updated_at         timestamptz not null default now(),
   unique (odoo_id, test, idempotency_key)
 );
-create unique index if not exists api_commandes_reference on api_commandes (odoo_id, test, reference_client)
-  where reference_client is not null and etat <> 'refusee';
+-- reference_client unique par fiche hors commandes refusées ET annulées (une commande annulée libère sa référence : la
+-- commande corrigée peut la reprendre). L'ancien index (hors refusées seulement) est remplacé.
+drop index if exists api_commandes_reference;
+create unique index if not exists api_commandes_reference_v2 on api_commandes (odoo_id, test, reference_client)
+  where reference_client is not null and etat not in ('refusee', 'annulee');
 create index if not exists api_commandes_a_envoyer on api_commandes (etat, envoi_apres);
 create index if not exists api_commandes_commande on api_commandes (order_id);
 create index if not exists api_commandes_fiche on api_commandes (odoo_id, recu_le);
@@ -136,6 +139,8 @@ create table if not exists api_journal (
 create index if not exists api_journal_at on api_journal (at);
 create index if not exists api_journal_cle on api_journal (cle_id, at);
 create index if not exists api_journal_fiche on api_journal (odoo_id, at);
+-- support : recherche d'un appel par son X-Request-Id (onglet 🔌 API, « Rechercher un X-Request-Id »)
+create index if not exists api_journal_requete on api_journal (request_id);
 
 -- Événements de cycle de vie (preuve) : accès ouvert ou modifié, CGU acceptées, clé créée, remplacée ou révoquée,
 -- test validé par l'admin, réglages, prérequis, « Tout couper ». Jamais de secret.
@@ -161,22 +166,30 @@ create table if not exists api_compteurs (
 );
 create index if not exists api_compteurs_fenetre on api_compteurs (fenetre);
 
+-- début de la fenêtre en cours : fenêtre d'un jour (86 400 s) = jour de Paris (minuit, heure de Paris : le « jour » des
+-- débits est celui du plafond de commandes) ; autres fenêtres : fixes, alignées sur l'époque
+create or replace function api_fenetre(p_fenetre_s int) returns timestamptz
+language sql stable set search_path = public as $$
+  select case when p_fenetre_s = 86400 then (date_trunc('day', now() at time zone 'Europe/Paris') at time zone 'Europe/Paris')
+    else to_timestamp(floor(extract(epoch from now()) / p_fenetre_s) * p_fenetre_s) end;
+$$;
 -- +1 sur la fenêtre en cours → nouvelle valeur
 create or replace function api_compter(p_cle text, p_fenetre_s int) returns int
 language sql set search_path = public as $$
   insert into api_compteurs (cle, fenetre, n)
-  values (p_cle, to_timestamp(floor(extract(epoch from now()) / p_fenetre_s) * p_fenetre_s), 1)
+  values (p_cle, api_fenetre(p_fenetre_s), 1)
   on conflict (cle, fenetre) do update set n = api_compteurs.n + 1
   returning n;
 $$;
--- valeur de la fenêtre en cours, sans incrément (refus de clés par réseau)
+-- valeur de la fenêtre en cours, sans incrément (lue avant de compter : une requête refusée par le débit n'est pas comptée)
 create or replace function api_lire_compteur(p_cle text, p_fenetre_s int) returns int
 language sql stable set search_path = public as $$
-  select coalesce((select n from api_compteurs
-    where cle = p_cle and fenetre = to_timestamp(floor(extract(epoch from now()) / p_fenetre_s) * p_fenetre_s)), 0);
+  select coalesce((select n from api_compteurs where cle = p_cle and fenetre = api_fenetre(p_fenetre_s)), 0);
 $$;
+revoke all on function api_fenetre(int) from public, anon, authenticated;
 revoke all on function api_compter(text, int) from public, anon, authenticated;
 revoke all on function api_lire_compteur(text, int) from public, anon, authenticated;
+grant execute on function api_fenetre(int) to service_role;
 grant execute on function api_compter(text, int) to service_role;
 grant execute on function api_lire_compteur(text, int) to service_role;
 
@@ -225,6 +238,67 @@ alter table api_acces add column if not exists test_parcours text;
 -- Les commandes réelles sont aussi dans elixir_orders (source « api », sans e-mail, CIP de la fiche) : onglet Commandes,
 -- contingentement, « Mes commandes », relais. Les commandes de test (« T… ») ne sont QUE dans api_commandes.
 comment on column api_commandes.etat is 'en_cours, refusee, recue, a_verifier, envoi_demande, envoyee, non_servie, annulee';
+
+-- ── Revue du 24/10/2026 ──────────────────────────────────────────────────────────────────────────
+-- Droit « documents » (factures, avoirs, bons de livraison et leurs PDF), séparé de « lecture » : contraintes élargies
+-- (tables déjà créées) et, UNE SEULE FOIS (événement « migration_documents »), ajouté aux accès et aux clés qui avaient
+-- « lecture » (compatible : rien ne change pour eux). Rejouer ce fichier ne le redonne jamais à un accès qui l'a perdu.
+alter table api_acces drop constraint if exists api_acces_portees_check;
+alter table api_acces add constraint api_acces_portees_check check (portees <@ array['lecture', 'commande', 'documents']::text[]);
+alter table api_acces alter column portees set default '{lecture,commande,documents}';
+alter table api_cles drop constraint if exists api_cles_portees_check;
+alter table api_cles add constraint api_cles_portees_check check (portees <@ array['lecture', 'commande', 'documents']::text[] and cardinality(portees) > 0);
+do $$
+begin
+  if not exists (select 1 from api_evenements where type = 'migration_documents') then
+    update api_acces set portees = portees || '{documents}'::text[] where 'lecture' = any(portees) and not ('documents' = any(portees));
+    update api_cles set portees = portees || '{documents}'::text[] where 'lecture' = any(portees) and not ('documents' = any(portees));
+    insert into api_evenements (type, role, detail) values ('migration_documents', 'systeme', '{"droit":"documents"}');
+  end if;
+end $$;
+
+-- Marques de l'API sur les lignes d'une commande du site (annulation par la pharmacie, rupture retirée à l'envoi) : en UNE
+-- transaction, commande verrouillée, seulement sur les lignes sans synced_at ni handled_at (une ligne partie ou traitée par
+-- Elixir n'est jamais touchée) ; processed posé si toutes les lignes sont faites → nombre de lignes marquées (-1 : commande
+-- absente). Remplace la relecture puis réécriture de tout le tableau : une marque d'envoi posée entre-temps n'est plus
+-- écrasée. Tant que ce fichier n'est pas rejoué, l'API garde l'ancienne écriture (rien ne casse).
+create or replace function api_marquer_lignes(p_order_id text, p_idx int[], p_motif text, p_at text) returns int
+language plpgsql set search_path = public as $$
+declare
+  v_type_items text;
+  v_type_id text;
+  v_items jsonb;
+  v_it jsonb;
+  v_n int := 0;
+  v_tous boolean;
+begin
+  if p_motif is null or p_motif not in ('annulee', 'rupture') then raise exception 'api_marquer_lignes : motif inconnu'; end if;
+  if p_order_id !~ '^1[7-9][0-9]{11}$' then return -1; end if;
+  select format_type(atttypid, atttypmod) into v_type_items from pg_attribute
+    where attrelid = 'public.elixir_orders'::regclass and attname = 'items' and not attisdropped;
+  select format_type(atttypid, atttypmod) into v_type_id from pg_attribute
+    where attrelid = 'public.elixir_orders'::regclass and attname = 'id' and not attisdropped;
+  execute format('select items::jsonb from elixir_orders where id = $1::%s for update', v_type_id) into v_items using p_order_id;
+  if v_items is null then return -1; end if;
+  if jsonb_typeof(v_items) = 'string' then v_items := (v_items #>> '{}')::jsonb; end if;
+  if jsonb_typeof(v_items) <> 'array' then return 0; end if;
+  for i in 0 .. jsonb_array_length(v_items) - 1 loop
+    v_it := v_items -> i;
+    if jsonb_typeof(v_it) = 'object' and (p_idx is null or i = any(p_idx))
+       and coalesce(v_it ->> 'synced_at', '') = '' and coalesce(v_it ->> 'handled_at', '') = '' then
+      v_items := jsonb_set(v_items, array[i::text], v_it || jsonb_build_object('handled_at', p_at, 'api_motif', p_motif));
+      v_n := v_n + 1;
+    end if;
+  end loop;
+  if v_n > 0 then
+    select bool_and(coalesce(x ->> 'synced_at', '') <> '' or coalesce(x ->> 'handled_at', '') <> '') into v_tous from jsonb_array_elements(v_items) x;
+    execute format('update elixir_orders set items = $1::%s, processed = (coalesce(processed, false) or $2) where id = $3::%s', v_type_items, v_type_id)
+      using v_items, coalesce(v_tous, false), p_order_id;
+  end if;
+  return v_n;
+end $$;
+revoke all on function api_marquer_lignes(text, int[], text, text) from public, anon, authenticated;
+grant execute on function api_marquer_lignes(text, int[], text, text) to service_role;
 
 -- RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated.
 alter table api_reglages   enable row level security;

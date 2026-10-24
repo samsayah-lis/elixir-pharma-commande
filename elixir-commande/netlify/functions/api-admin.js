@@ -2,7 +2,8 @@
 // GET  ?vue=tableau                 → { reglages, updated_at, prerequis, ouvrable, commandes_production, acces: [...],
 //                                       defauts, bornes, portees, libelles_portees, cgu_version, version_api }
 // GET  ?vue=acces&odoo_id=          → { acces, cles: [... sans secret, usage_24h], evenements }
-// GET  ?vue=journal[&odoo_id=][&cle_id=][&erreurs=1] → { lignes: 500 dernières requêtes (jamais de corps) }
+// GET  ?vue=journal[&odoo_id=][&cle_id=][&erreurs=1][&request_id=] → { lignes: 500 dernières requêtes (jamais de corps) ; request_id :
+//      l'appel signalé par une pharmacie (X-Request-Id), quel que soit son âge }
 // POST { action: "reglages", actif?, commandes_live?, base }   → { ok, updated_at } | 409 (conflit, prérequis manquants)
 // POST { action: "prerequis", id, fait, note?, base }          → { ok, updated_at } (décocher referme les commandes réelles)
 // POST { action: "tout_couper" }                               → { ok } (API suspendue ET commandes réelles fermées)
@@ -179,7 +180,9 @@ export function creerHandler(deps = {}) {
               reference_client: r.reference_client, cle: prefixe.get(r.cle_id) || null, envoi_resultat: r.envoi_resultat }])) });
           }
           case "journal": {
-            const [lignes, cles] = await Promise.all([stock.journal.lister({ odooId: entier(q.odoo_id), cleId: estUuid(q.cle_id) ? q.cle_id : null,
+            const requestId = String(q.request_id || "").trim();
+            if (requestId && !estUuid(requestId)) return json(cors, 400, { error: "X-Request-Id illisible (format attendu : 8-4-4-4-12 caractères hexadécimaux)." });
+            const [lignes, cles] = await Promise.all([stock.journal.lister(requestId ? { requestId, limite: 50 } : { odooId: entier(q.odoo_id), cleId: estUuid(q.cle_id) ? q.cle_id : null,
               erreurs: q.erreurs === "1", limite: 500 }), stock.cles.toutes()]);
             const prefixe = new Map(cles.map(c => [c.id, c.prefixe]));
             return json(cors, 200, { lignes: lignes.map(l => ({ ...l, cle: prefixe.get(l.cle_id) || null })) });
@@ -220,7 +223,8 @@ export function creerHandler(deps = {}) {
           const p = PREREQUIS.find(x => x.id === b.id);
           if (!p) return json(cors, 400, { error: "Prérequis inconnu" });
           const fait = b.fait === true;
-          if (fait && !prerequisEtat(v, now).find(x => x.id === p.id).cochable) return json(cors, 409, { error: `${p.id} : ne peut pas être coché avant le ${p.pas_avant.split("-").reverse().join("/")}.` });
+          if (fait && !prerequisEtat(v, now).find(x => x.id === p.id).cochable) return json(cors, 409, { error: p.indisponible ? `${p.id} : ${p.indisponible}.`
+            : `${p.id} : ne peut pas être coché avant le ${String(p.pas_avant).split("-").reverse().join("/")}.` });
           v.prerequis[p.id] = { fait, le: now.toISOString(), par, note: texte(b.note, 300) };
           if (!fait) v.commandes_live = false;   // une case décochée referme les commandes réelles
           detail = { id: p.id, fait, note: v.prerequis[p.id].note, commandes_live: v.commandes_live };
@@ -294,6 +298,9 @@ export function creerHandler(deps = {}) {
           if (refus) return json(cors, 409, { error: refus.message, code: refus.code });
           const res = await creerCle(stock, { acces: a, environnement, libelle: b.libelle, portees, par, role: "admin", maintenant: now, octets: deps.octets });
           await evenement("cle_creee_admin", id, { environnement, libelle: res.cle.libelle, portees: res.cle.portees, prefixe: res.cle.prefixe, motif, vue_par: par }, res.cle.id);
+          if (environnement === "live") await stock.site.notifier({ type: "new_order", title: `🔑 Clé API de production créée dans l'admin — ${a.nom || `fiche n° ${id}`}`,
+            body: `« ${res.cle.libelle} » (${res.cle.prefixe}) par ${par} : ${motif}`, data: { source: "api", motif: "cle_creee_admin", odoo_id: id, prefixe: res.cle.prefixe } })
+            .catch((e) => journal({ code: "avis_cle", erreur: String(e?.message || e).slice(0, 80) }));
           return json(cors, 201, { cle: res.secret, info: res.cle });
         }
         case "cgu_signees": {

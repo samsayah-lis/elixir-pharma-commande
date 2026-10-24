@@ -11,8 +11,12 @@ import crypto from "node:crypto";
 export const VERSION_API = "1.0.0";
 export const DERNIERE_MODIFICATION = "2026-10-24";
 
-export const PORTEES = ["lecture", "commande"];
-export const LIBELLES_PORTEES = { lecture: "Lecture (catalogue, disponibilités, contingents, commandes, documents)", commande: "Commande (passer et annuler)" };
+// Droits d'une clé (et d'un accès) : « documents » (factures, avoirs, bons de livraison et leurs PDF) est séparé de « lecture »
+// (revue de sécurité du 24/10/2026) : une clé donnée à un outil de disponibilités ne reçoit pas les pièces financières.
+export const PORTEES = ["lecture", "commande", "documents"];
+export const LIBELLES_PORTEES = { lecture: "Lecture (catalogue, disponibilités, contingents, commandes)", commande: "Commande (passer et annuler)",
+  documents: "Documents (factures, avoirs et bons de livraison, en PDF)" };
+export const NOMS_PORTEES = { lecture: "Lecture", commande: "Commande", documents: "Documents" };
 export const ENVIRONNEMENTS = ["live", "test"];
 export const MODES = ["auto", "bloque"];
 export const CLES_ACTIVES_MAX = 3;          // par environnement et par pharmacie
@@ -31,35 +35,51 @@ export const niveauStock = (libre) => {
   return n < NIVEAUX_STOCK.faible_sous ? "stock_faible" : "en_stock";
 };
 
-// Débits : fenêtres fixes, compteurs durables (api_compteurs). Avant authentification : par IP (IPv6 : /64).
-// Classes par clé : lecture (catalogue, contingents, commandes, factures et livraisons en liste), disponibilites (stock lu
-// en direct, 200 CIP par appel), documents (PDF), commande. odoo : charge d'Odoo, comptée seulement quand une route lit
-// vraiment Odoo (cache manqué) — par fiche, toutes clés confondues, et pour toutes les pharmacies ensemble.
+// Débits : fenêtres fixes, compteurs durables (api_compteurs) ; fenêtre d'un jour = jour de Paris (minuit, heure de Paris).
+// Avant authentification : par IP (IPv6 : /64). Classes par clé : lecture (catalogue, contingents, commandes, factures et
+// livraisons en liste), disponibilites (stock lu en direct, 200 CIP par appel), documents (PDF), commande (POST), annulation
+// (DELETE : classe à part, une boucle de commandes n'empêche jamais d'annuler), simulation. Une requête refusée par le
+// débit (429) n'est pas comptée ; toute autre requête l'est (refus 400 et 422 compris). odoo : charge d'Odoo, comptée
+// seulement quand une route lit vraiment Odoo (cache manqué) — par fiche, toutes clés confondues, et pour toutes les
+// pharmacies ensemble. refus_cle : clés inconnues ou mal formées depuis un même réseau (une clé révoquée ou expirée est
+// comptée sur elle-même, jamais sur le réseau : un serveur partagé par plusieurs pharmacies n'est pas puni pour l'une d'elles).
 export const LIMITES = {
   ip: { par_minute: 120 },
-  refus_cle: { max: 20, fenetre_s: 600 },   // clés refusées depuis un même réseau
+  refus_cle: { max: 20, fenetre_s: 600 },
   lecture: { par_minute: 60, par_jour: 5000 },
   disponibilites: { par_minute: 30, par_jour: 5000 },
   documents: { par_minute: 20, par_jour: 300 },
   commande: { par_minute: 6, par_jour: 30 },
+  annulation: { par_minute: 30, par_jour: 1000 },
   simulation: { par_minute: 10, par_jour: 500 },
   odoo: { fiche_par_minute: 30, global_par_minute: 240 },
 };
+// Clés de test (elx_test_) : plus de marge pour développer (rien n'est envoyé ni facturé) ; les autres classes sont celles
+// des clés de production
+export const LIMITES_TEST = { commande: { par_minute: 30, par_jour: 500 }, simulation: { par_minute: 30, par_jour: 1000 } };
+export const limiteDe = (classe, environnement) => (environnement === "test" && LIMITES_TEST[classe]) || LIMITES[classe] || LIMITES.lecture;
+// Commandes de test par jour : au moins COMMANDES_TEST_JOUR_MIN, quel que soit le plafond de l'accès
+export const COMMANDES_TEST_JOUR_MIN = 100;
+export const plafondJour = (acces, test) => (test ? Math.max(Number(acces.plafond_commandes_jour) || 0, COMMANDES_TEST_JOUR_MIN) : Number(acces.plafond_commandes_jour) || 0);
 
 // ── Phase 3 (commandes) ──
 // Limites dures d'une demande (422 requete_invalide, rien n'est enregistré) ; Idempotency-Key : même règle que
 // RE_CLE_IDEMPOTENCE de _push-messages.js (UUID conseillé). Une requête « en cours » depuis moins de en_cours_ms → 409 ;
-// au-delà (fonction coupée), elle est reprise. budget_ms : au-delà, la commande n'est pas enregistrée (503 rejouable avec
-// la même clé) — les fonctions Netlify sont coupées à 10 s.
+// au-delà (fonction coupée), elle est reprise. budget_ms : mesuré depuis l'ARRIVÉE de la requête (contrôles du routeur et
+// relecture de la fiche compris) ; au-delà, rien n'est plus écrit (ni numéro, ni commande du site) : 503 rejouable avec la
+// même clé — les fonctions Netlify sont coupées à 10 s. fiche_ecriture_ms : relecture de la fiche Odoo d'une écriture.
 export const COMMANDE = { lignes_max: 200, quantite_max: 999, reference_max: 40, commentaire_max: 200, en_cours_ms: 60_000, budget_ms: 7000,
-  idempotence: /^[A-Za-z0-9_.:-]{8,128}$/, delai_envoi_max_min: 20 };
+  fiche_ecriture_ms: 3000, idempotence: /^[A-Za-z0-9_.:-]{8,128}$/, delai_envoi_max_min: 20 };
 // Anomalies nettes (commande gardée « à vérifier », jamais d'envoi automatique) :
 //  • quantité : ligne au-delà de anomalie_facteur × la quantité mensuelle habituelle du produit pour la pharmacie
 //    (moyenne des historique_jours derniers jours, tous canaux, commandes Odoo non annulées), avec un plancher de
 //    base_min_boites par mois pour un produit jamais ou rarement commandé (facteur 10 : 30 boîtes) ;
-//  • quasi-doublon : au moins part_doublon des produits de la commande déjà dans UNE commande reçue depuis moins de
-//    anomalie_doublon_min minutes (site, API, logiciel d'officine vu dans Odoo), lignes annulées ou traitées exclues.
-export const ANOMALIE = { historique_jours: 182, mois: 6, base_min_boites: 3, part_doublon: 0.8 };
+//  • quasi-doublon : une commande reçue depuis moins de anomalie_doublon_min minutes (site, API, logiciel d'officine vu dans
+//    Odoo ; lignes annulées ou traitées exclues) porte presque les mêmes produits : produits communs / produits des deux
+//    commandes réunis ≥ part_doublon (indice de Jaccard, symétrique : un complément d'une ou deux lignes après une grosse
+//    commande n'est PAS un quasi-doublon). Historique lu par somme groupée (aucune limite de lignes) ; commandes récentes
+//    du logiciel lues à part (recentes_max lignes) : une lecture pleine (tronquée) ne déclenche aucune anomalie de quantité.
+export const ANOMALIE = { historique_jours: 182, mois: 6, base_min_boites: 3, part_doublon: 0.8, recentes_max: 2000 };
 export const MOTIFS_ANOMALIE = { anomalie_quantite: "quantité très supérieure à vos habitudes pour ce produit", quasi_doublon: "commande presque identique à une commande reçue il y a peu" };
 export const MENTION_COMMANDE = `${MENTION_PRIX}. Prix indicatifs : la facture applique vos conditions au jour de la livraison.`;
 // Lectures : tailles de page et périodes (jours, bornes comprises)
@@ -88,11 +108,16 @@ export const BORNES = {
 
 // ── Prérequis de l'ouverture des commandes réelles (conception § 19) ──
 // pas_avant : jour (heure de Paris) avant lequel la case ne peut pas être cochée. Libellés neutres (dépôt public).
+// indisponible : case impossible à cocher tant que le développement correspondant n'est pas livré (texte affiché).
 export const PREREQUIS = [
   { id: "P1", libelle: "Sécurisation de la base de données : étape 2 et Bloc 1 du plan terminés" },
   { id: "P3", libelle: "Fin de la quarantaine des commandes du site (02/11/2026)", pas_avant: "2026-11-02" },
   { id: "P4", libelle: "Identifiants du relais renouvelés et envoi automatique du site stable" },
   { id: "P7", libelle: "Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé)" },
+  // revue de sécurité du 24/10/2026 : avis par e-mail à la pharmacie (clé créée, remplacée, révoquée) et alertes d'usage
+  // (nouveau réseau, volume inhabituel, erreurs, clé inutilisée) — en attendant, Elixir est prévenu (notification) de
+  // chaque clé de production créée, remplacée ou révoquée
+  { id: "P9", libelle: "Avis par e-mail des clés et alertes d'usage de l'API en place", indisponible: "développement à livrer avant l'ouverture des commandes réelles" },
 ];
 
 export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: {}, cips_exclus: [] };
@@ -100,6 +125,16 @@ export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: 
 export const lireCipsExclus = (v) => [...new Set((Array.isArray(v) ? v : String(v ?? "").split(/[\s,;]+/)).map(x => String(x).trim()).filter(x => /^\d{13}$/.test(x)))].slice(0, 500);
 const lireJson = (t, d) => { if (t && typeof t === "object") return t; try { return JSON.parse(t); } catch { return d; } };
 export const jourParis = (d = new Date()) => new Date(d).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+// secondes jusqu'au prochain minuit, heure de Paris (fenêtres d'un jour des débits et du plafond de commandes)
+export function secondesAvantMinuitParis(d = new Date()) {
+  const t = new Date(d).getTime();
+  const demain = new Date(Date.parse(`${jourParis(d)}T12:00:00Z`) + 86400e3).toISOString().slice(0, 10);
+  for (const off of ["+01:00", "+02:00"]) {
+    const m = Date.parse(`${demain}T00:00:00${off}`);
+    if (jourParis(new Date(m)) === demain && jourParis(new Date(m - 1000)) !== demain) return Math.max(1, Math.ceil((m - t) / 1000));
+  }
+  return Math.max(1, Math.ceil((Date.parse(`${demain}T00:00:00+01:00`) - t) / 1000));
+}
 
 export function fusionnerReglages(valeur) {
   const v = lireJson(valeur, {}) || {};
@@ -115,8 +150,8 @@ export function fusionnerReglages(valeur) {
 export function prerequisEtat(reglages, maintenant = new Date()) {
   const r = fusionnerReglages(reglages);
   const jour = jourParis(maintenant);
-  return PREREQUIS.map(p => ({ ...p, pas_avant: p.pas_avant || null, fait: false, le: null, par: null, note: null, ...(r.prerequis[p.id] || {}),
-    cochable: !p.pas_avant || jour >= p.pas_avant }));
+  return PREREQUIS.map(p => ({ ...p, pas_avant: p.pas_avant || null, indisponible: p.indisponible || null, fait: false, le: null, par: null, note: null,
+    ...(r.prerequis[p.id] || {}), cochable: !p.indisponible && (!p.pas_avant || jour >= p.pas_avant) }));
 }
 // L'interrupteur « Commandes par API » ne s'ouvre que si tous les prérequis sont cochés (et datés au bon jour)
 export function commandesOuvrables(reglages, maintenant = new Date()) {

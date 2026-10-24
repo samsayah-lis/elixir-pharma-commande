@@ -127,6 +127,9 @@ globalThis.fetch = async (url, opts = {}) => {
 
 const Cmd = await import("../netlify/functions/_api-commande.js");
 const conf = await import("../netlify/functions/_api-config.js");
+// P9 (avis par e-mail et alertes) n'est pas encore livré : ces essais du chemin de commande simulent sa livraison (sinon les
+// commandes réelles ne s'ouvrent jamais — voir test-api-fondations)
+delete conf.PREREQUIS.find(p => p.id === "P9").indisponible;
 const cles = await import("../netlify/functions/_api-cles.js");
 const { isoParis } = await import("../netlify/functions/_api-http.js");
 const { ficheVerifiee } = await import("../netlify/functions/_chat-perimetre.js");
@@ -152,8 +155,9 @@ const K = { bLive: await cle(200, "live"), bTest: await cle(200, "test"), aTest:
   bLecture: await cle(200, "live", ["lecture"]) };
 const JUSTIF = { [G]: { lab: { key: "labo-exemple", site: true }, produit: { cip: G, nom: "PRODUIT EXEMPLE G" } } };
 // débits relevés pour les essais en série (le débit lui-même est couvert par test-api-fondations)
-const LIM = structuredClone(conf.LIMITES);
-for (const k of ["commande", "simulation", "lecture"]) conf.LIMITES[k] = { par_minute: 100000, par_jour: 1000000 };
+const LIM = structuredClone(conf.LIMITES), LIMT = structuredClone(conf.LIMITES_TEST);
+for (const k of ["commande", "simulation", "lecture", "annulation"]) conf.LIMITES[k] = { par_minute: 100000, par_jour: 1000000 };
+for (const k of ["commande", "simulation"]) conf.LIMITES_TEST[k] = { par_minute: 100000, par_jour: 1000000 };
 conf.LIMITES.ip.par_minute = 100000;
 conf.LIMITES.odoo = { fiche_par_minute: 100000, global_par_minute: 100000 };
 const routeur = (extra = {}) => creerRouteur({ stock, maintenant, verifierFiche: (id) => ficheVerifiee(id, { odoo: faux.odoo }), odoo: faux.odoo, log: silence,
@@ -872,8 +876,289 @@ h = routeur();
     vrai(`${f} : aucun CIP réel ni clé`, !/\b34009\d{8}\b/.test(src) && !/elx_(live|test)_[0-9A-Za-z]{40}/.test(src));
   }
 }
-// ═══ 15. Débits par clé : simulation (10/min) et commande (6/min) ═══
+// ═══ 14 bis. Revue du 24/10/2026 (sécurité, commandes, intégrateur) ═══
+{
+  reglages({ actif: true, commandes_live: true, prerequis: TOUS() });
+  kvConfig(true);
+  await modifierAcces(200, { mode: "auto", cgu_version: conf.CGU.version, plafond_commandes_jour: 200, anomalie_active: true, anomalie_doublon_min: 0, delai_annulation_min: 10 });
+  for (const z of db.tables.api_commandes) if (!z.test && z.etat === "recue") z.etat = "annulee";
+  const viderEmpreintes = () => { db.tables.kv_store = db.tables.kv_store.filter(k => !k.key.startsWith("pmlr:empreinte:")); };
+  const evtEnvoi = (id) => ({ httpMethod: "POST", headers: { "x-cron-secret": "secret-cron-test" }, body: JSON.stringify({ id }) });
+  const fondR = (extra = {}) => creerFondEnvoi({ stock, odoo: faux.odoo, maintenant, journal: silence, ...extra });
+  const cronR = (extra = {}) => creerCron({ stock, maintenant, journal: silence, lancer: async (id) => { await fondR(extra)(evtEnvoi(id)); return null; } })();
+  let hr = routeur();
+  let r;
+
+  // ── C2 : annulation sans Odoo (fiche jamais lue) ; servie pendant « Tout couper » ──
+  viderEmpreintes();
+  r = await commander(hr, K.bLive, [[A, 2], [F, 1]]);
+  const oPanne = corpsDe(r).id;
+  faux.etat.panne = true;
+  const lecturesFiche = faux.etat.appels.filter(a => a.model === "res.partner").length;
+  r = await appel(routeur(), "DELETE", `/commandes/${oPanne}`, { cle: K.bLive });
+  faux.etat.panne = false;
+  eq("Odoo muet pendant le délai : DELETE 200, aucune lecture de la fiche", [r.statusCode, corpsDe(r).etat, faux.etat.appels.filter(a => a.model === "res.partner").length - lecturesFiche], [200, "annulee", 0]);
+  avancer(10 * 60 + 1);
+  await cronR();
+  eq("…le délai passé, la fonction d'envoi ne met rien en file", [api(oPanne).etat, taches(oPanne).length], ["annulee", 0]);
+  viderEmpreintes();
+  r = await commander(hr, K.bLive, [[A, 3]]);
+  const oCoupe = corpsDe(r).id;
+  reglages({ actif: false, commandes_live: false, prerequis: TOUS() });
+  r = await appel(routeur(), "DELETE", `/commandes/${oCoupe}`, { cle: K.bLive });
+  eq("« Tout couper » : l'annulation reste servie", [r.statusCode, corpsDe(r).etat], [200, "annulee"]);
+  r = await appel(routeur(), "GET", `/commandes/${oCoupe}`, { cle: K.bLive });
+  eq("…les autres routes : 503 api_suspendue", corpsDe(r).code, "api_suspendue");
+  reglages({ actif: true, commandes_live: true, prerequis: TOUS() });
+
+  // ── C3 : lignes prises en main par Elixir (« Traiter sans envoi ») → plus annulable par l'API ──
+  hr = routeur();
+  r = await commander(hr, K.bLive, [[A, 2], [F, 1]]);
+  const oPrise = corpsDe(r).id;
+  site(oPrise).items[0].handled_at = iso();   // admin : traitée sans envoi (saisie directe dans Odoo)
+  r = await appel(hr, "DELETE", `/commandes/${oPrise}`, { cle: K.bLive });
+  eq("ligne traitée par Elixir pendant le délai : DELETE 409 trop_tard, rien changé", [r.statusCode, corpsDe(r).code, corpsDe(r).etat, api(oPrise).etat, !!site(oPrise).items[1].handled_at],
+    [409, "trop_tard", "transmise", "recue", false]);
+  vrai("…message : contacter Elixir", /pris cette commande en main/.test(corpsDe(r).detail));
+  r = await commander(hr, K.bLive, [[A, 40]]);
+  const gPrise = corpsDe(r).id;
+  eq("commande gardée « à vérifier »", api(gPrise).etat, "a_verifier");
+  for (const it of site(gPrise).items) it.handled_at = iso();
+  r = await appel(hr, "DELETE", `/commandes/${gPrise}`, { cle: K.bLive });
+  eq("gardée, toutes lignes traitées par Elixir : DELETE 409", [r.statusCode, api(gPrise).etat], [409, "a_verifier"]);
+  api(oPrise).etat = "annulee"; api(gPrise).etat = "annulee";   // hors des essais suivants
+
+  // ── C4 : marques des lignes : panne → 503 rejouable ; rejeu → marquées ; passage planifié → reposées ──
+  r = await commander(hr, K.bLive, [[A, 2], [F, 1]]);
+  const oMarque = corpsDe(r).id;
+  const marquerVrai = stock.site.marquer, ecrireVrai = stock.site.ecrireLignes;
+  stock.site.marquer = async () => { throw new Error("base muette"); };
+  r = await appel(hr, "DELETE", `/commandes/${oMarque}`, { cle: K.bLive });
+  eq("panne en marquant les lignes : 503 rejouable, lignes non marquées", [r.statusCode, corpsDe(r).code, api(oMarque).etat, site(oMarque).items.some(i => i.handled_at)], [503, "indisponible", "annulee", false]);
+  stock.site.marquer = marquerVrai;
+  r = await appel(hr, "DELETE", `/commandes/${oMarque}`, { cle: K.bLive });
+  eq("…rejeu : 200, lignes marquées « annulee », commande traitée", [r.statusCode, site(oMarque).items.map(i => i.api_motif), site(oMarque).processed], [200, ["annulee", "annulee"], true]);
+  // page de l'admin restée ouverte : les marques sont effacées → le passage planifié les repose
+  for (const it of site(oMarque).items) { delete it.handled_at; delete it.api_motif; }
+  site(oMarque).processed = false;
+  await cronR();
+  eq("passage planifié : marques d'annulation reposées", [site(oMarque).items.map(i => i.api_motif), site(oMarque).processed], [["annulee", "annulee"], true]);
+  // fonction SQL absente (fichier pas rejoué) : repli sur la relecture-réécriture
+  db.etat.sansMarquer = true;
+  r = await commander(hr, K.bLive, [[A, 1], [B, 1]]);
+  const oRepli = corpsDe(r).id;
+  const avantMarque = db.etat.marquages || 0;
+  r = await appel(hr, "DELETE", `/commandes/${oRepli}`, { cle: K.bLive });
+  eq("sans api_marquer_lignes : annulation par l'ancienne écriture", [r.statusCode, site(oRepli).items.map(i => i.api_motif), (db.etat.marquages || 0) - avantMarque], [200, ["annulee", "annulee"], 0]);
+  db.etat.sansMarquer = false;
+  // la fonction SQL ne touche jamais une ligne partie
+  const n0m = db.etat.marquages || 0;
+  r = await commander(hr, K.bLive, [[A, 1], [F, 1]]);
+  const oSql = corpsDe(r).id;
+  r = await appel(hr, "DELETE", `/commandes/${oSql}`, { cle: K.bLive });
+  eq("annulation par la fonction SQL (une transaction)", [r.statusCode, (db.etat.marquages || 0) > n0m, site(oSql).items.map(i => i.api_motif)], [200, true, ["annulee", "annulee"]]);
+  stock.site.ecrireLignes = ecrireVrai;
+
+  // ── C5 / I1 : rejeu d'une commande acceptée après fermeture de l'interrupteur, nouvelles CGU, accès bloqué ──
+  for (const [quoi, fermer, rouvrir] of [
+    ["interrupteur refermé", () => reglages({ actif: true, commandes_live: false, prerequis: TOUS() }), () => reglages({ actif: true, commandes_live: true, prerequis: TOUS() })],
+    ["nouvelle version des CGU", () => modifierAcces(200, { cgu_version: "2026-01-01-ancienne" }), () => modifierAcces(200, { cgu_version: conf.CGU.version })],
+    ["accès bloqué", () => modifierAcces(200, { mode: "bloque" }), () => modifierAcces(200, { mode: "auto" })]]) {
+    const k = idem(), corps = cmd([[A, 2]], { reference_client: `REJEU-${quoi.slice(0, 6)}` });
+    r = await appel(hr, "POST", "/commandes", { cle: K.bLive, idem: k, corps });
+    const premier = r.body;
+    await fermer();
+    const hf = routeur();
+    r = await appel(hf, "POST", "/commandes", { cle: K.bLive, idem: k, corps });
+    eq(`${quoi} : rejeu → 201 rejoué à l'identique`, [r.statusCode, r.headers["Idempotent-Replayed"], r.body === premier], [201, "true", true]);
+    r = await appel(hf, "POST", "/commandes", { cle: K.bLive, idem: k, corps: { ...corps, lignes: [{ cip: A, quantite: 3 }] } });
+    eq(`${quoi} : même clé, autre contenu → 422`, corpsDe(r).code, "idempotency_key_reutilisee");
+    r = await commander(hf, K.bLive, [[A, 1]]);
+    eq(`${quoi} : nouvelle commande refusée`, r.statusCode >= 403 && r.statusCode !== 422, true);
+    await rouvrir();
+  }
+  vrai("refus de l'interrupteur : « aucune nouvelle commande n'a été enregistrée »", /aucune nouvelle commande/.test(Cmd.refusAcces({ mode: "auto", cgu_version: conf.CGU.version }, "live", {}, maintenant()).detail));
+
+  // ── I2 : une commande annulée libère sa reference_client ──
+  hr = routeur();
+  r = await commander(hr, K.bLive, [[A, 2]], { reference_client: "CORRIGEE-1" });
+  const oRef = corpsDe(r).id;
+  await appel(hr, "DELETE", `/commandes/${oRef}`, { cle: K.bLive });
+  r = await commander(hr, K.bLive, [[A, 3]], { reference_client: "CORRIGEE-1" });
+  eq("annulée puis repassée avec la même reference_client : 201", [r.statusCode, corpsDe(r).reference_client], [201, "CORRIGEE-1"]);
+  db.etat.indexReferenceAncien = true;   // base pas encore à jour : l'ancien index retient les annulées
+  r = await commander(hr, K.bLive, [[A, 2]], { reference_client: "CORRIGEE-2" });
+  const oRef2 = corpsDe(r).id;
+  await appel(hr, "DELETE", `/commandes/${oRef2}`, { cle: K.bLive });
+  r = await commander(hr, K.bLive, [[A, 3]], { reference_client: "CORRIGEE-2" });
+  eq("…ancien index : 409 explicite (commande annulée, nouvelle référence)", [r.statusCode, corpsDe(r).code, corpsDe(r).id, /annulée/.test(corpsDe(r).detail)], [409, "reference_deja_utilisee", oRef2, true]);
+  db.etat.indexReferenceAncien = false;
+  // ── C10 : même référence qu'une réservation encore en cours → 409 requete_en_cours (pas « déjà utilisée ») ──
+  db.tables.api_commandes.push({ id: "66666666-6666-4666-8666-666666666666", odoo_id: 200, cle_id: "k", test: false, idempotency_key: "en-cours-0001", empreinte_requete: "x",
+    reference_client: "EN-COURS-1", etat: "en_cours", order_id: null, recu_le: iso(), updated_at: iso() });
+  r = await commander(hr, K.bLive, [[A, 1]], { reference_client: "EN-COURS-1" });
+  eq("référence d'une réservation en cours : 409 requete_en_cours, Retry-After", [r.statusCode, corpsDe(r).code, r.headers["Retry-After"]], [409, "requete_en_cours", "2"]);
+  db.tables.api_commandes = db.tables.api_commandes.filter(z => z.idempotency_key !== "en-cours-0001");
+
+  // ── C6 : historique de plus de 5 000 lignes : somme groupée, aucune fausse anomalie ──
+  const nLignes = faux.tables["sale.order.line"].length;
+  let idSol = 990000;
+  faux.tables["sale.order"].push(so(390001, 200, T - 20 * 86400e3));
+  for (let i = 0; i < 6000; i++) faux.tables["sale.order.line"].push(sol(idSol++, 390001, 200, 4002, 1, T - 20 * 86400e3 + i * 1000));
+  for (let m = 0; m < 6; m++) { faux.tables["sale.order"].push(so(390100 + m, 200, T - (m * 30 + 5) * 86400e3)); faux.tables["sale.order.line"].push(sol(idSol++, 390100 + m, 200, 4006, 100, T - (m * 30 + 5) * 86400e3)); }
+  r = await simuler(hr, K.bLive, [[F, 300], [B, 1]]);
+  eq("F : 100 boîtes par mois → 300 avec B (6 000 lignes d'historique) : reçue, aucune anomalie", [corpsDe(r).etat, corpsDe(r).anomalies], ["recue", []]);
+  vrai("…historique lu par somme groupée (read_group), jamais par lignes", faux.etat.appels.some(a => a.model === "sale.order.line" && a.method === "read_group")
+    && !faux.etat.appels.slice(-12).some(a => a.model === "sale.order.line" && a.method === "search_read" && a.kwargs?.limit === 5000));
+  faux.tables["sale.order.line"].length = nLignes;
+
+  // ── C7 : quasi-doublon symétrique (un complément n'est pas un doublon) ──
+  await modifierAcces(200, { anomalie_doublon_min: 30 });
+  db.tables.elixir_orders.push({ id: 1790000000901, date: iso(T - 5 * 60e3), pharmacy_cip: "2222222", pharmacy_email: "b@pharma-b.test", source: "catalogue", processed: false,
+    items: [A, B, C, D, F].map(cip => ({ cip, qty: 2 })) });
+  hr = routeur();
+  r = await simuler(hr, K.bLive, [[F, 1]]);
+  eq("commande du site de 5 produits il y a 5 min, puis F×1 par l'API : reçue (complément)", [corpsDe(r).etat, corpsDe(r).motif], ["recue", null]);
+  r = await simuler(hr, K.bLive, [[A, 1], [B, 1], [C, 1], [D, 1], [F, 1]], { si_rupture: "garder" });
+  eq("…les mêmes 5 produits : quasi-doublon gardé", [corpsDe(r).etat, corpsDe(r).motif], ["en_attente_elixir", "quasi_doublon"]);
+  db.tables.elixir_orders = db.tables.elixir_orders.filter(o => o.id !== 1790000000901);
+  await modifierAcces(200, { anomalie_doublon_min: 0 });
+
+  // ── C8 : échéance mesurée depuis l'ARRIVÉE de la requête : rien n'est écrit au-delà ──
+  const compterVrai = stock.commandes.compterDepuis;
+  stock.commandes.compterDepuis = async (...a) => { await new Promise(ok => setTimeout(ok, 120)); return compterVrai(...a); };
+  const hLent = routeur({ horloge: () => Date.now(), budgetMs: 60 });
+  const kLent = idem(), cLent = cmd([[A, 2]], { reference_client: "LENTE-1" });
+  const nSite = db.tables.elixir_orders.length;
+  r = await appel(hLent, "POST", "/commandes", { cle: K.bLive, idem: kLent, corps: cLent });
+  stock.commandes.compterDepuis = compterVrai;
+  eq("échéance dépassée avant d'écrire : 503 rejouable, rien d'enregistré, réservation rendue", [r.statusCode, corpsDe(r).code, db.tables.elixir_orders.length - nSite,
+    db.tables.api_commandes.some(z => z.idempotency_key === kLent)], [503, "indisponible", 0, false]);
+  r = await appel(routeur(), "POST", "/commandes", { cle: K.bLive, idem: kLent, corps: cLent });
+  eq("…même requête rejouée : 201", r.statusCode, 201);
+  // instance gelée qui reprend après l'échéance (horloge avancée de 10 s juste après le numéro noté) : l'insertion est refusée
+  const kGel = idem();
+  let decalage = 0;
+  const hGel = routeur({ horloge: () => Date.now() + decalage });
+  const ecrireCmd = stock.commandes.ecrire;
+  stock.commandes.ecrire = async (row, champs) => { const x = await ecrireCmd(row, champs); if (champs.order_id && !champs.statut_http) decalage += 10_000; return x; };
+  r = await appel(hGel, "POST", "/commandes", { cle: K.bLive, idem: kGel, corps: cmd([[A, 4]]) });
+  stock.commandes.ecrire = ecrireCmd;
+  const rowGel = db.tables.api_commandes.find(z => z.idempotency_key === kGel);
+  eq("échéance passée entre le numéro et l'insertion : 503, numéro noté, rien dans elixir_orders", [r.statusCode, !!rowGel?.order_id, site(rowGel?.order_id)], [503, true, undefined]);
+  avancer(61);
+  r = await appel(routeur(), "POST", "/commandes", { cle: K.bLive, idem: kGel, corps: cmd([[A, 4]]) });
+  eq("…rejeu après 1 min : terminée avec le MÊME numéro", [r.statusCode, corpsDe(r).id], [201, rowGel.order_id]);
+
+  // ── S5 / C9 : plafond du jour sans course (requêtes simultanées) : place prise atomiquement avant le numéro ──
+  const jourP = new Date(T).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
+  const dejaJour = db.tables.api_commandes.filter(z => z.odoo_id === 200 && !z.test && z.order_id && !["refusee", "en_cours"].includes(z.etat)
+    && new Date(z.recu_le).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" }) === jourP).length;
+  const compteurJour = db.tables.api_compteurs.find(c => c.cle === `cmdjour:200:live:${jourP}`);
+  vrai("compteur atomique des commandes du jour tenu (fiche, environnement, jour de Paris)", compteurJour && compteurJour.n >= 1);
+  compteurJour.n = dejaJour;   // aligné sur les commandes du jour (les essais ont aussi écrit des lignes à la main)
+  await modifierAcces(200, { plafond_commandes_jour: dejaJour + 2 });
+  hr = routeur();
+  const simult = await Promise.all([[A, 1], [B, 1], [F, 1], [A, 2]].map(l => commander(hr, K.bLive, [l])));
+  eq(`plafond de ${dejaJour + 2} (2 de libres), 4 requêtes simultanées : exactement 2 acceptées, 2 × 429`, simult.map(x => x.statusCode).sort(), [201, 201, 429, 429]);
+  eq("…les refusées : rien d'enregistré, réservation rendue", db.tables.api_commandes.filter(z => z.etat === "en_cours").length, 0);
+  await modifierAcces(200, { plafond_commandes_jour: 200 });
+  // clés de test : au moins 100 commandes de test par jour, quel que soit le plafond de l'accès
+  await modifierAcces(100, { plafond_commandes_jour: 1 });
+  r = await commander(hr, K.aTest, [[A, 1]]);
+  r = await commander(hr, K.aTest, [[B, 1]]);
+  eq("test : plafond du jour au moins 100 (accès réglé à 1)", r.statusCode, 201);
+  await modifierAcces(100, { plafond_commandes_jour: 10 });
+
+  // ── I5 : commande de test gardée : validation simulée à la fin du délai ──
+  r = await commander(hr, K.aTest, [[A, 60]]);
+  const tg = corpsDe(r);
+  eq("test gardée : en attente d'Elixir, avertissement du mode test", [tg.etat, tg.avertissements.some(a => /en production, elle attendrait la validation d'Elixir Pharma/.test(a))], ["en_attente_elixir", true]);
+  r = await appel(hr, "GET", `/commandes/${tg.id}`, { cle: K.aTest });
+  eq("…relecture : en attente", corpsDe(r).etat, "en_attente_elixir");
+  avancer(10 * 60 + 1);
+  r = await appel(hr, "GET", `/commandes/${tg.id}`, { cle: K.aTest });
+  eq("…après le délai : validation simulée, transmise", corpsDe(r).etat, "transmise");
+  r = await appel(hr, "DELETE", `/commandes/${tg.id}`, { cle: K.aTest });
+  eq("…plus annulable (409 trop_tard, transmise)", [r.statusCode, corpsDe(r).etat], [409, "transmise"]);
+
+  // ── I8 : délai écoulé, pas encore pris par l'envoi : « en_transmission », comme le dit DELETE ──
+  r = await commander(hr, K.bLive, [[A, 1], [B, 1]]);
+  const oFen = corpsDe(r).id;
+  avancer(10 * 60 + 1);
+  r = await appel(hr, "GET", `/commandes/${oFen}`, { cle: K.bLive });
+  const lu = corpsDe(r);
+  r = await appel(hr, "DELETE", `/commandes/${oFen}`, { cle: K.bLive });
+  eq("délai écoulé avant le passage planifié : GET en_transmission, DELETE 409 en_transmission", [lu.etat, lu.annulable_jusqu_a, r.statusCode, corpsDe(r).etat],
+    ["en_transmission", null, 409, "en_transmission"]);
+  api(oFen).etat = "annulee";
+
+  // ── C11 : réponse perdue après la mise en file → « envoyee » (la file du relais fait foi) ──
+  viderEmpreintes();
+  r = await commander(hr, K.bLive, [[A, 2], [B, 1]]);
+  const oPerdu = corpsDe(r).id;
+  avancer(10 * 60 + 1);
+  const { envoiAuto } = await import("../netlify/functions/_relais.js");
+  await creerFondEnvoi({ stock, odoo: faux.odoo, maintenant, journal: silence, envoiAuto: async (a) => { await envoiAuto(a); throw new Error("réponse perdue"); } })(evtEnvoi(api(oPerdu).id));
+  eq("mis en file puis exception : « envoyee », une tâche", [api(oPerdu).etat, /réponse perdue/.test(api(oPerdu).envoi_resultat), taches(oPerdu).length], ["envoyee", true, 1]);
+
+  // ── C12 : Odoo muet à l'envoi, avant toute mise en file : nouvel essai 3 min plus tard ──
+  viderEmpreintes();
+  r = await commander(hr, K.bLive, [[A, 2], [F, 1]]);
+  const oEssai = corpsDe(r).id;
+  avancer(10 * 60 + 1);
+  faux.etat.panne = true;
+  await fondR()(evtEnvoi(api(oEssai).id));
+  eq("Odoo muet à l'envoi : redevient « recue », nouvel essai dans 3 min, aucune tâche", [api(oEssai).etat, api(oEssai).envoi_apres, /^nouvel essai n° 1/.test(api(oEssai).envoi_resultat), taches(oEssai).length],
+    ["recue", iso(T + 3 * 60e3), true, 0]);
+  faux.etat.panne = false;
+  await cronR();
+  eq("…passage suivant trop tôt : rien", taches(oEssai).length, 0);
+  avancer(3 * 60 + 1);
+  await cronR();
+  eq("…Odoo revenu : mise en file", [api(oEssai).etat, taches(oEssai).length], ["envoyee", 1]);
+  // trop ancienne (22 min) : à vérifier, avis à Elixir
+  viderEmpreintes();
+  r = await commander(hr, K.bLive, [[A, 1], [F, 2]]);
+  const oVieux = corpsDe(r).id;
+  avancer(23 * 60);
+  faux.etat.panne = true;
+  const avis0 = db.tables.ec_notifications.length;
+  await fondR()(evtEnvoi(api(oVieux).id));
+  faux.etat.panne = false;
+  eq("…commande de plus de 22 min : « à vérifier » (envoi_manque), avis", [api(oVieux).etat, api(oVieux).motif, db.tables.ec_notifications.length - avis0], ["a_verifier", "envoi_manque", 1]);
+
+  // ── C13 : le passage planifié prévient Elixir ; commandes « api » inconnues de l'API signalées une fois ──
+  const vieux = iso(T - 21 * 60e3);
+  db.tables.api_commandes.push({ id: "77777777-7777-4777-8777-777777777777", odoo_id: 200, cle_id: "k", test: false, idempotency_key: "suspens-0007", empreinte_requete: "x",
+    etat: "envoi_demande", order_id: "1790000000700", recu_le: vieux, updated_at: vieux });
+  db.tables.elixir_orders.push({ id: 1790000000800, date: iso(T - 60e3), pharmacy_cip: "2222222", pharmacy_email: null, source: "api", processed: false, items: [{ cip: A, qty: 1 }] });
+  const avis1 = db.tables.ec_notifications.length;
+  await cronR();
+  const nouveaux = db.tables.ec_notifications.slice(avis1);
+  eq("passage planifié : envoi interrompu → à vérifier, avis ; commande « api » orpheline signalée", [nouveaux.some(n => /1790000000700/.test(n.title)), nouveaux.some(n => /inconnue de l'API/.test(n.title) && /1790000000800/.test(n.title))], [true, true]);
+  await cronR();
+  eq("…orpheline signalée une seule fois", db.tables.ec_notifications.filter(n => /inconnue de l'API/.test(n.title)).length, 1);
+  db.tables.elixir_orders = db.tables.elixir_orders.filter(o => o.id !== 1790000000800);
+
+  // ── S3 : clé de production créée ou révoquée depuis le compte → avis à Elixir ──
+  const { creerHandler: creerCompte } = await import("../netlify/functions/api-compte.js");
+  const compte = creerCompte({ stock, maintenant, journal: silence, identifier: async () => ({ odooId: 700, cip: "7777777", nom: "PHARMACIE G", ville: "Ville", mode: "complet", compteEmail: "g@pharma-g.test", admin: null }) });
+  const poste = (b) => compte({ httpMethod: "POST", headers: { host: "elixir-commande.expepharma.com", authorization: "Bearer x", "x-nf-client-connection-ip": "203.0.113.5" }, body: JSON.stringify(b) });
+  const avis2 = db.tables.ec_notifications.length;
+  r = await poste({ action: "creer_cle", environnement: "test", libelle: "Essai", portees: ["lecture"] });
+  eq("clé de TEST : pas d'avis", [r.statusCode, db.tables.ec_notifications.length - avis2], [201, 0]);
+  r = await poste({ action: "creer_cle", environnement: "live", libelle: "Logiciel", portees: ["lecture", "commande"] });
+  const kp = JSON.parse(r.body).info;
+  eq("clé de PRODUCTION créée : avis à Elixir (préfixe, jamais le secret)", [r.statusCode, db.tables.ec_notifications.length - avis2, /Clé API de production créée/.test(db.tables.ec_notifications.at(-1).title),
+    db.tables.ec_notifications.at(-1).body.includes(JSON.parse(r.body).cle)], [201, 1, true, false]);
+  r = await poste({ action: "revoquer_cle", id: kp.id });
+  eq("…révoquée : avis", [r.statusCode, /révoquée/.test(db.tables.ec_notifications.at(-1).title)], [200, true]);
+}
+
+// ═══ 15. Débits par clé : simulation (10/min) et commande (6/min) ; clés de test : 30/min ═══
 Object.assign(conf.LIMITES, LIM);
+Object.assign(conf.LIMITES_TEST, LIMT);
 {
   h = routeur();
   avancer(60 - (Math.floor(T / 1000) % 60));
@@ -883,8 +1168,18 @@ Object.assign(conf.LIMITES, LIM);
   avancer(60);
   await modifierAcces(200, { plafond_commandes_jour: 200 });
   const c = [];
-  for (let i = 0; i < 7; i++) c.push((await commander(h, K.bTest, [[A, 1]])).statusCode);
-  eq("commande : 6 par minute, la 7e → 429 (rien d'écrit)", [c.slice(0, 6).every(x => x === 201), c[6]], [true, 429]);
+  const n0 = sitesApi().length;
+  const kNeuve = await cle(200, "live");   // clé neuve : son plafond du jour (30) n'est pas entamé par les essais précédents
+  for (let i = 0; i < 7; i++) c.push((await commander(h, kNeuve, [[A, 1]])).statusCode);
+  eq("commande (production) : 6 par minute, la 7e → 429 (rien d'écrit)", [c, sitesApi().length - n0], [[201, 201, 201, 201, 201, 201, 429], 6]);
+  // l'annulation a sa propre classe : 6 commandes dans la minute n'empêchent jamais d'annuler la première, encore dans son délai
+  const premiere = db.tables.api_commandes.filter(z => z.odoo_id === 200 && !z.test && z.etat === "recue").sort((a, b) => Date.parse(b.recu_le) - Date.parse(a.recu_le))[5];
+  let r = await appel(h, "DELETE", `/commandes/${premiere.order_id}`, { cle: kNeuve });
+  eq("…puis DELETE de la première : 200 (classe « annulation », 30/min)", [r.statusCode, corpsDe(r).etat], [200, "annulee"]);
+  avancer(60);
+  const t = [];
+  for (let i = 0; i < conf.LIMITES_TEST.commande.par_minute + 1; i++) t.push((await commander(h, K.bTest, [[A, 1]])).statusCode);
+  eq(`commande (test) : ${conf.LIMITES_TEST.commande.par_minute} par minute, la suivante → 429`, [t.slice(0, -1).every(x => x === 201), t.at(-1)], [true, 429]);
 }
 
 console.log(`\nAPI des pharmacies (commandes) : ${ok} OK, ${ko} échec(s)`);

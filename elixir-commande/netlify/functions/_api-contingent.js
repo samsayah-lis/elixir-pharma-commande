@@ -10,6 +10,11 @@
 import { odoo as odooReel, COMPANY_ID } from "./_odoo-rpc.js";
 import { quotaProducts, odooUsage, lastPharmamlImport, currentPeriod, quotaLabel, parisDate, PERIODS } from "./_quota.js";
 
+// Période d'un contingent dans l'API : code stable (ASCII, snake_case, comme les autres énumérations) ; le libellé en
+// français reste dans « libelle ». Toute période connue de _quota.js (PERIODS) doit avoir son code ici.
+export const CODES_PERIODE = { "-1": "semaine", "-2": "decade", "-3": "quinzaine", "-4": "mois", "1": "jours_glissants" };
+export const periodeConnue = (p) => !!PERIODS[p];
+
 // → { exempt, today, products: { <CIP ou EAN>: { name, quota, period, days, label, used, used_odoo, used_site, remaining, start, end } } }
 // (forme de la réponse de quota-status) ; sb(path) → JSON (lecture) ; odoo : _odoo-rpc.js (fiche dispensée)
 export async function resteContingents({ odooId, cip }, { sb, odoo = odooReel, maintenant = () => new Date() } = {}) {
@@ -73,7 +78,7 @@ export function formerContingents(r) {
     vus.add(row);
     const codes = Object.entries(r.products).filter(([, x]) => x === row).map(([c]) => c);
     const cip = codes.find(c => /^\d{13}$/.test(c)) || code;
-    donnees.push({ cip, nom: row.name || null, quota: row.quota, periode: PERIODS[row.period] || null, jours_glissants: row.period === "1" ? row.days : null,
+    donnees.push({ cip, nom: row.name || null, quota: row.quota, periode: CODES_PERIODE[row.period] || null, jours_glissants: row.period === "1" ? row.days : null,
       libelle: row.label, debut: row.start, fin: row.end ? jourAvant(row.end) : r.today || null, deja_commande: row.used, reste: row.remaining });
   }
   donnees.sort((a, b) => a.cip.localeCompare(b.cip));

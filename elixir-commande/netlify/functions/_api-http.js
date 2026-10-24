@@ -5,10 +5,34 @@
 // est une page statique du site, qui n'a pas besoin de CORS.
 // Les textes ne parlent jamais de la plomberie interne : on écrit « notre système de préparation ».
 
+import crypto from "node:crypto";
+
 const SITE_HOSTS = ["elixir-commande.expepharma.com", "commandes-elixir.netlify.app"];
+// Hôte d'aperçu : aperçus de branche, ET lien permanent de chaque déploiement (« <id>--commandes-elixir… »), anciens
+// déploiements compris (ils font tourner l'ancien code). Le routeur n'y accepte que les clés de TEST (403
+// cle_production_hors_site pour une clé elx_live_) et y tient le journal comme ailleurs.
 const APERCU = /^[a-z0-9-]+--commandes-elixir\.netlify\.app$/;
 const hote = (event) => String(event?.headers?.host || event?.headers?.Host || "").toLowerCase();
 export const estApercu = (event) => APERCU.test(hote(event));
+// Adresse du client vue par Netlify (en-tête posé par Netlify, que le client ne peut pas écrire) → texte, ou null si absent.
+// Jamais X-Forwarded-For : un contrôle de sécurité (réseaux autorisés, débits) ne se fie pas à une donnée du client.
+export function ipClient(event) {
+  const h = event?.headers || {};
+  const k = Object.keys(h).find(x => x.toLowerCase() === "x-nf-client-connection-ip");
+  const v = k ? String(h[k] || "").trim() : "";
+  return v || null;
+}
+// Secret des fonctions d'arrière-plan (x-cron-secret) comparé en temps constant (empreintes de même longueur) ; faux si
+// CRON_SECRET n'est pas configuré
+export function cronAutorise(event, secret = process.env.CRON_SECRET) {
+  if (!secret) return false;
+  const h = event?.headers || {};
+  const k = Object.keys(h).find(x => x.toLowerCase() === "x-cron-secret");
+  const fourni = k ? String(h[k] ?? "") : "";
+  if (!fourni) return false;
+  const a = crypto.createHash("sha256").update(fourni).digest(), b = crypto.createHash("sha256").update(String(secret)).digest();
+  return crypto.timingSafeEqual(a, b);
+}
 export const siteBase = (event) => `https://${SITE_HOSTS.includes(hote(event)) ? hote(event) : SITE_HOSTS[0]}`;
 // adresse du site pour une fonction planifiée (sans requête entrante) : URL de Netlify si c'est un hôte du site
 export const siteBaseEnv = (env = process.env) => { let h = ""; try { h = new URL(String(env.URL || "")).hostname.toLowerCase(); } catch { /* absente */ }
@@ -34,6 +58,7 @@ export const CODES = {
   cle_invalide: [401, "Clé d'API invalide", "Cette clé n'est pas reconnue : vérifiez qu'elle est recopiée en entier, sans espace."],
   cle_revoquee: [401, "Clé d'API révoquée", "Cette clé a été révoquée : créez-en une nouvelle depuis votre compte (« Accès API »)."],
   cle_expiree: [401, "Clé d'API expirée", "Cette clé a été remplacée et n'est plus valide : utilisez la nouvelle clé."],
+  cle_production_hors_site: [403, "Clé de production refusée à cette adresse", "Cette adresse n'est pas celle du service : seules les clés de test (elx_test_) y sont acceptées. Appelez https://elixir-commande.expepharma.com/api/v1/…"],
   portee_insuffisante: [403, "Droit insuffisant", "Cette clé n'a pas le droit nécessaire pour cette opération."],
   ip_non_autorisee: [403, "Réseau non autorisé", "Cette clé ne s'utilise que depuis les réseaux déclarés pour votre pharmacie."],
   acces_suspendu: [403, "Accès suspendu", "L'accès API de votre pharmacie est suspendu : contactez Elixir Pharma."],

@@ -11,8 +11,9 @@ Dépôt public : ce fichier ne contient ni secret ni donnée réelle.
 
 **En une phrase.** Une fois en ligne, la lecture (catalogue à leurs prix, disponibilités, contingents, commandes,
 factures, bons de livraison) et les commandes de **test** fonctionnent tout de suite. Les commandes **réelles** restent
-refusées (`503 ecriture_suspendue`) tant que vous n'avez pas coché P1, P3, P4 et P7 puis ouvert l'interrupteur
-« Commandes par API ».
+refusées (`503 ecriture_suspendue`) tant que P1, P3, P4, P7 et P9 ne sont pas cochés et que vous n'avez pas ouvert
+l'interrupteur « Commandes par API ». P9 (avis par e-mail et alertes) ne peut pas encore être coché : son développement
+reste à livrer.
 
 ---
 
@@ -30,8 +31,17 @@ Le fichier se rejoue sans effet : vous pouvez le relancer autant de fois que né
 - `api_compteurs` (débits) ;
 - `api_prix` et `api_prix_listes` (prix de chaque liste).
 
-Il ajoute aussi la colonne `api_acces.test_parcours`. Toutes ces tables sont fermées : RLS activé, aucune policy, droits
-retirés à anon et authenticated. Seules les fonctions du serveur y accèdent.
+Il ajoute aussi :
+
+- la colonne `api_acces.test_parcours` ;
+- le droit « documents » (factures, avoirs, bons de livraison), séparé de « lecture » ;
+- l'index qui libère la référence d'une commande annulée (`api_commandes_reference_v2`) et celui de la recherche par
+  `X-Request-Id` ;
+- les fonctions `api_fenetre` (le « jour » des débits est le jour de Paris) et `api_marquer_lignes` (marques
+  d'annulation posées en une seule fois).
+
+Toutes ces tables et fonctions sont fermées : RLS activé, aucune policy, droits retirés à anon et authenticated. Seules
+les fonctions du serveur y accèdent.
 
 **Vérification** (même éditeur) :
 
@@ -42,6 +52,9 @@ select relname, relrowsecurity from pg_class where relkind = 'r' and relname lik
 select count(*) from pg_policies where tablename like 'api\_%';
 -- 3. la clé du navigateur ne lit rien : doit répondre false
 select has_table_privilege('anon', 'public.api_cles', 'select');
+-- 4. fonctions réservées au serveur : doit répondre false, false
+select has_function_privilege('anon', 'api_marquer_lignes(text, int[], text, text)', 'execute'),
+       has_function_privilege('anon', 'api_compter(text, int)', 'execute');
 ```
 
 ### 1.2 Variables Netlify
@@ -53,7 +66,21 @@ Rien de nouveau. L'API utilise deux variables déjà en place :
 
 Vérifiez seulement qu'elles existent avec la portée « Functions ». Ne les affichez pas.
 
-### 1.3 Déploiement
+### 1.3 Protéger les adresses de déploiement (Netlify, une fois, AVANT le déploiement)
+
+Chaque déploiement Netlify garde sa propre adresse (`<identifiant>--commandes-elixir.netlify.app`), qui fait tourner le
+code de CE déploiement, même ancien. L'API n'y accepte que les clés de test, mais protégez-les quand même :
+
+1. Netlify → le site → **Site configuration → Access & security → Visitor access** (« Password protection ») ;
+2. choisissez la protection des déploiements **hors production** (aperçus de branche et liens permanents des
+   déploiements), avec un mot de passe connu de l'équipe ;
+3. vérifiez : l'adresse d'un ancien déploiement (Netlify → Deploys → un déploiement → lien « Permalink ») demande le mot
+   de passe, et `https://elixir-commande.expepharma.com/api/` reste ouverte.
+
+Si votre offre Netlify ne propose pas cette protection, dites-le moi : l'API refuse déjà les clés de production sur ces
+adresses et y note chaque appel au journal (environnement « aperçu »).
+
+### 1.4 Déploiement
 
 Je ne pousse rien moi-même. Quand vous le décidez, la branche `api-pharmacies` est fusionnée dans `master`, puis Netlify
 construit le site comme d'habitude.
@@ -68,7 +95,7 @@ Ce qui part avec ce déploiement :
 - le panneau « Accès API » de « Mes commandes » ;
 - la documentation `/api/`.
 
-### 1.4 Vérifications après la mise en ligne (5 minutes)
+### 1.5 Vérifications après la mise en ligne (5 minutes)
 
 1. `https://elixir-commande.expepharma.com/api/` affiche la documentation.
 2. `/api/docs` renvoie vers `/api/`, et `/api/openapi.yaml` se télécharge.
@@ -81,8 +108,8 @@ Ce qui part avec ce déploiement :
    On attend `401`, `Content-Type: application/problem+json`, `"code":"cle_absente"` et un en-tête `X-Request-Id`.
 4. Dans l'onglet admin **🔌 API**, on lit :
    - « API en service » ;
-   - « Commandes par API (production) : fermees » ;
-   - les prérequis, tous décochés.
+   - « Commandes par API (production) : fermées » ;
+   - les prérequis, tous décochés (P9 grisé : « développement à livrer avant l'ouverture des commandes réelles »).
 5. Netlify → Functions : `api-cron` et `api-commandes-cron` sont marquées « Scheduled ». Tant qu'aucun accès n'est ouvert,
    leurs journaux ne montrent rien d'autre qu'un passage à vide.
 
@@ -90,23 +117,24 @@ Ce qui part avec ce déploiement :
 
 ## 2. Prérequis P1 à P8
 
-Seules les quatre cases de l'onglet 🔌 API (P1, P3, P4, P7) commandent l'interrupteur « Commandes par API ». Il ne s'ouvre
-que quand elles sont toutes cochées, et décocher une case le referme aussitôt. P2, P5, P6 et P8 se vérifient à la main,
-avec la liste ci-dessous.
+Seules les cinq cases de l'onglet 🔌 API (P1, P3, P4, P7, P9) commandent l'interrupteur « Commandes par API ». Il ne
+s'ouvre que quand elles sont toutes cochées, et décocher une case le referme aussitôt. P2, P5, P6 et P8 se vérifient à la
+main, avec la liste ci-dessous.
 
 La lecture et le mode test peuvent servir dès la mise en ligne : ils n'écrivent que dans les tables privées `api_*` et
 n'élargissent pas l'exposition actuelle de la base.
 
 | # | Prérequis | Nécessaire pour | Qui | État au 24/10/2026 | Case de l'onglet |
 |---|---|---|---|---|---|
-| **P1** | Sécurisation de la base de données : étape 2 et Bloc 1 du plan terminés | Toute commande réelle. Sans elle, les commandes, la file d'envoi et les comptes restent modifiables avec la clé publique du navigateur. | Zineb (SQL) + Claude | À faire (plan de fermeture du 19/10) | Oui |
+| **P1** | Sécurisation de la base de données : étape 2 et Bloc 1 du plan terminés | Toute commande réelle (détail dans le plan de sécurisation du 19/10, hors dépôt) | Zineb (SQL) + Claude | À faire | Oui |
 | **P2** | Tables `api_*` créées fermées (`sql/api-schema.sql`, rejoué pour `test_parcours`) | Tout | Zineb | À faire (§ 1.1) | Non (requêtes du § 1.1) |
 | **P3** | Fin de la quarantaine des commandes du site (02/11/2026) | Écriture | — | Date | Oui (impossible à cocher avant le 02/11/2026) |
-| **P4** | Identifiants du relais renouvelés et envoi automatique du site stable | Envoi automatique des commandes API. Le mot de passe par défaut est dans le dépôt public. | Zineb | À faire | Oui |
+| **P4** | Identifiants du relais renouvelés et envoi automatique du site stable | Envoi automatique des commandes API | Zineb | À faire | Oui |
 | **P5** | Numéros de commande « 18… » et « 19… » reconnus par le suivi | Suivi des commandes après le 15/01/2027 | Claude | Fait (fb2a76b, en production) | Non |
 | **P6** | Lecture du stock par lots | Grosses commandes | Claude | Fait côté API (voir ci-dessous) | Non (non bloquant) |
 | **P7** | Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé) | Commandes réelles | Zineb (avocat + pharmacien responsable) | À faire (projet au § 6) | Oui |
 | **P8** | Entretien avec chaque pharmacie demandeuse (logiciel, outil, besoin, volume, PharmaML déjà paramétré ou non) | Avant d'ouvrir son accès | Zineb | À faire | Non |
+| **P9** | Avis par e-mail des clés et alertes d'usage de l'API en place | Commandes réelles : la pharmacie et Elixir sont prévenus de chaque clé créée, remplacée ou révoquée ; alertes nouveau réseau, volume inhabituel, erreurs, clé inutilisée | Claude (développement), puis Zineb | À livrer (en attendant : notification à Elixir pour chaque clé de production) | Oui (grisée tant que ce n'est pas livré) |
 
 Détail de P6 :
 
@@ -120,6 +148,7 @@ Libellés exacts des cases de l'onglet, repris du code :
 - P3 : Fin de la quarantaine des commandes du site (02/11/2026)
 - P4 : Identifiants du relais renouvelés et envoi automatique du site stable
 - P7 : Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé)
+- P9 : Avis par e-mail des clés et alertes d'usage de l'API en place
 
 ---
 
@@ -128,7 +157,7 @@ Libellés exacts des cases de l'onglet, repris du code :
 1. **Entretien (P8).** Si le besoin est le réassort courant, la bonne réponse est PharmaML depuis son logiciel
    d'officine : vérifiez qu'Elixir y est paramétré.
 2. **Admin → 🔌 API → « Ouvrir un accès ».**
-   - Recherchez la fiche (nom, ville, CIP ou e-mail), puis choisissez les droits (Lecture, Commande) et le mode
+   - Recherchez la fiche (nom, ville, CIP ou e-mail), puis choisissez les droits (Lecture, Commande, Documents) et le mode
      (Automatique ou Bloqué). Une note interne est facultative.
    - Cliquez sur « Ouvrir l'accès ». La fiche est revérifiée : cliente Elixir, CIP présent.
    - La liste de prix de la fiche est lue, puis ses prix sont calculés. Dans « Prix des listes », elle passe de
@@ -161,8 +190,8 @@ Libellés exacts des cases de l'onglet, repris du code :
 5. **Pharmacie sans compte du site** (variante tracée) :
    - « CGU signées (PDF) » : saisissez la référence du document signé ;
    - « Valider le test (passer outre) » si besoin, avec un motif ;
-   - « Créer une clé (sans compte) » : la clé n'est montrée qu'une fois. Remettez-la de vive voix, jamais par e-mail.
-     Le journal note quel admin l'a vue.
+   - « Créer une clé (sans compte) » : un petit formulaire (environnement, droits, nom, motif). La clé n'est montrée
+     qu'une fois. Remettez-la de vive voix, jamais par e-mail. Le journal note quel admin l'a vue.
 6. **Pharmacie en lecture seule** : décochez le droit « Commande », ou passez le mode à « Bloqué ».
 
 ---
@@ -171,11 +200,11 @@ Libellés exacts des cases de l'onglet, repris du code :
 
 | Situation | Geste (onglet 🔌 API sauf mention) | Effet |
 |---|---|---|
-| Incident, abus, doute général | **Tout couper** (avec confirmation) | Toutes les routes répondent `503 api_suspendue`, sauf `/v1/etat`, et les commandes réelles sont fermées. Les commandes encore dans leur délai ne partent pas : elles passent « à vérifier » (`envoi_suspendu`). « Remettre en service » rouvre l'API, mais pas les commandes réelles, qui se rouvrent à part. |
+| Incident, abus, doute général | **Tout couper** (avec confirmation) | Toutes les routes répondent `503 api_suspendue`, sauf `/v1/etat` et l'annulation (une pharmacie peut toujours annuler), et les commandes réelles sont fermées. Les commandes encore dans leur délai ne partent pas : elles passent « à vérifier » (`envoi_suspendu`). « Remettre en service » rouvre l'API, mais pas les commandes réelles, qui se rouvrent à part. |
 | Arrêter seulement les commandes réelles | **Fermer les commandes par API** (ou décocher un prérequis) | `POST /v1/commandes` avec une clé de production répond `503 ecriture_suspendue`. La lecture et le mode test continuent. Les commandes dans leur délai passent « à vérifier ». |
 | Une pharmacie pose problème | **Suspendre l'accès** (motif tracé) | `403 acces_suspendu` sur toutes ses routes. |
 | La pharmacie peut lire mais ne doit plus commander | Mode **Bloqué** | Ses commandes sont refusées (`403 commandes_bloquees`) et celles en attente ne partent pas. La lecture continue. |
-| Une clé a fui | **Révoquer** (dans l'onglet, ou par la pharmacie dans « Accès API ») | `401 cle_revoquee` en moins d'une minute. |
+| Une clé a fui | **Révoquer** (dans l'onglet, ou par la pharmacie dans « Accès API ») | `401 cle_revoquee` aussitôt pour les commandes et annulations, en moins d'une minute pour les lectures. Une notification vous prévient de chaque clé de production créée, remplacée ou révoquée. |
 | Un produit ne doit pas se commander par l'API | « Produits exclus des commandes par API » | La ligne est refusée (`produit_non_commandable`, « à commander sur le site »). |
 | Envoi automatique du relais coupé | Bandeau du relais (onglet relais, `autoSite`) | Les commandes API dont le délai se termine passent « à vérifier » (`envoi_manuel`). Il faut les synchroniser à la main. |
 
@@ -193,14 +222,19 @@ Une commande déjà partie vers PharmaML ne se rattrape pas par ces interrupteur
   - « Traiter sans envoi » retire une ligne : la pharmacie la voit `traitee_par_elixir`.
 - Les commandes API ne partent jamais avec « Sync toutes ». « Sync » pendant le délai demande une confirmation, parce que
   la pharmacie peut encore annuler.
+- **⚠ 🔌 inconnue de l'API** ou **état API inconnu** : commande marquée « api » sans trace d'acceptation (ou enregistrement
+  interrompu). Elle ne part jamais seule ; « Sync » demande une confirmation : appelez d'abord la pharmacie. Une
+  notification vous la signale une fois.
+- L'onglet **🔌 API** porte une pastille : nombre de commandes API « à vérifier » (et inconnues de l'API) en attente. Dans
+  « Commandes reçues par l'API », cliquez sur un numéro pour aller à la commande dans l'onglet Commandes.
 
 | Motif « à vérifier » | Cause | Que faire |
 |---|---|---|
 | `anomalie_quantite` | Ligne au-delà de 10 × la quantité mensuelle habituelle (6 mois, tous canaux ; plancher 3 boîtes par mois) | Appeler la pharmacie si besoin, puis Sync, ou retirer la ligne |
-| `quasi_doublon` | 80 % des produits déjà dans une commande de moins de 30 min (site, API, logiciel) | Vérifier le doublon avant Sync |
+| `quasi_doublon` | Presque les mêmes produits qu'une commande de moins de 30 min (site, API, logiciel) : 80 % de produits communs, en comptant ceux des deux commandes | Vérifier le doublon avant Sync |
 | `envoi_suspendu` | API, commandes par API ou accès coupés pendant le délai | Sync quand tout est rouvert, ou laisser la pharmacie annuler |
 | `envoi_manuel` | Envoi automatique du relais coupé | Sync à la main |
-| `envoi_manque` | Envoi automatique plus de 30 min en retard | Sync à la main |
+| `envoi_manque` | Envoi automatique plus de 30 min en retard, ou erreur passagère qui a duré plus de 22 min (l'envoi est réessayé toutes les 3 min avant) | Sync à la main |
 | `doublon_recent` | Le relais a vu une commande identique de moins de 2 h | Vérifier avant Sync |
 | `precommande` | Lignes en rupture gardées (`si_rupture: garder`) | Sync au retour du stock |
 | `rupture_envoi` | Ligne sans stock au moment de l'envoi | « Traiter sans envoi » sur ces lignes, ou Sync au retour du stock |
@@ -210,25 +244,31 @@ Une commande déjà partie vers PharmaML ne se rattrape pas par ces interrupteur
 ### 5.2 Onglet 🔌 API
 
 - **Commandes reçues par l'API** : commandes réelles et de test, avec état, motif et référence, sans jamais le corps.
-- **Journal des appels** : 500 derniers appels, filtres « Erreurs seulement » et « Cette pharmacie », « Export CSV ».
-  Pendant le pilote, un coup d'œil par jour sur « Erreurs seulement » suffit.
+- **Journal des appels** : 500 derniers appels, filtres « Erreurs seulement » et « Cette pharmacie », « Export CSV », et
+  **« Rechercher un X-Request-Id »** (l'identifiant donné par la pharmacie, quel que soit son âge, copiable). Les appels
+  faits sur une adresse de déploiement sont marqués « (aperçu) ». Pendant le pilote, un coup d'œil par jour sur
+  « Erreurs seulement » suffit.
 - **Prix des listes** : état du calcul de chaque liste et bouton « Recalculer ».
 - **Clés** d'un accès : dernière utilisation, appels sur 24 h, « Révoquer ».
 
 ### 5.3 Autres sources
 
-- **Support.** La pharmacie donne le `X-Request-Id` de la réponse. Retrouvez-le dans le journal (colonne « Requête ») ou
-  dans les journaux Netlify de la fonction `api-v1`, en lignes JSON.
+- **Support.** La pharmacie donne le `X-Request-Id` de la réponse (elle le voit aussi dans « Accès API » → « Derniers
+  appels »). Collez-le dans « Rechercher un X-Request-Id » du journal, ou cherchez-le dans les journaux Netlify de la
+  fonction `api-v1`, en lignes JSON.
 - **Notifications.** Chaque commande API réelle crée une notification « Commande API de … », précédée de
-  « ⚠ À vérifier — » si elle est gardée.
+  « ⚠ À vérifier — » si elle est gardée. Aussi : toute commande que l'envoi ou le passage planifié garde « à vérifier »,
+  toute commande « api » inconnue de l'API, et chaque clé de production créée, remplacée ou révoquée (« 🔑 Clé API de
+  production … »).
 - **Conservation** :
   - journal des appels : 13 mois (purge automatique) ;
   - compteurs de débit : 2 jours ;
   - commandes reçues par l'API : gardées, comme preuve (5 ans prévus ; purge pas encore programmée).
-- **Pas encore fait** (V1.1) :
-  - e-mails d'avis à la création ou à la révocation d'une clé ;
-  - alertes automatiques : clé inactive depuis 90 jours, nouveau réseau, pic de volume, taux d'erreurs ;
-  - résumé quotidien par e-mail.
+- **Pas encore fait** (prérequis P9, bloquant pour les commandes réelles) :
+  - e-mails d'avis à la pharmacie (copie à Elixir) à la création, au remplacement ou à la révocation d'une clé ;
+  - alertes automatiques : clé inactive depuis 90 jours (révoquée à 180), nouveau réseau, volume supérieur à 3 fois
+    l'habitude, plus de 20 % d'erreurs ;
+  - résumé quotidien par e-mail (V1.1).
 
 ---
 
@@ -320,12 +360,18 @@ sur papier existe : signature d'un PDF, puis référence saisie dans l'admin.
 3. **Catalogue.** Il ne signale pas encore les produits refusés à la commande (justificatif, campagnes, fauteuils,
    exclusions) : la ligne est refusée à la commande, avec son motif. Un champ « commandable » est prévu en V1.1.
 4. **Seuil « stock faible »** : moins de 10 unités libres. À confirmer (jamais de quantité exacte rendue).
-5. **Plafond du jour** : deux commandes passées à la même seconde peuvent faire 11 commandes sur 10. Les débits par clé
-   bornent le reste.
-6. **Rejeu après fermeture.** Une commande déjà acceptée, renvoyée avec la même clé après la fermeture de l'interrupteur,
-   reçoit `503`, pas sa réponse d'origine.
+5. **Plafond du jour** : réglé — la place du jour est prise atomiquement avant le numéro de commande : des commandes
+   simultanées ne dépassent jamais le plafond.
+6. **Rejeu après fermeture** : réglé — une commande déjà acceptée, renvoyée avec la même clé après la fermeture de
+   l'interrupteur, une nouvelle version des CGU ou le passage en « Bloqué », reçoit sa réponse d'origine.
 7. **Commande traitée sans envoi.** Si toutes ses lignes ont été « traitées sans envoi » par Elixir, elle apparaît
-   « transmise » (règle du site), avec des lignes `traitee_par_elixir`.
+   « transmise » (règle du site), avec des lignes `traitee_par_elixir`, et la pharmacie ne peut plus l'annuler par
+   l'API (`409 trop_tard`).
 8. **Adresse de l'API** : `https://elixir-commande.expepharma.com/api/v1`. Un sous-domaine dédié pourra venir plus tard
    si besoin.
-9. **E-mails d'avis et alertes automatiques** : voir § 5.3.
+9. **E-mails d'avis et alertes automatiques** : prérequis P9, voir § 5.3.
+10. **Serveur partagé par plusieurs pharmacies** (éditeur de logiciel) : les 120 requêtes par minute avant la clé sont
+    comptées par adresse IP ; une clé révoquée d'une pharmacie ne bloque plus les autres, mais le débit par IP reste
+    commun. À relever pour ce cas, si une demande arrive.
+11. **Page de l'admin restée ouverte** : « Traiter sans envoi » réécrit les lignes depuis la page ; sur une commande API
+    annulée, les marques d'annulation effacées sont reposées par le passage planifié (2 min au plus).

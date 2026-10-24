@@ -5,19 +5,24 @@
 // POST { action: "creer_cle", environnement, libelle, portees } → 201 { cle (secret, montré UNE fois), info }
 // POST { action: "remplacer_cle", id }                   → 201 { cle, info, ancienne_expire_le } (l'ancienne reste valide 7 jours)
 // POST { action: "revoquer_cle", id, motif? }            → { ok, info }
-// POST { action: "journal" }                             → { appels: 50 derniers (date, méthode, route, statut, code, durée, clé) }
+// POST { action: "journal" }                             → { appels: 50 derniers (date, méthode, route, statut, code, durée, clé,
+//                                                           request_id : à donner au support d'Elixir) }
+// Compte dont l'adresse n'est plus sur la fiche Odoo, ou fiche sans CIP (mode « conseiller_seul ») : « etat » ne dit que
+// { ouvert, lecture_seule: "adresse" } (ni plafonds, ni clés, ni parcours), « journal » est refusé (403 lecture_seule).
+// Avis à Elixir (notification de l'admin) à chaque clé de PRODUCTION créée, remplacée ou révoquée (en attendant l'e-mail
+// d'avis à la pharmacie, prérequis P9).
 // Identité : celle de l'Assistant (identifier() de _chat-perimetre.js) — jeton du code reçu par e-mail, adresse ENCORE
 // sur la fiche Odoo (mode « complet ») pour toute écriture ; admin « Commander pour une pharmacie » (admin_token +
 // pour_odoo_id revalidé dans Odoo) : lecture seule (les clés d'une pharmacie sans compte se créent dans l'admin, tracé).
 // Aucun autre identifiant venu du navigateur n'est lu. Hôte d'aperçu : lecture seule. Le secret d'une clé n'est jamais
 // stocké, journalisé ni renvoyé une seconde fois.
 import { getCors } from "./cors.js";
-import { cleIp, clientIp } from "./rate-limit.js";
+import { cleIp } from "./rate-limit.js";
 import { identifier } from "./_chat-perimetre.js";
 import { creerStockApi, estUuid } from "./_api-stock.js";
 import { clePublique, creerCle, remplacerCle, refusCreation, reseauDe } from "./_api-cles.js";
 import { CGU, LIBELLES_PORTEES, LIMITES, MENTION_PRIX, commandesLiveOuvertes, empreinteCgu, fusionnerReglages } from "./_api-config.js";
-import { estApercu, isoParis } from "./_api-http.js";
+import { estApercu, ipClient, isoParis } from "./_api-http.js";
 import { parcoursPublic } from "./_api-parcours.js";
 
 const ACTIONS = new Set(["etat", "cgu", "creer_cle", "remplacer_cle", "revoquer_cle", "journal"]);
@@ -74,11 +79,19 @@ export function creerHandler(deps = {}) {
     const lectureSeule = ctx.admin ? "admin" : ctx.mode !== "complet" ? "adresse" : apercu ? "apercu" : null;
     const evenement = (type, detail, cleId = null) => stock.evenements.ajouter({ type, odoo_id: ctx.odooId, cle_id: cleId, par: ctx.compteEmail, role: "pharmacie", detail })
       .catch((e) => journal({ code: "evenement", type, erreur: String(e?.message || e).slice(0, 80) }));
+    // clé de production créée, remplacée ou révoquée par la pharmacie : Elixir est prévenu (notification de l'admin)
+    const QUOI = { cle_creee: "créée", cle_remplacee: "remplacée", cle_revoquee: "révoquée" };
+    const prevenir = (type, info) => (info?.environnement === "live" ? stock.site.notifier({ type: "new_order", title: `🔑 Clé API de production ${QUOI[type]} — ${ctx.nom || `fiche n° ${ctx.odooId}`}`,
+      body: `« ${info.libelle} » (${info.prefixe}), ${QUOI[type]} depuis le compte de la pharmacie. Si ce n'est pas attendu : révoquez-la (onglet 🔌 API) et appelez la pharmacie.`,
+      data: { source: "api", motif: type, odoo_id: ctx.odooId, prefixe: info.prefixe } }).catch((e) => journal({ code: "avis_cle", erreur: String(e?.message || e).slice(0, 80) })) : null);
 
     try {
       const acces = await stock.acces.lire(ctx.odooId);
+      // compte détaché de la fiche (adresse retirée d'Odoo, client bloqué) : rien de plus que « l'accès existe »
+      const detache = !ctx.admin && ctx.mode !== "complet";
       if (body.action === "etat") {
         if (!acces) return json(cors, 200, { ouvert: false });
+        if (detache) return json(cors, 200, { ouvert: true, lecture_seule: "adresse" });
         const [cles, reglages] = await Promise.all([stock.cles.deFiche(ctx.odooId), stock.reglages.lire()]);
         return json(cors, 200, {
           ouvert: true, actif: !!acces.actif, lecture_seule: lectureSeule, pharmacie: ctx.nom,
@@ -96,9 +109,10 @@ export function creerHandler(deps = {}) {
       }
       if (body.action === "journal") {
         if (!acces) return json(cors, 404, { error: "acces" });
+        if (detache) return json(cors, 403, { error: "lecture_seule", raison: "adresse", message: "Demandez à Elixir Pharma de mettre à jour l'adresse e-mail de votre fiche." });
         const [lignes, cles] = await Promise.all([stock.journal.lister({ odooId: ctx.odooId, limite: 50 }), stock.cles.deFiche(ctx.odooId)]);
         const prefixe = new Map(cles.map(c => [c.id, c.prefixe]));
-        return json(cors, 200, { appels: lignes.map(l => ({ at: l.at, methode: l.methode, route: l.route, statut: l.statut, code: l.code,
+        return json(cors, 200, { appels: lignes.map(l => ({ at: l.at, request_id: l.request_id, methode: l.methode, route: l.route, statut: l.statut, code: l.code,
           duree_ms: l.duree_ms, environnement: l.environnement, cle: prefixe.get(l.cle_id) || null })) });
       }
 
@@ -112,7 +126,7 @@ export function creerHandler(deps = {}) {
       switch (body.action) {
         case "cgu": {
           if (body.version !== CGU.version) return json(cors, 409, { error: "cgu_version", message: "Les conditions ont changé : relisez la version affichée." });
-          const preuve = { mode: "en_ligne", empreinte_texte: empreinteCgu(), reseau: reseauDe(clientIp(event)), le: now.toISOString() };
+          const preuve = { mode: "en_ligne", empreinte_texte: empreinteCgu(), reseau: reseauDe(ipClient(event)), le: now.toISOString() };
           const a = await stock.acces.modifier(ctx.odooId, { cgu_version: CGU.version, cgu_acceptees_le: now.toISOString(),
             cgu_acceptees_par: ctx.compteEmail, cgu_preuve: JSON.stringify(preuve) });
           await evenement("cgu_acceptees", { version: CGU.version, empreinte_texte: preuve.empreinte_texte, reseau: preuve.reseau });
@@ -126,6 +140,7 @@ export function creerHandler(deps = {}) {
           if (refus) return json(cors, 409, { error: refus.code, message: refus.message });
           const res = await creerCle(stock, { acces, environnement, libelle: body.libelle, portees, par: ctx.compteEmail, role: "pharmacie", maintenant: now, octets: deps.octets });
           await evenement("cle_creee", { environnement, libelle: res.cle.libelle, portees: res.cle.portees, prefixe: res.cle.prefixe }, res.cle.id);
+          await prevenir("cle_creee", res.cle);
           return json(cors, 201, { cle: res.secret, info: res.cle });
         }
         case "remplacer_cle": {
@@ -138,6 +153,7 @@ export function creerHandler(deps = {}) {
           if (refus) return json(cors, 409, { error: refus.code, message: refus.message });
           const res = await remplacerCle(stock, { acces, ancienne, par: ctx.compteEmail, role: "pharmacie", maintenant: now, octets: deps.octets });
           await evenement("cle_remplacee", { ancienne: ancienne.id, prefixe: res.cle.prefixe, ancienne_expire_le: res.ancienne_expire_le }, res.cle.id);
+          await prevenir("cle_remplacee", res.cle);
           return json(cors, 201, { cle: res.secret, info: res.cle, ancienne_expire_le: isoParis(res.ancienne_expire_le) });
         }
         case "revoquer_cle": {
@@ -149,6 +165,7 @@ export function creerHandler(deps = {}) {
             return c ? json(cors, 200, { ok: true, info: clePublique(c, now), deja: true }) : json(cors, 404, { error: "cle" });
           }
           await evenement("cle_revoquee", { motif, prefixe: r.prefixe }, r.id);
+          await prevenir("cle_revoquee", r);
           return json(cors, 200, { ok: true, info: clePublique(r, now) });
         }
         default: return json(cors, 400, { error: "action" });

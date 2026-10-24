@@ -9,7 +9,7 @@
 //   3. api_prix réécrite pour cette liste, lignes des produits sortis du catalogue supprimées (seulement après un calcul
 //      complet) ; état « pret » (ou « erreur », message court sans donnée).
 // Lectures Odoo seulement. Aucune autre table que api_prix et api_prix_listes n'est écrite.
-import { isCronAuthorized } from "./auth.js";
+import { cronAutorise } from "./_api-http.js";
 import { creerStockApi } from "./_api-stock.js";
 import { calculerListe, lecteurOdoo } from "./_api-prix.js";
 import { jourParis } from "./_api-config.js";
@@ -19,7 +19,7 @@ export function creerHandler(deps = {}) {
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-prix-background", ...o })));
   const maintenant = deps.maintenant || (() => new Date());
   return async (event) => {
-    if (!(deps.autoriser || isCronAuthorized)(event)) return { statusCode: 403, body: "" };
+    if (!(deps.autoriser || ((e) => cronAutorise(e)))(event)) return { statusCode: 403, body: "" };
     let listeId = null;
     try { listeId = Number(JSON.parse(event.body || "{}").liste_id); } catch { /* corps illisible */ }
     if (!Number.isInteger(listeId) || listeId <= 0) return { statusCode: 400, body: "" };

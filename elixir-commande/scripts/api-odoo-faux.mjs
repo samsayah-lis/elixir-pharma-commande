@@ -6,7 +6,8 @@
 //    prix = le PLUS BAS des prix donnés par les règles applicables (variante, modèle, catégorie et ses parents, barème
 //    global ; règle en vigueur ; quantité minimale atteinte ; formule appuyée sur le prix de base ou sur une autre liste),
 //    prix de base sans règle ; rendu HTML au format d'Odoo 17 (une cellule par quantité, montants « 1 417,48 ») ;
-//  • le stock libre (product.product.free_qty) et la liste de prix des fiches (res.partner.property_product_pricelist).
+//  • le stock libre (product.product.free_qty) et la liste de prix des fiches (res.partner.property_product_pricelist) ;
+//  • read_group (somme groupée, sans limite de lignes, comme Odoo) : champs « x:sum », un regroupement many2one, lazy false.
 // Toute méthode d'écriture lève une erreur ; chaque appel est noté (appels).
 import { creerFauxOdoo } from "./test-chat-perimetre.mjs";
 
@@ -75,6 +76,19 @@ export function creerOdooApi(donnees, { jour = () => "2026-10-20" } = {}) {
     if (etat.panne) throw new TypeError("fetch failed");
     if (ECRITURES.has(method)) throw new Error(`faux Odoo : écriture interdite (${model}.${method})`);
     if (model === "report.product.report_pricelist" && method === "get_html") return rapport(args[0]);
+    if (method === "read_group") {
+      const fields = kwargs.fields || args[1] || [], groupby = [].concat(kwargs.groupby || args[2] || []);
+      if (groupby.length !== 1) throw new Error("faux Odoo : read_group sur un seul regroupement");
+      const rows = await base.odoo(model, "search_read", [args[0]], {});
+      const groupes = new Map();
+      for (const r of rows) {
+        const v = r[groupby[0]], k = Array.isArray(v) ? v[0] : v;
+        const g = groupes.get(k) || groupes.set(k, { [groupby[0]]: v, __count: 0 }).get(k);
+        g.__count++;
+        for (const f of fields) { const [champ, agr] = String(f).split(":"); if (agr === "sum") g[champ] = (g[champ] || 0) + (Number(r[champ]) || 0); }
+      }
+      return [...groupes.values()];
+    }
     return base.odoo(model, method, args, kwargs, opts);
   }
   // le même faux Odoo en JSON-RPC (fetch global : _odoo-rpc.js, appelé par _quota.js et quota-status.js)

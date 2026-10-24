@@ -43,17 +43,24 @@ function etatApi(row, now, site = null) {
   if (PARTIE.has(site?.etat)) return null;
   if (row.etat === "a_verifier") return { etat: "en_attente_elixir", motif: row.motif || "anomalie" };
   if (row.etat === "recue" && row.envoi_apres && Date.parse(row.envoi_apres) > now.getTime()) return { etat: "recue", motif: null, annulable_jusqu_a: isoParis(row.envoi_apres) };
+  // délai écoulé, pas encore pris par l'envoi (au plus 2 min) : déjà plus annulable, comme le dit DELETE (409 trop_tard)
+  if (row.etat === "recue" && row.envoi_apres) return { etat: "en_transmission", motif: null };
   if (row.etat === "en_cours" || row.etat === "recue") return { etat: "recue", motif: null };
   if (row.etat === "envoi_demande") return { etat: "en_transmission", motif: null };
   return null;
 }
 // commande de test (« T… », jamais dans elixir_orders) : état simulé (conception § 9) — reçue pendant le délai d'annulation,
-// puis transmise, puis sortie de l'entrepôt 10 min plus tard
+// puis transmise, puis sortie de l'entrepôt 10 min plus tard ; gardée « à vérifier » : en attente d'Elixir jusqu'à la fin du
+// délai (validation simulée : envoi_apres, sinon 10 min après la réception), puis transmise et sortie comme les autres
 export function etatTest(row, now) {
-  const fin = row.envoi_apres ? Date.parse(row.envoi_apres) : Date.parse(row.recu_le);
   if (row.etat === "annulee") return { etat: "annulee", motif: row.motif || null };
-  if (row.etat === "a_verifier") return { etat: "en_attente_elixir", motif: row.motif || "anomalie" };
   if (row.etat === "en_cours") return { etat: "recue", motif: null };
+  if (row.etat === "a_verifier") {
+    const valide = row.envoi_apres ? Date.parse(row.envoi_apres) : Date.parse(row.recu_le) + 10 * 60e3;
+    if (!(now.getTime() >= valide)) return { etat: "en_attente_elixir", motif: row.motif || "anomalie" };
+    return now.getTime() < valide + 10 * 60e3 ? { etat: "transmise", motif: null } : { etat: "sortie_entrepot", motif: null };
+  }
+  const fin = row.envoi_apres ? Date.parse(row.envoi_apres) : Date.parse(row.recu_le);
   if (now.getTime() < fin) return { etat: "recue", motif: null, annulable_jusqu_a: isoParis(fin) };
   return now.getTime() < fin + 10 * 60e3 ? { etat: "transmise", motif: null } : { etat: "sortie_entrepot", motif: null };
 }

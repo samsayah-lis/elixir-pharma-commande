@@ -14,7 +14,9 @@ info:
 
     **Authentification.** Clé dans l'en-tête `Authorization: Bearer elx_live_…` (production) ou `elx_test_…` (test),
     jamais dans l'adresse. La clé se crée dans le compte de la pharmacie (« Mes commandes » → « Accès API »). L'identité
-    vient toujours de la clé : aucun identifiant de pharmacie n'est lu dans la requête.
+    vient toujours de la clé : aucun identifiant de pharmacie n'est lu dans la requête. Droits d'une clé : `lecture`
+    (catalogue, disponibilités, contingents, commandes), `commande` (passer et annuler), `documents` (factures, avoirs et
+    bons de livraison). Seule l'adresse ci-dessous accepte les clés de production (`403 cle_production_hors_site` ailleurs).
 
     **Formats.** JSON en UTF-8. Montants en euros hors taxes, 2 décimales. Dates ISO 8601 à l'heure de Paris, avec le
     décalage (`2026-11-16T09:30:12+01:00`) ; jours au format `AAAA-MM-JJ`. CIP : 13 chiffres (CIP13 ou code-barres).
@@ -29,16 +31,24 @@ info:
     d'ici là, `POST /v1/commandes` avec une clé de production répond `503 ecriture_suspendue` et tout fonctionne en test.
 
     **Erreurs.** RFC 9457 (`application/problem+json`) avec un `code` stable ; chaque réponse porte `X-Request-Id`, à
-    donner au support. Les codes sont expliqués sur https://elixir-commande.expepharma.com/api/#erreurs.
+    donner au support (aussi dans « Accès API » → « Derniers appels »). Les codes sont expliqués sur
+    https://elixir-commande.expepharma.com/api/#erreurs.
+
+    **Pagination et adresses.** `suivante` et `Location` sont des chemins depuis la racine du site (`/api/v1/…`) : ajoutez-les
+    à `https://elixir-commande.expepharma.com`, pas à l'adresse de base `…/api`. `suivante` reprend la période résolue
+    (`debut`, `fin`) : la page suivante ne glisse pas quand minuit passe.
 
     **Versions.** Dans `/v1`, seulement des ajouts compatibles (champ, route, valeur annoncée) : ignorez les champs que
-    vous ne connaissez pas. Une rupture ouvrira `/v2`, avec six mois de préavis.
+    vous ne connaissez pas. Les schémas des réponses sont donc OUVERTS (champs supplémentaires possibles) et leurs listes
+    de valeurs marquées `x-extensible-enum` peuvent s'allonger : un client généré doit accepter une valeur inconnue. Une
+    rupture ouvrira `/v2`, avec six mois de préavis.
   contact:
     name: Elixir Pharma
     email: pharmacien@elixirpharma.fr
     url: https://elixir-commande.expepharma.com/api/
   x-derniere-modification: "2026-10-24"
-  # Débits par clé (fenêtres fixes : minute et jour) ; avant authentification : par adresse IP (IPv6 : par /64)
+  # Débits par clé (fenêtres fixes : minute, et jour de Paris de minuit à minuit) ; une requête refusée par le débit (429)
+  # n'est pas comptée, toute autre l'est (refus 400 et 422 compris) ; avant authentification : par adresse IP (IPv6 : par /64)
   x-limites:
     ip: { par_minute: 120 }
     refus_cle: { max: 20, fenetre_s: 600 }
@@ -46,8 +56,14 @@ info:
     disponibilites: { par_minute: 30, par_jour: 5000 }
     documents: { par_minute: 20, par_jour: 300 }
     commande: { par_minute: 6, par_jour: 30 }
+    annulation: { par_minute: 30, par_jour: 1000 }
     simulation: { par_minute: 10, par_jour: 500 }
     suivi_par_pharmacie_par_minute: 30
+  # Clés de test (elx_test_) : plus de marge pour développer ; commandes de test par jour : au moins 100
+  x-limites-test:
+    commande: { par_minute: 30, par_jour: 500 }
+    simulation: { par_minute: 30, par_jour: 1000 }
+    commandes_test_par_jour_minimum: 100
   # Plafonds d'une pharmacie à l'ouverture de son accès (réglables par Elixir Pharma, pharmacie par pharmacie)
   x-plafonds-defaut:
     delai_annulation_min: 10
@@ -66,6 +82,7 @@ info:
     cle_invalide: 401
     cle_revoquee: 401
     cle_expiree: 401
+    cle_production_hors_site: 403
     portee_insuffisante: 403
     ip_non_autorisee: 403
     acces_suspendu: 403
@@ -111,7 +128,7 @@ tags:
   - name: Commandes
     description: Suivi (droit « lecture »), simulation, commande et annulation (droit « commande »).
   - name: Documents
-    description: Factures, avoirs et bons de livraison, en liste et en PDF (droit « lecture »).
+    description: Factures, avoirs et bons de livraison, en liste et en PDF (droit « documents »).
 
 paths:
   /v1/etat:
@@ -142,7 +159,7 @@ paths:
                     pharmacie: PHARMACIE EXEMPLE
                     environnement: test
                     cle: { prefixe: "elx_test_Ab3d…k9Qz", libelle: Tableur de réassort, expire_le: null }
-                    portees: [lecture, commande]
+                    portees: [lecture, commande, documents]
                     etat_service: normal
                     commandes:
                       disponibles: true
@@ -156,8 +173,9 @@ paths:
                       lecture: { par_minute: 60, par_jour: 5000 }
                       disponibilites: { par_minute: 30, par_jour: 5000 }
                       documents: { par_minute: 20, par_jour: 300 }
-                      commande: { par_minute: 6, par_jour: 30 }
-                      simulation: { par_minute: 10, par_jour: 500 }
+                      commande: { par_minute: 30, par_jour: 500 }
+                      annulation: { par_minute: 30, par_jour: 1000 }
+                      simulation: { par_minute: 30, par_jour: 1000 }
                     cgu: { version_en_vigueur: "2026-10-24-projet", acceptee: true }
                     version_api: "1.0.0"
                     derniere_modification: "2026-10-24"
@@ -375,6 +393,7 @@ paths:
                           cree_le: "2026-11-16T09:30:12+01:00", annulable_jusqu_a: null, lignes: 2, commandes_elixir: [S00000] }
                     page: 1
                     par_page: 20
+                    total: null
                     suivante: null
                     periode: { debut: "2026-10-19", fin: "2026-11-17" }
         "400": { $ref: "#/components/responses/E400Cle" }
@@ -397,11 +416,15 @@ paths:
         - Produit en rupture : ligne retirée (`si_rupture: retirer`, défaut) ou gardée en attente du stock (`garder`).
         - Plafond dépassé (lignes, boîtes, montant) : `422 plafond_depasse`, rien n'est enregistré.
         - Anomalie nette (quantité de plus de 10 fois votre quantité mensuelle habituelle du produit, ou commande presque
-          identique à une commande reçue depuis moins de 30 minutes, tous canaux) : `201` avec
-          `etat: en_attente_elixir`. La commande ne part qu'après vérification par Elixir Pharma.
+          identique à une commande reçue depuis moins de 30 minutes, tous canaux : 80 % au moins de produits communs, en
+          comptant les produits des DEUX commandes — un complément d'une ou deux lignes n'en est pas un) : `201` avec
+          `etat: en_attente_elixir`. La commande ne part qu'après vérification par Elixir Pharma (en test : validation
+          simulée à la fin du délai).
         - Sinon : `201` avec `etat: recue` ; annulable jusqu'à `annulable_jusqu_a`, puis envoyée seule.
 
-        Même `Idempotency-Key` et même corps : réponse d'origine rejouée (`Idempotent-Replayed: true`), y compris un refus.
+        Même `Idempotency-Key` et même corps : réponse d'origine rejouée (`Idempotent-Replayed: true`), y compris un refus,
+        et même si l'accès s'est fermé depuis (seule une NOUVELLE commande est alors refusée). Le corps rejoué décrit la
+        commande à sa création : son état actuel se lit par `GET /v1/commandes/{id}` (en-tête `Location`).
       x-droit: commande
       x-classe-debit: commande
       parameters:
@@ -537,7 +560,7 @@ paths:
                     simulation: true
                     resultat: refusee
                     refus: { statut: 503, code: ecriture_suspendue, titre: Commandes momentanément fermées,
-                             detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : rien n'a été enregistré. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles." }
+                             detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : aucune nouvelle commande n'a été enregistrée. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles." }
                     environnement: live
                     etat: null
                     motif: null
@@ -598,7 +621,7 @@ paths:
                       - numero: S00000
                         etat: sortie_entrepot
                         sortie_le: "2026-11-16T21:40:00+01:00"
-                        factures: []
+                        factures: [{ id: 900003, numero: FAC/EXEMPLE/0002 }]
                         avoirs: []
                         livraisons: [{ id: 900001, numero: BL/EXEMPLE/0001, sortie_le: "2026-11-16T21:40:00+01:00" }]
                     lignes:
@@ -620,10 +643,12 @@ paths:
       summary: Annuler une commande passée par l'API
       description: |
         Possible pendant le délai d'annulation (`annulable_jusqu_a`), ou tant qu'une commande gardée « à vérifier » n'est
-        pas partie. Ensuite : `409 trop_tard` (réclamations et retours selon les conditions générales de vente).
-        Idempotente : une commande déjà annulée répond de nouveau `200`.
+        pas partie. Ensuite, ou si Elixir Pharma a déjà pris la commande en main : `409 trop_tard` (réclamations et
+        retours selon les conditions générales de vente). Classe de débit à part (`annulation`) : une rafale de commandes
+        n'empêche jamais d'annuler. Servie même pendant une suspension du service. Idempotente : une commande déjà annulée
+        répond de nouveau `200` ; un `503` se rejoue sans risque. Une commande annulée libère sa `reference_client`.
       x-droit: commande
-      x-classe-debit: commande
+      x-classe-debit: annulation
       parameters:
         - $ref: "#/components/parameters/IdCommande"
       responses:
@@ -646,7 +671,7 @@ paths:
         "409": { $ref: "#/components/responses/E409Annulation" }
         "413": { $ref: "#/components/responses/E413" }
         "429": { $ref: "#/components/responses/E429" }
-        "503": { $ref: "#/components/responses/E503" }
+        "503": { $ref: "#/components/responses/E503Annulation" }
 
   /v1/factures:
     get:
@@ -654,7 +679,7 @@ paths:
       tags: [Documents]
       summary: Factures et avoirs
       description: Factures et avoirs de la période (366 jours au plus, 90 derniers jours par défaut), les plus récents d'abord.
-      x-droit: lecture
+      x-droit: documents
       x-classe-debit: lecture
       parameters:
         - $ref: "#/components/parameters/DebutFactures"
@@ -702,7 +727,7 @@ paths:
       tags: [Documents]
       summary: PDF d'une facture ou d'un avoir
       description: "Le PDF d'origine de la pièce. `404` si la pièce n'est pas à votre pharmacie ou si son PDF n'est pas encore prêt (`pdf_disponible: false`)."
-      x-droit: lecture
+      x-droit: documents
       x-classe-debit: documents
       parameters:
         - $ref: "#/components/parameters/IdDocument"
@@ -732,7 +757,7 @@ paths:
       description: |
         Bons de livraison de la période (366 jours au plus, 30 derniers jours par défaut), les plus récents d'abord. La
         date est celle de la sortie de l'entrepôt (jamais une date de réception).
-      x-droit: lecture
+      x-droit: documents
       x-classe-debit: lecture
       parameters:
         - $ref: "#/components/parameters/DebutLivraisons"
@@ -773,7 +798,7 @@ paths:
       tags: [Documents]
       summary: Duplicata d'un bon de livraison
       description: Duplicata établi par Elixir Pharma à partir des données de la livraison (PDF).
-      x-droit: lecture
+      x-droit: documents
       x-classe-debit: documents
       parameters:
         - $ref: "#/components/parameters/IdDocument"
@@ -1005,7 +1030,7 @@ components:
                 detail: "Envoyez votre clé dans l'en-tête « Authorization: Bearer elx_… »."
                 instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
     E403Etat:
-      description: Accès suspendu, réseau non autorisé, ou accès momentanément indisponible.
+      description: Clé de production hors de l'adresse du service, accès suspendu, réseau non autorisé, ou accès momentanément indisponible.
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
       content:
@@ -1013,9 +1038,9 @@ components:
           schema:
             allOf:
               - $ref: "#/components/schemas/Probleme"
-              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque] } }
+              - properties: { code: { enum: [cle_production_hors_site, acces_suspendu, ip_non_autorisee, compte_bloque] } }
     E403:
-      description: Accès suspendu, réseau non autorisé, accès momentanément indisponible, ou droit de la clé insuffisant.
+      description: Clé de production hors de l'adresse du service, accès suspendu, réseau non autorisé, accès momentanément indisponible, ou droit de la clé insuffisant.
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
       content:
@@ -1023,7 +1048,7 @@ components:
           schema:
             allOf:
               - $ref: "#/components/schemas/Probleme"
-              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante] } }
+              - properties: { code: { enum: [cle_production_hors_site, acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante] } }
     E403Commande:
       description: Comme toute route, plus — commandes par API suspendues pour votre pharmacie, ou conditions d'utilisation à accepter.
       headers:
@@ -1035,7 +1060,7 @@ components:
           schema:
             allOf:
               - $ref: "#/components/schemas/Probleme"
-              - properties: { code: { enum: [acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante, commandes_bloquees, cgu_a_accepter] } }
+              - properties: { code: { enum: [cle_production_hors_site, acces_suspendu, ip_non_autorisee, compte_bloque, portee_insuffisante, commandes_bloquees, cgu_a_accepter] } }
     E404:
       description: Ressource inconnue, ou appartenant à une autre pharmacie (même réponse).
       headers:
@@ -1050,8 +1075,9 @@ components:
               - properties: { code: { enum: [introuvable] } }
     E409Commande:
       description: |
-        `requete_en_cours` : la même requête est encore en traitement (réessayez après `Retry-After`) ;
-        `reference_deja_utilisee` : cette `reference_client` a déjà servi (champ `id` : la commande existante).
+        `requete_en_cours` : la même requête — ou une autre requête de même `reference_client` — est encore en traitement
+        (réessayez après `Retry-After`) ; `reference_deja_utilisee` : cette `reference_client` porte une commande
+        enregistrée (champ `id` : relisez-la ; une commande annulée libère sa référence).
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
         Retry-After:
@@ -1072,13 +1098,13 @@ components:
                 title: Référence déjà utilisée
                 status: 409
                 code: reference_deja_utilisee
-                detail: La reference_client « REASSORT-2026-11-16-A » a déjà servi pour une autre commande.
+                detail: La reference_client « REASSORT-2026-11-16-A » a déjà servi pour la commande n° 1790000000001 (relisez-la avec GET /v1/commandes/1790000000001).
                 instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
                 id: "1790000000001"
     E409Annulation:
       description: |
-        `trop_tard` : la commande est déjà partie (champ `etat`) ; `requete_en_cours` : la commande est encore en cours
-        d'enregistrement.
+        `trop_tard` : la commande est déjà partie, ou Elixir Pharma l'a prise en main (champ `etat`) ; `requete_en_cours` :
+        la commande est encore en cours d'enregistrement.
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
         Retry-After:
@@ -1154,7 +1180,7 @@ components:
                   - { ligne: 1, cip: "3400000000011", nom: PRODUIT EXEMPLE A 30 CPR, quantite_demandee: 1200, quantite: 1200, prix_unitaire_ht: 3.7,
                       total_ht: 4440, etat: acceptee, motif: null, detail: null }
     E429:
-      description: Trop de requêtes (`debit`) ou plafond du jour de la clé atteint (`plafond_journalier`).
+      description: Trop de requêtes (`debit`) ou plafond du jour de la clé atteint (`plafond_journalier`, jusqu'à minuit heure de Paris). Une requête refusée en 429 n'est pas comptée.
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
@@ -1203,6 +1229,19 @@ components:
             allOf:
               - $ref: "#/components/schemas/Probleme"
               - properties: { code: { enum: [api_suspendue, indisponible] } }
+    E503Annulation:
+      description: "Momentanément indisponible (`indisponible`) ; renvoyez la même requête après `Retry-After` (l'annulation est idempotente). Jamais `api_suspendue` : l'annulation reste servie pendant une suspension."
+      headers:
+        X-Request-Id: { $ref: "#/components/headers/XRequestId" }
+        Retry-After: { $ref: "#/components/headers/RetryAfter" }
+        RateLimit-Policy: { $ref: "#/components/headers/RateLimitPolicy" }
+        RateLimit: { $ref: "#/components/headers/RateLimit" }
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Probleme"
+              - properties: { code: { enum: [indisponible] } }
     E503Simulation:
       description: Comme toute route, plus `contingent_indisponible` (produit contingenté, contingent impossible à vérifier).
       headers:
@@ -1218,9 +1257,9 @@ components:
               - properties: { code: { enum: [api_suspendue, indisponible, contingent_indisponible] } }
     E503Commande:
       description: |
-        Rien n'est enregistré : `ecriture_suspendue` (commandes réelles pas encore ouvertes, ou fermées),
-        `contingent_indisponible`, `indisponible`, `api_suspendue`. Renvoyez la même requête (même Idempotency-Key)
-        après `Retry-After` : jamais de doublon.
+        Aucune nouvelle commande n'est enregistrée : `ecriture_suspendue` (commandes réelles pas encore ouvertes, ou
+        fermées), `contingent_indisponible`, `indisponible`, `api_suspendue`. Renvoyez la même requête (même
+        Idempotency-Key) après `Retry-After` : jamais de doublon (une commande déjà enregistrée est rendue telle quelle).
       headers:
         X-Request-Id: { $ref: "#/components/headers/XRequestId" }
         Retry-After: { $ref: "#/components/headers/RetryAfter" }
@@ -1239,7 +1278,7 @@ components:
                 title: Commandes momentanément fermées
                 status: 503
                 code: ecriture_suspendue
-                detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : rien n'a été enregistré. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles."
+                detail: "Les commandes réelles par l'API ne sont pas encore ouvertes (ou momentanément fermées) : aucune nouvelle commande n'a été enregistrée. Les clés de test (elx_test_) fonctionnent ; le site et votre logiciel d'officine restent disponibles."
                 instance: urn:uuid:0f8e6c1a-3b2d-4e5f-8a9b-1c2d3e4f5a6b
 
   schemas:
@@ -1264,6 +1303,7 @@ components:
     Disponibilite:
       type: string
       enum: [en_stock, stock_faible, rupture]
+      x-extensible-enum: true
       description: Niveau indicatif, jamais une quantité.
     Environnement:
       type: string
@@ -1276,6 +1316,7 @@ components:
         `partiellement_sortie` · `sortie_entrepot` (jamais « livrée » : date de sortie d'entrepôt) · `facturee` ·
         `non_servie` (rien n'a pu être servi : rupture, contingent…) · `annulee`.
       enum: [recue, en_attente_elixir, en_transmission, transmise, en_preparation, partiellement_sortie, sortie_entrepot, facturee, non_servie, annulee]
+      x-extensible-enum: true
     MotifCommande:
       type: [string, "null"]
       description: |
@@ -1286,25 +1327,23 @@ components:
         `annulee_par_la_pharmacie`. D'autres valeurs pourront s'ajouter.
     Palier:
       type: object
-      additionalProperties: false
       required: [a_partir_de, prix_ht]
       properties:
         a_partir_de: { type: integer, minimum: 2, description: Quantité à partir de laquelle ce prix s'applique (par ligne). }
         prix_ht: { $ref: "#/components/schemas/Montant" }
     EtatPrix:
       type: object
-      additionalProperties: false
       required: [base, etat, calcule_le]
       properties:
         base: { type: string, enum: [liste_pharmacie], description: Prix de VOTRE liste de prix. }
         etat:
           type: string
           enum: [a_jour, ancien, en_calcul, indisponible]
+          x-extensible-enum: true
           description: "`ancien` : calcul de plus de 48 h ; `en_calcul` : prix pas encore calculés (moins d'une heure) ; `indisponible` : liste illisible."
         calcule_le: { type: [string, "null"], format: date-time }
     Produit:
       type: object
-      additionalProperties: false
       required: [cip, nom, prix_ht, paliers, disponibilite, contingente]
       properties:
         cip: { $ref: "#/components/schemas/Cip" }
@@ -1315,7 +1354,6 @@ components:
         contingente: { type: [boolean, "null"], description: "Produit contingenté (voir GET /v1/contingents) ; null : momentanément inconnu." }
     PageCatalogue:
       type: object
-      additionalProperties: false
       required: [donnees, page, par_page, total, suivante, prix, disponibilite_maj, mention, avertissements]
       properties:
         donnees: { type: array, items: { $ref: "#/components/schemas/Produit" } }
@@ -1329,7 +1367,6 @@ components:
         avertissements: { type: array, items: { type: string } }
     ProduitDetail:
       type: object
-      additionalProperties: false
       required: [cip, nom, prix_ht, paliers, disponibilite, contingente, prix, disponibilite_maj, mention, avertissements]
       properties:
         cip: { $ref: "#/components/schemas/Cip" }
@@ -1344,14 +1381,12 @@ components:
         avertissements: { type: array, items: { type: string } }
     Disponibilites:
       type: object
-      additionalProperties: false
       required: [donnees, lu_le, mention]
       properties:
         donnees:
           type: array
           items:
             type: object
-            additionalProperties: false
             required: [cip, disponibilite]
             properties:
               cip: { $ref: "#/components/schemas/Cip" }
@@ -1361,7 +1396,6 @@ components:
         mention: { type: string }
     Contingents:
       type: object
-      additionalProperties: false
       required: [exempte, jour, donnees]
       properties:
         exempte: { type: boolean, description: Votre pharmacie n'a aucun contingent. }
@@ -1370,13 +1404,12 @@ components:
           type: array
           items:
             type: object
-            additionalProperties: false
             required: [cip, nom, quota, periode, jours_glissants, libelle, debut, fin, deja_commande, reste]
             properties:
               cip: { $ref: "#/components/schemas/Cip" }
               nom: { type: [string, "null"] }
               quota: { type: integer, description: Quantité permise sur la période. }
-              periode: { type: [string, "null"], enum: [semaine, décade, quinzaine, mois, jours glissants, null] }
+              periode: { type: [string, "null"], enum: [semaine, decade, quinzaine, mois, jours_glissants, null], x-extensible-enum: true, description: "Code de la période ; libellé en français : `libelle`." }
               jours_glissants: { type: [integer, "null"], description: "Nombre de jours (période « jours glissants »)." }
               libelle: { type: string }
               debut: { type: [string, "null"], format: date }
@@ -1399,7 +1432,7 @@ components:
         reference_client:
           type: [string, "null"]
           pattern: '^[\p{L}\p{N} _.:/#+-]{1,40}$'
-          description: Votre référence (40 caractères au plus), unique pour votre pharmacie (hors commandes refusées).
+          description: Votre référence (40 caractères au plus), unique pour votre pharmacie (hors commandes refusées ou annulées).
         lignes:
           type: array
           minItems: 1
@@ -1420,7 +1453,6 @@ components:
           description: Texte libre sur une ligne (200 caractères au plus).
     LigneCommande:
       type: object
-      additionalProperties: false
       required: [ligne, cip, nom, quantite_demandee, quantite, prix_unitaire_ht, total_ht, etat, motif, detail]
       properties:
         ligne: { type: integer, minimum: 1, description: Rang de la ligne dans votre demande. }
@@ -1431,7 +1463,7 @@ components:
         quantite: { type: integer, minimum: 0, description: Quantité acceptée. }
         prix_unitaire_ht: { type: [number, "null"], description: "Prix de votre liste pour cette quantité (palier compris)." }
         total_ht: { $ref: "#/components/schemas/Montant" }
-        etat: { type: string, enum: [acceptee, refusee, rupture] }
+        etat: { type: string, enum: [acceptee, refusee, rupture], x-extensible-enum: true }
         motif:
           type: [string, "null"]
           description: |
@@ -1441,15 +1473,13 @@ components:
         anomalie: { type: string, enum: [anomalie_quantite], description: Ligne à l'origine de la mise « à vérifier ». }
     Anomalie:
       type: object
-      additionalProperties: false
       required: [type, detail]
       properties:
-        type: { type: string, enum: [anomalie_quantite, quasi_doublon] }
+        type: { type: string, enum: [anomalie_quantite, quasi_doublon], x-extensible-enum: true }
         cip: { $ref: "#/components/schemas/Cip" }
         detail: { type: string }
     Commande:
       type: object
-      additionalProperties: false
       required: [id, environnement, reference_client, canal, etat, motif, cree_le, annulable_jusqu_a, si_rupture, total_indicatif_ht, lignes, anomalies, avertissements, mention]
       properties:
         id: { $ref: "#/components/schemas/IdCommande" }
@@ -1468,7 +1498,6 @@ components:
         mention: { type: string }
     Refus:
       type: object
-      additionalProperties: false
       required: [statut, code, titre, detail]
       properties:
         statut: { type: integer }
@@ -1478,7 +1507,6 @@ components:
         plafond: { $ref: "#/components/schemas/Plafond" }
     Simulation:
       type: object
-      additionalProperties: false
       required: [simulation, resultat, refus, environnement, etat, motif, delai_annulation_min, si_rupture, total_indicatif_ht, lignes, anomalies, avertissements, mention]
       properties:
         simulation: { type: boolean, enum: [true] }
@@ -1496,7 +1524,6 @@ components:
         mention: { type: string }
     Annulation:
       type: object
-      additionalProperties: false
       required: [id, environnement, etat, annulee_le]
       properties:
         id: { $ref: "#/components/schemas/IdCommande" }
@@ -1505,14 +1532,12 @@ components:
         annulee_le: { type: [string, "null"], format: date-time }
     Periode:
       type: object
-      additionalProperties: false
       required: [debut, fin]
       properties:
         debut: { $ref: "#/components/schemas/Jour" }
         fin: { $ref: "#/components/schemas/Jour" }
     ResumeCommande:
       type: object
-      additionalProperties: false
       required: [id, environnement, canal, reference_client, etat, motif, cree_le, annulable_jusqu_a, lignes, commandes_elixir]
       properties:
         id: { $ref: "#/components/schemas/IdCommande" }
@@ -1527,17 +1552,16 @@ components:
         commandes_elixir: { type: array, items: { type: string }, description: Numéros de nos commandes (imprimés sur le bon de livraison et la facture). }
     PageCommandes:
       type: object
-      additionalProperties: false
-      required: [donnees, page, par_page, suivante, periode]
+      required: [donnees, page, par_page, total, suivante, periode]
       properties:
         donnees: { type: array, items: { $ref: "#/components/schemas/ResumeCommande" } }
         page: { type: integer }
         par_page: { type: integer }
+        total: { type: [integer, "null"], description: "null : les commandes se comptent page par page (suivez « suivante »)." }
         suivante: { type: [string, "null"] }
         periode: { $ref: "#/components/schemas/Periode" }
     Suivi:
       type: object
-      additionalProperties: false
       required: [commandee, acceptee, servie, non_servie, a_livrer, facturee]
       description: Quantités de la ligne une fois prise en charge par notre système de préparation.
       properties:
@@ -1549,7 +1573,6 @@ components:
         facturee: { type: number }
     LigneSuivi:
       type: object
-      additionalProperties: false
       required: [cip, nom, quantite_demandee, suivi]
       description: |
         Ligne d'une commande. Commande de l'API : mêmes champs qu'à la création, `etat` à jour (`annulee`, `rupture` si
@@ -1564,34 +1587,37 @@ components:
         quantite: { type: integer, minimum: 0 }
         prix_unitaire_ht: { type: [number, "null"] }
         total_ht: { $ref: "#/components/schemas/Montant" }
-        etat: { type: string, enum: [acceptee, refusee, rupture, annulee, traitee_par_elixir] }
+        etat: { type: string, enum: [acceptee, refusee, rupture, annulee, traitee_par_elixir], x-extensible-enum: true }
         motif: { type: [string, "null"] }
         detail: { type: [string, "null"] }
         anomalie: { type: string, enum: [anomalie_quantite] }
         suivi: { oneOf: [{ $ref: "#/components/schemas/Suivi" }, { type: "null" }] }
     CommandeElixir:
       type: object
-      additionalProperties: false
       required: [numero, etat, sortie_le, factures, avoirs, livraisons]
       properties:
         numero: { type: string, description: Numéro de notre commande. }
-        etat: { type: string, enum: [en_preparation, partiellement_sortie, sortie_entrepot, facturee, non_servie, annulee] }
+        etat: { type: string, enum: [en_preparation, partiellement_sortie, sortie_entrepot, facturee, non_servie, annulee], x-extensible-enum: true }
         sortie_le: { type: [string, "null"], format: date-time }
-        factures: { type: array, items: { type: string } }
-        avoirs: { type: array, items: { type: string } }
+        factures: { type: array, items: { $ref: "#/components/schemas/PieceLiee" }, description: "id : pour GET /v1/factures/{id}/pdf." }
+        avoirs: { type: array, items: { $ref: "#/components/schemas/PieceLiee" } }
         livraisons:
           type: array
           items:
             type: object
-            additionalProperties: false
             required: [id, numero, sortie_le]
             properties:
               id: { type: integer, description: "Pour GET /v1/livraisons/{id}/pdf." }
               numero: { type: string }
               sortie_le: { type: [string, "null"], format: date-time }
+    PieceLiee:
+      type: object
+      required: [id, numero]
+      properties:
+        id: { type: integer, description: "Pour GET /v1/factures/{id}/pdf." }
+        numero: { type: string }
     DetailCommande:
       type: object
-      additionalProperties: false
       required: [id, environnement, canal, reference_client, etat, motif, cree_le, annulable_jusqu_a, total_indicatif_ht, commandes_elixir, lignes]
       properties:
         id: { $ref: "#/components/schemas/IdCommande" }
@@ -1607,7 +1633,6 @@ components:
         lignes: { type: array, items: { $ref: "#/components/schemas/LigneSuivi" } }
     Facture:
       type: object
-      additionalProperties: false
       required: [id, type, numero, date, montant_ht, montant_tva, montant_ttc, commandes_elixir, pdf_disponible]
       properties:
         id: { type: integer, description: "Pour GET /v1/factures/{id}/pdf." }
@@ -1623,7 +1648,6 @@ components:
         motif: { type: [string, "null"], description: "Avoir : motif." }
     PageFactures:
       type: object
-      additionalProperties: false
       required: [donnees, page, par_page, total, suivante, periode]
       properties:
         donnees: { type: array, items: { $ref: "#/components/schemas/Facture" } }
@@ -1634,7 +1658,6 @@ components:
         periode: { $ref: "#/components/schemas/Periode" }
     Livraison:
       type: object
-      additionalProperties: false
       required: [id, numero, sortie_le, commande_elixir, renvoi, reste_a_livrer, produits]
       properties:
         id: { type: integer, description: "Pour GET /v1/livraisons/{id}/pdf." }
@@ -1647,14 +1670,12 @@ components:
           type: array
           items:
             type: object
-            additionalProperties: false
             required: [cip, nom]
             properties:
               cip: { type: [string, "null"] }
               nom: { type: [string, "null"] }
     PageLivraisons:
       type: object
-      additionalProperties: false
       required: [donnees, page, par_page, total, suivante, periode]
       properties:
         donnees: { type: array, items: { $ref: "#/components/schemas/Livraison" } }
@@ -1665,24 +1686,21 @@ components:
         periode: { $ref: "#/components/schemas/Periode" }
     Etat:
       type: object
-      additionalProperties: false
       required: [pharmacie, environnement, cle, portees, etat_service, commandes, prix, limites, cgu, version_api, derniere_modification]
       properties:
         pharmacie: { type: [string, "null"] }
         environnement: { $ref: "#/components/schemas/Environnement" }
         cle:
           type: object
-          additionalProperties: false
           required: [prefixe, libelle, expire_le]
           properties:
             prefixe: { type: string, description: Début et fin de la clé (jamais la clé entière). }
             libelle: { type: string, description: Nom donné à la clé (l'outil qui l'utilise). }
             expire_le: { type: [string, "null"], format: date-time, description: "Clé remplacée : encore valide jusqu'à cette date." }
-        portees: { type: array, items: { type: string, enum: [lecture, commande] }, description: Droits de la clé. }
+        portees: { type: array, items: { type: string, enum: [lecture, commande, documents], x-extensible-enum: true }, description: Droits de la clé. }
         etat_service: { type: string, enum: [normal, suspendu] }
         commandes:
           type: object
-          additionalProperties: false
           required: [disponibles, mode, production, delai_annulation_min, plafonds, verification]
           properties:
             disponibles: { type: boolean, description: Cette clé peut passer des commandes maintenant. }
@@ -1691,7 +1709,6 @@ components:
             delai_annulation_min: { type: integer }
             plafonds:
               type: object
-              additionalProperties: false
               required: [lignes_par_commande, boites_par_commande, montant_ht_par_commande, commandes_par_jour]
               properties:
                 lignes_par_commande: { type: integer }
@@ -1700,7 +1717,6 @@ components:
                 commandes_par_jour: { type: integer }
             verification:
               type: object
-              additionalProperties: false
               required: [active, facteur_habitude_mensuelle, quasi_doublon_min]
               description: Contrôles d'anomalie nette (commande gardée « à vérifier »).
               properties:
@@ -1709,24 +1725,23 @@ components:
                 quasi_doublon_min: { type: [integer, "null"] }
         prix:
           type: object
-          additionalProperties: false
           required: [base, mention]
           properties:
             base: { type: string, enum: [liste_pharmacie] }
             mention: { type: string }
         limites:
           type: object
-          additionalProperties: false
-          required: [lecture, disponibilites, documents, commande, simulation]
+          required: [lecture, disponibilites, documents, commande, annulation, simulation]
+          description: Débits de CETTE clé (une clé de test a plus de marge pour la commande et la simulation).
           properties:
             lecture: { $ref: "#/components/schemas/Debit" }
             disponibilites: { $ref: "#/components/schemas/Debit" }
             documents: { $ref: "#/components/schemas/Debit" }
             commande: { $ref: "#/components/schemas/Debit" }
+            annulation: { $ref: "#/components/schemas/Debit" }
             simulation: { $ref: "#/components/schemas/Debit" }
         cgu:
           type: object
-          additionalProperties: false
           required: [version_en_vigueur, acceptee]
           properties:
             version_en_vigueur: { type: string }
@@ -1735,22 +1750,19 @@ components:
         derniere_modification: { $ref: "#/components/schemas/Jour" }
     Debit:
       type: object
-      additionalProperties: false
       required: [par_minute, par_jour]
       properties:
         par_minute: { type: integer }
         par_jour: { type: integer }
     Plafond:
       type: object
-      additionalProperties: false
       required: [nom, limite, valeur]
       properties:
-        nom: { type: string, enum: [lignes, boites, montant_ht, commandes_jour] }
+        nom: { type: string, enum: [lignes, boites, montant_ht, commandes_jour], x-extensible-enum: true }
         limite: { type: number }
         valeur: { type: number }
     ErreurChamp:
       type: object
-      additionalProperties: false
       required: [champ, message]
       properties:
         champ: { type: string, description: "Champ en cause (lignes[2].quantite, page, Idempotency-Key…)." }
@@ -1758,14 +1770,14 @@ components:
     CodeErreur:
       type: string
       description: Code stable de l'erreur (voir https://elixir-commande.expepharma.com/api/#erreurs).
-      enum: [json_invalide, idempotency_key_absente, cle_dans_url, cle_absente, cle_invalide, cle_revoquee, cle_expiree, portee_insuffisante,
+      x-extensible-enum: true
+      enum: [json_invalide, idempotency_key_absente, cle_dans_url, cle_absente, cle_invalide, cle_revoquee, cle_expiree, cle_production_hors_site, portee_insuffisante,
              ip_non_autorisee, acces_suspendu, compte_bloque, cgu_a_accepter, test_requis, commandes_bloquees, introuvable, methode_non_autorisee,
              requete_en_cours, reference_deja_utilisee, trop_tard, trop_long, requete_invalide, idempotency_key_reutilisee, aucune_ligne_acceptee,
              commande_refusee, plafond_depasse, debit, plafond_journalier, plafond_commandes_jour, api_suspendue, ecriture_suspendue,
              contingent_indisponible, indisponible]
     Probleme:
       type: object
-      additionalProperties: false
       required: [type, title, status, code, detail, instance]
       description: Erreur au format RFC 9457 (application/problem+json).
       properties:
@@ -1777,6 +1789,6 @@ components:
         instance: { type: string, description: "urn:uuid: suivi de X-Request-Id (réponse rejouée : celui de la première requête)." }
         erreurs: { type: array, items: { $ref: "#/components/schemas/ErreurChamp" }, description: "requete_invalide : détail par champ." }
         id: { type: [string, "null"], description: "reference_deja_utilisee : la commande qui porte déjà cette référence." }
-        etat: { type: string, description: "trop_tard : état de la commande." }
+        etat: { type: string, description: "trop_tard : état de la commande (en_transmission, transmise, non_servie)." }
         plafond: { $ref: "#/components/schemas/Plafond" }
         lignes: { type: array, items: { $ref: "#/components/schemas/LigneCommande" }, description: "Refus d'une commande : sort de chaque ligne." }

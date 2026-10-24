@@ -590,5 +590,23 @@ console.log("\nClés d'API dans le dépôt (elx_live_ / elx_test_)");
   else ok(`${suivis.length} fichiers, aucune clé`);
 }
 
+// 7. documentation de l'API (dépôt PUBLIC, servie en partie aux pharmacies) : jamais l'état exploitable de la plomberie
+// (base modifiable avec la clé du navigateur, emplacement d'un mot de passe, poste qui émet les commandes). Libellés neutres
+// des prérequis (PREREQUIS de _api-config.js) ; le détail reste dans les notes privées, hors dépôt (revue du 24/10/2026).
+console.log("\nDocumentation de l'API : aucune faiblesse décrite (dépôt public)");
+{
+  const RE_FAIBLESSE = /clé publique du navigateur|clé anon|mot de passe par défaut|mot de passe[^.\n]{0,60}dépôt|dans le dépôt public|agent du Mac|modifiables? avec la clé|base n'est pas fermée/i;
+  const docs = (() => { try { return [...new Set([...git("ls-files", "--", "docs/api.md", "docs/api", "public/api").split("\n"), ...git("ls-files", "--others", "--exclude-standard", "--", "docs/api.md", "docs/api", "public/api").split("\n")])].filter(Boolean); } catch { return []; } })()
+    .filter(f => /\.(md|ya?ml|html?|txt)$/i.test(f));
+  const fautes = [];
+  for (const f of docs) {
+    const t = enCours(f);
+    if (!t) continue;
+    t.split("\n").forEach((l, i) => { const m = RE_FAIBLESSE.exec(l); if (m) fautes.push(`${f}:${i + 1} : « ${m[0]} »`); });
+  }
+  if (fautes.length) for (const x of fautes) ko(`${x} — à réécrire avec un libellé neutre`);
+  else ok(`${docs.length} fichiers, aucune faiblesse décrite`);
+}
+
 console.log(`\nRésultat : ${erreurs ? `${erreurs} erreur(s) de définition, ` : ""}${ecarts ? `${ecarts} écart(s)` : "aucun écart"}`);
 process.exit(erreurs ? 2 : ecarts ? 1 : 0);

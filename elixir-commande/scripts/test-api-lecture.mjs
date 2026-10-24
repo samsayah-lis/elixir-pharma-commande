@@ -310,7 +310,7 @@ const appelAdmin = (corps, methode = "POST", query = null) => admin({ httpMethod
 // A sans droit de lecture
 for (const id of [100, 200, 700]) await stock.acces.modifier(id, { cgu_version: conf.CGU.version, test_valide_le: "2026-10-01T00:00:00.000Z" });
 const accesDe = async (id) => stock.acces.lire(id);
-const cle = async (id, env, portees = ["lecture", "commande"]) => (await cles.creerCle(stock, { acces: await accesDe(id), environnement: env, libelle: `Outil ${id} ${env}`, portees,
+const cle = async (id, env, portees = ["lecture", "commande", "documents"]) => (await cles.creerCle(stock, { acces: await accesDe(id), environnement: env, libelle: `Outil ${id} ${env}`, portees,
   par: `compte@fiche-${id}.test`, role: "pharmacie", maintenant: maintenant() })).secret;
 const K = { aTest: await cle(100, "test"), aLive: await cle(100, "live"), bLive: await cle(200, "live"), gLive: await cle(700, "live"), aCommande: await cle(100, "live", ["commande"]) };
 const nouveauRouteur = (extra = {}) => creerRouteur({ stock, maintenant, verifierFiche: (id) => ficheVerifiee(id, { odoo: faux.odoo }), odoo: faux.odoo, log: silence, hasard: () => 0.5, ...extra });
@@ -396,8 +396,8 @@ let h = nouveauRouteur();
   eq("liste changée : encore l'ancienne (cache de 10 min)", corps(r).donnees[0].prix_ht, 9.5);
   avancer(601);
   const hApercu = nouveauRouteur();
-  r = await requete(hApercu, "/catalogue?par_page=1", { host: "deploy-preview-7--commandes-elixir.netlify.app" });
-  eq("aperçu : nouvelle liste lue, rien d'écrit", [corps(r).donnees[0].prix_ht, (await accesDe(100)).liste_prix_id], [9.55, 15]);
+  r = await requete(hApercu, "/catalogue?par_page=1", { host: "deploy-preview-7--commandes-elixir.netlify.app", cle: K.aTest });
+  eq("aperçu (clé de test) : nouvelle liste lue, rien d'écrit", [corps(r).donnees[0].prix_ht, (await accesDe(100)).liste_prix_id], [9.55, 15]);
   r = await requete(h, "/catalogue?par_page=1");
   eq("liste changée : nouveaux prix, accès mis à jour", [corps(r).donnees[0].prix_ht, (await accesDe(100)).liste_prix_id], [9.55, 5]);
   ficheOdoo(100).property_product_pricelist = [15, "Liste 15"];
@@ -448,6 +448,10 @@ let h = nouveauRouteur();
   const n = faux.etat.appels.length;
   await requete(h, "/contingents");
   eq("contingents : cache de 60 s par fiche", faux.etat.appels.length, n);
+  const { CODES_PERIODE } = await import("../netlify/functions/_api-contingent.js");
+  const { PERIODS } = await import("../netlify/functions/_quota.js");
+  eq("contingents : chaque période de _quota.js a un code ASCII (snake_case)", Object.keys(PERIODS).filter(k => !/^[a-z]+(_[a-z]+)*$/.test(CODES_PERIODE[k] || "")), []);
+  eq("contingents : codes des périodes", Object.values(CODES_PERIODE).sort(), ["decade", "jours_glissants", "mois", "quinzaine", "semaine"]);
   r = garder(await requete(h, "/contingents", { cle: K.gLive }));
   eq("contingents (G, dispensée) : exempte", [corps(r).exempte, corps(r).donnees], [true, []]);
   r = garder(await requete(h, "/contingents", { cle: K.bLive }));
@@ -461,6 +465,7 @@ let h = nouveauRouteur();
   eq("commandes : 200", r.statusCode, 200);
   let c = corps(r);
   eq("commandes : période par défaut (30 jours)", c.periode, { debut: "2026-09-21", fin: "2026-10-20" });
+  eq("commandes : total null (même forme que les autres listes)", "total" in c && c.total === null, true);
   eq("commandes (A) : du site, les plus récentes d'abord, états", c.donnees.map(x => [x.id, x.canal, x.etat, x.motif, x.lignes]), [
     ["1792400000000", "site", "en_transmission", null, 1], ["1792600000000", "site", "en_attente_elixir", "verification", 1], ["1792300000000", "site", "en_attente_elixir", "verification", 1]]);
   eq("commandes : date de création (Paris)", c.donnees[0].cree_le, "2026-10-19T10:00:00+02:00");
@@ -484,7 +489,7 @@ let h = nouveauRouteur();
   eq("détail : état, canal, environnement", [c.etat, c.canal, c.environnement, c.annulable_jusqu_a], ["facturee", "site", "live", null]);
   eq("détail : lignes, quantités servies", c.lignes, [{ cip: "3400930000035", nom: "SMECTA 3 g B/30", quantite_demandee: 2,
     suivi: { commandee: 2, acceptee: 2, servie: 2, non_servie: 0, a_livrer: 0, facturee: 2 } }]);
-  eq("détail : nos commandes, factures, bons", c.commandes_elixir, [{ numero: "S300002", etat: "facturee", sortie_le: "2026-09-02T21:35:00+02:00", factures: ["INV/2026/40001"], avoirs: [],
+  eq("détail : nos commandes, factures, bons", c.commandes_elixir, [{ numero: "S300002", etat: "facturee", sortie_le: "2026-09-02T21:35:00+02:00", factures: [{ id: 1001, numero: "INV/2026/40001" }], avoirs: [],
     livraisons: [{ id: 5002, numero: "EP/OUT/1002", sortie_le: "2026-09-02T21:35:00+02:00" }] }]);
   r = garder(await requete(h, "/commandes/1792400000000"));
   eq("détail : commande en transmission, sans suivi", [corps(r).etat, corps(r).lignes[0].suivi, corps(r).lignes[0].nom], ["en_transmission", null, "DOLIPRANE 1000 mg cp B/8"]);
@@ -561,7 +566,8 @@ let h = nouveauRouteur();
   eq("avoirs : origine et motif", corps(r).donnees, [{ id: 1003, type: "avoir", numero: "RINV/2026/00501", date: "2026-09-20", montant_ht: -20, montant_tva: -0.42, montant_ttc: -20.42,
     commandes_elixir: [], pdf_disponible: false, avoir_de: "INV/2026/40001", motif: "Extourne de : INV/2026/40001, Erreur de prix" }]);
   r = garder(await requete(h, "/factures?par_page=2&page=2"));
-  eq("factures : pages", [corps(r).donnees.map(x => x.id), corps(r).total, corps(r).suivante], [[1004, 1002], 5, "/api/v1/factures?page=3&par_page=2"]);
+  eq("factures : pages (période résolue dans « suivante » : elle ne glisse pas à minuit)", [corps(r).donnees.map(x => x.id), corps(r).total, corps(r).suivante],
+    [[1004, 1002], 5, "/api/v1/factures?debut=2026-07-23&fin=2026-10-20&page=3&par_page=2"]);
   r = await requete(h, "/factures?type=tout");
   eq("factures : type inconnu → 422", corps(r).erreurs[0].champ, "type");
   r = garder(await requete(h, "/factures?debut=2026-01-01&fin=2026-12-31"));
@@ -654,13 +660,21 @@ let h = nouveauRouteur();
   // droit « lecture » exigé
   r = await requete(h, "/catalogue", { cle: K.aCommande });
   eq("clé sans droit de lecture → 403", corps(r).code, "portee_insuffisante");
+  // droit « documents » à part : une clé de lecture seule (outil de disponibilités) ne reçoit ni factures ni bons
+  const kLecture = await cle(100, "live", ["lecture"]);
+  for (const ch of ["/factures", "/factures/1001/pdf", "/livraisons", "/livraisons/5008/pdf"]) {
+    r = await requete(h, ch, { cle: kLecture });
+    eq(`clé sans droit « documents » : ${ch} → 403`, [r.statusCode, corps(r).code], [403, "portee_insuffisante"]);
+  }
+  r = await requete(h, "/catalogue?par_page=1", { cle: kLecture });
+  eq("…mais le catalogue, oui", r.statusCode, 200);
   r = await requete(h, "/catalogue", { cle: null });
   eq("sans clé → 401", r.statusCode, 401);
   r = await requete(h, "/catalogue?api_key=x");
   eq("clé dans l'adresse → 400", corps(r).code, "cle_dans_url");
   // /v1/etat : limites par classe
   r = await requete(h, "/etat");
-  eq("etat : limites par classe", Object.keys(corps(r).limites), ["lecture", "disponibilites", "documents", "commande", "simulation"]);
+  eq("etat : limites par classe", Object.keys(corps(r).limites), ["lecture", "disponibilites", "documents", "commande", "annulation", "simulation"]);
   eq("etat : clé de production, commandes réelles fermées → commandes indisponibles", corps(r).commandes.disponibles, false);
 }
 {
