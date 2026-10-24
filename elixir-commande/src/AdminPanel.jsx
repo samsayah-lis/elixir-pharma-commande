@@ -93,6 +93,19 @@ function comparerConfig(loc, srv) {
   return seulementIci.length || seulementEnLigne.length || modifies.length || affichage.length ? { seulementIci, seulementEnLigne, modifies, affichage } : null;
 }
 
+// Badge « 🔌 API » d'une commande passée par l'API des pharmacies (onglet Commandes) : état côté API
+const MOTIFS_API = { anomalie_quantite: "quantité inhabituelle", quasi_doublon: "quasi-doublon", doublon_recent: "identique à une commande récente", envoi_manuel: "envoi auto du relais coupé",
+  envoi_manque: "envoi auto manqué", envoi_suspendu: "API ou accès coupé", precommande: "ruptures gardées", rupture_envoi: "lignes sans stock à l'envoi", commande_modifiee: "commande modifiée depuis l'acceptation", erreur_transmission: "envoi impossible", envoi_a_verifier: "envoi interrompu", reprise: "reprise après coupure" };
+function BadgeApi({ e }) {
+  const heure = (d) => new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  const verifier = e?.etat === "a_verifier", delai = e?.etat === "recue" && e.envoi_apres && Date.parse(e.envoi_apres) > Date.now();
+  const suite = verifier ? ` · À VÉRIFIER (${MOTIFS_API[e.motif] || e.motif || "anomalie"})` : delai ? ` · annulable jusqu'à ${heure(e.envoi_apres)}` : e?.etat === "annulee" ? " · ANNULÉE PAR LA PHARMACIE"
+    : e?.etat === "non_servie" ? " · RUPTURE (rien envoyé)" : "";
+  const t = tone(verifier ? "danger" : "info");
+  return <span title={`Commande passée par l'API des pharmacies${e?.cle ? ` (clé ${e.cle})` : ""}${e?.reference_client ? ` · référence ${e.reference_client}` : ""}${e?.envoi_resultat ? ` · ${e.envoi_resultat}` : ""}. ${verifier ? "Gardée à vérifier : « Sync » pour la valider, « Traiter sans envoi » pour refuser des lignes." : "Elle part seule après son délai d'annulation."}`}
+    style={{background:t.bg,color:t.fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>🔌 API{suite}</span>;
+}
+
 export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
@@ -256,6 +269,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   // Envoi partiel : lignes cochées par commande ; une ligne transmise porte synced_at / synced_ref
   const [lineSel, setLineSel] = useState({});        // orderId → [index des lignes cochées]
   const [orderStock, setOrderStock] = useState({});  // cip → true (en stock) | false (précommande)
+  const [apiEtats, setApiEtats] = useState({});      // commandes passées par l'API des pharmacies : numéro → { etat, motif, envoi_apres, cle… }
   const ordersRef = useRef(orders); ordersRef.current = orders;   // état à jour pendant les envois en série
   const inFlight = useRef(new Set());                // commandes en cours d'envoi (pas de double envoi)
   const [syncingAll, setSyncingAll] = useState(false);
@@ -656,6 +670,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     const idx = onlyIdx ? onlyIdx.filter(i => remaining.includes(i)) : remaining;
     if (!idx.length) return;
     if (order.avisAuto?.code === "double" && !window.confirm(`⚠ Possible doublon : ${order.avisAuto.error}\n\nVérifiez que la pharmacie veut bien les deux commandes. Envoyer quand même celle-ci à PharmaML ?`)) return;
+    // commande API encore annulable par la pharmacie : elle partira seule à la fin du délai
+    const etatApi = order.source === "api" ? apiEtats[String(order.id)] : null;
+    if (etatApi?.etat === "recue" && etatApi.envoi_apres && Date.parse(etatApi.envoi_apres) > Date.now()
+      && !window.confirm(`Commande passée par l'API, encore annulable par la pharmacie jusqu'à ${new Date(etatApi.envoi_apres).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })} : elle partira seule à la fin de ce délai.\n\nL'envoyer tout de suite quand même ?`)) return;
+    if (etatApi?.etat === "annulee") { window.alert("Commande annulée par la pharmacie (API) : rien à envoyer."); return; }
     inFlight.current.add(order.id);
     setSyncStatus(s => ({ ...s, [order.id]: "pending" }));
     try {
@@ -699,7 +718,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   // (précommandes retenues) ne part que par son propre bouton « Sync le reste »
   // Commandes « sur justificatif labo » : jamais dans « Sync toutes » — à synchroniser une par une, à réception du labo
   // Commandes « a_verifier » (page d'avant le correctif de sécurité du 19/10/2026, sans jeton) : jamais en masse non plus
-  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && o.source !== "a_verifier" && !(o.items || []).some(lineDone)
+  // Commandes de l'API des pharmacies (source « api ») : jamais en masse — elles partent seules après leur délai d'annulation ;
+  // celles qui restent (gardées « à vérifier ») se valident une par une
+  const bulkPending = orders.filter(o => !o.processed && o.source !== "justificatif" && o.source !== "a_verifier" && o.source !== "api" && !(o.items || []).some(lineDone)
     && !(o.relais || []).some(t => ["a_envoyer", "prise", "incertaine"].includes(t.etat))   // en cours ou à vérifier : pas en masse
     && o.avisAuto?.code !== "double");                                                       // possible doublon : une par une, après vérification
   const syncAllPending = async () => {
@@ -725,6 +746,15 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
       }
     } finally { for (const l of lances) inFlight.current.delete(l.id); setSyncingAll(false); }
   };
+  // Commandes de l'API des pharmacies : état côté API (délai d'annulation, « à vérifier », annulée) — onglet 🔌 API (api-admin)
+  useEffect(() => {
+    const ids = orders.filter(o => o.source === "api").map(o => String(o.id)).slice(0, 300);
+    if (!ids.length) return;
+    let alive = true;
+    adminFetch(`/.netlify/functions/api-admin?vue=commandes_etat&ids=${ids.join(",")}`)
+      .then(r => (r.ok ? r.json() : null)).then(j => { if (alive && j?.etats) setApiEtats(j.etats); }).catch(() => {});
+    return () => { alive = false; };
+  }, [orders, adminFetch]);
   // Stock des lignes des commandes en attente (cases « en stock » / « précommande »)
   useEffect(() => {
     const cips = [...new Set(orders.filter(o => !o.processed).flatMap(o => (o.items || []).map(i => i?.cip)).filter(c => c && /^\d{7,14}$/.test(c) && !(c in orderStock)))];
@@ -1372,6 +1402,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         {o.avisAuto?.code === "double" && !o.processed && <span title={o.avisAuto.error} style={{background:T.dangerBg,color:T.danger,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>⚠ POSSIBLE DOUBLON{o.avisAuto.doubleDe ? ` de n° ${o.avisAuto.doubleDe}` : ""} : à vérifier</span>}
                         {o.source === "a_verifier" && <span title="Envoyée sans connexion par une page ouverte avant le correctif de sécurité du 19/10/2026 : identité NON vérifiée. Confirmez par téléphone avec la pharmacie avant de la saisir (Commander pour une pharmacie)." style={{background:T.dangerBg,color:T.danger,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>⚠ À VÉRIFIER PAR TÉLÉPHONE</span>}
                         {o.enteredBy && <span title={`Saisie par ${o.enteredBy}`} style={{background:tone("acting").bg,color:tone("acting").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>🛠 SAISIE ELIXIR</span>}
+                        {o.source === "api" && <BadgeApi e={apiEtats[String(o.id)]} />}
                         {o.source === "justificatif" && <span title={`Commande sur justificatif labo : à synchroniser à réception de la marchandise.${(o.justif||[]).map(j => ` ${j.lab} : ${j.statut}${j.poNom ? ` (${j.poNom})` : ""}${j.motif ? ` — ${j.motif}` : ""}`).join(" ;")}`}
                           style={{background:tone("labo").bg,color:tone("labo").fg,fontSize:11,fontWeight:700,padding:"2px 7px",borderRadius:10}}>📑 JUSTIFICATIF LABO{(o.justif||[]).length ? ` · ${(o.justif||[]).map(j => j.statut === "envoye" ? `envoyé ${j.poNom || ""}`.trim() : j.statut.replace("_", " ")).join(", ")}` : ""}</span>}
                         {o.source === "justificatif" && !(o.justif||[]).length && (

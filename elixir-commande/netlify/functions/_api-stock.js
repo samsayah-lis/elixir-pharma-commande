@@ -18,6 +18,9 @@ const COLS_JOURNAL = "id,at,request_id,cle_id,odoo_id,environnement,methode,rout
 const COLS_EVT = "id,at,type,odoo_id,cle_id,par,role,detail";
 const COLS_PRIX_LISTE = "liste_id,etat,demande_le,debut_le,fin_le,produits,sans_prix,appels,erreur,updated_at";
 const COLS_COMMANDE = "id,odoo_id,cle_id,test,reference_client,order_id,etat,motif,statut_http,reponse,envoi_apres,envoi_resultat,recu_le,updated_at";
+// phase 3 : ligne complète (idempotence, demande normalisée) pour la création, la reprise et l'envoi
+const COLS_COMMANDE_PLEINE = `${COLS_COMMANDE},idempotency_key,empreinte_requete,demande`;
+const ETATS_COMMANDE = /^(en_cours|refusee|recue|a_verifier|envoi_demande|envoyee|non_servie|annulee)$/;
 // catalogue (odoo_catalog, synchronisé par la GitHub Action) : jamais les lots, ni le prix de la liste n° 5
 const COLS_CATALOGUE = "cip,barcode,name,in_stock,available,updated_at";
 const CIP13 = /^\d{13}$/;
@@ -105,6 +108,22 @@ export function creerStockApi(deps = {}) {
         const [r] = (await sb(`api_acces?odoo_id=eq.${n}&select=${COLS_ACCES}`, { method: "PATCH", prefer: "return=representation",
           body: { ...champs, updated_at: iso() } })) || [];
         return acces(r);
+      },
+      // parcours de test (phase 3) : colonne lue et écrite à part (absente tant que le SQL n'est pas rejoué : rien ne casse)
+      async parcours(odooId) {
+        const n = entier(odooId);
+        if (!n) return null;
+        const [r] = (await sb(`api_acces?odoo_id=eq.${n}&select=test_parcours,test_valide_le&limit=1`)) || [];
+        return r ? { etapes: lireJson(r.test_parcours, {}) || {}, test_valide_le: r.test_valide_le || null } : null;
+      },
+      async noterParcours(odooId, etapes, valideLe = null, par = null) {
+        const n = entier(odooId);
+        if (!n) return null;
+        await sb(`api_acces?odoo_id=eq.${n}`, { method: "PATCH", prefer: "return=minimal", body: { test_parcours: JSON.stringify(etapes) } });
+        if (!valideLe) return null;
+        const [r] = (await sb(`api_acces?odoo_id=eq.${n}&test_valide_le=is.null&select=odoo_id`, { method: "PATCH", prefer: "return=representation",
+          body: { test_valide_le: valideLe, test_valide_par: par, updated_at: iso() } })) || [];
+        return r || null;
       },
     },
     cles: {
@@ -285,6 +304,16 @@ export function creerStockApi(deps = {}) {
         const n = Math.min(1000, Math.max(1, Number(limite) || 100)), o = Math.max(0, Number(offset) || 0);
         return sb(`odoo_catalog?select=${COLS_CATALOGUE}&order=cip.asc&offset=${o}&limit=${n}`, { compte: true });
       },
+      // produits par CIP13 ou code-barres (deux lectures : la liste « in » ne passe pas dans un « or »)
+      async deCips(cips) {
+        const xs = [...new Set((cips || []).map(String))].filter(c => CIP13.test(c)).slice(0, 400);
+        if (!xs.length) return [];
+        const [a, b] = await Promise.all([sb(`odoo_catalog?cip=in.${enc(listeIn(xs))}&select=${COLS_CATALOGUE}&limit=${xs.length * 2}`),
+          sb(`odoo_catalog?barcode=in.${enc(listeIn(xs))}&select=${COLS_CATALOGUE}&limit=${xs.length * 2}`)]);
+        const vus = new Map();
+        for (const r of [...(a || []), ...(b || [])]) if (!vus.has(r.cip)) vus.set(r.cip, r);
+        return [...vus.values()];
+      },
       // un produit par son CIP13 (ou son code-barres)
       async parCip(cip) {
         if (!CIP13.test(String(cip || ""))) return null;
@@ -302,8 +331,93 @@ export function creerStockApi(deps = {}) {
         }
       },
     },
-    // Commandes reçues par l'API (api_commandes), LECTURE seule ici : le chemin d'écriture est celui de la phase commande
+    // Commandes reçues par l'API (api_commandes) : lectures de la phase 2, réservation et transitions de la phase 3 (toutes
+    // conditionnelles : updated_at lu ET état lu — la fonction d'envoi, l'annulation et la reprise ne peuvent pas se croiser)
     commandes: {
+      // réservation (idempotence) → { row } | { conflit: true } (même Idempotency-Key, ou reference_client déjà prise)
+      async reserver(ligne) {
+        try {
+          const [r] = (await sb(`api_commandes?select=${COLS_COMMANDE_PLEINE}`, { method: "POST", prefer: "return=representation",
+            body: { ...ligne, etat: "en_cours", recu_le: iso(), updated_at: iso() } })) || [];
+          return { row: r };
+        } catch (e) { if (doublon(e)) return { conflit: true }; throw e; }
+      },
+      async parIdempotence(odooId, test, cle) {
+        const n = entier(odooId);
+        if (!n || !/^[A-Za-z0-9_.:-]{8,128}$/.test(String(cle || ""))) return null;
+        const [r] = (await sb(`api_commandes?odoo_id=eq.${n}&test=eq.${test ? "true" : "false"}&idempotency_key=eq.${enc(cle)}&select=${COLS_COMMANDE_PLEINE}&limit=1`)) || [];
+        return r || null;
+      },
+      // commande (hors refusées) qui porte déjà cette référence client
+      async parReference(odooId, test, reference) {
+        const n = entier(odooId);
+        if (!n || !reference) return null;
+        const [r] = (await sb(`api_commandes?odoo_id=eq.${n}&test=eq.${test ? "true" : "false"}&reference_client=eq.${enc(reference)}&etat=neq.refusee&select=${COLS_COMMANDE}&limit=1`)) || [];
+        return r || null;
+      },
+      async parId(id) {
+        if (!estUuid(id)) return null;
+        const [r] = (await sb(`api_commandes?id=eq.${id}&select=${COLS_COMMANDE_PLEINE}&limit=1`)) || [];
+        return r || null;
+      },
+      // commande de la fiche par son numéro (environnement de la clé), hors refusées
+      async parOrdre(odooId, test, ordre) {
+        const n = entier(odooId);
+        if (!n || !(test ? ORDRE_TEST : ORDRE_SITE).test(String(ordre || ""))) return null;
+        const [r] = (await sb(`api_commandes?odoo_id=eq.${n}&test=eq.${test ? "true" : "false"}&order_id=eq.${enc(ordre)}&etat=neq.refusee&select=${COLS_COMMANDE_PLEINE}&order=recu_le.desc&limit=1`)) || [];
+        return r || null;
+      },
+      // transition conditionnelle (état ET updated_at lus) → nouvelle ligne, ou null si quelqu'un est passé avant
+      async ecrire(row, champs) {
+        if (!estUuid(row?.id) || !row.updated_at || !ETATS_COMMANDE.test(String(row.etat))) return null;
+        let t = maintenant().getTime();
+        if (new Date(t).toISOString() === new Date(row.updated_at).toISOString()) t += 1;   // toujours une nouvelle version
+        const [r] = (await sb(`api_commandes?id=eq.${row.id}&etat=eq.${row.etat}&updated_at=eq.${enc(row.updated_at)}&select=${COLS_COMMANDE_PLEINE}`,
+          { method: "PATCH", prefer: "return=representation", body: { ...champs, updated_at: new Date(t).toISOString() } })) || [];
+        return r || null;
+      },
+      // réservation abandonnée (erreur passagère, 429) : supprimée si rien n'a été préparé → la même Idempotency-Key repart de zéro
+      async liberer(row) {
+        if (!estUuid(row?.id) || !row.updated_at) return;
+        await sb(`api_commandes?id=eq.${row.id}&etat=eq.en_cours&order_id=is.null&updated_at=eq.${enc(row.updated_at)}`, { method: "DELETE", prefer: "return=minimal" });
+      },
+      // réservation restée en suspens sans commande enregistrée (api-commandes-cron) → true si supprimée
+      async supprimerReservation(row) {
+        if (!estUuid(row?.id) || !row.updated_at) return false;
+        const rows = (await sb(`api_commandes?id=eq.${row.id}&etat=eq.en_cours&updated_at=eq.${enc(row.updated_at)}&select=id`, { method: "DELETE", prefer: "return=representation" })) || [];
+        return rows.length === 1;
+      },
+      // commandes acceptées depuis une date (plafond de commandes par jour)
+      async compterDepuis(odooId, test, depuisIso) {
+        const n = entier(odooId);
+        if (!n) return 0;
+        const rows = (await sb(`api_commandes?odoo_id=eq.${n}&test=eq.${test ? "true" : "false"}&recu_le=gte.${enc(depuisIso)}&order_id=not.is.null&etat=not.in.(refusee,en_cours)&select=id&limit=1000`)) || [];
+        return rows.length;
+      },
+      // commandes de TEST récentes d'une fiche (quasi-doublons du mode test)
+      async recentesTest(odooId, depuisIso) {
+        const n = entier(odooId);
+        if (!n) return [];
+        return (await sb(`api_commandes?odoo_id=eq.${n}&test=eq.true&recu_le=gte.${enc(depuisIso)}&etat=in.(recue,a_verifier,envoyee)&select=${COLS_COMMANDE}&limit=200`)) || [];
+      },
+      // commandes réelles dont le délai d'annulation est écoulé (api-commandes-cron)
+      async dues(nowIso, limite = 20) {
+        return (await sb(`api_commandes?etat=eq.recue&test=eq.false&envoi_apres=lte.${enc(nowIso)}&select=${COLS_COMMANDE}&order=envoi_apres.asc&limit=${Math.min(100, limite)}`)) || [];
+      },
+      // réservations ou envois restés en suspens (fonction coupée) depuis avantIso
+      async enSuspens(avantIso, limite = 50) {
+        return (await sb(`api_commandes?etat=in.(en_cours,envoi_demande)&updated_at=lt.${enc(avantIso)}&select=${COLS_COMMANDE_PLEINE}&order=updated_at.asc&limit=${Math.min(200, limite)}`)) || [];
+      },
+      // admin : dernières commandes (toutes fiches)
+      async recentes(limite = 100) {
+        return (await sb(`api_commandes?etat=neq.en_cours&select=${COLS_COMMANDE_PLEINE}&order=recu_le.desc&limit=${Math.min(500, limite)}`)) || [];
+      },
+      // admin (onglet Commandes) : commandes réelles par numéro
+      async parNumeros(ordres) {
+        const xs = [...new Set((ordres || []).map(String))].filter(o => ORDRE_SITE.test(o)).slice(0, 300);
+        if (!xs.length) return [];
+        return (await sb(`api_commandes?test=eq.false&order_id=in.${enc(listeIn(xs))}&etat=neq.refusee&select=${COLS_COMMANDE}&limit=${xs.length * 2}`)) || [];
+      },
       // commandes d'une fiche (test : environnement test, « T… » ; sinon live) reçues dans [depuis, jusqua[, les plus récentes d'abord
       async deFiche(odooId, { test = false, depuisIso = null, jusquaIso = null, limite = 200 } = {}) {
         const n = entier(odooId);
@@ -321,12 +435,53 @@ export function creerStockApi(deps = {}) {
         return (await sb(`api_commandes?odoo_id=eq.${n}&order_id=in.${enc(listeIn(xs))}&etat=neq.refusee&select=${COLS_COMMANDE}&limit=${xs.length * 2}`)) || [];
       },
     },
-    // Commandes du site d'une pharmacie (elixir_orders, par le CIP de la fiche), numéros et dates seulement
+    // Commandes du site d'une pharmacie (elixir_orders, par le CIP de la fiche) ; phase 3 : écriture des commandes passées
+    // par l'API (source « api », même table que le site : contingent, « Mes commandes », onglet Commandes, relais)
     site: {
+      // → { ok: true } | { doublon: true } (numéro déjà pris)
+      async inserer(ligne) {
+        try { await sb("elixir_orders", { method: "POST", prefer: "return=minimal", body: ligne }); return { ok: true }; }
+        catch (e) { if (doublon(e)) return { doublon: true }; throw e; }
+      },
+      async lire(id) {
+        if (!ORDRE_SITE.test(String(id || ""))) return null;
+        const [r] = (await sb(`elixir_orders?id=eq.${id}&select=id,date,items,processed,pharmacy_cip,pharmacy_email,source&limit=1`)) || [];
+        if (!r) return null;
+        return { ...r, items: typeof r.items === "string" ? lireJson(r.items, []) : (Array.isArray(r.items) ? r.items : []) };
+      },
+      // lignes réécrites (marques de l'API : rupture, annulation) ; processed posé si toutes les lignes sont faites
+      ecrireLignes(id, items, processed) {
+        if (!ORDRE_SITE.test(String(id || ""))) return null;
+        return sb(`elixir_orders?id=eq.${id}`, { method: "PATCH", prefer: "return=minimal", body: { items, processed: !!processed } });
+      },
+      // commandes récentes de la fiche (par CIP et par adresses de compte) : quasi-doublons
+      async recentes(cip, emails, depuisIso) {
+        const f = [...(/^\d{7,13}$/.test(String(cip || "")) ? [`pharmacy_cip.eq.${cip}`] : []), ...(emails || []).slice(0, 20).map(e => `pharmacy_email.eq.${JSON.stringify(String(e))}`)];
+        if (!f.length) return [];
+        const rows = (await sb(`elixir_orders?date=gte.${enc(depuisIso)}&or=(${enc(f.join(","))})&select=id,date,items,source&order=date.desc&limit=100`)) || [];
+        return rows.map(r => ({ ...r, items: typeof r.items === "string" ? lireJson(r.items, []) : (Array.isArray(r.items) ? r.items : []) }));
+      },
+      async comptes(odooId) {
+        const n = entier(odooId);
+        if (!n) return [];
+        return [...new Set(((await sb(`elixir_pharmacies?odoo_id=eq.${n}&select=email`)) || []).map(r => String(r.email || "").trim()).filter(Boolean))];
+      },
+      // décrément du stock affiché par le site (même fonction que order-save)
+      decrementer(cip, qty) { return sb("rpc/decrement_stock", { method: "POST", body: { p_cip: String(cip), p_qty: Number(qty) } }); },
+      // notification interne de l'admin (même table que order-save)
+      notifier(n) { return sb("ec_notifications", { method: "POST", prefer: "return=minimal", body: { ...n, read: false } }); },
       async numeros(cip, { debutIso, finIso, offset = 0, limite = 21 } = {}) {
         if (!/^\d{7,13}$/.test(String(cip || ""))) return [];
         const o = Math.max(0, Number(offset) || 0), n = Math.min(600, Math.max(1, Number(limite) || 21));
         return (await sb(`elixir_orders?pharmacy_cip=eq.${enc(cip)}&date=gte.${enc(debutIso)}&date=lt.${enc(finIso)}&select=id,date&order=date.desc&offset=${o}&limit=${n}`)) || [];
+      },
+    },
+    // Tâches du relais d'une commande (kv_store pmlr:tache:<numéro>…), lecture seule : annulation possible tant que rien n'est parti
+    relais: {
+      async taches(ordre) {
+        if (!ORDRE_SITE.test(String(ordre || ""))) return [];
+        const rows = (await sb(`kv_store?key=like.${enc(`pmlr:tache:${ordre}`)}*&select=key,value&limit=50`)) || [];
+        return rows.map(r => (typeof r.value === "string" ? lireJson(r.value, null) : r.value)).filter(t => t && String(t.orderId) === String(ordre));
       },
     },
   };

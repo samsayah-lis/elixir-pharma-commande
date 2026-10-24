@@ -42,8 +42,26 @@ export const LIMITES = {
   disponibilites: { par_minute: 30, par_jour: 5000 },
   documents: { par_minute: 20, par_jour: 300 },
   commande: { par_minute: 6, par_jour: 30 },
+  simulation: { par_minute: 10, par_jour: 500 },
   odoo: { fiche_par_minute: 30, global_par_minute: 240 },
 };
+
+// ── Phase 3 (commandes) ──
+// Limites dures d'une demande (422 requete_invalide, rien n'est enregistré) ; Idempotency-Key : même règle que
+// RE_CLE_IDEMPOTENCE de _push-messages.js (UUID conseillé). Une requête « en cours » depuis moins de en_cours_ms → 409 ;
+// au-delà (fonction coupée), elle est reprise. budget_ms : au-delà, la commande n'est pas enregistrée (503 rejouable avec
+// la même clé) — les fonctions Netlify sont coupées à 10 s.
+export const COMMANDE = { lignes_max: 200, quantite_max: 999, reference_max: 40, commentaire_max: 200, en_cours_ms: 60_000, budget_ms: 7000,
+  idempotence: /^[A-Za-z0-9_.:-]{8,128}$/, delai_envoi_max_min: 20 };
+// Anomalies nettes (commande gardée « à vérifier », jamais d'envoi automatique) :
+//  • quantité : ligne au-delà de anomalie_facteur × la quantité mensuelle habituelle du produit pour la pharmacie
+//    (moyenne des historique_jours derniers jours, tous canaux, commandes Odoo non annulées), avec un plancher de
+//    base_min_boites par mois pour un produit jamais ou rarement commandé (facteur 10 : 30 boîtes) ;
+//  • quasi-doublon : au moins part_doublon des produits de la commande déjà dans UNE commande reçue depuis moins de
+//    anomalie_doublon_min minutes (site, API, logiciel d'officine vu dans Odoo), lignes annulées ou traitées exclues.
+export const ANOMALIE = { historique_jours: 182, mois: 6, base_min_boites: 3, part_doublon: 0.8 };
+export const MOTIFS_ANOMALIE = { anomalie_quantite: "quantité très supérieure à vos habitudes pour ce produit", quasi_doublon: "commande presque identique à une commande reçue il y a peu" };
+export const MENTION_COMMANDE = `${MENTION_PRIX}. Prix indicatifs : la facture applique vos conditions au jour de la livraison.`;
 // Lectures : tailles de page et périodes (jours, bornes comprises)
 export const PAGES = {
   catalogue: { defaut: 100, max: 500 },
@@ -77,7 +95,9 @@ export const PREREQUIS = [
   { id: "P7", libelle: "Conditions d'utilisation de l'API validées par un avocat (dossier BPDG validé)" },
 ];
 
-export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: {} };
+export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: {}, cips_exclus: [] };
+// produits exclus de l'API (réglage de l'onglet 🔌 API) : CIP13 ou codes-barres, 500 au plus
+export const lireCipsExclus = (v) => [...new Set((Array.isArray(v) ? v : String(v ?? "").split(/[\s,;]+/)).map(x => String(x).trim()).filter(x => /^\d{13}$/.test(x)))].slice(0, 500);
 const lireJson = (t, d) => { if (t && typeof t === "object") return t; try { return JSON.parse(t); } catch { return d; } };
 export const jourParis = (d = new Date()) => new Date(d).toLocaleDateString("sv-SE", { timeZone: "Europe/Paris" });
 
@@ -88,7 +108,7 @@ export function fusionnerReglages(valeur) {
     const x = v.prerequis?.[p.id];
     if (x && typeof x === "object") prerequis[p.id] = { fait: x.fait === true, le: x.le || null, par: x.par || null, note: String(x.note || "").slice(0, 300) || null };
   }
-  return { actif: v.actif !== false, commandes_live: v.commandes_live === true, prerequis };
+  return { actif: v.actif !== false, commandes_live: v.commandes_live === true, prerequis, cips_exclus: lireCipsExclus(v.cips_exclus || []) };
 }
 
 // → [{ id, libelle, pas_avant, fait, le, par, note, cochable }]

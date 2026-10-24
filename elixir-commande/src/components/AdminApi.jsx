@@ -4,7 +4,8 @@ import { T, R, ui, fmtEur } from "../theme.js";
 // ── Admin : onglet « 🔌 API » (API des pharmacies, /api/v1) — chargé à la demande par AdminPanel ──
 // État du service (« Tout couper »), interrupteur « Commandes par API » et sa liste de prérequis, accès des pharmacies
 // (ouverture, réglages, suspension), clés SANS secret (révocation ; variante admin tracée pour une pharmacie sans compte),
-// état du calcul des prix de chaque liste (phase 2, sans aucun prix), usage et journal des appels. API : netlify/functions/api-admin.js (verifyAdmin). Les secrets ne sont jamais lus : seule
+// état du calcul des prix de chaque liste (phase 2, sans aucun prix), commandes reçues par l'API et produits exclus (phase 3),
+// usage et journal des appels. API : netlify/functions/api-admin.js (verifyAdmin). Les secrets ne sont jamais lus : seule
 // une clé créée ici par l'admin est montrée, UNE fois.
 const API = "/.netlify/functions/api-admin";
 const dt = (s) => s ? new Date(s).toLocaleString("fr-FR", { timeZone: "Europe/Paris", day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "–";
@@ -80,6 +81,79 @@ function EtatService({ t, poster }) {
           : <button style={{ ...ui.btn("primaire"), ...off(!t.ouvrable.ok || !r.actif) }} disabled={!t.ouvrable.ok || !r.actif} title={t.ouvrable.ok ? "" : `Prérequis manquants : ${t.ouvrable.manquants.join(", ")}`}
               onClick={() => basculer({ action: "reglages", commandes_live: true }, "Ouvrir les commandes par API en production ?\n\nLes pharmacies dont l'accès est en mode automatique pourront passer des commandes réelles.")}>Ouvrir les commandes par API</button>}
       </div>
+      <ProduitsExclus t={t} poster={poster} />
+    </section>
+  );
+}
+
+// Produits que l'API refuse (« produit_non_commandable » : à commander sur le site). Les produits sur justificatif labo sont
+// refusés d'office (page dédiée du site), sans être listés ici.
+function ProduitsExclus({ t, poster }) {
+  const [texte, setTexte] = useState((t.reglages.cips_exclus || []).join("\n"));
+  useEffect(() => { setTexte((t.reglages.cips_exclus || []).join("\n")); }, [t.reglages.cips_exclus]);
+  return (
+    <details style={{ marginTop: 16 }}>
+      <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Produits exclus des commandes par API ({(t.reglages.cips_exclus || []).length})</summary>
+      <p style={{ fontSize: 12, color: T.inkMute }}>Un CIP13 ou code-barres par ligne : la ligne est refusée (« à commander sur le site »). Les produits sur justificatif labo sont déjà refusés d'office.</p>
+      <label htmlFor="api-exclus" style={ui.label}>CIP exclus</label>
+      <textarea id="api-exclus" style={{ ...ui.input, minHeight: 80, fontFamily: T.mono, fontSize: 12 }} value={texte} onChange={e => setTexte(e.target.value)} placeholder="3400000000011" />
+      <button style={{ ...ui.btn("ligne", "s"), marginTop: 8 }} onClick={() => poster({ action: "reglages", cips_exclus: texte, base: t.updated_at })}>Enregistrer la liste</button>
+    </details>
+  );
+}
+
+// ── Commandes reçues par l'API (phase 3) : réelles et de test, sans corps de requête ──
+// Une commande gardée « à vérifier » (anomalie nette, doublon, envoi suspendu ou manqué) se valide dans l'onglet Commandes :
+// bouton « Sync » de la commande (ou « Traiter sans envoi » pour refuser une ligne). Elle ne part jamais seule.
+const ETATS_CMD = { recue: ["Délai d'annulation", "info"], a_verifier: ["À vérifier", "danger"], envoi_demande: ["Envoi en cours", "info"], envoyee: ["Mise en envoi", "ok"],
+  non_servie: ["Non servie (rupture)", "neutral"], annulee: ["Annulée par la pharmacie", "neutral"], refusee: ["Refusée", "neutral"] };
+const MOTIFS_CMD = { anomalie_quantite: "quantité inhabituelle", quasi_doublon: "quasi-doublon", doublon_recent: "identique à une commande de moins de 2 h",
+  envoi_manuel: "envoi automatique du relais coupé", envoi_manque: "envoi automatique manqué", envoi_suspendu: "API ou accès coupé", precommande: "lignes en rupture gardées", rupture_envoi: "lignes sans stock à l'envoi (à retirer)", commande_modifiee: "lignes ou pharmacie modifiées depuis l'acceptation",
+  erreur_transmission: "envoi impossible", envoi_a_verifier: "envoi interrompu", reprise: "reprise après coupure", rupture: "rupture", annulee_par_la_pharmacie: "par la pharmacie" };
+function CommandesApi({ adminFetch }) {
+  const [rows, setRows] = useState(null), [test, setTest] = useState(false);
+  const charger = useCallback(async () => {
+    setRows(null);
+    try { setRows((await lire(await adminFetch(`${API}?vue=commandes`))).commandes); } catch { setRows([]); }
+  }, [adminFetch]);
+  useEffect(() => { charger(); }, [charger]);
+  const vues = (rows || []).filter(c => test || c.environnement === "live");
+  const aVerifier = (rows || []).filter(c => c.environnement === "live" && c.etat === "a_verifier").length;
+  return (
+    <section style={carte} aria-labelledby="api-commandes">
+      <h2 id="api-commandes" style={ui.h2}>Commandes reçues par l'API{aVerifier ? ` · ${aVerifier} à vérifier` : ""}</h2>
+      <p style={{ fontSize: 12, color: T.inkMute, marginTop: 0 }}>Une commande acceptée part seule après le délai d'annulation. Gardée « à vérifier » (anomalie nette, doublon, envoi coupé) : elle ne part jamais seule — validez-la dans l'onglet Commandes (« Sync »), ou refusez ses lignes (« Traiter sans envoi »).</p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <button style={ui.pill(test)} aria-pressed={test} onClick={() => setTest(!test)}>Avec les commandes de test</button>
+        <button style={ui.btn("ligne", "s")} onClick={charger}>Actualiser</button>
+      </div>
+      {rows === null ? <p style={{ fontSize: 13, color: T.inkMute }}>Chargement…</p> : (
+        <div style={{ overflowX: "auto", maxHeight: 420, overflowY: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead><tr>{["Reçue", "Pharmacie", "Numéro", "Référence", "État", "Lignes", "Total HT", "Envoi"].map(h => <th key={h} style={{ ...ui.th, position: "sticky", top: 0 }}>{h}</th>)}</tr></thead>
+            <tbody>
+              {vues.length === 0 && <tr><td colSpan={8} style={{ ...ui.td, color: T.inkMute }}>Aucune commande.</td></tr>}
+              {vues.map(c => {
+                const [lib, ton] = ETATS_CMD[c.etat] || [c.etat, "neutral"];
+                return (
+                  <tr key={c.id} style={{ borderTop: `1px solid ${T.lineSoft}` }}>
+                    <td style={ui.td}>{dt(c.recu_le)}{c.environnement === "test" && <div><Badge ton="info">Test</Badge></div>}</td>
+                    <td style={ui.td}>{c.pharmacie || `n° ${c.odoo_id}`}<div style={{ fontSize: 11, color: T.inkMute, fontFamily: T.mono }}>{c.cle || ""}</div></td>
+                    <td style={{ ...ui.td, fontFamily: T.mono }}>{c.numero || "–"}</td>
+                    <td style={ui.td}>{c.reference_client || "–"}{c.commentaire && <div style={{ fontSize: 11, color: T.inkMute }}>« {c.commentaire} »</div>}</td>
+                    <td style={ui.td}><Badge ton={ton} plein={c.etat === "a_verifier"}>{lib}</Badge>
+                      {(c.motif || c.anomalies.length > 0) && c.motif !== "annulee_par_la_pharmacie" && <div style={{ fontSize: 11, color: T.inkSoft }}>{MOTIFS_CMD[c.motif] || c.motif || c.anomalies.map(a => MOTIFS_CMD[a] || a).join(", ")}</div>}
+                      {c.etat === "recue" && c.envoi_apres && <div style={{ fontSize: 11, color: T.inkMute }}>envoi après {dt(c.envoi_apres)}</div>}</td>
+                    <td style={ui.td}>{c.lignes_acceptees}{c.lignes_demandees != null && c.lignes_demandees !== c.lignes_acceptees ? ` / ${c.lignes_demandees}` : ""}</td>
+                    <td style={ui.td}>{c.total_ht != null ? fmtEur(c.total_ht) : "–"}</td>
+                    <td style={{ ...ui.td, fontSize: 11, color: T.inkSoft, maxWidth: 260 }}>{c.envoi_resultat || "–"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -415,6 +489,7 @@ export default function AdminApi({ adminFetch, flash }) {
         </div>
       </section>
       {selection && detail?.acces?.odoo_id === selection && <DetailAcces d={detail} t={t} poster={poster} recharger={() => chargerDetail(selection)} />}
+      <CommandesApi adminFetch={adminFetch} />
       <PrixListes t={t} poster={poster} />
       <Journal adminFetch={adminFetch} odooId={selection} />
     </div>

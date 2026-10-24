@@ -102,3 +102,10 @@
 # des compteurs de débit et du journal des appels (13 mois). Lectures Odoo seulement ; rien quand aucun accès n'est ouvert.
 [functions."api-cron"]
   schedule = "*/15 * * * *"
+
+# API des pharmacies, commandes (netlify/functions/api-commandes-cron.js) : toutes les 2 min — commandes réelles dont le délai
+# d'annulation (10 min par défaut) est écoulé confiées à api-envoi-background (relais existant, envoiAuto ; jamais PharmaML
+# directement) ; réservations ou envois restés en suspens (fonction coupée) terminés « à vérifier » ou supprimés. Aucune
+# lecture Odoo ; rien tant qu'aucune commande réelle n'existe (interrupteur « Commandes par API » fermé).
+[functions."api-commandes-cron"]
+  schedule = "*/2 * * * *"

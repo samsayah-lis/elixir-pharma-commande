@@ -15,8 +15,9 @@
 // journal ni sur la clé (seuls les compteurs de débit, tables privées, sont tenus).
 // Phase 1 (fondations) : GET /v1/etat. Phase 2 (lecture, _api-lecture.js) : catalogue, disponibilités, contingents,
 // commandes, factures et bons de livraison (droit « lecture »), chacune coupée à 8,5 s (503 rejouable, limite de 10 s des
-// fonctions Netlify). Les routes de commande s'ajoutent à ROUTES ; celles qui écrivent une commande réelle restent fermées
-// par l'interrupteur « Commandes par API » (_api-config.js).
+// fonctions Netlify). Phase 3 (commandes, _api-commande.js) : simulation, commande (Idempotency-Key), annulation (droit
+// « commande », fiche relue dans Odoo à chaque appel) ; les commandes RÉELLES restent refusées (503 ecriture_suspendue) tant
+// que l'interrupteur « Commandes par API » est fermé (_api-config.js) ; les clés de test fonctionnent dès la mise en ligne.
 import crypto from "node:crypto";
 import { clientIp, prefixeIp } from "./rate-limit.js";
 import { ficheVerifiee } from "./_chat-perimetre.js";
@@ -26,6 +27,8 @@ import { analyserCle, cleDeRequete, empreinteCle, etatCle, ipDansListe, reseauDe
 import { LIMITES, CORPS_MAX_OCTETS, VERSION_API, DERNIERE_MODIFICATION, MENTION_PRIX, CGU, fusionnerReglages, commandesLiveOuvertes } from "./_api-config.js";
 import { probleme, reponseJson, codeDe, estApercu, isoParis } from "./_api-http.js";
 import { ROUTES_LECTURE, creerServicesLecture } from "./_api-lecture.js";
+import { ROUTES_COMMANDE } from "./_api-commande.js";
+import { noterParcours } from "./_api-parcours.js";
 
 const CACHE_MS = 30_000;            // clé, accès, réglages : 30 s au plus par instance (une révocation est vue en ≤ 30 s)
 const FICHE_MS = 10 * 60_000;       // fiche revérifiée dans Odoo au plus toutes les 10 min par instance (lectures)
@@ -41,6 +44,7 @@ const nettoyer = (s) => String(s || "").replace(/\s+/g, " ").trim();
 export const ROUTES = [
   { methode: "GET", gabarit: "/v1/etat", re: /^\/v1\/etat$/, portee: null, classe: "lecture", toujours: true, traiter: routeEtat },
   ...ROUTES_LECTURE,
+  ...ROUTES_COMMANDE,
 ];
 
 // /api/v1/etat (réécriture de _redirects), /.netlify/functions/api-v1/etat (appel direct) → /v1/etat
@@ -52,7 +56,9 @@ export function cheminDe(event) {
 }
 
 // GET /v1/etat : test de connexion (pharmacie, environnement, droits, commandes, limites, version)
-async function routeEtat({ cle, acces, reglages, fiche, environnement, maintenant }) {
+async function routeEtat(arg) {
+  const { cle, acces, reglages, fiche, environnement, maintenant } = arg;
+  await noterParcours(arg, "etat");   // parcours de test (clé elx_test_ seulement)
   const portees = (cle.portees || []).filter(p => (acces.portees || []).includes(p));
   const routeCommande = ROUTES.some(r => r.methode === "POST" && r.gabarit === "/v1/commandes");
   const production = commandesLiveOuvertes(reglages, maintenant);
@@ -69,9 +75,12 @@ async function routeEtat({ cle, acces, reglages, fiche, environnement, maintenan
       delai_annulation_min: acces.delai_annulation_min,
       plafonds: { lignes_par_commande: acces.plafond_lignes, boites_par_commande: acces.plafond_boites,
         montant_ht_par_commande: acces.plafond_montant_ht, commandes_par_jour: acces.plafond_commandes_jour },
+      // anomalies nettes : commande gardée « à vérifier » par Elixir (jamais d'envoi automatique) — conception § 6.2
+      verification: { active: !!acces.anomalie_active, facteur_habitude_mensuelle: acces.anomalie_active ? acces.anomalie_facteur : null,
+        quasi_doublon_min: acces.anomalie_active ? acces.anomalie_doublon_min : null },
     },
     prix: { base: "liste_pharmacie", mention: MENTION_PRIX },
-    limites: { lecture: LIMITES.lecture, disponibilites: LIMITES.disponibilites, documents: LIMITES.documents, commande: LIMITES.commande },
+    limites: { lecture: LIMITES.lecture, disponibilites: LIMITES.disponibilites, documents: LIMITES.documents, commande: LIMITES.commande, simulation: LIMITES.simulation },
     cgu: { version_en_vigueur: CGU.version, acceptee: acces.cgu_version === CGU.version },
     version_api: VERSION_API,
     derniere_modification: DERNIERE_MODIFICATION,
@@ -79,7 +88,8 @@ async function routeEtat({ cle, acces, reglages, fiche, environnement, maintenan
 }
 
 // deps (doublures des tests) : stock, maintenant, horloge (ms), verifierFiche(odooId), uuid, log, sel, hasard, odoo (lectures
-// de la phase 2, signature de _odoo-rpc.js), quota (contingents, doublure du banc), delaiRouteMs
+// de la phase 2, signature de _odoo-rpc.js), quota (contingents, doublure du banc), justificatifs (produits sur justificatif,
+// doublure du banc), delaiRouteMs
 export function creerHandler(deps = {}) {
   let stockDefaut = null, servicesDefaut = null;
   const stockDe = () => deps.stock || (stockDefaut ||= creerStockApi());
@@ -94,7 +104,7 @@ export function creerHandler(deps = {}) {
   const hache = (v) => crypto.createHmac("sha256", sel).update(String(v)).digest("hex").slice(0, 24);
   const caches = { cles: new Map(), acces: new Map(), fiches: new Map(), ip: new Map(), usage: new Map(), reglages: null };
   // services des lectures (caches par instance, charge d'Odoo) : créés au premier appel d'une route de lecture
-  const servicesDe = (stock) => (servicesDefaut ||= creerServicesLecture({ stock, odoo: deps.odoo, horloge, maintenant, log, quota: deps.quota }));
+  const servicesDe = (stock) => (servicesDefaut ||= creerServicesLecture({ stock, odoo: deps.odoo, horloge, maintenant, log, quota: deps.quota, justificatifs: deps.justificatifs }));
   const delaiRoute = deps.delaiRouteMs ?? DELAI_ROUTE_MS;
   const borner = (m) => { if (m.size > 5000) m.clear(); };
 

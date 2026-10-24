@@ -209,7 +209,7 @@ eq("droits gardés dans l'ordre", cleTest.cle.portees, ["lecture", "commande"]);
   eq("etat : environnement", e.environnement, "test");
   eq("etat : droits", e.portees, ["lecture", "commande"]);
   eq("etat : commandes réelles fermées", e.commandes.production, "fermees");
-  eq("etat : pas encore de route de commande", e.commandes.disponibles, false);
+  eq("etat : route de commande (phase 3), clé de test : commandes disponibles", e.commandes.disponibles, true);
   eq("etat : plafonds par défaut", e.commandes.plafonds, { lignes_par_commande: 100, boites_par_commande: 1000, montant_ht_par_commande: 3000, commandes_par_jour: 10 });
   eq("etat : délai d'annulation", e.commandes.delai_annulation_min, 10);
   eq("etat : mention des prix", e.prix, { base: "liste_pharmacie", mention: "Prix HT de votre liste, hors offres du site" });

@@ -1,0 +1,186 @@
+# API des pharmacies (`/api/v1`) — contrat interne
+
+Dépôt PUBLIC : aucun secret, aucune donnée réelle. Les exemples sont fictifs (CIP `3400000000011`, « Pharmacie Exemple »,
+numéros `1790000000001`). La page de documentation publique pour les pharmacies viendra au lot « documentation » ; ce
+fichier fixe les règles que le code applique et que cette page reprendra.
+
+Décisions de Zineb (24/10/2026) :
+
+1. accès sur demande, ouvert par Elixir pharmacie par pharmacie (onglet 🔌 API) ; la pharmacie crée et révoque ensuite
+   ses clés dans son compte (« Mes commandes » → « Accès API ») ; variante tracée côté admin pour une pharmacie sans compte ;
+2. la V1 comprend la **commande** ;
+3. **pas de validation manuelle par défaut** : une commande acceptée part seule après un délai d'annulation de 10 min, avec
+   des plafonds ; elle n'est gardée « à vérifier » que pour une **anomalie nette** (voir § 4) ;
+4. gratuit ;
+5. prix de la liste de prix Odoo de CHAQUE pharmacie (« prix HT de votre liste, hors offres du site »).
+
+## 1. Fichiers
+
+| Fichier | Rôle |
+|---|---|
+| `netlify/functions/api-v1.js` | Routeur : débit par IP, clé, accès, fiche Odoo, droit, débit par clé, route, journal |
+| `netlify/functions/_api-lecture.js` | Lecture : catalogue, disponibilités, contingents, commandes, factures, BL |
+| `netlify/functions/_api-commande.js` | Commandes : simulation, commande, annulation |
+| `netlify/functions/_api-parcours.js` | Parcours de test (clé de production après six étapes réussies) |
+| `netlify/functions/api-commandes-cron.js` | Planifiée toutes les 2 min : envois dus, réservations en suspens |
+| `netlify/functions/api-envoi-background.js` | Envoi d'une commande par le relais existant (`envoiAuto`) |
+| `netlify/functions/_api-stock.js` | Tables privées `api_*` (clé serveur), commandes du site écrites par l'API |
+| `sql/api-schema.sql` | Tables `api_*` : RLS sans policy, droits retirés à anon et authenticated |
+
+## 2. Interrupteur « Commandes par API »
+
+- Les commandes **réelles** (clés `elx_live_`) sont refusées par le serveur — `503 ecriture_suspendue`, `Retry-After` —
+  tant que l'interrupteur de l'onglet 🔌 API est fermé. Il ne s'ouvre que si les quatre prérequis sont cochés :
+  - P1 : étape 2 et Bloc 1 de la fermeture de Supabase ;
+  - P3 : fin de la quarantaine des commandes du site (pas avant le 02/11/2026) ;
+  - P4 : identifiants du relais renouvelés et envoi automatique du site stable ;
+  - P7 : conditions d'utilisation de l'API validées par un avocat.
+- Décocher une case referme l'interrupteur. Une commande acceptée puis rattrapée par une fermeture ne part pas : elle passe
+  « à vérifier » (motif `envoi_suspendu`).
+- Les clés de **test** fonctionnent dès la mise en ligne : elles n'écrivent que dans les tables privées `api_*`.
+- La simulation reste possible avec une clé de production : elle annonce le refus (`resultat: "refusee"`, `refus.code`).
+
+## 3. Une commande
+
+`POST /v1/commandes` (droit « commande », fiche Odoo relue à chaque appel) :
+
+```http
+POST /api/v1/commandes
+Authorization: Bearer elx_test_<votre clé de test>
+Idempotency-Key: 6f1c2b9e-0d4a-4c1e-9a57-2b8f0c3d1e42
+Content-Type: application/json
+
+{ "reference_client": "REASSORT-A", "lignes": [ { "cip": "3400000000011", "quantite": 12 } ],
+  "si_rupture": "retirer", "tout_ou_rien": false, "commentaire": "facultatif" }
+```
+
+Contrôles, dans l'ordre :
+
+1. accès en mode « auto » (sinon `403 commandes_bloquees`), conditions d'utilisation en vigueur acceptées (sinon
+   `403 cgu_a_accepter`), interrupteur ouvert pour une clé de production (sinon `503 ecriture_suspendue`) ;
+2. `Idempotency-Key` obligatoire (8 à 128 caractères `A-Z a-z 0-9 _ . : -`) ;
+3. structure : 1 à 200 lignes, `cip` = texte de 13 chiffres (CIP13 ou code-barres), `quantite` entière de 1 à 999, un produit
+   une seule fois (ni deux fois le même CIP, ni le CIP et le code-barres d'un même produit), aucun champ inconnu (un prix
+   envoyé par le client est refusé : rien n'est pris du client) ;
+4. plafond de commandes du jour de la pharmacie (toutes clés) : `429 plafond_commandes_jour` jusqu'à minuit (heure de Paris) ;
+5. par ligne :
+   - absent du catalogue → `refusee`, `produit_inconnu` ;
+   - produit exclu par l'admin → `produit_non_commandable` ;
+   - offres que le site seul sait servir (hors V1) → `produit_non_commandable` (« à commander sur le site ») : article livré
+     sous plusieurs CIP (fauteuils : le site répartit la quantité entre eux, le plus ancien d'abord), produit d'une campagne
+     (section U-Labs ou campagne active). Exclusions illisibles → `503`, jamais « commandable » par défaut ;
+   - produit sur justificatif laboratoire → `produit_sur_justificatif` (« à commander sur le site ») ;
+   - prix pas encore calculé → `prix_indisponible` ;
+   - contingent : quantité ramenée au reste (`motif: contingentement`), refusée à 0 ;
+   - rupture (stock libre lu en direct) : retirée (`etat: rupture`) avec `si_rupture: "retirer"` (défaut), gardée en attente
+     du stock avec `"garder"` (`motif: en_attente_stock`) ;
+   - prix : celui de la liste de prix de la pharmacie, calculé par Odoo (MINIMUM des règles applicables, comme la facture), au
+     palier atteint par la quantité ;
+6. `tout_ou_rien: true` et une ligne refusée, retirée ou réduite → `422 commande_refusee` ; aucune ligne acceptée →
+   `422 aucune_ligne_acceptee` ;
+7. plafonds de l'accès, sur ce qui serait envoyé (défauts : 100 lignes, 1 000 boîtes, 3 000 € HT) : dépassement →
+   `422 plafond_depasse` avec `plafond: { nom, limite, valeur }`. **Refus explicite, jamais de mise en attente.**
+8. anomalies nettes (§ 4) → commande acceptée mais gardée « à vérifier ».
+
+Odoo injoignable : `503` (`contingent_indisponible` si un produit est contingenté), rien n'est enregistré, la même requête
+(même `Idempotency-Key`) peut être renvoyée. Le contrôle de contingent est fait au serveur ; deux commandes simultanées
+peuvent lire le même reste : Odoo reste l'arbitre à l'import.
+
+Réponse `201`, `Location: /api/v1/commandes/{id}` :
+
+```json
+{ "id": "1790000000001", "environnement": "live", "reference_client": "REASSORT-A", "canal": "api", "etat": "recue",
+  "motif": null, "cree_le": "2026-11-16T09:30:12+01:00", "annulable_jusqu_a": "2026-11-16T09:40:12+01:00",
+  "si_rupture": "retirer", "total_indicatif_ht": 110.4,
+  "lignes": [ { "ligne": 1, "cip": "3400000000011", "nom": "PRODUIT EXEMPLE A 30 CPR", "quantite_demandee": 12, "quantite": 12,
+                "prix_unitaire_ht": 9.2, "total_ht": 110.4, "etat": "acceptee", "motif": null, "detail": null } ],
+  "anomalies": [], "avertissements": [], "mention": "Prix HT de votre liste, hors offres du site. Prix indicatifs : …" }
+```
+
+La commande réelle est écrite dans `elixir_orders` (source `api`, sans e-mail, CIP et nom de la fiche, lignes
+`{ cip, name, qty, pn, total, ligne_api }`) : elle compte aussitôt dans le contingent, apparaît dans « Mes commandes » et dans
+l'onglet Commandes de l'admin avec le badge « 🔌 API ». `order-save.js` n'est pas utilisé ni modifié.
+
+`POST /v1/commandes/simulation` : mêmes contrôles, rien n'est écrit, `200` avec `resultat` (`acceptee` | `refusee`), `refus`
+(statut, code, détail que la commande aurait reçus), lignes, total, anomalies.
+
+## 4. Anomalies nettes : commande gardée « à vérifier »
+
+C'est la SEULE validation humaine. Réglable par pharmacie dans l'onglet 🔌 API (case « Garder à vérifier les commandes
+anormales », facteur, fenêtre de doublon). Par défaut :
+
+- **Quantité inhabituelle** : une ligne au-delà de **10 × la quantité mensuelle habituelle** de ce produit pour cette
+  pharmacie. Habitude = quantité commandée sur les 6 derniers mois (tous canaux : site, API, logiciel d'officine ; commandes
+  Odoo non annulées), divisée par 6, avec un plancher de 3 boîtes par mois pour un produit jamais ou rarement commandé
+  (soit 30 boîtes au-delà desquelles une première commande est gardée).
+- **Quasi-doublon** : au moins **80 %** des produits de la commande figurent déjà dans UNE commande reçue depuis moins de
+  **30 min**, quel que soit le canal (site, API, logiciel d'officine vu dans Odoo). Les lignes annulées ou traitées sans envoi
+  ne comptent pas : une commande annulée puis repassée n'est pas un doublon. En mode test, la comparaison se fait avec les
+  commandes de test de la pharmacie.
+
+Effet : `201` avec `etat: "en_attente_elixir"`, `motif: "anomalie_quantite"` ou `"quasi_doublon"`, `anomalies` détaillées,
+`annulable_jusqu_a: null` (annulable tant qu'Elixir ne l'a pas envoyée). Elixir est notifié ; la commande est dans l'onglet
+Commandes (« 🔌 API · À VÉRIFIER »), hors de « Sync toutes ». Valider = « Sync » de la commande ; refuser une ligne =
+« Traiter sans envoi ». Elle ne part jamais seule.
+
+Sont aussi gardées « à vérifier », après le délai : relais en envoi manuel (`envoi_manuel`), commande identique à une autre
+de moins de 2 h selon le relais (`doublon_recent`), retard de plus de 30 min (`envoi_manque`), API ou accès coupés
+(`envoi_suspendu`), ruptures gardées (`precommande`), ligne sans stock au moment de l'envoi (`rupture_envoi`), commande
+modifiée depuis l'acceptation (`commande_modifiee`), erreur
+(`erreur_transmission`, `envoi_a_verifier`, `reprise`). Ces cas ne sont pas des validations : la commande n'est pas partie
+seule et Elixir la termine.
+
+## 5. Idempotence
+
+- Portée : la fiche et l'environnement (une clé tournée retrouve la même commande).
+- Rejeu, même contenu (lignes triées, valeurs par défaut remplies) : même statut, même corps, `Idempotent-Replayed: true`
+  — y compris pour un refus `422`. Contenu différent : `422 idempotency_key_reutilisee`.
+- Requête encore en cours (moins de 60 s) : `409 requete_en_cours`, `Retry-After: 2` ; au-delà (fonction coupée) : reprise.
+- `reference_client` : unique par fiche hors commandes refusées → `409 reference_deja_utilisee` avec l'`id` existant.
+- Numéro choisi par le serveur (`Date.now()`, 13 chiffres ; `T` devant en test) et noté dans `api_commandes` AVANT l'insertion :
+  une reprise réutilise le même numéro ; un numéro déjà pris par une autre commande en fait tirer un nouveau.
+- Erreur passagère ou plafond du jour : la réservation est rendue (la même clé repart de zéro).
+
+## 6. Envoi, annulation, états
+
+- `api-commandes-cron` (toutes les 2 min) confie chaque commande réelle dont le délai est écoulé à `api-envoi-background`,
+  qui la prend par une transition conditionnelle (un seul envoi même si deux passages se croisent), retire les lignes sans
+  stock (`si_rupture: "retirer"`) AVANT la mise en file, puis appelle `envoiAuto` du relais (seul chemin vers PharmaML :
+  agent du Mac). L'interrupteur `autoSite` du relais vaut aussi pour l'API.
+- Avant tout envoi, la commande du site doit porter exactement les lignes acceptées par l'API (CIP, quantité, rang) et le
+  CIP de la fiche Odoo de l'accès : sinon « à vérifier » (`commande_modifiee`), rien ne part. Défense en profondeur tant
+  que la base n'est pas fermée (P1) : une ligne `elixir_orders` modifiée entre l'acceptation et l'envoi n'est jamais relayée.
+- Commande synchronisée à la main par Elixir pendant le délai (« Sync » de l'onglet Commandes, avec confirmation) : la
+  fonction d'envoi n'y touche plus (ni ligne retirée, ni nouvel envoi), l'état suit le relais.
+- Ligne restée sans stock entre la vérification et la mise en file : elle n'est pas réécrite après la mise en file (le
+  relais pose ses marques sur les mêmes lignes) ; la commande passe « à vérifier » (`rupture_envoi`, avis à Elixir), qui la
+  retire avec « Traiter sans envoi » ou l'envoie au retour du stock.
+- `DELETE /v1/commandes/{id}` : pendant le délai (reçue, pas encore prise par l'envoi) ou tant qu'une commande gardée
+  « à vérifier » n'est pas partie ; jamais si une ligne est envoyée ou si une tâche du relais existe → `409 trop_tard`.
+  Les lignes sont marquées « traitées » (`handled_at`, `api_motif: annulee`) : plus de contingent, plus d'envoi.
+- États (`GET /v1/commandes/{id}`) : `recue` (délai en cours), `en_attente_elixir` + motif, `en_transmission`, `transmise`,
+  `en_preparation`, `partiellement_sortie`, `sortie_entrepot`, `facturee`, `non_servie` (toutes lignes en rupture),
+  `annulee`. Dès qu'une ligne part, l'état du relais puis d'Odoo l'emporte. Lignes : `acceptee`, `refusee`, `rupture`,
+  `annulee`, `traitee_par_elixir`.
+
+## 7. Mode test
+
+Clé `elx_test_` (et tout appel sur un aperçu Netlify) : contrôles réels (prix, contingents, stock, plafonds, anomalies),
+commande « T… » écrite seulement dans `api_commandes` — jamais dans `elixir_orders`, ni notification, ni stock, ni relais ;
+état simulé (reçue pendant le délai, puis transmise, puis sortie de l'entrepôt 10 min plus tard). En-tête
+`X-Elixir-Simulation` (test seulement) : `rupture`, `contingent`, `indisponible`, `doublon`.
+
+Parcours de test : la clé de production s'ouvre d'elle-même quand une clé de test a réussi `GET /v1/etat`, une simulation,
+une commande, sa relecture, son annulation et un rejeu avec la même `Idempotency-Key` (étapes montrées dans « Accès API ») ;
+l'admin peut toujours valider le test à la main (tracé).
+
+## 8. Ce qui ne sort jamais
+
+Plomberie interne (relais, Odoo, Supabase, PharmaML), e-mails, numéro ou nom de la liste de prix, quantités de stock exactes,
+prix d'achat, texte libre d'une commande du site, messages techniques du relais. Le journal ne garde ni corps, ni IP
+complète, ni numéro de commande dans la route.
+
+## 9. À faire par Zineb avant la mise en service
+
+- rejouer `sql/api-schema.sql` (colonne `api_acces.test_parcours` ; le fichier se rejoue sans effet) ;
+- cocher les prérequis P1, P3, P4, P7 quand ils sont faits, puis ouvrir « Commandes par API ».

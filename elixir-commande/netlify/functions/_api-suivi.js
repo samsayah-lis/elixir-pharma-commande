@@ -32,12 +32,19 @@ const DEPUIS_SITE = {
   a_verifier: { etat: "en_attente_elixir", motif: "verification" }, non_verifiee: { etat: "en_attente_elixir", motif: "verification" },
   campagne: { etat: "en_attente_elixir", motif: "campagne" }, justificatif: { etat: "en_attente_elixir", motif: "justificatif" },
 };
-// ligne api_commandes (phase commande) qui prime sur le site tant que la commande n'est pas partie
-function etatApi(row, now) {
+// ligne api_commandes (phase commande) qui prime sur le site tant que rien n'est parti : annulée, toutes lignes en rupture
+// (non servie), gardée « à vérifier », reçue dans son délai d'annulation. Dès qu'une ligne part (relais en cours, transmise,
+// dans Odoo), l'état du site, du relais et d'Odoo l'emporte (une commande « à vérifier » validée par Elixir avance ainsi).
+const PARTIE = new Set(["en_transmission", "transmise", "dans_odoo"]);
+function etatApi(row, now, site = null) {
   if (!row) return null;
   if (row.etat === "annulee") return { etat: "annulee", motif: row.motif || null };
+  if (row.etat === "non_servie") return { etat: "non_servie", motif: row.motif || "rupture" };
+  if (PARTIE.has(site?.etat)) return null;
   if (row.etat === "a_verifier") return { etat: "en_attente_elixir", motif: row.motif || "anomalie" };
   if (row.etat === "recue" && row.envoi_apres && Date.parse(row.envoi_apres) > now.getTime()) return { etat: "recue", motif: null, annulable_jusqu_a: isoParis(row.envoi_apres) };
+  if (row.etat === "en_cours" || row.etat === "recue") return { etat: "recue", motif: null };
+  if (row.etat === "envoi_demande") return { etat: "en_transmission", motif: null };
   return null;
 }
 // commande de test (« T… », jamais dans elixir_orders) : état simulé (conception § 9) — reçue pendant le délai d'annulation,
@@ -46,14 +53,31 @@ export function etatTest(row, now) {
   const fin = row.envoi_apres ? Date.parse(row.envoi_apres) : Date.parse(row.recu_le);
   if (row.etat === "annulee") return { etat: "annulee", motif: row.motif || null };
   if (row.etat === "a_verifier") return { etat: "en_attente_elixir", motif: row.motif || "anomalie" };
+  if (row.etat === "en_cours") return { etat: "recue", motif: null };
   if (now.getTime() < fin) return { etat: "recue", motif: null, annulable_jusqu_a: isoParis(fin) };
   return now.getTime() < fin + 10 * 60e3 ? { etat: "transmise", motif: null } : { etat: "sortie_entrepot", motif: null };
 }
 function etatSiteApi(site, codesOdoo, row, now) {
-  const a = etatApi(row, now);
+  const a = etatApi(row, now, site);
   if (a) return a;
   if (site?.etat === "dans_odoo") return { etat: etatDepuisOdoo(codesOdoo) || "transmise", motif: null };
   return DEPUIS_SITE[site?.etat] || { etat: "recue", motif: null };
+}
+// lignes de la commande du site (CIP de la fiche) pour l'état des lignes d'une commande de l'API
+async function lignesSite(stock, id, cip) {
+  if (!/^\d{7,13}$/.test(String(cip || ""))) return [];
+  const [o] = (await stock.sbLecture(`elixir_orders?id=eq.${id}&pharmacy_cip=eq.${encodeURIComponent(cip)}&select=items&limit=1`)) || [];
+  const its = lireJson(o?.items, []);
+  return Array.isArray(its) ? its : [];
+}
+// état d'une ligne acceptée : annulée (pharmacie), rupture (retirée à l'envoi), traitée par Elixir sans envoi ; sinon inchangé
+function etatLigne(l, items, row) {
+  if (l.etat !== "acceptee") return {};
+  const it = items.find(x => x && Number(x.ligne_api) === Number(l.ligne)) || items.find(x => x && String(x.cip) === String(l.cip));
+  if (!it?.handled_at || it.synced_at) return row?.etat === "annulee" ? { etat: "annulee", motif: "annulee_par_la_pharmacie" } : {};
+  if (it.api_motif === "annulee") return { etat: "annulee", motif: "annulee_par_la_pharmacie" };
+  if (it.api_motif === "rupture") return { etat: "rupture", motif: "rupture", detail: "En rupture au moment de l'envoi : ligne retirée." };
+  return { etat: "traitee_par_elixir", motif: null };
 }
 // lignes de la réponse rendue par l'API à la création (preuve, rejouée à l'identique) — forme de la phase commande
 const lignesReponse = (row) => { const r = lireJson(row?.reponse, null); return Array.isArray(r?.lignes) ? r : null; };
@@ -64,7 +88,7 @@ function resume({ id, environnement, canal, row, site, codes, numeros, now, date
   const rep = lignesReponse(row);
   return { id, environnement, canal: canal === "test" ? "api" : canal, reference_client: row?.reference_client || null, etat: e.etat, motif: e.motif || null,
     cree_le: canal === "test" ? isoParis(row.recu_le) : creeLe(id, date), annulable_jusqu_a: e.annulable_jusqu_a || null,
-    lignes: rep ? rep.lignes.length : site?.lignes ?? 0, commandes_elixir: numeros || [] };
+    lignes: rep ? rep.lignes.filter(l => l.etat === undefined || (l.etat === "acceptee" && l.quantite !== 0)).length : site?.lignes ?? 0, commandes_elixir: numeros || [] };
 }
 
 // GET /v1/commandes : page des commandes de la période (les plus récentes d'abord) → { donnees, suivante }
@@ -84,7 +108,10 @@ export async function listerCommandesApi(ctx, { debutIso, finIso, page, parPage,
   const suivante = entrees.length > parPage;
   entrees = entrees.slice(0, parPage);
   const idsSite = entrees.filter(e => e.canal === "site").map(e => e.id);
-  const [sites, rowsApi] = idsSite.length ? await Promise.all([commandesSite(ctx, { numeros: idsSite }, deps), stock.commandes.parOrdres(ctx.odooId, idsSite)]) : [[], []];
+  // commandes de l'API de la fiche d'abord : elles sont « vérifiées » sans e-mail de compte (rattachées par api_commandes)
+  const rowsApi = idsSite.length ? await stock.commandes.parOrdres(ctx.odooId, idsSite) : [];
+  const verifiees = new Set(rowsApi.filter(r => !r.test).map(r => String(r.order_id)));
+  const sites = idsSite.length ? await commandesSite(ctx, { numeros: idsSite, verifiees }, deps) : [];
   const parSite = new Map(sites.map(s => [String(s.reference_site), s]));
   const parApi = new Map(rowsApi.filter(r => !r.test).map(r => [String(r.order_id), r]));
   const suivi = await suiviCommandesOdoo(ctx, sites.flatMap(s => s.ids_odoo || []), {}, deps);
@@ -109,12 +136,13 @@ export async function detailCommandeApi(ctx, id, { environnement, now }, stock, 
     const rep = lignesReponse(row);
     return { id, environnement: "test", canal: "api", reference_client: row.reference_client || null, etat: e.etat, motif: e.motif || null,
       cree_le: isoParis(row.recu_le), annulable_jusqu_a: e.annulable_jusqu_a || null, total_indicatif_ht: rep?.total_indicatif_ht ?? null,
-      commandes_elixir: [], lignes: (rep?.lignes || []).map(l => ({ ...l, suivi: null })) };
+      commandes_elixir: [], lignes: (rep?.lignes || []).map(l => ({ ...l, ...(row.etat === "annulee" && l.etat === "acceptee" ? { etat: "annulee", motif: "annulee_par_la_pharmacie" } : {}), suivi: null })) };
   }
   if (!ORDRE_SITE.test(id)) return null;
-  const [[site], rowsApi] = await Promise.all([commandesSite(ctx, { id, noms: true, lignesMax: 200 }, deps), stock.commandes.parOrdres(ctx.odooId, [id])]);
-  if (!site) return null;
+  const rowsApi = await stock.commandes.parOrdres(ctx.odooId, [id]);
   const row = rowsApi.find(r => !r.test && String(r.order_id) === id) || null;
+  const [site] = await commandesSite(ctx, { id, noms: true, lignesMax: 200, verifiees: new Set(row ? [id] : []) }, deps);
+  if (!site) return null;
   const suivi = await suiviCommandesOdoo(ctx, site.ids_odoo || [], { detail: true }, deps);
   // lignes Odoo de CETTE commande (une commande Odoo peut regrouper plusieurs commandes du site ou du logiciel)
   const miennes = suivi.lignes.filter(l => REF_SITE.exec(l.ref)?.[1] === id);
@@ -127,8 +155,11 @@ export async function detailCommandeApi(ctx, id, { environnement, now }, stock, 
   }
   const suiviDe = (cip) => { const a = parCip.get(cip); if (!a) return null; parCip.delete(cip); const { cip: _c, nom: _n, ...q } = a; return q; };
   const rep = lignesReponse(row);
+  // commande de l'API : état de chaque ligne depuis la commande du site (rupture retirée à l'envoi, annulation, ligne traitée
+  // sans envoi par Elixir) ; la réponse d'origine reste celle rendue à la création (rejouée à l'identique)
+  const items = rep ? await lignesSite(stock, id, ctx.cip) : [];
   const lignes = rep
-    ? rep.lignes.map(l => ({ ...l, suivi: suiviDe(l.cip) }))
+    ? rep.lignes.map(l => ({ ...l, ...etatLigne(l, items, row), suivi: suiviDe(l.cip) }))
     : (site.produits || []).map(p => ({ cip: p.cip, nom: p.produit || null, quantite_demandee: p.commande, suivi: suiviDe(p.cip) }));
   // lignes servies sous un autre CIP (article multi-CIP réparti à l'envoi) : rendues à part
   for (const a of parCip.values()) { const { cip, nom, ...q } = a; lignes.push({ cip: cip || null, nom: nom || null, quantite_demandee: null, suivi: q }); }

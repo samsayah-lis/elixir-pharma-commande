@@ -568,8 +568,9 @@ async function nomsProduits(cips, d, max = 30) {
 // commandes du site de la période, avec leur lien éventuel vers les commandes Odoo (pml_order_ref = id, idP2…)
 // noms : relit dans Odoo le nom des produits (détail d'UNE commande seulement)
 // API des pharmacies (_api-suivi.js) : numeros (commandes d'une page, 100 au plus) au lieu de la période ; lignesMax : lignes
-// de produits rendues par commande (30 par défaut, comme pour l'Assistant)
-export async function commandesSite(ctx, { debut, fin, id = null, numeros = null, noms = false, lignesMax = 30 }, deps = {}) {
+// de produits rendues par commande (30 par défaut, comme pour l'Assistant) ; verifiees : numéros de commandes passées par
+// l'API et rattachées à la fiche par sa table privée api_commandes (sans e-mail de compte : vérifiées quand même)
+export async function commandesSite(ctx, { debut, fin, id = null, numeros = null, noms = false, lignesMax = 30, verifiees = null }, deps = {}) {
   const d = depsParDefaut(deps);
   const P = fiche(ctx);
   if (!ctx.cip) return [];
@@ -592,7 +593,7 @@ export async function commandesSite(ctx, { debut, fin, id = null, numeros = null
   for (const l of liens) { const m = String(l.pml_order_ref || "").match(REF_SITE); if (m) { if (!versOdoo.has(m[1])) versOdoo.set(m[1], new Map()); versOdoo.get(m[1]).set(l.order_id[0], nomM2o(l.order_id)); } }
   const sorties = rows.map(o => {
     const dansOdoo = [...(versOdoo.get(String(o.id))?.values() || [])].filter(Boolean);
-    const verifiee = dansOdoo.length > 0 || comptes.has(minuscule(o.pharmacy_email));
+    const verifiee = dansOdoo.length > 0 || comptes.has(minuscule(o.pharmacy_email)) || (o.source === "api" && !!verifiees?.has?.(String(o.id)));
     const e = etatSite(o, taches.get(String(o.id)) || [], dansOdoo, verifiee);
     const dt = o.date && !Number.isNaN(Date.parse(o.date)) ? new Date(o.date) : null;
     return { reference_site: String(o.id), date: dt ? jourParis(dt) : null, heure: dt ? heureParis(dt) : null,

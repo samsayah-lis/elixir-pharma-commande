@@ -416,6 +416,8 @@ export async function envoiAuto({ orderId, user }) {
   if (!cfg.autoSite) return { ok: false, code: "inactif", error: "envoi automatique désactivé : synchro manuelle" };
   const o = await lireCommande(orderId);
   if (!o) return { ok: false, code: "introuvable", error: "commande introuvable" };
+  // API des pharmacies (api-envoi-background, délai d'annulation écoulé) : commande « api » relayée comme une commande du site, par cet appel seulement
+  if (o.source === "api" && user?.api === true && /^\d{7}$/.test(String(user.cip || ""))) o.source = "catalogue";
   if ((o.source || "catalogue") !== "catalogue") return { ok: false, code: "source", error: `commande « ${o.source} » : synchro manuelle` };
   if (o.processed) return { ok: false, code: "traitee", error: "commande déjà traitée" };
   const creee = Date.parse(o.date);

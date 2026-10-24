@@ -155,6 +155,14 @@ export default function AccesApi({ appel, pour, etatInitial, onClose, onEtat }) 
                   <label style={{ display: "flex", gap: 6, alignItems: "center" }}><input type="radio" name="acces-api-env" checked={nouvelle.environnement === "test"} onChange={() => setNouvelle({ ...nouvelle, environnement: "test" })} />Test (rien n'est commandé)</label>
                   <label style={{ display: "flex", gap: 6, alignItems: "center", color: etat.test_valide ? T.ink : T.inkMute }}><input type="radio" name="acces-api-env" disabled={!etat.test_valide} checked={nouvelle.environnement === "live"} onChange={() => setNouvelle({ ...nouvelle, environnement: "live" })} />Production{etat.test_valide ? "" : " (après validation du mode test)"}</label>
                 </div>
+                {!etat.test_valide && Array.isArray(etat.test_parcours) && (
+                  <div style={{ fontSize: 12, color: T.inkSoft, margin: "4px 0 10px" }}>
+                    Mode test : la production s'ouvre d'elle-même quand votre outil a réussi, avec une clé de test, ces six étapes :
+                    <ol style={{ margin: "6px 0 0", paddingLeft: 20, lineHeight: 1.6 }}>
+                      {etat.test_parcours.map(e => <li key={e.etape} style={{ color: e.faite ? T.ok : T.inkSoft }}>{e.faite ? "✓ " : ""}{e.libelle}</li>)}
+                    </ol>
+                  </div>
+                )}
                 <label style={ui.label} htmlFor="acces-api-libelle">Nom de la clé (l'outil qui l'utilise)</label>
                 <input id="acces-api-libelle" style={{ ...ui.input, maxWidth: 360 }} maxLength={60} value={nouvelle.libelle} placeholder="ex. Tableur de réassort" onChange={e => setNouvelle({ ...nouvelle, libelle: e.target.value })} />
                 <div style={{ display: "flex", gap: 16, flexWrap: "wrap", margin: "10px 0", fontSize: 13 }}>

@@ -18,6 +18,7 @@ import { creerStockApi, estUuid } from "./_api-stock.js";
 import { clePublique, creerCle, remplacerCle, refusCreation, reseauDe } from "./_api-cles.js";
 import { CGU, LIBELLES_PORTEES, LIMITES, MENTION_PRIX, commandesLiveOuvertes, empreinteCgu, fusionnerReglages } from "./_api-config.js";
 import { estApercu, isoParis } from "./_api-http.js";
+import { parcoursPublic } from "./_api-parcours.js";
 
 const ACTIONS = new Set(["etat", "cgu", "creer_cle", "remplacer_cle", "revoquer_cle", "journal"]);
 const DEBIT = [30, 60];   // requêtes par minute et par IP, par instance
@@ -86,6 +87,8 @@ export function creerHandler(deps = {}) {
             acceptee: acces.cgu_version === CGU.version, acceptee_le: acces.cgu_version === CGU.version ? isoParis(acces.cgu_acceptees_le) : null,
             version_acceptee: acces.cgu_version || null },
           test_valide: !!acces.test_valide_le,
+          // phase 3 : étapes du parcours de test (validé seul quand les six sont faites avec une clé de test)
+          test_parcours: acces.test_valide_le ? null : await parcoursPublic(stock, ctx.odooId),
           commandes_production: commandesLiveOuvertes(fusionnerReglages(reglages.valeur), now) ? "ouvertes" : "fermees",
           cles: cles.map(c => clePublique(c, now)),
           documentation: null,   // page publique /api/ : lot « documentation »

@@ -23,9 +23,12 @@ import { odoo as odooReel, COMPANY_ID } from "./_odoo-rpc.js";
 import { DELAI_ODOO_MS, listerPieces, pdfPiece, listerLivraisons, livraisonsDeLaFiche, donneesLivraisons, jourValide, jourParis, heureParis, jourPlus,
   minuitParisIso } from "./_chat-perimetre.js";
 import { blPdf, nomFichierBl } from "./_chat-bl.js";
+import { lireConfig as lireConfigJustif, indexProduits } from "./_lab-justif.js";
+import { CLE_OUTILS, FAUTEUILS, cipsFauteuils } from "./_accueil-outils.js";
 import { validCip } from "./_pharmacies.js";
 import { resteContingents, cipsContingentes, formerContingents } from "./_api-contingent.js";
 import { listerCommandesApi, detailCommandeApi, ORDRE_SITE, ORDRE_TEST } from "./_api-suivi.js";
+import { noterParcours } from "./_api-parcours.js";
 import { lecteurOdoo, listesDesFiches } from "./_api-prix.js";
 import { LIMITES, PAGES, PRIX, MENTION_PRIX_DETAIL, MENTION_DISPONIBILITE, niveauStock } from "./_api-config.js";
 import { erreurApi, reponseJson, reponseFichier, isoParis } from "./_api-http.js";
@@ -37,10 +40,10 @@ const r2 = (x) => Math.round(Number(x) * 100) / 100;
 // ── Services (un jeu par instance du routeur) ──
 // deps : stock (_api-stock.js), odoo (_odoo-rpc.js, doublure des tests), horloge (ms), maintenant, log, quota (doublure de
 // _api-contingent.js pour le banc d'essai : { cipsContingentes, resteContingents } — _quota.js lit Odoo sans injection)
-export function creerServicesLecture({ stock, odoo, horloge = () => Date.now(), maintenant = () => new Date(), log = () => {}, quota = {} }) {
+export function creerServicesLecture({ stock, odoo, horloge = () => Date.now(), maintenant = () => new Date(), log = () => {}, quota = {}, justificatifs = null }) {
   odoo ||= odooReel;
   const lireContingentes = quota.cipsContingentes || cipsContingentes, calculerContingents = quota.resteContingents || resteContingents;
-  const caches = { listes: new Map(), dispo: new Map(), contingents: new Map(), quota: null };
+  const caches = { listes: new Map(), dispo: new Map(), contingents: new Map(), quota: null, justif: null, horsApi: null };
   const borner = (m) => { if (m.size > 20000) m.clear(); };
   const resteFenetre = (s) => s - (Math.floor(horloge() / 1000) % s);
   // lectures directes de l'API (disponibilités, liste de prix) : société 2 imposée, méthodes d'écriture refusées, 6 s
@@ -124,7 +127,65 @@ export function creerServicesLecture({ stock, odoo, horloge = () => Date.now(), 
     return v;
   }
 
-  return { deps, chargerOdoo, listeDeFiche, contingentes, disponibilites, contingents };
+  // ── Phase 3 (commandes) : lectures FRAÎCHES (jamais de cache pour accepter une commande) ──
+  // Contingents bruts de la fiche (forme de quota-status) ; le cache de /v1/contingents est vidé (commande acceptée)
+  async function contingentsBruts(ctx) {
+    caches.contingents.delete(ctx.odooId);
+    return calculerContingents({ odooId: ctx.odooId, cip: ctx.cip }, { sb: stock.sbLecture, odoo: (m, me, a, k) => odoo(m, me, a, k, { timeoutMs: DELAI_ODOO_MS }), maintenant });
+  }
+  const oublierContingents = (odooId) => caches.contingents.delete(odooId);
+  // Produits sur justificatif laboratoire (page dédiée du site) → index CIP → { lab, produit } ; cache 10 min ; illisible → lève
+  async function produitsJustificatif() {
+    const t = horloge();
+    if (caches.justif && t - caches.justif.at < QUOTA_MS) return caches.justif.v;
+    const v = justificatifs ? await justificatifs() : indexProduits(await lireConfigJustif());
+    caches.justif = { at: t, v };
+    return v;
+  }
+  // Produits que le site seul sait commander (hors API en V1) → Map(CIP → « multi_cip » | « campagne ») ; cache 10 min ;
+  // illisible → lève (jamais « commandable » par défaut) :
+  //  • articles livrés sous plusieurs CIP (fauteuils : le site répartit la quantité entre les CIP, le plus ancien d'abord) —
+  //    correspondance de la fonction planifiée de l'accueil (kv « accueil:outils »), plus les CIP de repli ;
+  //  • produits des campagnes (section U-Labs et sections des campagnes actives : gratuités et quantités engagées propres
+  //    à la campagne). Mêmes sources que les exclusions de la péremption (_peremption.js, exclusionsSite).
+  async function produitsHorsApi() {
+    const t = horloge();
+    if (caches.horsApi && t - caches.horsApi.at < QUOTA_MS) return caches.horsApi.v;
+    const lireJson = (x, d) => { if (x && typeof x === "object") return x; try { return JSON.parse(x); } catch { return d; } };
+    const [plan, campagnes] = await Promise.all([
+      stock.sbLecture(`kv_store?key=eq.${encodeURIComponent(CLE_OUTILS)}&select=value&limit=1`).then(r => lireJson(r?.[0]?.value, null)),
+      stock.sbLecture("elixir_campaigns?active=eq.true&select=id&limit=200"),
+    ]);
+    const sections = [...new Set(["ulabs", ...(Array.isArray(campagnes) ? campagnes : []).map(c => String(c?.id ?? ""))])].filter(s => /^[\w.-]{1,60}$/.test(s));
+    const enCampagne = (await stock.sbLecture(`elixir_products?section=in.${encodeURIComponent(`(${sections.map(s => `"${s}"`).join(",")})`)}&select=cip&limit=5000`)) || [];
+    const v = new Map();
+    for (const c of cipsFauteuils(Object.keys(FAUTEUILS), plan)) v.set(String(c), "multi_cip");
+    for (const p of enCampagne) if (p?.cip && !v.has(String(p.cip))) v.set(String(p.cip), "campagne");
+    caches.horsApi = { at: t, v };
+    return v;
+  }
+  // Produits Odoo (société 2) par CIP ou code-barres → Map(code → { id, free_qty }) ; lecture directe
+  async function produitsOdoo(codes) {
+    const xs = [...new Set(codes)].filter(c => CIP13.test(c));
+    const out = new Map();
+    if (!xs.length) return out;
+    const rows = (await lire("product.product", "search_read", [["&", ["company_id", "in", [COMPANY_ID, false]], "|", ["default_code", "in", xs], ["barcode", "in", xs]]],
+      { fields: ["id", "default_code", "barcode", "free_qty"], order: "id asc", limit: xs.length * 3 })) || [];
+    for (const r of rows) for (const c of [r.default_code, r.barcode]) if (c && xs.includes(c) && !out.has(c)) out.set(c, { id: r.id, free_qty: Number(r.free_qty) || 0 });
+    return out;
+  }
+  // Lignes de commande Odoo de la fiche (toutes origines, non annulées) sur ces produits depuis une date Odoo (« AAAA-MM-JJ hh:mm:ss ») :
+  // historique (quantité mensuelle habituelle) et commandes reçues dans les dernières minutes (quasi-doublons du logiciel)
+  async function lignesOdoo(odooId, codes, depuisOdoo) {
+    const xs = [...new Set(codes)].filter(c => CIP13.test(c));
+    if (!xs.length) return [];
+    return (await lire("sale.order.line", "search_read", [[["company_id", "=", COMPANY_ID], ["order_partner_id", "child_of", Number(odooId)], ["state", "!=", "cancel"],
+      "|", ["product_id.default_code", "in", xs], ["product_id.barcode", "in", xs], ["order_id.date_order", ">=", depuisOdoo]]],
+      { fields: ["product_id", "product_uom_qty", "order_id", "create_date"], limit: 5000 })) || [];
+  }
+
+  return { deps, chargerOdoo, listeDeFiche, contingentes, disponibilites, contingents, contingentsBruts, oublierContingents, produitsJustificatif, produitsHorsApi,
+    produitsOdoo, lignesOdoo };
 }
 
 // ── Paramètres ──
@@ -265,12 +326,14 @@ async function routeCommandes({ event, acces, fiche, stock, services, environnem
     stock, services.deps);
   return { donnees: r.donnees, page, par_page: parPage, suivante: suivante("commandes", q, page, parPage, r.suivante), periode: { debut, fin } };
 }
-async function routeCommande({ acces, fiche, stock, services, environnement, maintenant, params }) {
+async function routeCommande(arg) {
+  const { acces, fiche, stock, services, environnement, maintenant, params } = arg;
   const id = params[0];
   if (!ORDRE_SITE.test(id) && !ORDRE_TEST.test(id)) throw erreurApi("introuvable");
   await services.chargerOdoo(acces.odoo_id);
   const c = await detailCommandeApi(ficheDe(acces, fiche), id, { environnement, now: maintenant }, stock, services.deps);
   if (!c) throw erreurApi("introuvable");
+  if (ORDRE_TEST.test(id)) await noterParcours(arg, "relecture");   // parcours de test (phase 3)
   return c;
 }
 

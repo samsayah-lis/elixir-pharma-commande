@@ -18,6 +18,11 @@
 // POST { action: "valider_test", odoo_id, motif }              → { acces } (passer outre le parcours de test, tracé)
 // POST { action: "prix_recalculer", liste_id }                 → { ok, lancement } (phase 2 : prix de la liste recalculés par
 //      Odoo en arrière-plan, api-prix-background ; le tableau donne l'état de chaque liste utilisée, sans aucun prix)
+// Phase 3 (commandes) :
+// GET  ?vue=commandes                → { commandes: 100 dernières reçues par l'API (réelles et de test), sans corps de requête }
+// GET  ?vue=commandes_etat&ids=a,b   → { etats: { <numéro>: { etat, motif, envoi_apres, reference_client, cle, envoi_resultat } } }
+//      (onglet Commandes : badge « 🔌 API », « à vérifier », délai d'annulation en cours)
+// POST { action: "reglages", cips_exclus: [...] | "a b c", base } → produits que l'API refuse (« produit_non_commandable »)
 // Les secrets ne sont jamais lus ni affichés (seule l'empreinte est en base). Hôte d'aperçu : lecture seule.
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
@@ -27,7 +32,7 @@ import { validCip } from "./_pharmacies.js";
 import { creerStockApi, estUuid } from "./_api-stock.js";
 import { cidrValide, clePublique, creerCle, refusCreation } from "./_api-cles.js";
 import { ACCES_DEFAUT, BORNES, CGU, LIBELLES_PORTEES, MODES, PORTEES, PREREQUIS, VERSION_API, commandesLiveOuvertes, commandesOuvrables,
-  fusionnerReglages, prerequisEtat } from "./_api-config.js";
+  fusionnerReglages, lireCipsExclus, prerequisEtat } from "./_api-config.js";
 import { estApercu, lancerCalculPrix, siteBase } from "./_api-http.js";
 
 const json = (cors, statusCode, corps) => ({ statusCode, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify(corps) });
@@ -152,6 +157,27 @@ export function creerHandler(deps = {}) {
             return json(cors, 200, { acces: { ...a, cgu_preuve: preuve, cgu_a_jour: a.cgu_version === CGU.version },
               cles: cles.map(c => ({ ...clePublique(c, now, { admin: true }), usage_24h: usage.get(c.id) || { requetes: 0, erreurs: 0 } })), evenements });
           }
+          case "commandes": {
+            const [rows, acces, cles] = await Promise.all([stock.commandes.recentes(100), stock.acces.lister(), stock.cles.toutes()]);
+            const nom = new Map(acces.map(a => [a.odoo_id, a.nom])), prefixe = new Map(cles.map(c => [c.id, c.prefixe]));
+            return json(cors, 200, { commandes: rows.map(r => {
+              const rep = (() => { try { return JSON.parse(r.reponse || "null"); } catch { return null; } })();
+              const dem = (() => { try { return JSON.parse(r.demande || "null"); } catch { return null; } })();
+              const lignes = Array.isArray(rep?.lignes) ? rep.lignes : [];
+              return { id: r.id, numero: r.order_id, environnement: r.test ? "test" : "live", odoo_id: r.odoo_id, pharmacie: nom.get(r.odoo_id) || null, cle: prefixe.get(r.cle_id) || null,
+                reference_client: r.reference_client, etat: r.etat, motif: r.motif, statut_http: r.statut_http, recu_le: r.recu_le, envoi_apres: r.envoi_apres,
+                envoi_resultat: r.envoi_resultat, total_ht: rep?.total_indicatif_ht ?? null, lignes_acceptees: lignes.filter(l => l.etat === "acceptee" && l.quantite > 0).length,
+                lignes_demandees: Array.isArray(dem?.lignes) ? dem.lignes.length : null, si_rupture: dem?.si_rupture || null, commentaire: dem?.commentaire || null,
+                anomalies: Array.isArray(rep?.anomalies) ? rep.anomalies.map(a => a.type) : [] };
+            }) });
+          }
+          case "commandes_etat": {
+            const ids = String(q.ids || "").split(",").map(x => x.trim()).filter(x => /^1[7-9]\d{11}$/.test(x)).slice(0, 300);
+            const [rows, cles] = await Promise.all([stock.commandes.parNumeros(ids), stock.cles.toutes()]);
+            const prefixe = new Map(cles.map(c => [c.id, `${c.libelle} (${c.prefixe})`]));
+            return json(cors, 200, { etats: Object.fromEntries(rows.map(r => [String(r.order_id), { etat: r.etat, motif: r.motif, envoi_apres: r.envoi_apres,
+              reference_client: r.reference_client, cle: prefixe.get(r.cle_id) || null, envoi_resultat: r.envoi_resultat }])) });
+          }
           case "journal": {
             const [lignes, cles] = await Promise.all([stock.journal.lister({ odooId: entier(q.odoo_id), cleId: estUuid(q.cle_id) ? q.cle_id : null,
               erreurs: q.erreurs === "1", limite: 500 }), stock.cles.toutes()]);
@@ -176,6 +202,12 @@ export function creerHandler(deps = {}) {
         if (b.action === "tout_couper") { v.actif = false; v.commandes_live = false; detail = { actif: false, commandes_live: false }; }
         else if (b.action === "reglages") {
           if ("actif" in b) v.actif = b.actif === true;
+          if ("cips_exclus" in b) {
+            const brut = Array.isArray(b.cips_exclus) ? b.cips_exclus : String(b.cips_exclus ?? "").split(/[\s,;]+/);
+            const faux = brut.map(x => String(x).trim()).filter(x => x && !/^\d{13}$/.test(x));
+            if (faux.length) return json(cors, 400, { error: `Produits exclus : CIP13 ou codes-barres de 13 chiffres (illisible : ${faux.slice(0, 3).join(", ")}).` });
+            v.cips_exclus = lireCipsExclus(brut);
+          }
           if ("commandes_live" in b) {
             if (b.commandes_live === true) {
               const o = commandesOuvrables(v, now);
@@ -183,7 +215,7 @@ export function creerHandler(deps = {}) {
             }
             v.commandes_live = b.commandes_live === true;
           }
-          detail = { actif: v.actif, commandes_live: v.commandes_live };
+          detail = { actif: v.actif, commandes_live: v.commandes_live, ...("cips_exclus" in b ? { cips_exclus: v.cips_exclus.length } : {}) };
         } else {
           const p = PREREQUIS.find(x => x.id === b.id);
           if (!p) return json(cors, 400, { error: "Prérequis inconnu" });

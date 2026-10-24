@@ -210,6 +210,22 @@ create table if not exists api_prix_listes (
   updated_at  timestamptz not null default now()
 );
 
+-- ── Phase 3 (commandes) ────────────────────────────────────────────────────────────────────────────
+-- Parcours de test (conception § 9) : étapes réussies avec une clé elx_test_ (JSON { etat, simulation, commande, relecture,
+-- annulation, rejeu : date }) ; les six faites → test_valide_le posé (clé de production possible). Lue et écrite à part par
+-- l'API : tant que ce fichier n'est pas rejoué, le parcours ne se valide pas seul (l'admin peut toujours « Valider le test »).
+alter table api_acces add column if not exists test_parcours text;
+-- api_commandes (déjà créée en phase 1) : états d'une commande reçue par l'API
+--   en_cours      réservation (Idempotency-Key) pendant les contrôles ; order_id + reponse notés AVANT l'insertion ;
+--   refusee       réponse 4xx enregistrée (rejouée à l'identique ; reference_client libérée) ;
+--   recue         acceptée, délai d'annulation jusqu'à envoi_apres (DELETE possible) ; puis api-commandes-cron l'envoie ;
+--   a_verifier    gardée par Elixir (anomalie nette, doublon, envoi coupé ou manqué) : jamais envoyée seule ;
+--   envoi_demande prise par api-envoi-background ; envoyee : mise en file du relais (l'état suit ensuite le relais et Odoo) ;
+--   non_servie    toutes les lignes en rupture (si_rupture « retirer ») ; annulee : annulée par la pharmacie.
+-- Les commandes réelles sont aussi dans elixir_orders (source « api », sans e-mail, CIP de la fiche) : onglet Commandes,
+-- contingentement, « Mes commandes », relais. Les commandes de test (« T… ») ne sont QUE dans api_commandes.
+comment on column api_commandes.etat is 'en_cours, refusee, recue, a_verifier, envoi_demande, envoyee, non_servie, annulee';
+
 -- RLS activé, aucune policy (voir l'en-tête) ; droits retirés à anon et authenticated.
 alter table api_reglages   enable row level security;
 alter table api_acces      enable row level security;

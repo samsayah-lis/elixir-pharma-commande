@@ -4,7 +4,9 @@
 // not.is, or=(…), order, offset, limit, Prefer count=exact (Content-Range) ; POST (return=representation ; upsert
 // resolution=merge-duplicates), PATCH conditionnel, DELETE ; unicité (api_acces.odoo_id, api_cles.empreinte,
 // api_prix_listes.liste_id, api_prix (liste_id, cip) → 409 23505) ; phase 2 : tables de lecture odoo_catalog, elixir_orders,
-// elixir_pharmacies, kv_store (remplies par les tests ou le banc) ;
+// elixir_pharmacies, kv_store (remplies par les tests ou le banc) ; phase 3 : unicité de api_commandes (fiche, environnement,
+// Idempotency-Key ; reference_client hors refusées), elixir_orders.id, kv_store.key ; ec_notifications ; rpc/decrement_stock
+// (noté dans tables.decrements) ; DELETE avec return=representation ; elixir_campaigns et elixir_products (produits hors API) ;
 // fonctions rpc/api_compter et rpc/api_lire_compteur (fenêtres fixes, comme le SQL) ; clé serveur exigée (sinon 401,
 // compté dans etat.refusees) ; etat.panne = true : fetch lève (Supabase injoignable).
 // horloge() → millisecondes (horloge des tests) ; tables, appels (journal des requêtes) et etat sont exposés.
@@ -14,7 +16,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
   const T0 = () => horloge();
   const iso = () => new Date(T0()).toISOString();
   const tables = { api_reglages: [{ id: 1, valeur: "{}", updated_at: iso() }], api_acces: [], api_cles: [], api_commandes: [], api_journal: [], api_evenements: [], api_compteurs: [],
-    api_prix: [], api_prix_listes: [], odoo_catalog: [], elixir_orders: [], elixir_pharmacies: [], kv_store: [] };
+    api_prix: [], api_prix_listes: [], odoo_catalog: [], elixir_orders: [], elixir_pharmacies: [], kv_store: [], ec_notifications: [], decrements: [], elixir_campaigns: [], elixir_products: [] };
   let seq = 0;
   const appels = [];
   const DEFAUTS = {
@@ -29,7 +31,11 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
     api_prix_listes: () => ({ etat: "a_calculer", demande_le: null, debut_le: null, fin_le: null, produits: null, sans_prix: null, appels: null, erreur: null, updated_at: iso() }),
     api_commandes: () => ({ id: crypto.randomUUID(), recu_le: iso(), updated_at: iso() }),
   };
-  const UNIQUES = { api_acces: [r => String(r.odoo_id)], api_cles: [r => r.empreinte], api_prix_listes: [r => String(r.liste_id)], api_prix: [r => `${r.liste_id}|${r.cip}`] };
+  // clé null : contrainte sans objet pour cette ligne (index partiel de api_commandes.reference_client, hors refusées)
+  const UNIQUES = { api_acces: [r => String(r.odoo_id)], api_cles: [r => r.empreinte], api_prix_listes: [r => String(r.liste_id)], api_prix: [r => `${r.liste_id}|${r.cip}`],
+    api_commandes: [r => `${r.odoo_id}|${r.test}|${r.idempotency_key}`, r => (r.reference_client && r.etat !== "refusee" ? `${r.odoo_id}|${r.test}|ref:${r.reference_client}` : null)],
+    elixir_orders: [r => String(r.id)], kv_store: [r => r.key] };
+  const memeCle = (f, a, b) => { const k = f(b); return k != null && f(a) === k; };
   const cmp = (a, b) => {
     if (a === null || a === undefined) return NaN;
     if (typeof a === "number") return a - Number(b);
@@ -59,7 +65,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
     return condition(r, k, v);
   });
   const projeter = (r, select) => select ? Object.fromEntries(select.split(",").map(c => [c, r[c] ?? null])) : { ...r };
-  const doublon = (table, r) => (UNIQUES[table] || []).some(f => tables[table].some(x => x !== r && f(x) === f(r)));
+  const doublon = (table, r) => (UNIQUES[table] || []).some(f => tables[table].some(x => x !== r && memeCle(f, x, r)));
   const reponse = (corps, status = 200, entetes = {}) => new Response(corps === null ? null : JSON.stringify(corps), { status, headers: { "Content-Type": "application/json", ...entetes } });
   const etat = { panne: false, refusees: 0 };
   async function fetch(url, opts = {}) {
@@ -70,6 +76,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
     const prefer = String(opts.headers?.Prefer || "");
     appels.push({ table, methode, url: u.pathname + u.search });
     if (opts.headers?.apikey !== cleService || opts.headers?.Authorization !== `Bearer ${cleService}`) { etat.refusees++; return reponse({ message: "clé refusée" }, 401); }
+    if (table === "rpc/decrement_stock") { const b = JSON.parse(opts.body); tables.decrements.push({ cip: b.p_cip, qty: b.p_qty }); return reponse(null, 200); }
     if (table.startsWith("rpc/")) {
       const { p_cle, p_fenetre_s } = JSON.parse(opts.body);
       const fenetre = new Date(Math.floor(T0() / 1000 / p_fenetre_s) * p_fenetre_s * 1000).toISOString();
@@ -98,7 +105,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
       const faites = [];
       for (const x of envoyees) {
         const r = { ...(DEFAUTS[table]?.() || {}), ...x };
-        const existante = tables[table].find(y => (UNIQUES[table] || []).some(f => f(y) === f(r)));
+        const existante = tables[table].find(y => (UNIQUES[table] || []).some(f => memeCle(f, y, r)));
         // upsert : seuls les champs envoyés remplacent ceux de la ligne existante (comme PostgREST)
         if (existante && fusion) { Object.assign(existante, x); faites.push(existante); continue; }
         if (existante || doublon(table, r)) return reponse({ code: "23505", message: "duplicate key" }, 409);
@@ -116,7 +123,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
     if (methode === "DELETE") {
       const cibles = tables[table].filter(r => correspond(r, p));
       tables[table] = tables[table].filter(r => !cibles.includes(r));
-      return reponse(null, 204);
+      return rep ? reponse(cibles.map(r => projeter(r, select))) : reponse(null, 204);
     }
     return reponse({ message: "méthode" }, 405);
   }

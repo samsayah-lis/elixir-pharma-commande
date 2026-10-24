@@ -512,8 +512,11 @@ let h = nouveauRouteur();
       envoi_apres: new Date(T).toISOString(), recu_le: new Date(T - 60e3).toISOString(), reponse: "{}" });
   let r = garder(await requete(h, "/commandes"));
   let c = corps(r).donnees;
-  eq("commande API dans son délai : reçue, annulable, référence client", [c[0].canal, c[0].etat, c[0].reference_client, c[0].annulable_jusqu_a],
-    ["api", "recue", "REASSORT-A", finDelai]);
+  // phase 3 : dès qu'une ligne part (ici une tâche du relais « à envoyer » : Elixir l'a synchronisée pendant le délai), l'état
+  // du relais l'emporte et la commande n'est plus annulable ; le cas « reçue, annulable » est couvert par test-api-commandes
+  eq("commande API dans son délai mais déjà mise en envoi par Elixir : état du relais, plus annulable", [c[0].canal, c[0].etat, c[0].reference_client, c[0].annulable_jusqu_a],
+    ["api", "en_transmission", "REASSORT-A", null]);
+  vrai("(délai de la commande encore en cours)", Date.parse(finDelai) > T);
   eq("commande API gardée à vérifier", [c[2].canal, c[2].etat, c[2].motif], ["api", "en_attente_elixir", "anomalie_quantite"]);
   vrai("clé de production : pas de commande de test", !c.some(x => x.id.startsWith("T")));
   r = await requete(h, "/commandes/T1792700000000");
@@ -654,8 +657,8 @@ let h = nouveauRouteur();
   eq("clé dans l'adresse → 400", corps(r).code, "cle_dans_url");
   // /v1/etat : limites par classe
   r = await requete(h, "/etat");
-  eq("etat : limites par classe", Object.keys(corps(r).limites), ["lecture", "disponibilites", "documents", "commande"]);
-  eq("etat : toujours pas de route de commande", corps(r).commandes.disponibles, false);
+  eq("etat : limites par classe", Object.keys(corps(r).limites), ["lecture", "disponibilites", "documents", "commande", "simulation"]);
+  eq("etat : clé de production, commandes réelles fermées → commandes indisponibles", corps(r).commandes.disponibles, false);
 }
 {
   // rien d'interne ne sort des réponses de lecture

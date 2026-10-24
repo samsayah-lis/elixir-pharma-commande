@@ -295,7 +295,7 @@ const FICHIERS_AUTORISES = {
   // sont celles des correctifs ci-dessus depuis la fusion de master, 19/10/2026 ; l'agrégat de campagne ?agrege=1 est retiré)
   "netlify/functions/_odoo-rpc.js": { empreinte: "c405c5a8fadd", motif: "délai facultatif des lectures (5e argument), lectures de l'assistant coupées à 6 s" },
   // Péremption courte, règle panier (21/10/2026) : seule fonction serveur existante modifiée par le lot (reprise de 3774a17)
-  "netlify/functions/_relais.js": { empreinte: "07965174f91d", motif: "péremption courte, règle panier (21/10/2026) : empreinte anti-doublon d'envoiAuto, ligne péremption marquée « :per » — la commande « à part » (même produit, même quantité que la ligne du menu de la commande voisine) n'est plus classée « POSSIBLE DOUBLON » ni écartée de l'envoi automatique ; sans ligne péremption, empreinte inchangée" },
+  "netlify/functions/_relais.js": { empreinte: "03f49e3a2fbb", motif: "péremption courte, règle panier (21/10/2026) : empreinte anti-doublon d'envoiAuto, ligne péremption marquée « :per » — la commande « à part » (même produit, même quantité que la ligne du menu de la commande voisine) n'est plus classée « POSSIBLE DOUBLON » ni écartée de l'envoi automatique ; sans ligne péremption, empreinte inchangée ; API des pharmacies, phase 3 (24/10/2026) : deux lignes AJOUTÉES dans envoiAuto, rien d'autre — une commande de source « api » est relayée comme une commande du site, seulement quand api-envoi-background l'appelle (user.api, CIP à 7 chiffres) après le délai d'annulation ; aucun autre appel n'est concerné (submit-order et la synchro de l'admin inchangés)" },
   // Sections du catalogue (22/10/2026, docs/sections-admin.md) : contrôle serveur des seules actions section_* (ajout,
   // déplacement, remise, retrait depuis l'onglet ✏️ Modifier) ; les autres actions (update, create, delete) sont inchangées
   "netlify/functions/products-upsert.js": { empreinte: "f18d186674d1", motif: "sections du catalogue (22/10/2026) : actions section_* contrôlées par refusActionSection (src/components/sections-produits.js) après lecture de la ligne et des campagnes actives — refus 400 menu promo, outil, clé invalide, U-Labs ou campagne active (arrivée ou origine), Stratège sans colis ; 409 CIP déjà présent ; 503 si la lecture échoue, rien d'écrit ; les autres actions sont inchangées" },
@@ -338,7 +338,12 @@ const FICHIERS_AUTORISES = {
 // commandesSite (défauts inchangés), suiviCommandesOdoo et codeEtatCommande ajoutées. quota-status.js et _quota.js
 // inchangés : le calcul du contingent est repris dans _api-contingent.js, comparé à quota-status.js par
 // scripts/test-api-lecture.mjs.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|_api-[a-z-]+)\.js$/;
+// Phase 3 « commandes » (24/10/2026) : fonctions NOUVELLES api-commandes-cron.js (planifiée, toutes les 2 min : envois dus,
+// réservations en suspens) et api-envoi-background.js (envoi d'une commande par envoiAuto, le relais existant) ; _api-*.js
+// complétés (_api-commande.js, _api-parcours.js) ; _chat-perimetre.js complété (option verifiees de commandesSite, défaut
+// inchangé) ; _relais.js : deux lignes ajoutées dans envoiAuto (FICHIERS_AUTORISES, empreinte). order-save.js, submit-order.js,
+// pml-relais.js, quota-status.js et _quota.js inchangés.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;

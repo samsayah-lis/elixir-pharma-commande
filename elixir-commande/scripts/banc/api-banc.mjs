@@ -7,7 +7,9 @@
 //  • /api/v1/* (règle de public/_redirects) : servi par le vrai routeur, avec les clés créées sur le banc ;
 //  • phase 2 (lecture) : faux Odoo de scripts/api-odoo-faux.mjs (catalogue fictif, prix des listes au minimum des règles,
 //    stock libre ; la pharmacie du banc n'a ni commande ni facture), contingents fictifs, prix de la liste n° 5 calculés au
-//    démarrage par la vraie fonction d'arrière-plan ; « Recalculer » de l'admin la relance en mémoire.
+//    démarrage par la vraie fonction d'arrière-plan ; « Recalculer » de l'admin la relance en mémoire ;
+//  • phase 3 (commandes) : simulation, commande et annulation de TEST par le vrai routeur (tables api_* en mémoire) ;
+//    aucun produit sur justificatif, aucun relais (les commandes réelles restent fermées par l'interrupteur).
 // Accès de la pharmacie du banc ouvert d'avance (CGU à accepter), pour voir tout le parcours.
 // Modules chargés à la première requête seulement : vite.config.js importe le plugin du banc à chaque « vite build », et
 // rate-limit.js (importé par les fonctions) pose un minuteur qui empêcherait le build de se terminer.
@@ -64,7 +66,9 @@ async function mondeApi() {
   monde = { db, pret,
     compte: handlerCompte({ stock, identifier, journal: () => {} }),
     admin: handlerAdmin({ stock, verifierAdmin, verifierFiche, listePrix: async () => 5, journal: () => {}, lancerPrix: async (base, id) => { setTimeout(() => calculer(id), 1500); return null; } }),
-    v1: handlerV1({ stock, verifierFiche, odoo: odoo.odoo, quota, log: () => {} }) };
+    // phase 3 (commandes) : aucun produit sur justificatif sur le banc (la vraie liste est lue dans kv_store) ; commandes de
+    // TEST seulement (l'interrupteur « Commandes par API » reste fermé) ; rien n'est envoyé (pas de relais sur le banc)
+    v1: handlerV1({ stock, verifierFiche, odoo: odoo.odoo, quota, justificatifs: async () => ({}), log: () => {} }) };
   return monde;
 }
 
