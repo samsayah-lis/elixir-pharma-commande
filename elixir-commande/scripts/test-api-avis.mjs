@@ -16,6 +16,9 @@
 //    réseau (un par clé et par jour), réseau refusé, erreurs (refus de réseau à part), volume ; dédoublonnage ; aperçus
 //    ignorés ; 5 alertes par passage ; échéance du passage ; Odoo ou Supabase muets ne font jamais échouer le passage ;
 //    surveillance même si l'étape des prix échoue ; vue=tableau de l'admin liste les alertes ;
+//  • opérations refusées ou sans effet (création au-delà de 3 clés, remplacement d'une clé inactive, révocation déjà faite) :
+//    aucun e-mail ; horaire par défaut du passage planifié (7 h de Paris, été et hiver) ; journal relu borné ;
+//  • adresses de compte d'une fiche (comptesEmailDeFiche) : encore sur la fiche Odoo, ancienne adresse exclue, erreur remontée ;
 //  • fichiers : prérequis P9 cochable, zones (_api-avis admis), documentation (contrat, mise en service, page).
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -201,6 +204,7 @@ let cleLive;
 
   r = await poste("pharmacie", { action: "remplacer_cle", id: cleTest.info.id });
   const k2 = corps(r);
+  globalThis.__cleTest = cleTest; globalThis.__k2 = k2;
   eq("remplacement : e-mail « remplacée », avis envoyé", [r.statusCode, k2.avis_envoye, /remplacée \(test\)/.test(dernier().subject), /reste valide jusqu'au/.test(dernier().body_html)], [201, true, true, true]);
   r = await poste("pharmacie", { action: "revoquer_cle", id: k2.info.id, motif: "outil abandonné" });
   eq("révocation : e-mail « révoquée » avec le motif", [r.statusCode, corps(r).avis_envoye, /révoquée \(test\)/.test(dernier().subject), /motif : outil abandonné/.test(dernier().body_html)], [200, true, true, true]);
@@ -263,6 +267,17 @@ const vue = (q) => ha({ httpMethod: "GET", headers: { host: "elixir-commande.exp
   const cleAdmin = corps(r);
   eq("clé admin : e-mail à la pharmacie, origine Elixir", [r.statusCode, cleAdmin.avis_envoye, mails.length - n, dernier().email_to, /par Elixir Pharma, dans son administration/.test(dernier().body_html)], [201, true, 1, COMPTES[595].join(", "), true]);
   vrai("clé admin : le secret n'est ni dans l'e-mail ni dans les événements", !dernier().body_html.includes(cleAdmin.cle) && !JSON.stringify(db.tables.api_evenements).includes(cleAdmin.cle));
+  // opérations refusées ou sans effet : aucun e-mail, aucune marque d'avis
+  const nRefus = mails.length, nAvis = db.tables.api_evenements.filter(e => /^avis_/.test(e.type)).length;
+  let x = await poste("pharmacie", { action: "creer_cle", environnement: "test", libelle: "Quatrième clé de test", portees: ["lecture"] });
+  eq("création refusée (3 clés de test actives) : 409, aucun e-mail", [x.statusCode, corps(x).error], [409, "trop_de_cles"]);
+  x = await poste("pharmacie", { action: "remplacer_cle", id: globalThis.__cleTest.info.id });
+  eq("remplacement d'une clé déjà remplacée : 409", [x.statusCode, corps(x).error], [409, "cle_inactive"]);
+  x = await poste("pharmacie", { action: "revoquer_cle", id: globalThis.__k2.info.id });
+  eq("révocation d'une clé déjà révoquée : 200 « déjà »", [x.statusCode, corps(x).deja], [200, true]);
+  x = await adm({ action: "revoquer_cle", id: globalThis.__k2.info.id, motif: "doublon" });
+  eq("révocation admin d'une clé déjà révoquée : 409", x.statusCode, 409);
+  eq("…aucun e-mail ni marque d'avis pour ces quatre opérations", [mails.length - nRefus, db.tables.api_evenements.filter(e => /^avis_/.test(e.type)).length - nAvis], [0, 0]);
   r = await adm({ action: "revoquer_cle", id: cleLive.info.id, motif: "demande de la pharmacie par téléphone" });
   eq("révocation admin d'une clé de production : e-mail avec copie Elixir et motif", [r.statusCode, corps(r).avis_envoye, dernier().email_cc, /révoquée \(production\)/.test(dernier().subject), /motif : demande de la pharmacie par téléphone/.test(dernier().body_html)],
     [200, true, "equipe@elixir.test", true, true]);
@@ -528,6 +543,38 @@ const ligneJournal = (cle, { at = T - 5 * MIN, statut = 200, code = null, reseau
   const r2 = await creerCron({ stock: stockCasse, odoo: async () => [], maintenant, journal: silence, lancer: async () => null, comptes, horloge: () => 1000,
     avis: { surveiller: async (s, o) => { appel = o; return {}; } } })();
   eq("étape des prix en échec : surveillance quand même, échéance depuis le début du passage", [r2.statusCode, !!appel, appel?.echeance], [200, true, 1000 + ALERTES.echeance_ms]);
+  // horaire par défaut : clés inutilisées à la première passe de 7 h (heure de Paris), volumes à la première passe de chaque heure
+  const horaireA = async (quand) => { let o = null; await creerCron({ stock, odoo: async () => [], maintenant: () => new Date(quand), journal: silence, lancer: async () => null, comptes,
+    avis: { surveiller: async (s, opts) => { o = opts; return {}; } } })(); return [o.inactives, o.volumes]; };
+  eq("horaire par défaut : 7 h 03 à Paris (hiver)", await horaireA("2026-10-26T06:03:00Z"), [true, true]);
+  eq("horaire par défaut : 7 h 20 à Paris", await horaireA("2026-10-26T06:20:00Z"), [false, false]);
+  eq("horaire par défaut : 8 h 03 à Paris", await horaireA("2026-10-26T07:03:00Z"), [false, true]);
+  eq("horaire par défaut : 7 h 03 à Paris (été)", await horaireA("2026-07-01T05:03:00Z"), [true, true]);
+  // journal relu borné : au-delà de journal_max lignes, le passage le dit (rien de plus n'est conclu sur le reste)
+  const muette = await creerLive("Journal plein");
+  const depart = db.tables.api_journal.length;
+  for (let i = 0; i < ALERTES.journal_max; i++) db.tables.api_journal.push({ id: 900000 + i, at: iso(T - 5 * MIN + i), request_id: `00000000-0000-4000-9000-${String(i).padStart(12, "0")}`,
+    cle_id: muette.id, odoo_id: 595, environnement: "live", methode: "GET", route: "/v1/etat", statut: 200, code: null, duree_ms: 3, reseau: "203.0.113.0/24" });
+  const b = await avis.surveiller(stock, { now: new Date(T), comptes, echeance: H + 60000 });
+  eq("journal de plus de 5 000 lignes : signalé tronqué", b.journal_tronque, true);
+  db.tables.api_journal.splice(depart);
+}
+
+// ═══ 9 bis. Adresses de compte d'une fiche (comptesEmailDeFiche, _chat-perimetre.js) ═══
+{
+  const { comptesEmailDeFiche } = await import("../netlify/functions/_chat-perimetre.js");
+  const appels = [];
+  const odoo = async (model, method, args, kwargs, opts) => { appels.push({ model, method, domaine: args[0], timeoutMs: opts?.timeoutMs });
+    return [{ email: "Titulaire@Pharmacie-exemple.test ; Adjoint@pharmacie-exemple.test" }, { email: "Comptable <compta@pharmacie-exemple.test>" }]; };
+  const sb = async (chemin) => { appels.push({ sb: chemin }); return [{ email: "titulaire@pharmacie-exemple.test" }, { email: "ancien.titulaire@pharmacie-exemple.test" }, { email: "ADJOINT@pharmacie-exemple.test" }, { email: "pas-une-adresse" }]; };
+  eq("adresses de compte encore sur la fiche, dédoublonnées ; ancienne adresse exclue", await comptesEmailDeFiche(595, { odoo, sb }), ["titulaire@pharmacie-exemple.test", "adjoint@pharmacie-exemple.test"]);
+  vrai("lecture Odoo de la fiche commerciale (contacts actifs, société 2) et des comptes du site de cette fiche",
+    appels.some(a => a.model === "res.partner" && JSON.stringify(a.domaine).includes('["commercial_partner_id","=",595]') && JSON.stringify(a.domaine).includes('"active"')) && appels.some(a => a.sb === "elixir_pharmacies?odoo_id=eq.595&select=email"));
+  vrai("lecture Odoo bornée", appels.filter(a => a.model).every(a => a.timeoutMs > 0));
+  eq("fiche invalide : aucune lecture, liste vide", [await comptesEmailDeFiche(0, { odoo, sb }), await comptesEmailDeFiche("x", { odoo, sb })], [[], []]);
+  let erreur = null;
+  try { await comptesEmailDeFiche(595, { odoo: async () => { throw new Error("Odoo injoignable"); }, sb }); } catch (e) { erreur = e.message; }
+  eq("Odoo injoignable : l'erreur remonte (l'appelant en fait « illisibles », jamais une liste vide)", erreur, "Odoo injoignable");
 }
 
 // ═══ 10. Fichiers ═══
