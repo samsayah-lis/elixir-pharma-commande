@@ -1,4 +1,5 @@
-// Tests de la jauge des paliers de quantité (src/tiers.jsx : jaugePaliers, vuesJauge, positionJauge, texteJauge ; rendu :
+// Tests de la jauge des paliers de quantité (src/tiers.jsx : jaugePaliers, vuesJauge, positionJauge, texteJauge, quantiteJauge,
+// borneJauge, toucheJauge ; rendu :
 // src/components/JaugePaliers.jsx ; placements : src/App.jsx, src/components/OrderEntry.jsx) : node scripts/test-paliers.mjs
 // Demande de Zineb (22/10/2026), capture d'un autre site de commande : « est ce que tu peux presenter la partie des paliers comme ça ».
 // Hors ligne, rien n'est lu ni écrit ailleurs qu'en mémoire. Contrôles (corrigés après la revue du 22/10/2026) :
@@ -13,6 +14,8 @@
 //    seulement, légende du tableau, palier nommé « Mettre la quantité à N : … »), détail ;
 //  • clic sur un palier → quantité que les vraies fonctions de quantité (setQty, arrondiSaisie, applyQty des cartes) laissent telle
 //    quelle ; Saisie : quantité qui manque quand une partie est déjà au panier ;
+//  • curseur à glisser (24/10/2026) : position → quantité (réciproque, aimant des paliers, colis, minimum, plafond, déjà au panier),
+//    quantités laissées telles quelles par les fonctions de quantité, geste (appui, glissé, lâcher, annulation), clavier ;
 //  • placements (texte des sources) : prix unitaire des tableaux = prix du panier, modes ligne / complète, rupture, panier, frappe.
 import { build } from "esbuild";
 import { existsSync, readFileSync } from "node:fs";
@@ -41,9 +44,9 @@ const E = await charge(`export { default as JaugePaliers } from "./components/Ja
   b.onLoad({ filter: /.*/, namespace: "essai" }, () => ({ loader: "js", contents: `
     const el = (type, props) => ({ type, props: props || {} });
     export const jsx = el, jsxs = el, Fragment = "fragment";
-    export default { useState: (v) => [typeof v === "function" ? v() : v, () => {}], useId: () => "id-essai" };` }));
+    export default { useState: (v) => [typeof v === "function" ? v() : v, () => {}], useRef: (v) => ({ current: v }), useId: () => "id-essai" };` }));
 } }]);
-const { applyTiers, jaugePaliers, vuesJauge, positionJauge, texteJauge, rendre } = M;
+const { applyTiers, jaugePaliers, vuesJauge, positionJauge, texteJauge, quantiteJauge, borneJauge, toucheJauge, rendre } = M;
 const elements = (n, out = []) => {
   if (Array.isArray(n)) { n.forEach(x => elements(x, out)); return out; }
   if (!n || typeof n !== "object") return out;
@@ -290,7 +293,13 @@ eq("paliers à rebours : à 20, plus de prochaine (32 est moins bon)", jaugePali
   eq("annonce : même texte de 0 à 19 (rien n'est relu à chaque touche), change au palier", [lu(0), lu(8), lu(19), lu(20), lu(35)],
     ["Prochain palier : 20 unités à 0,81 € HT l'unité", "Prochain palier : 20 unités à 0,81 € HT l'unité", "Prochain palier : 20 unités à 0,81 € HT l'unité",
      "Prix palier appliqué : 0,81 € HT l'unité", "Prix palier appliqué : 0,81 € HT l'unité"]);
-  vrai("piste décorative (aria-hidden), quantité lue par un texte masqué", /class="ex-jauge__piste" aria-hidden="true"/.test(h) && /Quantité 8, prix appliqué 0,83 € HT l'unité\./.test(h));
+  vrai("piste décorative (aria-hidden), quantité lue par le curseur (role slider)", /class="ex-jauge__piste" aria-hidden="true"/.test(h) && !/Quantité 8, prix appliqué/.test(h)
+    && /class="ex-jauge__curseur" style="left:33.6%" role="slider" tabindex="0" aria-label="Quantité à commander : DAFALGAN 1000MG" aria-valuemin="0" aria-valuemax="30" aria-valuenow="8" aria-valuetext="8 unités, 0,83 € HT l'unité"/.test(h), h.match(/<div class="ex-jauge__curseur[^>]*>/)?.[0]);
+  const hs = espaces(rendre({ ...DAFALGAN, qte: 8 }));
+  vrai("sans onChoisir : curseur décoratif, quantité lue par un texte masqué", /class="ex-jauge__curseur" style="left:33.6%" aria-hidden="true"/.test(hs) && !/role="slider"/.test(hs)
+    && !/data-reglable/.test(hs) && /Quantité 8, prix appliqué 0,83 € HT l'unité\./.test(hs));
+  const hd = espaces(rendre({ ...DAFALGAN, qte: 15, deja: 15, onChoisir: () => {} }));
+  vrai("Saisie, 15 déjà au panier : curseur de 15 à 30, « dont 15 déjà au panier »", /aria-valuemin="15" aria-valuemax="30" aria-valuenow="15" aria-valuetext="15 unités, 0,83 € HT l'unité, dont 15 déjà au panier"/.test(hd));
   const id = h.match(/aria-controls="([^"]+)"/)?.[1];
   vrai("« Voir le détail » : aria-expanded, aria-controls vers le tableau (masqué)", /aria-expanded="false"/.test(h) && !!id && h.includes(`<div id="${id}" hidden="">`));
   vrai("détail : tableau dans un cadre qui défile, légende pour les lecteurs d'écran", /<div class="ex-jauge__defile"><table class="ex-jauge__table"><caption class="ex-lecteur">Prix par quantité : DAFALGAN 1000MG<\/caption>/.test(h));
@@ -331,6 +340,83 @@ eq("paliers à rebours : à 20, plus de prochaine (32 est moins bon)", jaugePali
   eq(`quantité du clic inchangée par setQty, arrondiSaisie et applyQty (${n} clics)`, ecarts, 0);
   eq("quantité du clic : prix obtenu = prix montré sur l'étape", prix, 0);
   eq("contre-épreuve : setQty(60, colis 25) = 50", setQty(60, 25), 50);
+}
+
+// 7 bis. Curseur à glisser (24/10/2026) : position → quantité commandable, geste, clavier
+{
+  const un = [{ qte: 20 }];
+  eq("réciproque de positionJauge : 0 %, 42 %, 84 %, 100 % → 0, 10, 20, 30", [0, 42, 84, 100].map(x => quantiteJauge(un, x)), [0, 10, 20, 30]);
+  eq("hors piste : bornée (−5 % → 0, 140 % → 30)", [quantiteJauge(un, -5), quantiteJauge(un, 140)], [0, 30]);
+  eq("aimant à 2 % du palier : 82,5 % et 85,5 % → 20 ; 81 % → 19", [82.5, 85.5, 81].map(x => quantiteJauge(un, x)), [20, 20, 19]);
+  const trois = [{ qte: 6 }, { qte: 12 }, { qte: 48 }];
+  let aller = 0;
+  const aimantees = [];
+  for (let q = 0; q <= 72; q++) {
+    const x = positionJauge(trois, q), e = trois.find(t => Math.abs(positionJauge(trois, t.qte) - x) <= 2);   // à 2 % d'un palier : le palier
+    if (e && e.qte !== q) aimantees.push(q);
+    if (quantiteJauge(trois, x) !== (e ? e.qte : q)) aller++;
+  }
+  eq("aller-retour position ↔ quantité de 0 à 72 (à 2 % d'un palier : le palier)", aller, 0);
+  eq("aimant : voisines des paliers 12 et 48 seulement (à moins de 2 % de piste), jamais sur le segment de 0 à 6", aimantees, [13, 14, 46, 47, 49, 50, 51]);
+  eq("colis 25, palier 60 (étape 75) : 28 % → 25, 40 % → 25, 60 % → 50, 84 % → 75, 100 % → 100",
+    [28, 40, 60, 84, 100].map(x => quantiteJauge([{ qte: 75 }], x, { pas: 25 })), [25, 25, 50, 75, 100]);
+  eq("minimum 100 (colis 50, étape 200) : sous 50 → 0, de 50 à 100 → 100", [5, 15, 25, 30].map(x => quantiteJauge([{ qte: 200 }], x, { pas: 50, min: 100 })), [0, 0, 100, 100]);
+  eq("plafond 24 (péremption) : jamais au-delà", [quantiteJauge(un, 100, { max: 24 }), quantiteJauge(un, 100, { pas: 5, max: 24 })], [24, 20]);
+  eq("Saisie, 15 déjà au panier : jamais en dessous de 15", [quantiteJauge(un, 0, { plancher: 15 }), quantiteJauge(un, 84, { plancher: 15 })], [15, 20]);
+  eq("borneJauge : comme setQty (colis, puis minimum)", [borneJauge(37, { pas: 25 }), borneJauge(10, { pas: 1, min: 30 }), borneJauge(20, { pas: 1, min: 30 })], [25, 0, 30]);
+
+  // toute quantité que donne le curseur est laissée telle quelle par les vraies fonctions de quantité (comme le clic d'un palier)
+  const cas = [[DAFALGAN, 1, 0], [{ base: 5, tiers: [{ min_qty: 60, price: 4.5 }] }, 25, 25], [QUATRE, 6, 6], [QUATRE, 1, 0],
+    [{ base: 0.83, tiers: [{ min_qty: 20, price: 0.81 }, { min_qty: 24, price: 0.79 }, { min_qty: 60, price: 0.75 }] }, 10, 10]];
+  let ecarts = 0, n = 0;
+  for (const [c, pas, min] of cas) for (const qte of [0, 30]) {
+    const vues = vuesJauge(jaugePaliers({ ...c, qte, pas, min }), 3);
+    for (let x = 0; x <= 100; x += 0.25) {
+      const q = quantiteJauge(vues, x, { pas, min });
+      n++;
+      if (setQty(q, pas) !== q || setQty(q, pas, min, pas) !== q) ecarts++;
+      if (arrondiSaisie(q, { multiple: pas, min }) !== q) ecarts++;
+      if (applyQtyCarte(q, pas > 1 ? pas : 1, min) !== q) ecarts++;
+    }
+  }
+  eq(`curseur : quantité inchangée par setQty, arrondiSaisie et applyQty (${n} positions)`, ecarts, 0);
+
+  // geste, avec le React d'essai : piste de 500 px posée à 100 px ; appui, glissé, lâcher → quantités reçues par onChoisir
+  const glisser = (props, gestes) => {
+    const recus = [];
+    const zone = elements(E.JaugePaliers({ ...props, onChoisir: (q) => recus.push(q) })).find(e => /ex-jauge__zone/.test(e.props.className));
+    const quoi = { pointerdown: "onPointerDown", pointermove: "onPointerMove", pointerup: "onPointerUp", pointercancel: "onPointerCancel", lostpointercapture: "onLostPointerCapture" };
+    for (const [type, x, sur = null, pointerId = 1] of gestes) zone.props[quoi[type]]({ type, button: 0, isPrimary: true, pointerId, clientX: 100 + x * 5,
+      currentTarget: { getBoundingClientRect: () => ({ left: 100, width: 500 }), setPointerCapture() {} }, target: { closest: (sel) => sel === sur ? {} : null }, preventDefault() {} });
+    return recus;
+  };
+  eq("glissé de 0 au palier (84 %) puis lâché : 20", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 0], ["pointermove", 40], ["pointermove", 84], ["pointerup", 84], ["lostpointercapture", 84]]), [20]);
+  eq("appui sur la piste sans glisser : quantité sous le doigt (50 % → 12)", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 50], ["pointerup", 50]]), [12]);
+  eq("curseur pris à côté de son centre, lâché sans bouger : rien", glisser({ ...DAFALGAN, qte: 8 }, [["pointerdown", 35, ".ex-jauge__curseur"], ["pointerup", 35]]), []);
+  eq("curseur pris (écart gardé) et glissé de 25 % : 8 → 14", glisser({ ...DAFALGAN, qte: 8 }, [["pointerdown", 35, ".ex-jauge__curseur"], ["pointermove", 60], ["pointerup", 60]]), [14]);
+  eq("appui qui tremble (2 px) près d'un palier : ni déplacé ni aimanté", glisser({ ...QUATRE, qte: 13 }, [["pointerdown", 30, ".ex-jauge__curseur"], ["pointermove", 30.4], ["pointerup", 30.4]]), []);
+  eq("lâcher sans dernier mouvement : quantité au point de lâcher", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 0], ["pointerup", 84]]), [20]);
+  eq("appui sur un palier : son clic, pas de geste", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 84, ".ex-jauge__etape"], ["pointermove", 50], ["pointerup", 50]]), []);
+  eq("geste annulé (défilement repris par le navigateur) : rien", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 0], ["pointermove", 84], ["pointercancel", 84]]), []);
+  eq("second doigt ignoré", glisser({ ...DAFALGAN, qte: 0 }, [["pointerdown", 0], ["pointermove", 84, null, 2], ["pointerup", 84, null, 2], ["pointerup", 42]]), [10]);
+  eq("Saisie, 15 déjà au panier : glissé tout à gauche → rien ; jusqu'au palier → 20 (la Saisie pose 5)",
+    [glisser({ ...DAFALGAN, qte: 15, deja: 15 }, [["pointerdown", 63], ["pointermove", 0], ["pointerup", 0]]), glisser({ ...DAFALGAN, qte: 15, deja: 15 }, [["pointerdown", 63], ["pointermove", 84], ["pointerup", 84]])], [[], [20]]);
+  eq("colis 25, palier 60 : glissé au palier → 75", glisser({ base: 5, tiers: [{ min_qty: 60, price: 4.5 }], qte: 0, pas: 25 }, [["pointerdown", 0], ["pointermove", 83], ["pointerup", 83]]), [75]);
+  const sansChoix = elements(E.JaugePaliers({ ...DAFALGAN, qte: 0 })).find(e => /ex-jauge__zone/.test(e.props.className));
+  vrai("sans onChoisir : piste sans geste", !sansChoix.props.onPointerDown && sansChoix.props["data-reglable"] === undefined);
+
+  // clavier (role="slider") : flèches d'un colis, Pages d'un palier à l'autre, Début / Fin
+  const touches = (props, ...keys) => {
+    const recus = [];
+    const curseur = elements(E.JaugePaliers({ ...props, onChoisir: (q) => recus.push(q) })).find(e => e.props.role === "slider");
+    for (const key of keys) curseur.props.onKeyDown({ key, preventDefault() {} });
+    return recus;
+  };
+  eq("flèches à 8 : 9, 7 (pas 1)", touches({ ...DAFALGAN, qte: 8 }, "ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"), [9, 7, 9, 7]);
+  eq("Pages, Début, Fin à 10 (paliers 6, 12, 48, 120) : 12, 6, 0, 120", touches({ ...QUATRE, qte: 10 }, "PageUp", "PageDown", "Home", "End"), [12, 6, 0, 120]);
+  eq("Fin au-delà du dernier palier, Début à 0, autre touche : rien", touches({ ...QUATRE, qte: 200 }, "End", "Tab", "a").concat(touches({ ...QUATRE, qte: 0 }, "Home")), []);
+  eq("colis 25, minimum 25 : → 25 puis ← 0", [touches({ base: 5, tiers: [{ min_qty: 60, price: 4.5 }], qte: 0, pas: 25, min: 25 }, "ArrowRight"), touches({ base: 5, tiers: [{ min_qty: 60, price: 4.5 }], qte: 25, pas: 25, min: 25 }, "ArrowLeft")], [[25], [0]]);
+  eq("toucheJauge : déjà au panier (15) et plafond (24)", [toucheJauge(jaugePaliers({ ...DAFALGAN, qte: 15 }), "ArrowLeft", { plancher: 15 }), toucheJauge(jaugePaliers({ ...DAFALGAN, qte: 24 }), "ArrowRight", { max: 24 })], [15, 24]);
 }
 
 // 8. Placements (texte des sources)

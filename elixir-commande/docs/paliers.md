@@ -28,6 +28,17 @@ remises). Corrigée le même jour après une revue (visuel et exactitude) : voir
 - **Clic sur un palier** (ou « Passer à N ») : pose la quantité de l'étape par la fonction de quantité de l'endroit —
   `setQty` (tableaux, liste mobile), `applyQty` (cartes), `setItemQty` (panier), champ de la Saisie (arrondi à l'ajout par
   `ajouterDepuisSaisie`). Ces fonctions la laissent telle quelle (vérifié sur leur texte réel).
+- **Curseur à glisser** (24/10/2026, Zineb : « je voudrais pouvoir bouger le curseur pour augmenter la quantité à
+  commander ») : partout où la piste est dessinée (complète, compacte, mini) et où une quantité peut être posée. On prend le
+  curseur (prise de 40 px, au doigt comme à la souris) ou on appuie sur la piste ; la quantité sous le doigt s'affiche en
+  pastille au-dessus du curseur et l'incitation suit, mais elle ne part qu'**au lâcher**, par la même fonction de quantité que
+  le clic d'un palier (tableaux et panier changent de forme de jauge au dernier palier : pendant le geste, rien ne bouge
+  sous le doigt). Quantité : `quantiteJauge` (`src/tiers.jsx`), réciproque de la position, **aimantée au palier** à 2 % de
+  piste près, au pas du colis, au minimum (sous sa moitié : 0), au plus le plafond et le bout de la piste (une fois et demie
+  la dernière étape), jamais sous la quantité déjà au panier (Saisie). Un appui sur un palier garde son clic ; un appui qui
+  tremble (moins de 3 px) ne déplace rien ; un geste repris par le navigateur (défilement vertical) n'est pas posé.
+  Clavier (`role="slider"`, `toucheJauge`) : flèches d'un colis, Page suivante / précédente d'un palier à l'autre, Début /
+  Fin. Les variantes « ligne » (texte et « Passer à N ») n'ont pas de curseur.
 
 ## Où
 
@@ -74,4 +85,8 @@ changé (il appliquait déjà le palier avant la jauge).
   de la Saisie repérés par leur CIP : le contrôle passe avec ou sans `dev-fixtures/_capture.json` (avec, la recherche du
   banc affiche les noms Odoo capturés), donc sur le même banc que `controle-sections.mjs`.
 - Accessibilité : palier « Mettre la quantité à 20 : 0,81 € HT l'unité, −23,6 % », annonce (zone `aria-live` masquée)
-  seulement quand le palier visé ou atteint change, légende du tableau, tracés en `--or-fonce` (3:1 au moins).
+  seulement quand le palier visé ou atteint change, légende du tableau, tracés en `--or-fonce` (3:1 au moins) ; curseur
+  « Quantité à commander : <produit> » (`aria-valuetext` : « 8 unités, 0,83 € HT l'unité », « dont 15 déjà au panier »).
+- Curseur : `node scripts/test-paliers.mjs` (section 7 bis) contrôle la réciproque, l'aimant, le colis, le minimum, le
+  plafond, la quantité déjà au panier, que chaque quantité du curseur est laissée telle quelle par `setQty`, `arrondiSaisie`
+  et `applyQty`, le geste (appui, glissé, lâcher, annulation, second doigt) et le clavier.

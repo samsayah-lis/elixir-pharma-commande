@@ -93,6 +93,41 @@ export function positionJauge(etapes, q) {
   return Math.min(100, 84 + 16 * (q - qs[n]) / (qs[n] / 2));
 }
 
+// ── Curseur à glisser (24/10/2026 ; Zineb : « je voudrais pouvoir bouger le curseur pour augmenter la quantité à commander ») ──
+// Quantité sous le doigt : réciproque de positionJauge (x en % de la piste), aimantée à une étape à 2 % près (le prix change au
+// palier : le viser ne doit pas se jouer à une unité près), puis bornée par borneJauge. Bout de la piste : une fois et demie la
+// dernière étape montrée, comme positionJauge.
+export function quantiteJauge(etapes, x, regle = {}) {
+  const n = etapes.length, xs = [0, ...etapes.map((e, i) => 84 * (i + 1) / n)], qs = [0, ...etapes.map(e => e.qte)];
+  const v = Math.max(0, Math.min(100, x)), m = regle.pas > 1 ? regle.pas : 1, bout = Math.floor(qs[n] * 1.5 / m) * m;
+  const aimant = etapes.find((e, i) => Math.abs(xs[i + 1] - v) <= 2);
+  if (aimant) return borneJauge(aimant.qte, regle);
+  let i = 1;
+  while (i <= n && v > xs[i]) i++;
+  const brut = i <= n ? qs[i - 1] + (qs[i] - qs[i - 1]) * (v - xs[i - 1]) / (xs[i] - xs[i - 1]) : qs[n] + (qs[n] / 2) * (v - 84) / 16;
+  return borneJauge(Math.min(bout, Math.round(brut / m) * m), regle, brut);
+}
+
+// Quantité commandable la plus proche, comme les fonctions de quantité des appelants (setQty, applyQty : au pas, puis au
+// minimum ; sous la moitié du minimum, 0), au plus le plafond (péremption, justificatif), au moins plancher (Saisie : déjà au panier).
+export function borneJauge(q, { pas = 1, min = 0, max = null, plancher = 0 } = {}, brut = q) {
+  const m = pas > 1 ? pas : 1;
+  let r = Math.round(q / m) * m;
+  if (r > 0 && min > 0 && r < min) r = brut < min / 2 ? 0 : min;
+  if (max != null && r > max) r = Math.floor(max / m) * m;
+  return Math.max(plancher, r);
+}
+
+// Clavier du curseur (role="slider") : flèches d'un colis (« + » de la Saisie : au minimum d'abord), Pages d'un palier à l'autre,
+// Début / Fin : plancher et dernier palier (jamais en arrière). → quantité, ou null pour une autre touche.
+export function toucheJauge(j, touche, regle = {}) {
+  const { pas = 1, min = 0, plancher = 0 } = regle, m = pas > 1 ? pas : 1, q = j.q, plus = q < min ? min : q + m, moins = q - m < min ? 0 : q - m;
+  const n = { ArrowRight: plus, ArrowUp: plus, ArrowLeft: moins, ArrowDown: moins,
+    PageUp: (j.etapes.find(e => e.qte > q) || { qte: q }).qte, PageDown: ([...j.etapes].reverse().find(e => e.qte < q) || { qte: plancher }).qte,
+    Home: plancher, End: Math.max(q, j.etapes[j.etapes.length - 1].qte) }[touche];
+  return n == null ? null : borneJauge(n, regle);
+}
+
 // Incitation, en toutes lettres (titre, tests) : prix unitaire et remise ; « Dès N » tant que rien n'est commandé (revue : « Plus
 // que 20 » sonnait faux à 0), « Plus que N pour … » ensuite, « Prix palier appliqué » au meilleur prix. Le composant est dans
 // src/components/JaugePaliers.jsx : ce fichier reste sans icônes ni rendu (des tests l'empaquettent sans React).

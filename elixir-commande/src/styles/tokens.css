@@ -464,10 +464,19 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-jauge__piste { position: absolute; left: 0; right: 0; top: 23px; height: 6px; border-radius: 999px; background: var(--sand); }
 .ex-jauge__plein { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; background: var(--teal-2); }
 .ex-jauge__tirets { position: absolute; top: 2px; border-top: 2px dashed var(--teal-2); }
-.ex-jauge__curseur { position: absolute; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 999px; background: var(--surface);
+.ex-jauge__curseur { position: absolute; top: 26px; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 999px; background: var(--surface);
   border: 3px solid var(--teal-2); box-shadow: var(--shadow-1); z-index: 1; }
 .ex-jauge[data-atteint] .ex-jauge__plein { background: var(--or-fonce); }
 .ex-jauge[data-atteint] .ex-jauge__curseur { border-color: var(--or-fonce); }
+/* curseur à glisser (24/10/2026) : la piste se règle au doigt (défilement vertical laissé à la page), prise de 40 px autour du
+   curseur, grossi au survol et pendant le geste ; quantité en pastille pétrole au-dessus du curseur pendant le geste */
+.ex-jauge__zone[data-reglable] { cursor: pointer; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.ex-jauge__zone[data-reglable] .ex-jauge__curseur { cursor: grab; transition: transform .12s ease; }
+.ex-jauge__zone[data-reglable] .ex-jauge__curseur::before { content: ""; position: absolute; inset: -14px; border-radius: 999px; }
+@media (hover: hover) { .ex-jauge__zone[data-reglable] .ex-jauge__curseur:hover { transform: scale(1.2); } }
+.ex-jauge__zone[data-glisse], .ex-jauge__zone[data-glisse] .ex-jauge__curseur { cursor: grabbing; }
+.ex-jauge__zone[data-glisse] .ex-jauge__curseur { transform: scale(1.25); }
+.ex-jauge__bulle { position: absolute; top: -4px; transform: translateX(-50%); z-index: 2; height: 20px; font-weight: 700; pointer-events: none; }   /* pastille ex-jauge__n */
 .ex-jauge__zero, .ex-jauge__q { font-size: 11.5px; font-weight: 700; line-height: 15px; }
 .ex-jauge__zero { position: absolute; left: 0; top: 0; transform: translateX(-50%); color: var(--ink-mute); }
 .ex-jauge__etape { position: absolute; top: 0; height: 54px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center;
