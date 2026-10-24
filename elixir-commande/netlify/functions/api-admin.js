@@ -32,8 +32,8 @@ import { comptesEmailDeFiche, ficheVerifiee } from "./_chat-perimetre.js";
 import { validCip } from "./_pharmacies.js";
 import { creerStockApi, estUuid } from "./_api-stock.js";
 import { cidrValide, clePublique, creerCle, refusCreation } from "./_api-cles.js";
-import { creerAvis } from "./_api-avis.js";
-import { ACCES_DEFAUT, BORNES, CGU, LIBELLES_PORTEES, MODES, PORTEES, PREREQUIS, VERSION_API, commandesLiveOuvertes, commandesOuvrables,
+import { borne, creerAvis } from "./_api-avis.js";
+import { ACCES_DEFAUT, AVIS, BORNES, CGU, LIBELLES_PORTEES, MODES, PORTEES, PREREQUIS, VERSION_API, commandesLiveOuvertes, commandesOuvrables,
   fusionnerReglages, lireCipsExclus, prerequisEtat } from "./_api-config.js";
 import { estApercu, lancerCalculPrix, siteBase } from "./_api-http.js";
 
@@ -92,7 +92,10 @@ export function creerHandler(deps = {}) {
   const listePrix = deps.listePrix || listePrixOdoo;
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-admin", ...o })));
   const avis = deps.avis || creerAvis({ journal });
-  const comptesDe = (id) => (deps.comptes || comptesEmailDeFiche)(id).catch((e) => { journal({ code: "comptes", erreur: String(e?.message || e).slice(0, 80) }); return []; });
+  // adresses de compte de la fiche (destinataires de l'avis) : lecture bornée ; en échec ou trop lente → null (avis compté en
+  // échec et repris par api-cron), jamais une liste vide qui passerait pour « fiche sans compte »
+  const comptesDe = (id) => borne(Promise.resolve().then(() => (deps.comptes || comptesEmailDeFiche)(id))
+    .catch((e) => { journal({ code: "comptes", erreur: String(e?.message || e).slice(0, 80) }); return null; }), AVIS.delai_odoo_ms, null);
   const lancerPrix = deps.lancerPrix || ((base, id) => lancerCalculPrix(base, id));
   // liste de la fiche connue : demandée au calcul des prix si elle ne l'a jamais été (pas de nouvelle demande sinon)
   const demanderPrix = (stock, listeId) => (listeId ? stock.prixListes.demander(listeId).catch((e) => journal({ code: "prix_demande", erreur: String(e?.message || e).slice(0, 80) })) : null);

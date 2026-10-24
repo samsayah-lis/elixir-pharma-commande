@@ -242,22 +242,34 @@ Règles appliquées (constantes `AVIS` et `ALERTES` de `_api-config.js`) :
   **production** ou une révocation automatique ; fiche sans aucune adresse de compte : Elixir seul, avec la mention. L'e-mail
   ne contient **jamais la clé** : son début (`prefixe`), son nom, ses droits, l'environnement, la date, l'origine (compte,
   Elixir, automatique), et ce qu'il faut faire si l'opération n'est pas attendue. Envoi par `mail.mail` d'Odoo (comme les
-  justificatifs et les alertes du relais), 5 s au plus ; un envoi raté n'empêche jamais l'action (la réponse dit
-  `avis_envoye: false`), il est tracé (événement `avis_echec`) et repris par `api-cron` jusqu'à 3 fois en 24 h (événement
-  `avis_envoye` au succès). Elixir reçoit toujours en plus une notification de l'admin pour une clé de production.
-- **Alertes** (`api-cron`, toutes les 15 min ; chacune = événement `alerte_*` à `role: systeme`, notification à Elixir, e-mail
-  à Elixir ; **jamais deux fois pour le même fait**, les événements eux-mêmes servant de mémoire ; 5 alertes au plus par
-  passage, le reste au passage suivant) :
+  justificatifs et les alertes du relais), avec un Message-ID propre à (clé, avis) : une reprise retrouve le message déjà
+  créé dans Odoo et ne l'envoie jamais deux fois.
+  - **Dans la requête** (création, remplacement, révocation), la 1re tentative est bornée à **3 s** en tout (2,5 s par appel
+    à Odoo) : la réponse qui porte le secret d'une clé part toujours avant le délai des fonctions Netlify. Une marque
+    `avis_en_attente` (non affichée) est posée **avant** l'envoi ; la réponse dit `avis_envoye: true | false`.
+  - **Échec** (Odoo muet ou lent, état « exception » de la messagerie, adresses de compte illisibles) : événement
+    `avis_echec`, **jamais** la version « Elixir seul » (réservée à une fiche dont la lecture a réussi et qui n'a aucune
+    adresse). `api-cron` reprend au passage suivant une marque restée seule depuis 2 min (fonction coupée), et un échec
+    après 15 min, puis 2 h, puis 8 h : **4 tentatives** en tout, sur une dizaine d'heures. La dernière échouée porte
+    `abandon: true` et une notification demande à Elixir de prévenir la pharmacie. 3 reprises au plus par passage.
+  - Créations et remplacements de clés depuis le compte d'une pharmacie : **10 par heure** et par fiche au plus
+    (`CLES_CREATIONS_HEURE`, `429 trop_d_operations`) ; la révocation n'est jamais limitée.
+  - Elixir reçoit toujours en plus une notification de l'admin pour une clé de production.
+- **Alertes** (`api-cron`, toutes les 15 min ; chacune = événement `alerte_*` à `role: systeme`, notification à Elixir et
+  e-mail à Elixir — l'e-mail est tenté une fois : la notification et l'onglet 🔌 API font foi ; **jamais deux fois pour le
+  même fait**, les événements eux-mêmes servant de mémoire ; 5 alertes et 3 révocations automatiques au plus par passage,
+  le reste au passage suivant ; aucun envoi commencé au-delà de 8,5 s depuis le début du passage, et cette étape tourne même
+  si l'étape des prix a échoué) :
   - `alerte_cle_inactive` : clé active sans appel depuis **90 jours** (jamais utilisée : depuis sa création) ; à
     **180 jours**, elle est **révoquée automatiquement** (`cle_revoquee`, `role: systeme`, motif « inutilisée depuis N jours »)
     avec e-mail à la pharmacie et copie Elixir. Contrôle une fois par jour (première passe de 7 h, heure de Paris) ; une clé
     réutilisée puis oubliée de nouveau est signalée de nouveau ;
   - `alerte_nouveau_reseau` : une clé déjà utilisée avant la fenêtre (30 min) appelle depuis un réseau (`/24` ou `/64`)
-    jamais vu pour elle dans le journal ; sans objet pour un accès à réseaux autorisés ; une alerte par (clé, réseau) sur
-    30 jours ;
+    jamais vu pour elle dans le journal ; une alerte par clé et par jour, qui nomme jusqu'à 5 réseaux ; sans objet pour un
+    accès à réseaux autorisés ;
   - `alerte_reseau_refuse` : appels refusés `ip_non_autorisee` dans la dernière heure ; une alerte par clé et par jour ;
-  - `alerte_erreurs` : au moins **20 appels** sur la dernière heure et au moins **20 % de 4xx** ; une alerte par clé et par
-    heure ;
+  - `alerte_erreurs` : au moins **20 appels** sur la dernière heure et au moins **20 % de 4xx**, refus de réseau exclus
+    (déjà « réseau refusé ») ; une alerte par clé et par heure ;
   - `alerte_volume` : appels du jour (heure de Paris) d'au moins **300** et supérieurs à **3 ×** la moyenne journalière des
     14 jours précédents (clés utilisées aujourd'hui ; contrôle à la première passe de chaque heure) ; une alerte par clé et
     par jour.

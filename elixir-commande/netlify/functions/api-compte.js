@@ -11,7 +11,10 @@
 // { ouvert, lecture_seule: "adresse" } (ni plafonds, ni clés, ni parcours), « journal » est refusé (403 lecture_seule).
 // Avis (P9, _api-avis.js) : e-mail aux adresses de compte de la fiche (ctx.comptes : encore sur la fiche Odoo) à chaque clé
 // créée, remplacée ou révoquée, copie à Elixir pour une clé de PRODUCTION ; Elixir est aussi prévenu par une notification de
-// l'admin pour chaque clé de production. Un e-mail raté n'empêche rien (repris par api-cron) ; la réponse dit `avis_envoye`.
+// l'admin pour chaque clé de production. L'e-mail est tenté dans la requête, 3 s au plus (la réponse qui porte le secret part
+// toujours à temps) ; raté ou trop lent, il est repris par api-cron ; la réponse dit `avis_envoye`. Créations et remplacements :
+// CLES_CREATIONS_HEURE par heure et par fiche au plus (chacun envoie un e-mail) → 429 trop_d_operations ; la révocation n'est
+// jamais limitée.
 // Identité : celle de l'Assistant (identifier() de _chat-perimetre.js) — jeton du code reçu par e-mail, adresse ENCORE
 // sur la fiche Odoo (mode « complet ») pour toute écriture ; admin « Commander pour une pharmacie » (admin_token +
 // pour_odoo_id revalidé dans Odoo) : lecture seule (les clés d'une pharmacie sans compte se créent dans l'admin, tracé).
@@ -22,7 +25,7 @@ import { cleIp } from "./rate-limit.js";
 import { identifier } from "./_chat-perimetre.js";
 import { creerStockApi, estUuid } from "./_api-stock.js";
 import { clePublique, creerCle, remplacerCle, refusCreation, reseauDe } from "./_api-cles.js";
-import { CGU, LIBELLES_PORTEES, LIMITES, MENTION_PRIX, commandesLiveOuvertes, empreinteCgu, fusionnerReglages } from "./_api-config.js";
+import { CGU, CLES_CREATIONS_HEURE, LIBELLES_PORTEES, LIMITES, MENTION_PRIX, commandesLiveOuvertes, empreinteCgu, fusionnerReglages } from "./_api-config.js";
 import { estApercu, ipClient, isoParis } from "./_api-http.js";
 import { parcoursPublic } from "./_api-parcours.js";
 import { creerAvis } from "./_api-avis.js";
@@ -125,6 +128,14 @@ export function creerHandler(deps = {}) {
         : lectureSeule === "adresse" ? "Demandez à Elixir Pharma de mettre à jour l'adresse e-mail de votre fiche pour gérer vos clés."
         : "Aperçu : aucune modification n'est enregistrée ici." });
       if (!acces || !acces.actif) return json(cors, 409, { error: "acces_ferme", message: "L'accès API de votre pharmacie n'est pas ouvert (ou il est suspendu) : contactez Elixir Pharma." });
+      // créations et remplacements de clés : plafond par fiche et par heure (chacun envoie un e-mail d'avis)
+      if (body.action === "creer_cle" || body.action === "remplacer_cle") {
+        const recentes = await stock.evenements.compter({ odooId: ctx.odooId, types: ["cle_creee", "cle_remplacee", "cle_creee_admin"],
+          depuisIso: new Date(now.getTime() - 3600e3).toISOString() });
+        if (recentes >= CLES_CREATIONS_HEURE) return { ...json(cors, 429, { error: "trop_d_operations",
+          message: `Trop de clés créées ou remplacées en une heure (${CLES_CREATIONS_HEURE} au plus) : réessayez plus tard. La révocation d'une clé reste possible.` }),
+          headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store", "Retry-After": "3600" } };
+      }
 
       switch (body.action) {
         case "cgu": {

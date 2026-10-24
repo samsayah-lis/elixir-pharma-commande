@@ -26,7 +26,7 @@ const TYPES_EVT = { acces_ouvert: "Accès ouvert", acces_modifie: "Réglages mod
   cle_remplacee: "Clé remplacée", cle_revoquee: "Clé révoquée", test_valide: "Mode test validé (parcours complet)", test_valide_admin: "Mode test validé par l'admin",
   reglages: "Réglages du service", prerequis: "Prérequis", tout_couper: "Tout couper", prix_recalcul_demande: "Recalcul des prix demandé",
   // P9 : e-mails d'avis et alertes du passage planifié
-  avis_envoye: "E-mail d'avis envoyé", avis_echec: "E-mail d'avis non envoyé (nouvel essai au prochain passage)", alerte_cle_inactive: "Alerte : clé inutilisée",
+  avis_envoye: "E-mail d'avis envoyé", avis_echec: "E-mail d'avis non envoyé", alerte_cle_inactive: "Alerte : clé inutilisée",
   alerte_nouveau_reseau: "Alerte : nouveau réseau", alerte_reseau_refuse: "Alerte : réseau refusé", alerte_erreurs: "Alerte : trop d'erreurs", alerte_volume: "Alerte : volume inhabituel" };
 const AVIS_TXT = { cle_creee: "clé créée", cle_remplacee: "clé remplacée", cle_revoquee: "clé révoquée" };
 const CHAMPS_EVT = { environnement: (v) => (v === "live" ? "production" : v === "test" ? "test" : v), libelle: (v) => `« ${v} »`, portees: (v) => [].concat(v).map(p => NOMS_DROITS[p] || p).join(" + "),
@@ -35,9 +35,14 @@ const CHAMPS_EVT = { environnement: (v) => (v === "live" ? "production" : v === 
   // P9
   avis: (v) => AVIS_TXT[v] || v, destinataires: (v) => (v ? `${v} adresse(s) de la pharmacie` : "aucune adresse de compte : Elixir seul"), copie_elixir: (v) => (v ? "copie Elixir" : null),
   tentative: (v) => (v > 1 ? `tentative ${v}` : null), erreur: (v) => `erreur : ${v}`, jours_inactive: (v) => `${v} jours sans utilisation`, automatique: (v) => (v ? "automatique" : null),
+  abandon: (v) => (v ? "abandonné après la dernière tentative : prévenez la pharmacie" : null),
   appels: (v) => `${v} appel(s)`, reseaux: (v) => `réseaux ${[].concat(v).join(", ")}`, requetes: (v) => `${v} appels`, erreurs: (v) => `${v} erreurs 4xx`, part: (v) => `${v} %`,
   appels_jour: (v) => `${v} appels aujourd'hui`, moyenne_jour: (v) => `${v} par jour en moyenne` };
-const texteEvt = (d) => (d && typeof d === "object" ? Object.entries(d).filter(([k, v]) => CHAMPS_EVT[k] && v != null && v !== "").map(([k, v]) => CHAMPS_EVT[k](v)).join(" · ") : "");
+// formateurs qui rendent null (rien à dire) : écartés, jamais de séparateur vide
+const texteEvt = (d) => (d && typeof d === "object" ? Object.entries(d).filter(([k, v]) => CHAMPS_EVT[k] && v != null && v !== "").map(([k, v]) => CHAMPS_EVT[k](v))
+  .filter(x => x != null && x !== "").join(" · ") : "");
+// marque interne « e-mail d'avis en attente » (posée avant l'envoi, suivie de « envoyé » ou « non envoyé ») : non affichée
+const EVT_MASQUES = new Set(["avis_en_attente"]);
 const carte = { ...ui.card, marginBottom: 16 };
 const grille = { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(210px, 1fr))", gap: 12 };
 // bouton désactivé : visible comme tel (ui.btn n'a pas d'état désactivé)
@@ -444,9 +449,9 @@ function DetailAcces({ d, t, poster, recharger }) {
       </div>
 
       <details style={{ marginTop: 16 }}>
-        <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Historique de l'accès ({d.evenements.length})</summary>
+        <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 600 }}>Historique de l'accès ({d.evenements.filter(e => !EVT_MASQUES.has(e.type)).length})</summary>
         <ul style={{ fontSize: 12, color: T.inkSoft, lineHeight: 1.6 }}>
-          {d.evenements.map(e => <li key={e.id}>{dt(e.at)} · <b>{TYPES_EVT[e.type] || e.type}</b> · {e.role === "admin" ? "admin " : e.role === "systeme" ? "automatique" : ""}{e.role === "systeme" ? "" : e.par || "–"}{texteEvt(e.detail) ? ` · ${texteEvt(e.detail)}` : ""}</li>)}
+          {d.evenements.filter(e => !EVT_MASQUES.has(e.type)).map(e => <li key={e.id}>{dt(e.at)} · <b>{TYPES_EVT[e.type] || e.type}</b> · {e.role === "admin" ? "admin " : e.role === "systeme" ? "automatique" : ""}{e.role === "systeme" ? "" : e.par || "–"}{texteEvt(e.detail) ? ` · ${texteEvt(e.detail)}` : ""}</li>)}
         </ul>
       </details>
     </section>

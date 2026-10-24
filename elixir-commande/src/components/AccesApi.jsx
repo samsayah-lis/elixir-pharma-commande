@@ -99,7 +99,7 @@ export default function AccesApi({ appel, pour, etatInitial, onClose, onEtat }) 
           {secret && (
             <div ref={encartSecret} role="alert" style={{ ...ui.encart("warn"), marginBottom: 16, scrollMarginTop: 8 }}>
               <b>Votre nouvelle clé « {secret.info.libelle} » ({secret.info.environnement === "live" ? "production" : "test"}) : copiez-la maintenant.</b>
-              <p style={{ margin: "6px 0" }}>Elle ne sera plus jamais affichée. Gardez-la côté serveur ou dans votre outil, jamais dans une page web, un tableur partagé ou un message.{secret.avisEnvoye ? " Un e-mail d'avis (sans la clé) vient d'être envoyé aux adresses de votre compte." : ""}</p>
+              <p style={{ margin: "6px 0" }}>Elle ne sera plus jamais affichée. Gardez-la côté serveur ou dans votre outil, jamais dans une page web, un tableur partagé ou un message.{secret.avisEnvoye ? " Un e-mail d'avis (sans la clé) vient d'être envoyé aux adresses de votre compte." : " Un e-mail d'avis (sans la clé) partira vers les adresses de votre compte dans le quart d'heure."}</p>
               <code ref={codeSecret} style={{ display: "block", wordBreak: "break-all", background: T.surface, color: T.ink, padding: "10px 12px", borderRadius: R.s, fontFamily: T.mono, fontSize: 13, userSelect: "all" }}>{secret.cle}</code>
               <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
                 <button style={ui.btn("primaire", "s")} onClick={copier}>{copie ? "Copiée ✓" : "Copier la clé"}</button>
@@ -147,7 +147,7 @@ export default function AccesApi({ appel, pour, etatInitial, onClose, onEtat }) 
           {etat?.lecture_seule === "adresse" && !a ? null : (<>
           <section aria-labelledby="acces-api-cles">
             <h3 id="acces-api-cles" style={titreSection}>Vos clés</h3>
-            <p style={{ margin: "0 0 10px", fontSize: 12, color: T.inkSoft }}>À chaque clé créée, remplacée ou révoquée, un e-mail d'avis (sans la clé) est envoyé aux adresses de votre compte. Une clé inutilisée pendant 90 jours est signalée, puis révoquée automatiquement à 180 jours.</p>
+            <p style={{ margin: "0 0 10px", fontSize: 12, color: T.inkSoft }}>À chaque clé créée, remplacée ou révoquée, un e-mail d'avis (sans la clé) est envoyé aux adresses de votre compte. Au plus 10 clés créées ou remplacées par heure ; la révocation est toujours possible. Une clé inutilisée pendant 90 jours est signalée, puis révoquée automatiquement à 180 jours.</p>
             {visibles.length === 0 && <p style={{ margin: 0, color: T.inkSoft }}>Aucune clé pour l'instant.</p>}
             <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 8 }}>
               {visibles.map(c => (

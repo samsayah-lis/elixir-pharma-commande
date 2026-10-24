@@ -123,24 +123,41 @@ export const PREREQUIS = [
 
 // ── P9 : avis par e-mail des clés et alertes d'usage (_api-avis.js) ──
 // AVIS : e-mail à la pharmacie (adresses de compte encore sur la fiche Odoo) à chaque clé créée, remplacée ou révoquée, copie
-// à Elixir pour une clé de production ou une révocation automatique ; envoi raté (Odoo muet) tracé (api_evenements
-// « avis_echec ») et repris par api-cron jusqu'à tentatives_max fois en reprise_h heures.
-export const AVIS = { tentatives_max: 3, reprise_h: 24, delai_odoo_ms: 5000, reprises_par_passage: 5 };
+// à Elixir pour une clé de production ou une révocation automatique.
+//  • 1re tentative tout de suite, dans la requête, bornée à budget_requete_ms (la réponse qui porte le secret d'une clé ne
+//    doit jamais dépasser le délai des fonctions Netlify) ; une marque « avis_en_attente » est posée AVANT l'envoi : une
+//    fonction coupée pendant l'envoi est reprise par api-cron après attente_min minutes ;
+//  • échec (Odoo muet ou lent, adresses de compte illisibles) : événement « avis_echec », repris par api-cron après
+//    espacements_min[t - 1] minutes (t = tentative échouée), tentatives_max tentatives en tout ; la dernière échouée est
+//    signalée à Elixir (notification : prévenir la pharmacie) ;
+//  • chaque e-mail porte un Message-ID propre à (clé, avis) : une reprise retrouve le message déjà créé dans Odoo et ne
+//    l'envoie jamais deux fois ; delai_odoo_ms borne chaque appel à Odoo ; reprises_par_passage borne les reprises.
+export const AVIS = { tentatives_max: 4, espacements_min: [15, 120, 480], attente_min: 2, reprise_h: 24, delai_odoo_ms: 2500, budget_requete_ms: 3000,
+  reprises_par_passage: 3 };
+// Créations et remplacements de clés depuis le compte d'une pharmacie (api-compte) : au plus CLES_CREATIONS_HEURE par heure
+// et par fiche (chacune envoie un e-mail d'avis) ; la révocation n'est jamais limitée (une clé qui a fui doit pouvoir tomber).
+export const CLES_CREATIONS_HEURE = 10;
 // ALERTES (api-cron, toutes les 15 min ; chaque alerte = événement api_evenements « alerte_* », notification à Elixir et
-// e-mail à Elixir, jamais deux fois pour le même fait) :
+// e-mail à Elixir — tenté une fois, la notification et l'onglet 🔌 API faisant foi —, jamais deux fois pour le même fait) :
 //  • clé active inutilisée depuis inactive_jours → signalée ; depuis revocation_jours → révoquée automatiquement (e-mail à
-//    la pharmacie, copie Elixir) ; contrôle une fois par jour (première passe de 7 h, heure de Paris) ;
-//  • nouveau réseau : une clé déjà utilisée auparavant appelle depuis un réseau (/24 ou /64) jamais vu pour elle ; sans
-//    objet pour un accès à réseaux autorisés (un autre réseau y est refusé : alerte « réseau refusé » à la place) ;
-//  • erreurs : au moins erreurs_min appels sur erreurs_fenetre_min minutes et plus de erreurs_part de 4xx (une alerte par
-//    clé et par heure) ;
+//    la pharmacie, copie Elixir), revocations_par_passage au plus par passage ; contrôle une fois par jour (première passe
+//    de 7 h, heure de Paris) ;
+//  • nouveau réseau : une clé déjà utilisée auparavant appelle depuis un réseau (/24 ou /64) jamais vu pour elle ; une
+//    alerte par clé et par jour (5 réseaux nommés au plus) ; sans objet pour un accès à réseaux autorisés (un autre réseau y
+//    est refusé : alerte « réseau refusé » à la place) ;
+//  • réseau refusé : appels refusés (réseau non autorisé) dans la dernière heure ; une alerte par clé et par jour ;
+//  • erreurs : au moins erreurs_min appels sur erreurs_fenetre_min minutes et au moins erreurs_part de 4xx, hors refus de
+//    réseau (déjà « réseau refusé ») ; une alerte par clé et par heure ;
 //  • volume : appels du jour (heure de Paris) d'au moins volume_min ET supérieurs à volume_facteur × la moyenne journalière
 //    des volume_historique_jours jours précédents (contrôle à la première passe de chaque heure, une alerte par clé et
 //    par jour).
 //  journal_max : lignes du journal relues par passage (au-delà, le passage le dit et ne conclut rien de plus) ;
-//  par_passage_max : alertes (e-mails) envoyées au plus par passage — le reste attend le passage suivant.
+//  par_passage_max : alertes (e-mails) envoyées au plus par passage — le reste attend le passage suivant ;
+//  echeance_ms : le passage planifié ne commence plus aucun envoi au-delà de echeance_ms depuis son début (les fonctions
+//  planifiées sont coupées à 10 s) ; ce qui reste attend le passage suivant.
 export const ALERTES = { inactive_jours: 90, revocation_jours: 180, reseau_fenetre_min: 30, erreurs_fenetre_min: 60, erreurs_min: 20, erreurs_part: 0.2,
-  volume_facteur: 3, volume_min: 300, volume_historique_jours: 14, journal_max: 5000, par_passage_max: 5 };
+  volume_facteur: 3, volume_min: 300, volume_historique_jours: 14, journal_max: 5000, par_passage_max: 5, revocations_par_passage: 3, reseaux_max: 5,
+  echeance_ms: 8500 };
 
 export const REGLAGES_DEFAUT = { actif: true, commandes_live: false, prerequis: {}, cips_exclus: [] };
 // produits exclus de l'API (réglage de l'onglet 🔌 API) : CIP13 ou codes-barres, 500 au plus

@@ -236,10 +236,19 @@ export function creerStockApi(deps = {}) {
         const rows = (await sb(`api_evenements?type=like.alerte_*&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(500, limite)}`)) || [];
         return rows.map(r => ({ ...r, detail: r.detail ? lireJson(r.detail, null) : null }));
       },
-      // P9 : avis par e-mail d'une clé (envoyés ou en échec) depuis une date, les plus récents d'abord (reprise par api-cron)
+      // P9 : avis par e-mail d'une clé (en attente, envoyés ou en échec) depuis une date, les plus récents d'abord (reprise par
+      // api-cron)
       async avis(depuisIso, limite = 500) {
-        const rows = (await sb(`api_evenements?type=in.(avis_envoye,avis_echec)&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(1000, limite)}`)) || [];
+        const rows = (await sb(`api_evenements?type=in.(avis_en_attente,avis_envoye,avis_echec)&at=gte.${enc(depuisIso)}&select=${COLS_EVT}&order=at.desc&limit=${Math.min(1000, limite)}`)) || [];
         return rows.map(r => ({ ...r, detail: r.detail ? lireJson(r.detail, null) : null }));
+      },
+      // P9 : nombre d'événements d'une fiche, de ces types, depuis une date (plafond des créations de clés de api-compte)
+      async compter({ odooId, types = [], depuisIso }) {
+        const n = entier(odooId);
+        const ts = types.filter(t => /^[a-z_]{3,40}$/.test(String(t)));
+        if (!n || !ts.length || !depuisIso) return 0;
+        const { total, rows } = await sb(`api_evenements?odoo_id=eq.${n}&type=in.(${ts.join(",")})&at=gte.${enc(depuisIso)}&select=id&limit=1`, { compte: true });
+        return Number.isFinite(total) ? total : rows.length;
       },
     },
     compteurs: {

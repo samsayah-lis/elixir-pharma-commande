@@ -274,19 +274,23 @@ automatiquement), la pharmacie reçoit un e-mail aux adresses de son compte enco
 copie pour une clé de production et pour toute révocation automatique. L'e-mail ne contient jamais la clé : son début, son
 nom, ses droits, la date, l'origine, et la consigne « si ce n'est pas vous, révoquez vos clés et prévenez Elixir ». Fiche sans
 aucune adresse de compte : vous recevez l'e-mail seul, avec la mention « prévenez la pharmacie ». Envoi par la messagerie
-d'Odoo (comme les justificatifs) ; un envoi raté est repris au passage suivant, jusqu'à 3 fois en 24 h ; l'historique de
-l'accès (onglet 🔌 API) montre « E-mail d'avis envoyé » ou « non envoyé ».
+d'Odoo (comme les justificatifs), tenté tout de suite, 3 secondes au plus pour ne jamais retarder l'affichage de la clé. Si
+Odoo est lent ou muet, ou si les adresses de la fiche ne peuvent pas être lues, l'e-mail est repris par le passage planifié
+15 minutes plus tard, puis 2 h et 8 h après : 4 tentatives en tout, jamais deux fois le même e-mail. Après la dernière, une
+notification vous demande de prévenir la pharmacie vous-même. L'historique de l'accès (onglet 🔌 API) montre « E-mail
+d'avis envoyé » ou « non envoyé » (avec « abandonné » à la fin). Une pharmacie ne peut pas créer ou remplacer plus de
+10 clés par heure ; la révocation reste toujours possible.
 
 **Alertes** (passage planifié `api-cron`, toutes les 15 min). Chaque alerte apparaît dans la section « Alertes » de l'onglet
-🔌 API (30 jours), dans l'historique de l'accès, dans vos notifications, et vous arrive par e-mail. Jamais deux fois pour le
-même fait.
+🔌 API (30 jours), dans l'historique de l'accès et dans vos notifications ; elle vous est aussi envoyée par e-mail (une seule
+tentative : si Odoo ne répond pas, la notification et l'onglet restent la référence). Jamais deux fois pour le même fait.
 
 | Alerte | Quand | Que faire |
 |---|---|---|
 | Clé inutilisée | Aucun appel depuis 90 jours (contrôle à 7 h). À 180 jours : **révoquée automatiquement**, la pharmacie en est avertie par e-mail | Rien si l'outil n'est plus utilisé ; sinon demander à la pharmacie de vérifier son outil |
-| Nouveau réseau | Une clé déjà utilisée appelle depuis un réseau jamais vu pour elle | Un changement d'outil ou de connexion est l'explication courante ; en cas de doute : révoquer, appeler la pharmacie |
+| Nouveau réseau | Une clé déjà utilisée appelle depuis un réseau jamais vu pour elle (une alerte par jour, 5 réseaux nommés au plus) | Un changement d'outil ou de connexion est l'explication courante ; en cas de doute : révoquer, appeler la pharmacie |
 | Réseau refusé | Appels refusés parce que le réseau n'est pas dans les réseaux autorisés de l'accès (une alerte par jour) | Mettre à jour ses réseaux autorisés, ou révoquer si la clé est utilisée ailleurs |
-| Trop d'erreurs | Au moins 20 appels sur une heure et plus de 20 % de réponses 4xx (une alerte par heure) | Regarder le journal des appels (codes d'erreur) : outil mal paramétré |
+| Trop d'erreurs | Au moins 20 appels sur une heure et au moins 20 % de réponses 4xx, refus de réseau à part (une alerte par heure) | Regarder le journal des appels (codes d'erreur) : outil mal paramétré |
 | Volume inhabituel | Au moins 300 appels dans la journée et plus de 3 fois la moyenne des 14 jours précédents (une alerte par jour) | Synchronisation en boucle probable ; les débits bornent la charge ; suspendre l'accès si besoin |
 
 Les seuils (90 et 180 jours, 20 %, 3 ×, 300) sont ceux du code (`_api-config.js`, `ALERTES`) ; dites-moi s'ils ne vous

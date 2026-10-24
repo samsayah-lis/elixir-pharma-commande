@@ -281,7 +281,9 @@ const appelAdmin = (corps, methode = "POST", query = null) => admin({ httpMethod
   eq("priorité : à jour, ancienne, de jour", priorite({ etat: "pret", fin_le: "2026-10-19T10:00:00Z" }, now, { nuit: false }), null);
   eq("priorité : à jour, ancienne, la nuit", priorite({ etat: "pret", fin_le: "2026-10-19T10:00:00Z" }, now, { nuit: true }), 4);
   const lancees = [];
-  const cron = (quand) => creerCron({ stock, odoo: faux.odoo, maintenant: () => new Date(quand), journal: silence, lancer: async (id) => { lancees.push(id); return null; } })();
+  // surveillance P9 (avis et alertes) : doublure, testée par scripts/test-api-avis.mjs — jamais d'Odoo ni de Supabase réels ici
+  const sansAvis = { surveiller: async () => ({}) };
+  const cron = (quand) => creerCron({ stock, odoo: faux.odoo, maintenant: () => new Date(quand), journal: silence, avis: sansAvis, comptes: async () => [], lancer: async (id) => { lancees.push(id); return null; } })();
   // listes des fiches relues une fois par jour
   db.tables.api_acces.find(a => a.odoo_id === 100).liste_prix_lue_le = "2026-10-18T00:00:00.000Z";
   ficheOdoo(100).property_product_pricelist = [5, "Liste 5"];
@@ -299,7 +301,7 @@ const appelAdmin = (corps, methode = "POST", query = null) => admin({ httpMethod
   await cron("2026-10-21T00:30:00Z");   // 2 h 30 à Paris
   eq("cron : la nuit, une seule liste (la plus ancienne)", lancees, [15]);
   const nAcces = db.appels.filter(a => a.table === "api_acces" && a.methode === "PATCH").length;
-  await creerCron({ stock, odoo: faux.odoo, maintenant: () => new Date("2026-10-21T00:45:00Z"), journal: silence, lancer: async () => null })();
+  await creerCron({ stock, odoo: faux.odoo, maintenant: () => new Date("2026-10-21T00:45:00Z"), journal: silence, avis: sansAvis, comptes: async () => [], lancer: async () => null })();
   eq("cron : listes lues il y a moins d'un jour : pas relues", db.appels.filter(a => a.table === "api_acces" && a.methode === "PATCH").length, nAcces);
   // remise en état
   for (const l of db.tables.api_prix_listes) l.fin_le = new Date(T).toISOString();

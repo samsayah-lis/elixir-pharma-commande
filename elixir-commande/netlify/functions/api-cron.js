@@ -10,11 +10,13 @@
 //     90 jours, révoquées à 180 ; une fois par jour, première passe de 7 h, heure de Paris), erreurs, réseaux refusés et
 //     nouveaux réseaux (journal de la dernière heure), volume du jour (première passe de chaque heure). Chaque alerte : un
 //     événement « alerte_* », une notification et un e-mail à Elixir (mail.mail d'Odoo), jamais deux fois pour le même fait.
+//     Étape séparée : elle tourne même si l'étape des prix a échoué ; aucun envoi n'est commencé au-delà de
+//     ALERTES.echeance_ms depuis le début du passage (fonction planifiée coupée à 10 s) : la suite au passage suivant.
 // Rien n'est écrit hors des tables privées api_* (et les notifications de l'admin) ; aucune lecture Odoo de prix quand aucun
 // accès n'est ouvert.
 import { creerStockApi } from "./_api-stock.js";
 import { lecteurOdoo, listesDesFiches } from "./_api-prix.js";
-import { PRIX } from "./_api-config.js";
+import { ALERTES, PRIX } from "./_api-config.js";
 import { lancerCalculPrix, siteBaseEnv } from "./_api-http.js";
 import { creerAvis } from "./_api-avis.js";
 import { comptesEmailDeFiche } from "./_chat-perimetre.js";
@@ -33,17 +35,21 @@ export function priorite(l, now, { nuit }) {
 }
 
 // deps (doublures des tests) : stock, odoo, maintenant, lancer(listeId), journal, avis (creerAvis), comptes(odooId),
-// horaire { inactives, volumes } (sinon : clés inutilisées à la première passe de 7 h, volumes à la première passe de l'heure)
+// horaire { inactives, volumes } (sinon : clés inutilisées à la première passe de 7 h, volumes à la première passe de l'heure),
+// horloge() → millisecondes (échéance du passage ; par défaut l'horloge réelle)
 export function creerHandler(deps = {}) {
   const journal = deps.journal || ((o) => console.log(JSON.stringify({ fn: "api-cron", ...o })));
   const maintenant = deps.maintenant || (() => new Date());
   const avis = deps.avis || creerAvis({ journal: (o) => journal({ avis: true, ...o }) });
   const comptes = deps.comptes || ((id) => comptesEmailDeFiche(id));
+  const horloge = deps.horloge || (() => Date.now());
   return async () => {
+    const debut = horloge();
     const stock = deps.stock || creerStockApi();
     const now = maintenant();
     const nuit = heureParis(now) >= 1 && heureParis(now) < 6;
     const bilan = { listes_relues: 0, listes_changees: 0, lancee: null, avis: null };
+    let erreur = null;
     try {
       const acces = (await stock.acces.lister()).filter(a => a.actif);
       // 1. listes de prix des fiches, relues une fois par jour
@@ -79,14 +85,17 @@ export function creerHandler(deps = {}) {
         const avant = new Date(now.getTime() - 396 * 86400e3).toISOString();   // 13 mois
         await stock.journal.purger(avant).catch((e) => journal({ code: "purge_journal", erreur: String(e?.message || e).slice(0, 80) }));
       }
-      // 4. P9 : avis en échec repris, alertes d'usage (ne lève jamais)
+    } catch (e) {
+      erreur = e?.code || "erreur";
+      journal({ code: erreur, erreur: String(e?.message || e).slice(0, 160) });
+    }
+    // 4. P9 : avis repris, alertes d'usage — même si l'étape des prix a échoué ; échéance mesurée depuis le début du passage
+    try {
       const premierePasse = now.getUTCMinutes() < 15;
       const horaire = deps.horaire || { inactives: premierePasse && heureParis(now) === 7, volumes: premierePasse };
-      bilan.avis = await avis.surveiller(stock, { now, comptes, ...horaire });
-      journal({ code: "ok", ...bilan });
-    } catch (e) {
-      journal({ code: e?.code || "erreur", erreur: String(e?.message || e).slice(0, 160) });
-    }
+      bilan.avis = await avis.surveiller(stock, { now, comptes, ...horaire, echeance: debut + ALERTES.echeance_ms });
+    } catch (e) { journal({ code: "surveillance", erreur: String(e?.message || e).slice(0, 160) }); }
+    journal({ code: erreur ? `fin_${erreur}` : "ok", ...bilan });
     return { statusCode: 200, body: "" };
   };
 }
