@@ -10,11 +10,12 @@ export default function AdminSearchML({ adminFetch }) {
   const loadSearchML = async () => {
     setSearchML(prev => ({ ...prev, loading: true }));
     try {
+      // admin seulement depuis la bascule de SUPABASE_KEY sur une clé secrète (recherches de toutes les pharmacies)
       const [trendRes, zeroRes, funnelRes, statsRes] = await Promise.all([
-        fetch("/.netlify/functions/search-track?trending=1"),
-        fetch("/.netlify/functions/search-track?zero_results=1"),
-        fetch("/.netlify/functions/search-track?funnel=1"),
-        fetch("/.netlify/functions/search-track?stats=1"),
+        adminFetch("/.netlify/functions/search-track?trending=1"),
+        adminFetch("/.netlify/functions/search-track?zero_results=1"),
+        adminFetch("/.netlify/functions/search-track?funnel=1"),
+        adminFetch("/.netlify/functions/search-track?stats=1"),
       ]);
       const [trend, zero, funnel, stats] = await Promise.all([trendRes.json(), zeroRes.json(), funnelRes.json(), statsRes.json()]);
       setSearchML({ trending: trend.trending || [], zeroResults: zero.zero_results || [], funnel: funnel.funnel || null, stats: stats || null, loading: false });

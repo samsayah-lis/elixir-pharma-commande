@@ -1,11 +1,18 @@
 import { rateLimit } from "./rate-limit.js";
 import { getCors } from "./cors.js";
+import { verifyAdmin } from "./auth.js";
 // ── Search tracking — log des recherches + analytics ──────────────────
-// POST /search-track  { query, pharmacy_cip, results_count, clicked_cip, added_to_cart }
+// POST /search-track  { query, pharmacy_cip, results_count, clicked_cip, added_to_cart }  (public, sans jeton)
 // GET  /search-track?trending=1          → top 20 recherches 7 derniers jours
 // GET  /search-track?zero_results=1      → recherches sans résultat (produits demandés mais absents)
 // GET  /search-track?funnel=1            → taux conversion recherche → clic → panier
 // GET  /search-track?stats=1             → statistiques globales
+// Fermeture de Supabase, étape 2 (bascule de SUPABASE_KEY sur une clé secrète, qui contourne la RLS) :
+//  • GET : admin seulement (jeton de l'admin, comme ml-recommend ?mode=segments). Avant, la RLS sans politique de
+//    ec_search_patterns rendait ces statistiques vides avec la clé anon ; avec la clé secrète, un GET public aurait
+//    livré à n'importe qui les recherches de toutes les pharmacies (termes, recherches sans résultat, clics, paniers) ;
+//  • POST : inchangé (appelé sans jeton par la Saisie et la recherche globale), champs bornés : les écritures, refusées
+//    en silence avec la clé anon, aboutissent avec la clé secrète.
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
 const SB = { "apikey": SUPABASE_KEY, "Authorization": `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" };
@@ -20,14 +27,15 @@ export const handler = async (event) => {
     try { body = JSON.parse(event.body); }
     catch { return { statusCode: 400, headers: cors, body: JSON.stringify({ error: "JSON invalide" }) }; }
 
-    const { query, pharmacy_cip, results_count, clicked_cip, added_to_cart } = body;
-    if (!query || query.trim().length < 2) return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true }) };
+    const { query, pharmacy_cip, results_count, clicked_cip, added_to_cart } = body || {};
+    if (typeof query !== "string" || query.trim().length < 2) return { statusCode: 200, headers: cors, body: JSON.stringify({ ok: true }) };
 
+    const court = (v) => (typeof v === "string" || typeof v === "number" ? String(v).trim().substring(0, 20) || null : null);
     const row = {
-      query: query.trim().toLowerCase().substring(0, 100),
-      pharmacy_cip: pharmacy_cip || null,
-      results_count: parseInt(results_count) || 0,
-      clicked_cip: clicked_cip || null,
+      query: String(query).trim().toLowerCase().substring(0, 100),
+      pharmacy_cip: court(pharmacy_cip),
+      results_count: Math.min(100000, Math.max(0, parseInt(results_count) || 0)),
+      clicked_cip: court(clicked_cip),
       added_to_cart: !!added_to_cart,
     };
 
@@ -42,6 +50,8 @@ export const handler = async (event) => {
 
   // ── GET : analytics ──────────────────────────────────────────────────
   if (event.httpMethod === "GET") {
+    const auth = await verifyAdmin(event);
+    if (auth.error) return { ...auth.error, headers: { ...auth.error.headers, "Cache-Control": "no-store" } };
     const params = event.queryStringParameters || {};
 
     // Trending : top 20 recherches des 7 derniers jours
