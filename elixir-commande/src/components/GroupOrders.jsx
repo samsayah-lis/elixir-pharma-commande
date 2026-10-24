@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { priceOrder, priceLine, objectiveProgress, objectiveContribution, objectiveIsAdditive, objectiveFrom, sumSlots, parisToday, ugFor, allocateFree, freeBySlot, slotOrder, invoiceDiscount, packCheck, packIssues, packLabel, IMMEDIATE_SLOT, round2 } from "../gp-pricing.js";
-import { analyzeFile } from "../gp-files.js";
 import { T, R, ui, tone, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
@@ -13,6 +12,14 @@ const pct = (n) => `${round2(n || 0).toLocaleString("fr-FR")}\u00a0%`;
 const dfr = (d, opts = { day: "numeric", month: "long" }) => d ? new Date(d.slice(0, 10) + "T00:00:00").toLocaleDateString("fr-FR", opts) : "";
 const dts = (t) => t ? new Date(t).toLocaleDateString("fr-FR", { timeZone: "Europe/Paris", day: "numeric", month: "long" }) : "";
 const daysLeft = (d) => Math.round((Date.parse(d + "T12:00:00Z") - Date.parse(parisToday() + "T12:00:00Z")) / 86400e3);
+
+// Import du bon de commande (24/10/2026) : gp-files et la bibliothèque xlsx (426 Ko, 45 % du bundle des pharmacies) chargés
+// à la demande, dès l'appui sur « Importer mon bon de commande » (le temps de choisir le fichier), au plus tard à l'analyse.
+// Échec (connexion, ou nouvelle version du site mise en ligne) : message en français, comme « Admin indisponible » ; recharger
+// la page est nécessaire, le navigateur garde l'échec d'un import dynamique jusque-là (vérifié dans Chromium).
+const chargerFichiers = () => import("../gp-files.js").catch(() => {
+  throw new Error("L'import n'a pas pu se charger (connexion, ou nouvelle version du site mise en ligne) : rechargez la page, puis réessayez.");
+});
 
 // ── Refonte charte (lot 7) : atomes de theme.js au lieu des copies locales ; écran partagé avec l'admin (saisie d'une
 // participante : AdminGroupPurchases). Calculs (gp-pricing), enregistrement, focus de retour et protection avant de
@@ -182,6 +189,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
     const opId = op.id, req = reqRef.current;
     setBusy("import"); setMsg({ type: "info", text: "Analyse de votre bon de commande…" }); setImp(null);
     try {
+      const { analyzeFile } = await chargerFichiers();
       const r = await analyzeFile({ file, kind: "lgo", opId, post: (body) => call("gp-upload", body),
         onProgress: (s) => setMsg({ type: "info", text: `Analyse de votre bon de commande… ${s} s` }) });
       if (req !== reqRef.current || op.id !== opId) return;   // l'opération affichée a changé pendant l'analyse
@@ -396,7 +404,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
             {editable && (
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
                 <input ref={fileRef} type="file" accept=".pdf,.csv,.txt,.xls,.xlsx,.ods,image/png,image/jpeg,image/webp" style={{ display: "none" }} onChange={e => importLgo(e.target.files?.[0])} />
-                {!admin && <button className={busy ? undefined : btnClasse(false)} style={{ ...btn(false), ...(busy ? btnInactif : {}) }} disabled={!!busy} onClick={() => fileRef.current?.click()}>
+                {!admin && <button className={busy ? undefined : btnClasse(false)} style={{ ...btn(false), ...(busy ? btnInactif : {}) }} disabled={!!busy} onClick={() => { chargerFichiers().catch(() => {}); fileRef.current?.click(); }}>
                   <Icone nom={busy === "import" ? "horloge" : "importer"} taille={16} />{busy === "import" ? "Analyse…" : "Importer mon bon de commande (LGO)"}</button>}
                 <button className={confirmerGrise ? undefined : btnClasse(true)} style={{ ...btn(true), ...(confirmerGrise ? btnInactif : {}), ...(busy === "save" ? { cursor: "wait" } : {}) }} disabled={!!busy || packProblems.length > 0 || (!dirty && !confirmed && !hasQty(grid)) || (!!admin && !dirty)} onClick={confirm}>
                   {busy === "save" ? "Envoi…" : admin ? (confirmed ? "Enregistrer les modifications" : "Enregistrer la commande") : confirmed ? (dirty ? "Enregistrer les modifications" : "Renvoyer la confirmation") : "Confirmer ma commande"}

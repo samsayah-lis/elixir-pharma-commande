@@ -112,7 +112,7 @@ Poids : 216 octets de plus dans le bundle des pharmacies (part de l'assistant : 
 
 **Poids du code**
 - Le panneau est chargé à la demande (`React.lazy`, comme l'admin, `src/App.jsx:25`), dans un morceau séparé.
-- Le bundle des pharmacies est surveillé à 940 000 octets, pour environ 895 000 aujourd'hui (`scripts/verifie-zones.mjs:200-213`). Seuls le bouton et l'état d'ouverture y entrent (moins de 2 Ko).
+- Le bundle des pharmacies est surveillé par le budget de `scripts/verifie-zones.mjs` (section « Budget du bundle ») ; il pesait environ 895 000 octets à la conception (budget 940 000). Seuls le bouton et l'état d'ouverture y entrent (moins de 2 Ko).
 
 ### 1.3 Cartes construites par le serveur (`ui_actions`)
 

@@ -74,7 +74,7 @@ Demande de Zineb (16/10/2026) : « Pour le menu OTC Centrale d'achat, ajoute la 
   - L'admin (`AdminPanel` et ses outils, dont celui des laboratoires) est désormais chargé à la demande, à l'ouverture de `#admin` (`AdminPanel-*.js`, environ 280 Ko).
   - Le bundle des pharmacies passe ainsi de 1 152 361 octets (master) à environ 878 000.
   - Si l'admin ne se charge pas (connexion, ou nouvelle version mise en ligne pendant que la page était ouverte), il affiche « Admin indisponible » avec « Recharger la page », sans déconnecter.
-  - La bibliothèque xlsx reste dans le bundle des pharmacies, car l'import LGO des commandes groupées (`gp-files.js`) s'en sert.
-  - Ce changement tient dans un commit à part : on peut le retirer si la cliente préfère relever le budget.
-  - À décider ensuite : abaisser le budget à la nouvelle référence, pour qu'il garde son rôle de garde-fou.
+  - La bibliothèque xlsx restait dans le bundle des pharmacies, car l'import LGO des commandes groupées (`gp-files.js`) s'en sert. Depuis le 24/10/2026, `GroupOrders.jsx` charge `gp-files.js` (et xlsx) à la demande, dès l'appui sur « Importer mon bon de commande » (`gp-files-*.js`, environ 430 Ko) : le bundle des pharmacies passe de 943 847 à 510 974 octets. Si le chargement échoue, l'import affiche « L'import n'a pas pu se charger (connexion, ou nouvelle version du site mise en ligne) : rechargez la page, puis réessayez. »
+  - Le chargement à la demande de l'admin tient dans un commit à part : on peut le retirer si la cliente préfère relever le budget.
+  - Budget abaissé ensuite à la nouvelle référence, pour qu'il garde son rôle de garde-fou : 940 000, puis 513 000 une fois xlsx chargé à la demande (24/10/2026).
 - **Clé Medipim.** Son repli est écrit en dur dans `netlify/functions/_medipim.js` (TODO dans medipim-lookup) : ne garder que les variables d'environnement, puis changer la clé.
