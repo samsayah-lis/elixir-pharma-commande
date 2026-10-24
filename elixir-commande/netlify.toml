@@ -39,6 +39,11 @@
     Cache-Control = "no-cache"
     Content-Type = "application/manifest+json; charset=utf-8"
 
+# Cache des fichiers du site (docs/cache.md) : /assets/* gardés un an par le navigateur (immutable), une règle par fichier à
+# empreinte écrite au build dans dist/_headers (scripts/cache-assets-plugin.mjs) ; une mise à jour change leurs noms, index.html
+# (relu à chaque visite, défaut de Netlify) pointe vers les nouveaux. Jamais de règle « /assets/* » ici : Netlify peut l'appliquer
+# aussi au fichier absent (index.html de « /* », ou 404), qu'un navigateur garderait un an, cassé après un retour arrière.
+
 # API des pharmacies : description OpenAPI de la documentation publique /api/ (docs/api/openapi.yaml, copiée au build par
 # scripts/api-doc-plugin.mjs), toujours relue à la visite suivante
 [[headers]]
