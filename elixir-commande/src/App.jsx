@@ -47,6 +47,9 @@ const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catc
 const LienApi = React.lazy(() => import("./components/api/LienApi.jsx").catch(() => ({ default: () => null })));
 // Contingentement dans la ligne de l'article (docs/contingentement-ligne.md) : contexte ici, pastille chargée à la demande
 import { ContexteQuota, Quota, chargerPastille, tiersQuota } from "./components/quota/entree.jsx";
+// Limites de quantité des menus promo et précommandes (docs/limites-promo.md) : règles, pastille et encarts chargés à la demande,
+// seulement quand un menu actif a un produit limité
+const chargerLimites = () => import("./components/limites/LimitesPromo.jsx");
 
 const DEFAULT_RECIPIENT = "pharmacien@elixirpharma.fr";
 // Envoi d'une commande refusé AVANT tout envoi (correctif de sécurité du 19/10/2026 : session vérifiée d'abord) :
@@ -1411,6 +1414,47 @@ export default function App() {
   const ctxQuota = useMemo(() => ({ liste: identifie ? quotaListe : null, quota: quotaVu, check: quotaCheck, ko: quotaKo === loadQuota, attente: quotaAttente,
     demander: demanderQuota, montees, cle: cleQuota }), [identifie, quotaListe, quotaVu, quotaCheck, quotaKo, loadQuota, quotaAttente, demanderQuota, cleQuota]);
 
+  // ── Limites de quantité des menus promo et précommandes (26/10/2026, docs/limites-promo.md) ──
+  // Module chargé dès qu'un menu actif a un produit limité (échec : rien, order-save contrôle quand même).
+  // Limites des menus actifs (admin_promos, déjà chargé) ; ce que la pharmacie affichée peut encore commander, lu par promo-limites
+  // (ses commandes et, pour un max total, celles de toutes les pharmacies) : à l'affichage d'un menu ou d'un panier qui contient un
+  // produit limité (au plus une fois par minute ; échec : nouvel essai 30 s plus tard), à l'ouverture du panier et juste après un
+  // envoi. Sans réponse : les limites seules (au-delà, refusé quoi qu'il soit déjà commandé). Le panier refuse l'envoi au-delà ;
+  // order-save aussi (400, rien d'écrit), avec les chiffres du moment.
+  const avecLimites = useMemo(() => promoSections.some(ps => ps.active && (ps.products || []).some(p => p.maxPharmacie || p.maxTotal)), [promoSections]);
+  const [modLimites, setModLimites] = useState(null);
+  useEffect(() => { if (avecLimites && !modLimites) chargerLimites().then(setModLimites, () => {}); }, [avecLimites, modLimites]);
+  const limitesPromo = useMemo(() => modLimites ? modLimites.limitesActives(promoSections) : {}, [modLimites, promoSections]);
+  const sigLimites = useMemo(() => JSON.stringify(limitesPromo), [limitesPromo]);
+  const [limitesEtat, setLimitesEtat] = useState(null);   // { cle, limites: { <CIP>: { reste, motif, deja } } }
+  const cleLimites = `${cleQuota}|${sigLimites}`, limitesLues = useRef({});   // dernière lecture demandée : { cle, at }
+  const lireLimitesPromo = useCallback(async (force) => {
+    const lu = limitesLues.current;
+    if (!identifie || sigLimites === "{}" || (!force && lu.cle === cleLimites && Date.now() - lu.at < 60e3)) return;
+    const moi = limitesLues.current = { cle: cleLimites, at: Date.now() };
+    const r = await appelAuthentifie("/.netlify/functions/promo-limites", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(actingFor ? { cip: pharmacyCip, email: pharmacyEmail } : {}), ...delai(12000) }).catch(() => null);
+    const j = r?.ok ? await r.json().catch(() => null) : null;
+    // réponse de la dernière lecture demandée seulement (autre pharmacie en saisie Elixir, envoi entre-temps : ignorée)
+    if (!j) moi.at -= 30e3;
+    else if (limitesLues.current === moi) setLimitesEtat({ cle: moi.cle, limites: j.limites || {} });
+  }, [identifie, sigLimites, cleLimites, appelAuthentifie, actingFor, pharmacyCip, pharmacyEmail]);
+  const limitesEnVue = useMemo(() => sigLimites !== "{}" && (cartItems.some(i => limitesPromo[i.cip])
+    || (CATALOG_WITH_ADMIN[activeTab]?.products || []).some(p => limitesPromo[p.cip])), [sigLimites, limitesPromo, cartItems, CATALOG_WITH_ADMIN, activeTab]);
+  useEffect(() => { if (limitesEnVue) lireLimitesPromo(); }, [limitesEnVue, lireLimitesPromo]);
+  useEffect(() => { if (cartOpen && limitesEnVue) lireLimitesPromo(true); }, [cartOpen]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // commande enregistrée : chiffres d'avant l'envoi oubliés, relus
+    if (sendStatus !== "success") return;
+    limitesLues.current = {}; setLimitesEtat(null);
+    if (limitesEnVue) lireLimitesPromo(true);
+  }, [sendStatus]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const limitesVues = limitesEtat?.cle === cleLimites ? limitesEtat.limites : null;
+  const limitesCheck = useMemo(() => modLimites ? modLimites.depassementsLimites(cartItems, limitesPromo, limitesVues) : { panier: {}, over: [] },
+    [modLimites, cartItems, limitesPromo, limitesVues]);
+  // pastille d'une ligne d'article (menus, recherche) : rien pour un produit sans limite
+  const limiteLigne = (cip, style) => limitesPromo[cip]
+    ? <modLimites.Pastille l={limitesPromo[cip]} e={limitesVues?.[cip]} auPanier={limitesCheck.panier[cip] || 0} style={style} /> : null;
+
   // ── Saisie de commande (lot E2) : l'ajout n'ouvre plus le panier, un message le confirme ──
   // Le contingentement, que rechargeait l'ouverture du panier, est rechargé ici à chaque ajout : un dépassement
   // est signalé aussitôt (le panier l'affiche toujours et l'envoi le contrôle encore avec les chiffres du moment).
@@ -2690,6 +2734,7 @@ export default function App() {
                           <span style={{ fontSize:12, color:T.inkMute, display:"inline-flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={p.cip} />{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
                         </div>
                         <Quota cip={p.cip} forme="moyenne" />{/* contingentement (src/components/quota/) */}
+                        {limiteLigne(p.cip)}{/* limite de quantité (menus promo, précommandes) */}
                       </div>
 
                       {/* Prix HT : barré --ink-mute, remise en badge or + encre, prix net encre 700 (affichage français) */}
@@ -3264,6 +3309,7 @@ export default function App() {
                               </div>
                               {/* contingentement (src/components/quota/) : sous les boutons, texte court — le « + » ne bouge pas */}
                               <Quota cip={p.cip} forme="courte" pas={m > 1 ? m : step} style={{ marginTop: 0 }} />
+                              {limiteLigne(p.cip, { marginTop: 0 })}{/* limite de quantité (menus promo, précommandes) */}
                               {(stepMin > 0 || m > 1) && (
                                 <div className="num" style={{ fontSize: 11, color: qty > 0 ? T.teal : T.inkMute, marginTop: 2 }}>
                                   {stepMin > 0 && `min ${stepMin}`}{stepMin > 0 && m > 1 && " · "}{m > 1 && `×${m}`}
@@ -3336,6 +3382,7 @@ export default function App() {
                       </div>
                       {/* contingentement : rangée à part sous les boutons (le « + » ne bouge pas quand le texte change) */}
                       <Quota cip={p.cip} pas={step} style={{ flexBasis: "100%", marginTop: -4 }} />
+                      {limiteLigne(p.cip, { flexBasis: "100%", marginTop: -4 })}{/* limite de quantité (menus promo, précommandes) */}
                       {jauge}
                     </div>
                   );
@@ -3383,7 +3430,9 @@ export default function App() {
                     const prixNet = <>{prixUnitaire(pnLigne, p.pn)}{!jauge && <TierBadge tiers={reglage.tiers} pn={p.pn} compact bloc />}</>;
 
                     const ruptureBadge = isRupture ? <span style={{ ...ui.badge("danger"), marginLeft: 6, verticalAlign: "middle" }}><Icone nom="alerte" taille={11} />Rupture</span> : null;
-                    const qL = <Quota cip={p.cip} pas={pasLigne} forme="moyenne" />;   // contingentement : pastille sous la désignation, état court (la ligne garde sa hauteur)
+                    // contingentement : pastille sous la désignation, état court (la ligne garde sa hauteur) ; puis limite de quantité
+                    // (menus promo, précommandes : docs/limites-promo.md)
+                    const qL = <><Quota cip={p.cip} pas={pasLigne} forme="moyenne" />{limiteLigne(p.cip)}</>;
                     // zébrure (data-zebre : rang du produit, comme l'ancien nth-child), survol et fond rupture : classe ex-tr +
                     // data-rupture (tokens.css) — le survol ne l'efface plus. Produit à paliers : ligne de la jauge dessous (ex-tr-palier)
                     return (
@@ -3885,6 +3934,12 @@ export default function App() {
                           </div>
                         );
                       })()}
+                      {/* Limite de quantité (menus promo, précommandes : docs/limites-promo.md) : sur la première ligne du CIP ; reste lu par
+                          promo-limites (sans lecture : la limite seule) ; au-delà, « Ramener à » comme le contingentement */}
+                      {item.cip && limitesPromo[item.cip] && cartItems.findIndex(j => j.cip === item.cip) === n && (
+                        <modLimites.EncartLimite l={limitesPromo[item.cip]} e={limitesVues?.[item.cip]} o={limitesCheck.over.find(x => x.cip === item.cip)}
+                          item={item} onQte={(q) => setItemQty(item, q)} />
+                      )}
                       {/* Sur justificatif labo : attestation, renouvellement, ordonnance anonymisée */}
                       {/* ligne péremption (stock court d'Elixir) : jamais sur justificatif ; bloc sur la première autre ligne du CIP */}
                       {!estPeremption(item) && needsJustif(item, justifProducts, cartTotalsByCip) && cartItems.findIndex(j => j.cip === item.cip && !estPeremption(j)) === n && (
@@ -3946,6 +4001,7 @@ export default function App() {
                       <span>Contingentement dépassé : {quotaCheck.over.map(o => `${o.name} (${o.qty} demandés, reste ${o.remaining})`).join(" ; ")}. Ajustez ces lignes pour envoyer la commande.</span>
                     </div>
                   )}
+                  {limitesCheck.over.length > 0 && <modLimites.AlerteLimites over={limitesCheck.over} />}
                   {justifCheck.length > 0 && (
                     <div role="alert" style={{ ...encart("labo"), ...ligneEncart, gap: 8, marginTop: 0, marginBottom: 10, fontWeight: 600 }}>
                       <Icone nom="document" taille={16} style={{ marginTop: 1 }} />
@@ -3977,12 +4033,12 @@ export default function App() {
                   <button
                     className="ex-btn-or"
                     onClick={envoyerCommande}
-                    disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || justifCheck.length > 0}
+                    disabled={sendStatus === "sending" || sendStatus === "success" || quotaCheck.over.length > 0 || limitesCheck.over.length > 0 || justifCheck.length > 0}
                     style={{
                       ...ui.btn("or", "l"), width: "100%", gap: 10,
                       ...(sendStatus === "success" ? { background: T.ok, color: T.paper }
                         : sendStatus === "error" ? { background: T.danger, color: T.paper }
-                        : quotaCheck.over.length > 0 || justifCheck.length > 0 ? { background: T.sand, color: T.inkSoft, cursor: "not-allowed" }
+                        : quotaCheck.over.length > 0 || limitesCheck.over.length > 0 || justifCheck.length > 0 ? { background: T.sand, color: T.inkSoft, cursor: "not-allowed" }
                         : { background: undefined, color: undefined, cursor: sendStatus === "sending" ? "progress" : "pointer" }),
                     }}>
                     {sendStatus === "sending" ? <><Icone nom="horloge" />Envoi en cours…</> :

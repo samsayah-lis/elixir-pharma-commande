@@ -30,6 +30,7 @@ export function reponseFictive({ fn, methode = "POST", corps = null, pharmacie =
       : { success: false, error: "Aperçu : l'administration est désactivée ici (rien ne doit y être modifié)." };
     // lectures faites en POST : réponses neutres
     case "quota-status":        return { exempt: false, products: {} };
+    case "promo-limites":       return { limites: {} };   // limites seules (panier), rien de déjà commandé
     case "gp-pharmacy":         return b.action === "access" ? { allowed: true } : b.action === "list" ? { operations: [] } : { success: true };
     // envoi d'une commande : e-mail, enregistrement, relais PharmaML
     case "send-email":          return { success: true };

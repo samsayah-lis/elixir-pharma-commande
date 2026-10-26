@@ -81,7 +81,9 @@ Contrôles, dans l'ordre :
    - produit exclu par l'admin → `produit_non_commandable` ;
    - offres que le site seul sait servir (hors V1) → `produit_non_commandable` (« à commander sur le site ») : article livré
      sous plusieurs CIP (fauteuils : le site répartit la quantité entre eux, le plus ancien d'abord), produit d'une campagne
-     (section U-Labs ou campagne active). Exclusions illisibles → `503`, jamais « commandable » par défaut ;
+     (section U-Labs ou campagne active), produit à quantité limitée d'un menu promo actif (précommande : le site applique la
+     limite par pharmacie et le max total, docs/limites-promo.md). Exclusions illisibles → `503`, jamais « commandable » par
+     défaut ;
    - produit sur justificatif laboratoire → `produit_sur_justificatif` (« à commander sur le site ») ;
    - prix pas encore calculé → `prix_indisponible` ;
    - contingent : quantité ramenée au reste (`motif: contingentement`), refusée à 0 ;
