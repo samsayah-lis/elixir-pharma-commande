@@ -63,8 +63,9 @@ export async function commandesDepuis(sb, depuis, ph = null, cacheMs = 0) {
 }
 
 // État des limites : { <CIP>: etatLimite } (reste, motif, deja, parPharmacie, dejaTotal, parMenu) pour la pharmacie ph (null :
-// totaux seuls). cips : CIP à calculer (défaut : tous) ; sauf : numéro de commande ignoré ; cacheMs : commandes de toutes les
-// pharmacies gardées (max total) — celles de la pharmacie sont alors relues à l'instant (sa commande qui vient de partir comptée)
+// totaux seuls). cips : CIP à calculer (défaut : tous) ; sauf : numéro(s) de commande ignoré(s) — une liste ne vaut que pour les
+// commandes de la pharmacie ; cacheMs : commandes de toutes les pharmacies gardées (max total) — celles de la pharmacie sont alors
+// relues à l'instant (sa commande qui vient de partir comptée, une commande retirée oubliée)
 export async function etatLimites({ sb = sbDefaut, limites, ph = null, cips = null, sauf = null, cacheMs = 0 }) {
   const liste = Object.values(limites).filter(l => !cips || cips.includes(l.cip));
   if (!liste.length) return {};
@@ -73,10 +74,13 @@ export async function etatLimites({ sb = sbDefaut, limites, ph = null, cips = nu
   const depuis = Math.min(...liste.map(l => l.depuis)), tous = !ph || liste.some(l => (l.regles || [l]).some(r => r.total != null));
   let commandes = await commandesDepuis(sb, depuis, tous ? null : ph, tous ? cacheMs : 0);
   if (tous && ph && cacheMs > 0) {
+    // celles du cache que la lecture filtrée aurait rendues (même comparaison exacte que or=) sont remplacées par celle-ci
     const siennes = await commandesDepuis(sb, depuis, ph), ids = new Set(siennes.map(o => String(o.id)));
-    commandes = [...commandes.filter(o => !ids.has(String(o.id))), ...siennes];
+    const relue = (o) => (ph.cip && String(o.pharmacy_cip ?? "") === ph.cip) || ph.emails.includes(o.pharmacy_email);
+    commandes = [...commandes.filter(o => !relue(o) && !ids.has(String(o.id))), ...siennes];
   }
   const dePh = ph ? deLaPharmacie(ph) : null, out = {};
+  if (Array.isArray(sauf)) sauf = dePh ? sauf.filter(id => commandes.some(o => String(o.id) === String(id) && dePh(o))) : [];
   for (const l of liste) out[l.cip] = etatLimite(commandes, l, dePh, sauf);
   return out;
 }

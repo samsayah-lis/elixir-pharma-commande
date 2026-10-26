@@ -22,8 +22,8 @@ const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 export const depuisProduit = (promo, prod) => dateMs(prod?.id) ?? dateMs(promo?.id) ?? 0;
 
 // admin_promos → { <CIP>: { cip, nom, menu, parPharmacie, total, depuis, regles } } (produits limités des menus actifs) ;
-// regles : une par menu (menu, parPharmacie, total, depuis) ; parPharmacie, total : les plus basses (affichage, panier pas encore
-// lu) ; depuis : la plus ancienne (fenêtre de lecture des commandes)
+// regles : une par produit de menu (menu, cle « <id du menu>:<id du produit> », parPharmacie, total, depuis) ; parPharmacie,
+// total : les plus basses (affichage, panier pas encore lu) ; depuis : la plus ancienne (fenêtre de lecture des commandes)
 export function limitesActives(promos) {
   const out = {};
   for (const ps of Array.isArray(promos) ? promos : []) {
@@ -31,7 +31,7 @@ export function limitesActives(promos) {
     for (const p of Array.isArray(ps.products) ? ps.products : []) {
       const cip = String(p?.cip ?? "").trim(), parPharmacie = entierLimite(p?.maxPharmacie), total = entierLimite(p?.maxTotal);
       if (!/^\d{7,13}$/.test(cip) || (!parPharmacie && !total)) continue;
-      const r = { menu: String(ps.name || ""), parPharmacie, total, depuis: depuisProduit(ps, p) }, a = out[cip];
+      const r = { menu: String(ps.name || ""), cle: `${ps.id}:${p.id}`, parPharmacie, total, depuis: depuisProduit(ps, p) }, a = out[cip];
       out[cip] = a ? { ...a, parPharmacie: minNul(a.parPharmacie, parPharmacie), total: minNul(a.total, total), depuis: Math.min(a.depuis, r.depuis), regles: [...a.regles, r] }
         : { cip, nom: String(p.name || cip), ...r, regles: [r] };
     }
@@ -48,13 +48,13 @@ export const lignesCommande = (items) => {
 
 // Quantités déjà commandées par CIP limité → { <CIP>: { pharmacie, total } }.
 // commandes : lignes elixir_orders { id, date, items, … } ; dePharmacie(commande) : true pour une commande de la pharmacie
-// (absent : totaux seuls) ; sauf : numéro de commande ignoré (le même numéro renvoyé après une réponse perdue)
+// (absent : totaux seuls) ; sauf : numéro(s) de commande ignoré(s) (le même numéro renvoyé après une réponse perdue)
 export function quantitesCommandees(commandes, limites, dePharmacie = null, sauf = null) {
-  const out = {};
+  const out = {}, ignorer = new Set([].concat(sauf ?? []).map(String));
   for (const cip of Object.keys(limites)) out[cip] = { pharmacie: 0, total: 0 };
   for (const o of commandes || []) {
     // quarantaine d'order-save (page d'avant le correctif du 19/10, sans jeton) : données non vérifiées, comme pour le contingentement
-    if (!o || o.source === "a_verifier" || (sauf != null && String(o.id) === String(sauf))) continue;
+    if (!o || o.source === "a_verifier" || ignorer.has(String(o.id))) continue;
     const t = Date.parse(o.date), mienne = !!dePharmacie?.(o);
     for (const it of lignesCommande(o.items)) {
       const l = limites[String(it?.cip ?? "")];
@@ -78,7 +78,8 @@ export function resteLimite(l, deja) {
 }
 
 // État d'un CIP limité : la plus restrictive des règles de ses menus, chacune comptée depuis l'ajout du produit à son menu →
-// { reste, motif, deja, parPharmacie (de la règle qui bloque), dejaTotal, parMenu: { <menu>: déjà commandé, toutes pharmacies } }.
+// { reste, motif, deja, parPharmacie (de la règle qui bloque), dejaTotal, parMenu: { <cle de la règle>: déjà commandé, toutes
+// pharmacies } }.
 // dePharmacie absent : totaux seuls (reste au total).
 export function etatLimite(commandes, l, dePharmacie = null, sauf = null) {
   let pire = null;
@@ -86,7 +87,7 @@ export function etatLimite(commandes, l, dePharmacie = null, sauf = null) {
   for (const r of l.regles || [l]) {
     const d = quantitesCommandees(commandes, { [l.cip]: { ...r, cip: l.cip } }, dePharmacie, sauf)[l.cip];
     const e = { ...resteLimite(r, dePharmacie ? d : { pharmacie: 0, total: d.total }), parPharmacie: r.parPharmacie, dejaTotal: d.total };
-    parMenu[r.menu] = d.total;
+    parMenu[r.cle ?? r.menu] = d.total;
     if (!pire || e.reste < pire.reste) pire = e;
   }
   return { ...pire, parMenu };
@@ -117,9 +118,10 @@ export function messageDepassement(o) {
 // Tons de theme.js : info (reste), warn (limite atteinte, épuisé), danger (au-delà : le panier refusera l'envoi)
 export function pastilleLimite(l, e, auPanier = 0) {
   if (!l) return null;
-  const regle = l.parPharmacie ? `${l.parPharmacie} max par pharmacie` : "quantité limitée";
-  const debut = l.parPharmacie
-    ? `Offre limitée à ${pluriel(l.parPharmacie, "boîte")} par pharmacie, toutes vos commandes additionnées${l.total ? " (quantité totale limitée aussi)" : ""}.`
+  const pp = e?.parPharmacie ?? l.parPharmacie;   // une fois lu : le max de la règle qui bloque (CIP limité dans deux menus)
+  const regle = pp ? `${pp} max par pharmacie` : "quantité limitée";
+  const debut = pp
+    ? `Offre limitée à ${pluriel(pp, "boîte")} par pharmacie, toutes vos commandes additionnées${l.total ? " (quantité totale limitée aussi)" : ""}.`
     : "Quantité totale limitée pour l'ensemble des pharmacies.";
   if (!e || e.reste == null) {   // pas encore lu : la limite seule (au-delà, refusé quoi qu'il soit déjà commandé)
     const max = resteLimite(l, null).reste, trop = auPanier > max ? auPanier - max : 0;

@@ -1437,7 +1437,8 @@ export default function App() {
     if (!identifie || sigLimites === "{}" || (!force && lu.cle === cleLimites && Date.now() - lu.at < 60e3)) return;
     const moi = limitesLues.current = { cle: cleLimites, at: Date.now() };
     const r = await appelAuthentifie("/.netlify/functions/promo-limites", { method: "POST",   // corps JSON lu tel quel par la fonction
-      body: JSON.stringify({ ...(actingFor && { cip: pharmacyCip, email: pharmacyEmail }), frais: force === "frais" }), ...delai(12000) }).catch(() => null);
+      // sauf : numéros pas encore confirmés (réponse perdue) — sinon la commande peut-être enregistrée bloquerait son propre renvoi
+      body: JSON.stringify({ ...(actingFor && { cip: pharmacyCip, email: pharmacyEmail }), frais: force === "frais", sauf: Object.values(idsEnvoi.current) }), ...delai(12000) }).catch(() => null);
     const j = r?.ok ? await r.json().catch(() => null) : null;
     // réponse de la dernière lecture demandée seulement (autre pharmacie en saisie Elixir, envoi entre-temps : ignorée)
     if (!j) { moi.at -= 30e3; setTimeout(() => setEssaiLimites(n => n + 1), 30e3); }
@@ -1453,10 +1454,10 @@ export default function App() {
     const avant = envoiPrecedent.current;
     envoiPrecedent.current = sendStatus;
     // commande enregistrée : chiffres d'avant l'envoi oubliés et cachés (le panier, vidé 3 s plus tard, contient encore la commande :
-    // relus maintenant, ils la compteraient deux fois) ; relus sans le cache une fois le panier vidé, ou après un envoi refusé
-    // (retour à null depuis « success », « sending » ou « error »)
+    // relus maintenant, ils la compteraient deux fois) ; relus sans le cache une fois le panier vidé, ou après un envoi refusé par
+    // order-save (400) ou bloqué avant l'écriture — jamais après un échec sans réponse sûre (envoiBloque : réponse perdue, 5xx…)
     if (sendStatus === "success") { limitesLues.current = {}; setLimitesEtat(null); }
-    else if (!sendStatus && avant && limitesEnVue) lireLimitesPromo("frais");
+    else if (!sendStatus && avant && !envoiBloque && limitesEnVue) lireLimitesPromo("frais");
   }, [sendStatus]);   // eslint-disable-line react-hooks/exhaustive-deps
   const limitesVues = limitesEtat?.cle === cleLimites ? limitesEtat.limites : null;
   const limitesCheck = useMemo(() => modLimites ? modLimites.depassementsLimites(cartItems, limitesPromo, limitesVues) : { panier: {}, over: [] },

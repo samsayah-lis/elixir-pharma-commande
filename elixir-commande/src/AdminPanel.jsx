@@ -1402,8 +1402,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                           {prod.note&&<span style={{fontSize:11,color:T.warn,marginLeft:6,background:T.warnBg,borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
                           {(prod.maxPharmacie || prod.maxTotal) && (() => {
                             // limites (docs/limites-promo.md) et quantité déjà commandée (menus actifs : lue par promo-limites), comptée
-                            // depuis l'ajout du produit à CE menu (parMenu : un même CIP limité dans deux menus)
-                            const lu = ps.active ? limitesCommandees?.[prod.cip] : null, n = lu?.parMenu?.[ps.name] ?? lu?.dejaTotal;
+                            // depuis l'ajout du produit à CE menu (parMenu, clé « menu:produit » : un même CIP limité dans deux menus)
+                            const lu = ps.active ? limitesCommandees?.[prod.cip] : null, n = lu?.parMenu?.[`${ps.id}:${prod.id}`] ?? lu?.dejaTotal;
                             const vu = Number.isFinite(n) ? n : null, plein = vu != null && prod.maxTotal && vu >= prod.maxTotal;
                             return (
                               <span title="Limites de quantité : toutes commandes additionnées depuis l'ajout du produit au menu" style={{fontSize:11,marginLeft:6,borderRadius:4,padding:"1px 5px",background:plein?T.dangerBg:T.surface2,color:plein?T.danger:T.inkSoft,fontWeight:600}}>

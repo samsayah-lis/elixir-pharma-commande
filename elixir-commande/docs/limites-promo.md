@@ -29,7 +29,8 @@ chaque changement, une fois la publication terminée (menus visibles seulement) 
 ## Règle
 
 - Menus **actifs** seulement. Un CIP limité dans deux menus actifs : chaque menu garde sa règle, comptée depuis l'ajout du
-  produit à CE menu ; la plus restrictive l'emporte (la pastille montre le plus bas des max par pharmacie).
+  produit à CE menu ; la plus restrictive l'emporte (la pastille montre le plus bas des max par pharmacie tant que les
+  chiffres ne sont pas lus, puis celui de la règle qui bloque, comme le refus d'order-save).
 - Comptées **par CIP**, quel que soit le menu ou le canal de la commande (site, saisie Elixir, API), **depuis l'ajout du
   produit au menu** (son identifiant est sa date d'ajout ; à défaut, la création du menu) ; commandes relues sur 180 jours
   au plus. Pour repartir de zéro (nouvelle vague) : retirer le produit du menu et l'ajouter de nouveau (s'il est limité
@@ -57,7 +58,8 @@ chaque changement, une fois la publication terminée (menus visibles seulement) 
 - Commandes envoyées en même temps (deux pharmacies, ou la même depuis deux postes) : chacune est **contrôlée de nouveau
   juste après son écriture**, les autres comptées ; au-delà, elle est retirée (400, comme avant l'écriture). Deux envois
   simultanés qui dépassent ensemble la limite peuvent ainsi être refusés tous les deux : la pharmacie renvoie. Retrait
-  impossible (Supabase) : 503, le même numéro renvoyé retrouve la commande.
+  impossible (Supabase, 3 essais) : la commande reste enregistrée, elle est acceptée et suit son cours normal (notification,
+  stock, réponse 200) ; journal `[order-save] limites : commande N …, retrait impossible : gardée`.
 
 Limites connues :
 
@@ -66,18 +68,22 @@ Limites connues :
 ## Données
 
 - Limites dans `admin_promos` (ec_config), sur chaque produit : `maxPharmacie`, `maxTotal` (entiers, ou null).
-- `promo-limites` (nouvelle fonction, POST + jeton, lecture seule) : pharmacie → `{ limites: { <CIP>: { reste, motif, deja } } }`
-  (compte de l'e-mail vérifié du jeton, corps ignoré) ; admin en saisie → idem pour `{ cip, email }` ; admin, onglet
-  Promos → `{ admin: true }` → `{ limites: { <CIP>: { nom, menu, parPharmacie, total, dejaTotal, parMenu } } }` (`parMenu` :
-  déjà commandé selon chaque menu). Aucun produit limité : `{ limites: {} }` sans lire les commandes. Max total : commandes
-  de toutes les pharmacies gardées 60 s par instance, celles de la pharmacie toujours relues ; `{ frais: true }` : sans le
-  cache.
+- `promo-limites` (nouvelle fonction, POST + jeton, lecture seule) : pharmacie → `{ limites: { <CIP>: { reste, motif, deja,
+  parPharmacie } } }` (compte de l'e-mail vérifié du jeton, cip et email du corps ignorés ; `parPharmacie` : max de la règle
+  qui bloque) ; admin en saisie → idem pour `{ cip, email }` ; admin, onglet Promos → `{ admin: true }` → `{ limites: { <CIP>:
+  { nom, menu, parPharmacie, total, dejaTotal, parMenu } } }` (`parMenu` : déjà commandé selon chaque produit de menu, clé
+  `<id du menu>:<id du produit>`). Aucun produit limité : `{ limites: {} }` sans lire les commandes. Max total : commandes de
+  toutes les pharmacies gardées 60 s par instance, celles de la pharmacie toujours relues (une commande retirée depuis n'est
+  plus comptée) ; `{ frais: true }` : sans le cache ; `{ sauf: [numéros] }` : commandes de la pharmacie pas encore confirmées
+  (20 au plus), ignorées.
 - Site : module chargé à la demande (`src/components/limites/LimitesPromo.jsx`), seulement quand un menu actif a un
   produit limité ; état lu par `promo-limites` à l'affichage d'un menu, de résultats de recherche ou d'un panier qui
   contient un produit limité (une fois par minute au plus ; échec : nouvel essai 30 s plus tard), à l'ouverture du panier.
-  Commande envoyée : chiffres d'avant l'envoi cachés jusqu'au panier vidé (3 s), puis relus sans le cache ; envoi refusé
-  (limite dépassée entre-temps…) : relus sans le cache, le panier montre « Ramener à ». Réponse d'une autre pharmacie
-  (saisie Elixir) ou partie avant un envoi : ignorée.
+  Commande envoyée : chiffres d'avant l'envoi cachés jusqu'au panier vidé (3 s), puis relus sans le cache ; envoi refusé par
+  order-save (400 : limite dépassée entre-temps…) ou bloqué avant l'écriture : relus sans le cache, le panier montre « Ramener
+  à » ; jamais après un échec sans réponse sûre (réponse perdue, 5xx : la commande est peut-être enregistrée). Chaque lecture
+  envoie les numéros pas encore confirmés (`sauf`) : une commande enregistrée dont la réponse s'est perdue ne bloque pas son
+  propre renvoi (`{ deja }`). Réponse d'une autre pharmacie (saisie Elixir) ou partie avant un envoi : ignorée.
 - Aperçus Netlify (essai à blanc) : `promo-limites` répond `{ limites: {} }` (limites seules).
 
 ## Code
@@ -93,15 +99,20 @@ Limites connues :
   table `ec_config`.
 - `src/App.jsx` : état et lecture après le contingentement, pastille dans les 4 vues, encart et alerte du panier, bouton
   d'envoi ; aucune zone protégée touchée. `src/AdminPanel.jsx` : champs, contrôle, quantités commandées.
-- Bundle des pharmacies : 512 861 octets (budget 513 000) ; règles, pastille et encarts hors du bundle (2,9 et 3 ko à la
-  demande).
+- Bundle des pharmacies : 512 983 octets (budget 513 000, marge 17) ; règles, pastille et encarts hors du bundle (2,9 et 3,1 ko
+  à la demande).
 
 ## Vérifications
 
 - `node scripts/test-api-commandes.mjs` (§ 12 bis) : produit limité refusé par l'API, « quantité limitée ».
-- `node scripts/test-limites-promo.mjs` (73 contrôles, produits FICTIFS) : règles, textes, lecture des commandes (filtre exact,
-  pages, cache), contrôle, fonction `promo-limites` (jeton, compte, saisie, admin), `order-save` (400 rien d'écrit, dans la
-  limite, renvoi du même numéro, saisie Elixir, 503, `{ verifier }`), branchement du site et de l'admin.
+- `node scripts/test-limites-promo.mjs` (99 contrôles, produits FICTIFS ; chaque correctif des deux revues vérifié par mutation) :
+  règles (une par produit de menu pour un CIP présent dans deux menus), textes, lecture des commandes (filtre exact, pages,
+  colonnes demandées seulement, cache fusionné avec les commandes relues de la pharmacie, commande retirée oubliée,
+  `{ frais }`, `{ sauf }`, quarantaine non comptée, ligne retirée seulement si handled_at et api_motif, fiche sans CIP : toutes
+  ses adresses), contrôle, fonction `promo-limites` (jeton, compte, saisie, admin, max de la règle qui bloque), `order-save`
+  (400 rien d'écrit, dans la limite, renvoi du même numéro, saisie Elixir, quarantaine, envois simultanés, commande écrite
+  entre-temps → retirée (3e essai) 400, retrait impossible → gardée 200, contrôle illisible avant (503) ou après l'écriture,
+  `{ verifier }`), branchement du site et de l'admin.
 - Banc local (`npm run dev`) avec un menu promo fictif dans `dev-fixtures/get/config-get__key=admin_promos.json` et un état
   dans `dev-fixtures/post/promo-limites.json` : pastilles, panier bloqué, « Ramener à », formulaire de l'admin et refus d'une
   valeur invalide vérifiés à l'écran.

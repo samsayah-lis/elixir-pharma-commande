@@ -8,14 +8,14 @@
 //     textes ;
 //  2. serveur (_promo-limites.js, sb simulé) : limites en texte, commandes de la pharmacie (CIP, adresse exacte, jamais ilike ;
 //     fiche sans CIP : toutes ses adresses) ou de toutes (max total), pages de 1 000, cache (celles de la pharmacie toujours
-//     relues), contrôle d'une commande (rien de limité : aucune lecture des commandes ; limites illisibles : non contrôlée ;
-//     commandes illisibles : exception) ;
-//  3. fonction promo-limites : jeton exigé, compte sans pharmacie, pharmacie (reste), saisie Elixir, admin (totaux par menu),
-//     refus admin, { frais } sans le cache ;
+//     relues, une commande retirée oubliée), colonnes demandées seulement (source), contrôle d'une commande (rien de limité :
+//     aucune lecture des commandes ; limites illisibles : non contrôlée ; commandes illisibles : exception) ;
+//  3. fonction promo-limites : jeton exigé, compte sans pharmacie, pharmacie (reste, max de la règle qui bloque), saisie Elixir,
+//     admin (totaux par produit de menu), refus admin, { frais } sans le cache, { sauf } (ses commandes pas encore confirmées) ;
 //  4. order-save : au-delà → 400 et rien d'écrit ; même numéro renvoyé non compté contre lui-même ; dans la limite → enregistrée ;
 //     saisie Elixir ; quarantaine non comptée ; api_motif seul compté ; envois simultanés (nouveau contrôle après l'écriture,
-//     commande retirée) ; commandes illisibles avant (503 rien d'écrit) ou après l'écriture (retirée, 503) ; retrait impossible
-//     (503, le renvoi retrouve la commande) ; { verifier } sans lecture ;
+//     commande retirée, retrait réessayé) ; commandes illisibles avant (503 rien d'écrit) ou après l'écriture (retirée, 503) ;
+//     retrait impossible (commande gardée, suite normale : 200, notification) ; { verifier } sans lecture ;
 //  5. site et admin : branchement dans src/App.jsx et src/AdminPanel.jsx.
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-de-test";
@@ -47,7 +47,7 @@ const L = R.limitesActives(PROMOS);
 eq("menus actifs, CIP requis, produit sans limite ignoré", Object.keys(L).sort(), [A, B]);
 eq("CIP limité dans deux menus actifs : plus basses limites (affichage), début le plus ancien (lecture)", [L[A].parPharmacie, L[A].total, L[A].depuis], [5, 50, T0]);
 eq("CIP limité dans deux menus actifs : une règle par menu, chacune depuis l'ajout à SON menu", L[A].regles,
-  [{ menu: "Précommande FICTIVE", parPharmacie: 5, total: null, depuis: T0 }, { menu: "Autre menu", parPharmacie: 8, total: 50, depuis: T0 + 5000 }]);
+  [{ menu: "Précommande FICTIVE", cle: `${T0 - 864e5}:${T0}`, parPharmacie: 5, total: null, depuis: T0 }, { menu: "Autre menu", cle: `${T0}:${T0 + 5000}`, parPharmacie: 8, total: 50, depuis: T0 + 5000 }]);
 eq("limites de B", [L[B].parPharmacie, L[B].total, L[B].nom, L[B].menu, L[B].regles.length], [4, 10, "PRODUIT B (fictif)", "Précommande FICTIVE", 1]);
 eq("début : date d'ajout du produit, sinon du menu", [R.depuisProduit({ id: T0 }, { id: T0 + 1 }), R.depuisProduit({ id: T0 }, { id: 7 }), R.depuisProduit({}, {})], [T0 + 1, T0, 0]);
 eq("entrée vide ou invalide", [R.limitesActives(null), R.limitesActives("x")], [{}, {}]);
@@ -66,6 +66,7 @@ const mienne = (o) => o.pharmacy_cip === "2000001" || String(o.pharmacy_email).t
 const D = R.quantitesCommandees(CMDS, L, mienne);
 eq("déjà commandé : depuis l'ajout, ligne retirée par l'API exclue, items en texte, commande sans CIP par l'adresse", D, { [A]: { pharmacie: 3, total: 3 }, [B]: { pharmacie: 3, total: 8 } });
 eq("numéro ignoré (renvoi après réponse perdue)", R.quantitesCommandees(CMDS, L, mienne, 2)[A], { pharmacie: 1, total: 1 });
+eq("numéros ignorés (liste)", R.quantitesCommandees(CMDS, L, mienne, [2, 5])[A], { pharmacie: 0, total: 0 });
 eq("totaux seuls", R.quantitesCommandees(CMDS, L)[B], { pharmacie: 0, total: 8 });
 const PIEGES = [
   { id: 8, date: iso(T0 + 300e3), source: "a_verifier", pharmacy_cip: null, pharmacy_email: null, items: [{ cip: B, qty: 100000 }] },   // quarantaine
@@ -90,8 +91,9 @@ const LX = R.limitesActives([
 const CX = [{ id: 20, date: iso(AUTOMNE + 864e5), ...MOI, items: [{ cip: X, qty: 6 }] }, { id: 21, date: iso(AUTOMNE + 2 * 864e5), ...AUTRE, items: [{ cip: X, qty: 300 }] }];
 const EX = R.etatLimite(CX, LX[X], mienne);
 eq("deux menus : chaque règle depuis SON menu, la plus restrictive (automne : 10 − 6 = 4 ; hiver : 6, rien depuis)", choisir(EX, ["reste", "motif", "deja", "parPharmacie", "parMenu"]),
-  { reste: 4, motif: "pharmacie", deja: 6, parPharmacie: 10, parMenu: { "Promo automne": 306, "Précommande hiver": 0 } });
-eq("deux menus : totaux seuls (admin)", R.etatLimite(CX, LX[X]).parMenu, { "Promo automne": 306, "Précommande hiver": 0 });
+  { reste: 4, motif: "pharmacie", deja: 6, parPharmacie: 10, parMenu: { [`${AUTOMNE}:${AUTOMNE}`]: 306, [`${T0}:${T0}`]: 0 } });
+eq("deux menus : totaux seuls (admin), par produit de menu (deux menus du même nom restent distincts)", R.etatLimite(CX, LX[X]).parMenu, { [`${AUTOMNE}:${AUTOMNE}`]: 306, [`${T0}:${T0}`]: 0 });
+eq("deux menus : la pastille cite le max de la règle qui bloque une fois lue", R.pastilleLimite(LX[X], EX, 0).regle, "10 max par pharmacie");
 
 const ETAT = { [A]: R.etatLimite(CMDS, L[A], mienne), [B]: R.etatLimite(CMDS, L[B], mienne) };
 eq("état de A : règle du menu FICTIVE (5 par pharmacie) plus restrictive que l'autre (8)", choisir(ETAT[A], ["reste", "motif", "deja", "parPharmacie"]), { reste: 2, motif: "pharmacie", deja: 3, parPharmacie: 5 });
@@ -158,7 +160,8 @@ const sbFaux = async (path, { range } = {}) => {
     if (panneApres != null && panneApres-- <= 0) throw new Error("Supabase en panne");
     if (commandesEnPanne) throw new Error("Supabase en panne");
     const rows = filtrer(path), [de, a] = (range || "0-999").split("-").map(Number);
-    return rows.slice(de, a + 1);
+    const cols = new URL(`https://x/${path}`).searchParams.get("select")?.split(",");   // colonnes demandées seulement, comme PostgREST
+    return rows.slice(de, a + 1).map(o => cols ? Object.fromEntries(cols.map(c => [c, o[c]])) : o);
   }
   if (path.startsWith("elixir_pharmacies")) return pharmacies(path);
   throw new Error(`lecture inattendue : ${path}`);
@@ -201,6 +204,11 @@ const EC = await S.etatLimites({ sb: sbFaux, limites: L10, ph: PH, cacheMs: 60e3
 eq("cache 60 s : toutes les commandes lues une fois (3 pages), celles de la pharmacie relues à chaque fois", [commandesLues(false), commandesLues(true)], [3, 2]);
 eq("cache 60 s : la commande que la pharmacie vient d'envoyer comptée, celle d'une autre pas encore", [EC[B].deja, EC[B].dejaTotal], [2, 2347]);
 eq("sans le cache : celle de l'autre pharmacie aussi", (await S.etatLimites({ sb: sbFaux, limites: L10, ph: PH }))[B].dejaTotal, 2354);
+// cache rempli pendant que la commande 9000 existe (autre entrée : début différent), puis 9000 retirée (admin, contrôle après écriture)
+const L11 = { [B]: { ...L[B], depuis: T0 - 1800e3, regles: [{ ...L[B].regles[0], depuis: T0 - 1800e3 }] } };
+const avantRetrait = (await S.etatLimites({ sb: sbFaux, limites: L11, ph: PH, cacheMs: 60e3 }))[B].deja;
+BASE.commandes = BASE.commandes.filter(o => o.id !== 9000);
+eq("cache 60 s : une commande de la pharmacie retirée depuis n'est plus comptée pour elle", [avantRetrait, (await S.etatLimites({ sb: sbFaux, limites: L11, ph: PH, cacheMs: 60e3 }))[B].deja], [2, 0]);
 BASE.commandes = [...CMDS];
 
 lectures = [];
@@ -227,7 +235,7 @@ commandesEnPanne = false;
 const JETONS = { "jeton-a": { id: "u-a", email: "compte@pharmacie-a.test" }, "jeton-sans-fiche": { id: "u-s", email: "sans-fiche@pharmacie.test" },
   "jeton-n": { id: "u-n", email: "neuve@pharmacie.test" }, "jeton-r": { id: "u-r", email: "rapide@pharmacie.test" },
   "jeton-admin": { id: "u-admin", email: "equipe@elixir.test", app_metadata: { role: "admin" } } };
-let ecrites = [], retraitEnPanne = false;
+let ecrites = [], retraitEnPanne = 0, simultanee = null, envois = [];   // retraitEnPanne : nombre de retraits refusés
 globalThis.fetch = async (url, opts = {}) => {
   url = String(url);
   const rep = (corps, status = 200, headers = {}) => new Response(status === 204 ? null : corps == null ? "" : JSON.stringify(corps), { status, headers });
@@ -239,16 +247,18 @@ globalThis.fetch = async (url, opts = {}) => {
     const path = url.slice("https://supabase.test/rest/v1/".length), methode = opts.method || "GET";
     await new Promise(r => setTimeout(r, 1));   // une vraie attente réseau : deux envois simultanés s'entrelacent
     if (methode === "POST") {
+      envois.push(path.split("?")[0]);
       if (path.startsWith("elixir_orders")) {
         const row = JSON.parse(opts.body);
         if (BASE.commandes.some(o => o.id === row.id)) return rep({ code: "23505", message: "duplicate key" }, 409);
         ecrites.push(row); BASE.commandes.push(row);
+        if (simultanee) { BASE.commandes.push(simultanee); simultanee = null; }   // une autre commande écrite pendant celle-ci
         return rep(null, 201);
       }
       return rep(null, 201);   // notifications, décompte du stock
     }
     if (methode === "DELETE" && path.startsWith("elixir_orders?id=eq.")) {
-      if (retraitEnPanne) return rep({ message: "Supabase en panne" }, 503);
+      if (retraitEnPanne > 0) { retraitEnPanne--; return rep({ message: "Supabase en panne" }, 503); }
       const id = path.slice("elixir_orders?id=eq.".length);
       BASE.commandes = BASE.commandes.filter(o => String(o.id) !== id); ecrites = ecrites.filter(o => String(o.id) !== id);
       return rep(null, 204);
@@ -265,10 +275,26 @@ const { handler: limites } = await import("../netlify/functions/promo-limites.js
 eq("promo-limites : sans jeton → 401", (await lire(await limites(evt({}, null)))).status, 401);
 eq("promo-limites : compte sans pharmacie → 403", (await lire(await limites(evt({}, "jeton-sans-fiche")))).status, 403);
 const rp = await lire(await limites(evt({ cip: "9999999", email: "autre@x.fr" }, "jeton-a")));
-eq("promo-limites : pharmacie (corps ignoré) → reste, rien sur les autres pharmacies", rp, { status: 200, corps: { limites: { [A]: { reste: 2, motif: "pharmacie", deja: 3 }, [B]: { reste: 1, motif: "pharmacie", deja: 3 } } } });
-eq("promo-limites : saisie Elixir → pharmacie servie (déjà au-delà : 5 pour 4)", (await lire(await limites(evt({ cip: "2000002", email: "autre@pharmacie-b.test" }, "jeton-admin")))).corps.limites[B], { reste: 0, motif: "pharmacie", deja: 5 });
-eq("promo-limites : admin → totaux, par menu", (await lire(await limites(evt({ admin: true }, "jeton-admin")))).corps.limites[A],
-  { nom: "PRODUIT A (fictif)", menu: "Précommande FICTIVE", parPharmacie: 5, total: 50, dejaTotal: 3, parMenu: { "Précommande FICTIVE": 3, "Autre menu": 3 } });
+eq("promo-limites : pharmacie (corps ignoré) → reste, rien sur les autres pharmacies", rp,
+  { status: 200, corps: { limites: { [A]: { reste: 2, motif: "pharmacie", deja: 3, parPharmacie: 5 }, [B]: { reste: 1, motif: "pharmacie", deja: 3, parPharmacie: 4 } } } });
+eq("promo-limites : saisie Elixir → pharmacie servie (déjà au-delà : 5 pour 4)", (await lire(await limites(evt({ cip: "2000002", email: "autre@pharmacie-b.test" }, "jeton-admin")))).corps.limites[B], { reste: 0, motif: "pharmacie", deja: 5, parPharmacie: 4 });
+eq("promo-limites : admin → totaux, par produit de menu", (await lire(await limites(evt({ admin: true }, "jeton-admin")))).corps.limites[A],
+  { nom: "PRODUIT A (fictif)", menu: "Précommande FICTIVE", parPharmacie: 5, total: 50, dejaTotal: 3, parMenu: { [`${T0 - 864e5}:${T0}`]: 3, [`${T0}:${T0 + 5000}`]: 3 } });
+// { sauf } : ses commandes pas encore confirmées (réponse perdue) ne comptent pas pour elle ; celles d'une autre pharmacie, si
+BASE.commandes.push({ id: 7, date: iso(T0 + 300e3), ...MOI, source: "catalogue", items: [{ cip: A, qty: 2 }] });
+eq("promo-limites : { sauf } → sa commande en attente de confirmation ignorée, celle d'une autre pharmacie non",
+  [(await lire(await limites(evt({ frais: true }, "jeton-a")))).corps.limites[A].deja, (await lire(await limites(evt({ frais: true, sauf: [7, 4] }, "jeton-a")))).corps.limites[A].deja,
+    (await lire(await limites(evt({ frais: true, sauf: [4] }, "jeton-a")))).corps.limites[B].reste], [5, 3, 1]);
+BASE.commandes = [...CMDS];
+// un même CIP dans deux menus : le site (réponse de la pharmacie) cite le max de la règle qui bloque, comme order-save
+BASE.promos = JSON.stringify([
+  { id: AUTOMNE, name: "Promo automne", active: true, products: [{ id: AUTOMNE, name: "X automne", cip: X, pn: 1, maxPharmacie: 10 }] },
+  { id: T0, name: "Précommande hiver", active: true, products: [{ id: T0, name: "X hiver", cip: X, pn: 1, maxPharmacie: 6, maxTotal: 300 }] }]);
+BASE.commandes = [...CX];
+const vueSite = (await lire(await limites(evt({ frais: true }, "jeton-a")))).corps.limites;
+eq("promo-limites : deux menus, message du panier avec le max de la règle qui bloque (10, pas 6)",
+  R.depassementsLimites([{ cip: X, qty: 5 }], LX, vueSite).over.map(R.messageDepassement), ["X automne : 10 au plus par pharmacie pour cette offre (déjà commandé : 6), encore 4 possibles"]);
+BASE.promos = JSON.stringify(PROMOS); BASE.commandes = [...CMDS];
 eq("promo-limites : totaux refusés à une pharmacie", (await lire(await limites(evt({ admin: true }, "jeton-a")))).status, 403);
 BASE.commandes.push({ id: 40, date: iso(T0 + 500e3), ...AUTRE, items: [{ cip: B, qty: 1 }] });   // autre pharmacie, après la mise en cache
 eq("promo-limites : { frais } relit sans le cache (commande d'une autre pharmacie comptée)",
@@ -314,6 +340,18 @@ const [s1, s2] = await Promise.all([envoyer(commande(1790000000010, [{ cip: A, q
 eq("order-save : envois simultanés → au plus 5 gardées, refus 400 avec le motif", [deA("2000010") <= 5, [s1.status, s2.status].includes(400),
   [s1, s2].filter(x => x.status === 400).every(x => /5 au plus par pharmacie/.test(x.corps.error))], [true, true, true]);
 BASE.commandes = [...CMDS];
+// nouveau contrôle après l'écriture : une commande d'une autre pharmacie écrite entre-temps (B : total 8 + 2 = 10) → refus, retrait
+// (réessayé : deux échecs puis succès)
+ecrites = []; simultanee = { id: 50, date: new Date().toISOString(), ...AUTRE, items: [{ cip: B, qty: 2 }] }; retraitEnPanne = 2;
+r = await envoyer(commande(1790000000012, [{ cip: B, qty: 2 }]), "jeton-n");
+eq("order-save : dépassé à cause d'une commande écrite entre-temps → retirée (3e essai), 400", [r.status, /plus rien de disponible/.test(r.corps.error), BASE.commandes.some(o => o.id === 1790000000012), ecrites.length], [400, true, false, 0]);
+BASE.commandes = [...CMDS];
+ecrites = []; envois = []; simultanee = { id: 51, date: new Date().toISOString(), ...AUTRE, items: [{ cip: B, qty: 2 }] }; retraitEnPanne = 99;
+r = await envoyer(commande(1790000000013, [{ cip: B, qty: 2 }]), "jeton-n");
+retraitEnPanne = 0;
+eq("order-save : retrait impossible → commande gardée, suite normale (200, notification, stock)", [r.status, r.corps.success, BASE.commandes.some(o => o.id === 1790000000013),
+  envois.includes("ec_notifications"), envois.includes("rpc/decrement_stock")], [200, true, true, true, true]);
+BASE.commandes = [...CMDS];
 ecrites = [];
 commandesEnPanne = true;
 r = await envoyer(commande(1790000000020, [{ cip: A, qty: 1 }]), "jeton-a");
@@ -322,11 +360,12 @@ commandesEnPanne = false;
 panneApres = 1;   // contrôle avant l'écriture lu, nouveau contrôle illisible
 r = await envoyer(commande(1790000000021, [{ cip: A, qty: 1 }]), "jeton-a");
 eq("order-save : nouveau contrôle illisible → commande retirée, 503", [r.status, ecrites.length, BASE.commandes.some(o => o.id === 1790000000021)], [503, 0, false]);
-panneApres = 1; retraitEnPanne = true;
+panneApres = 1; retraitEnPanne = 99; envois = [];
 r = await envoyer(commande(1790000000022, [{ cip: A, qty: 1 }]), "jeton-a");
-panneApres = null; retraitEnPanne = false;
+panneApres = null; retraitEnPanne = 0;
 const renvoi = await envoyer(commande(1790000000022, [{ cip: A, qty: 1 }]), "jeton-a");
-eq("order-save : retrait impossible → 503, le renvoi du même numéro retrouve la commande ({ deja })", [r.status, renvoi.status, renvoi.corps.deja, ecrites.length], [503, 200, true, 1]);
+eq("order-save : contrôle illisible et retrait impossible → gardée (200, notifiée), le renvoi du même numéro la retrouve ({ deja })",
+  [r.status, envois.includes("ec_notifications"), renvoi.status, renvoi.corps.deja, ecrites.length], [200, true, 200, true, 1]);
 BASE.commandes = [...CMDS];
 lectures = []; ecrites = [];
 r = await envoyer({ verifier: true }, "jeton-a");
@@ -339,13 +378,14 @@ vrai("site : envoi bloqué au-delà", /disabled=\{[^}]*limitesCheck\.over\.lengt
 eq("site : pastille dans les 4 vues (recherche, cartes, liste mobile, tableau)", (app.match(/limiteLigne\(p\.cip/g) || []).length, 4);
 vrai("site : résultats de recherche lus aussi", /limitesEnVue = useMemo\([\s\S]{0,400}globalResults\.some\(p => limitesPromo\[p\.cip\]\)/.test(app));
 vrai("site : encart et alerte du panier", app.includes("<modLimites.EncartLimite") && app.includes("<modLimites.AlerteLimites"));
-vrai("site : lecture par promo-limites, { frais } sans le cache", app.includes('"/.netlify/functions/promo-limites"') && app.includes('frais: force === "frais"'));
+vrai("site : lecture par promo-limites, { frais } sans le cache, { sauf } numéros pas encore confirmés", app.includes('"/.netlify/functions/promo-limites"') && app.includes('frais: force === "frais"')
+  && app.includes("sauf: Object.values(idsEnvoi.current)"));
 vrai("site : nouvel essai 30 s après un échec", app.includes("setTimeout(() => setEssaiLimites(n => n + 1), 30e3)") && /\[limitesEnVue, lireLimitesPromo, essaiLimites\]/.test(app));
 vrai("site : commande envoyée → chiffres cachés, relus une fois le panier vidé ou après un refus",
   app.includes('if (sendStatus === "success") { limitesLues.current = {}; setLimitesEtat(null); }')
-  && app.includes('else if (!sendStatus && avant && limitesEnVue) lireLimitesPromo("frais");'));
+  && app.includes('else if (!sendStatus && avant && !envoiBloque && limitesEnVue) lireLimitesPromo("frais");'));
 vrai("admin : champs et contrôle", adm.includes("maxPharmacie, maxTotal }") && adm.includes("Max total (toutes pharmacies)") && adm.includes("CIP requis"));
-vrai("admin : quantités lues après la publication, par menu", adm.includes("await fileConfig.current.admin_promos;") && adm.includes("lu?.parMenu?.[ps.name] ?? lu?.dejaTotal"));
+vrai("admin : quantités lues après la publication, par produit de menu", adm.includes("await fileConfig.current.admin_promos;") && adm.includes("lu?.parMenu?.[`${ps.id}:${prod.id}`] ?? lu?.dejaTotal"));
 const fictives = readFileSync(new URL("../src/dev/reponses-fictives.js", import.meta.url), "utf8");
 vrai("aperçus (essai à blanc) : réponse neutre", fictives.includes('case "promo-limites":'));
 

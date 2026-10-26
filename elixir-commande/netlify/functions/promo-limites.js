@@ -1,11 +1,15 @@
 // ── Limites de quantité des menus promo et des précommandes (26/10/2026, docs/limites-promo.md) ──
 // POST + jeton, lecture seule :
-//  • pharmacie : {} → { limites: { <CIP>: { reste, motif, deja } } } — ce qu'elle peut encore commander (compte de l'e-mail
-//    VÉRIFIÉ du jeton : CIP de la fiche et adresse ; le corps est ignoré) ; deja : ce qu'elle a déjà commandé ;
+//  • pharmacie : {} → { limites: { <CIP>: { reste, motif, deja, parPharmacie } } } — ce qu'elle peut encore commander (compte de
+//    l'e-mail VÉRIFIÉ du jeton : CIP de la fiche et adresse ; cip et email du corps ignorés) ; deja : ce qu'elle a déjà commandé ;
+//    parPharmacie : le max de la règle qui bloque ;
 //  • admin en saisie pour une pharmacie : { cip, email } → idem pour cette pharmacie ;
 //  • admin, onglet Promos : { admin: true } → { limites: { <CIP>: { nom, menu, parPharmacie, total, dejaTotal, parMenu } } }
-//    (parMenu : déjà commandé selon chaque menu actif où le CIP est limité, compté depuis l'ajout du produit à ce menu).
-// { frais: true } (site : juste après un envoi ou un refus d'order-save) : commandes relues sans le cache.
+//    (parMenu : déjà commandé selon chaque menu actif où le CIP est limité, clé « <id du menu>:<id du produit> », compté depuis
+//    l'ajout du produit à ce menu).
+// { frais: true } (site : juste après un envoi ou un refus d'order-save) : commandes relues sans le cache. { sauf: [numéros] } :
+// commandes du site pas encore confirmées (réponse perdue : le renvoi du même numéro ne doit pas être bloqué par elles) — les
+// seules de la pharmacie, 20 au plus.
 // Produits limités des menus actifs seulement ; aucun : { limites: {} } sans autre lecture. Commandes de toutes les pharmacies
 // gardées 60 s par instance (max total) ; celles de la pharmacie toujours relues. Sans jeton valide : 401 ; compte sans pharmacie : 403 ; Supabase Auth en panne : 503 ;
 // autre panne : 502 (le panier contrôle alors avec les limites seules, order-save avec les chiffres du moment).
@@ -38,11 +42,12 @@ export const handler = async (event) => {
     }
     const limites = await lireLimites(sb);
     if (!Object.keys(limites).length) return json(cors, 200, { limites: {} });
-    const etat = await etatLimites({ sb, limites, ph, cacheMs: b.frais === true ? 0 : 60e3 });
+    const sauf = ph && Array.isArray(b.sauf) ? b.sauf.map(String).filter(x => /^\d{1,20}$/.test(x)).slice(0, 20) : null;
+    const etat = await etatLimites({ sb, limites, ph, sauf, cacheMs: b.frais === true ? 0 : 60e3 });
     const out = {};
     for (const [cip, e] of Object.entries(etat)) {
       const l = limites[cip];
-      out[cip] = ph ? { reste: e.reste, motif: e.motif, deja: e.deja }
+      out[cip] = ph ? { reste: e.reste, motif: e.motif, deja: e.deja, parPharmacie: e.parPharmacie }
         : { nom: l.nom, menu: l.menu, parPharmacie: l.parPharmacie, total: l.total, dejaTotal: e.dejaTotal, parMenu: e.parMenu };
     }
     return json(cors, 200, { limites: out });

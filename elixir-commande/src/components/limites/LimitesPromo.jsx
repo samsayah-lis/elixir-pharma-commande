@@ -44,7 +44,7 @@ export function EncartLimite({ l, e, o, item, onQte }) {
     <div style={encart(o ? "danger" : e?.reste === 0 ? "warn" : "info")}>
       <div style={ligne}>
         <Icone nom="cadenas" taille={14} style={{ marginTop: 2 }} />
-        <span>Quantité limitée : <strong>{l.parPharmacie ? `${l.parPharmacie} par pharmacie` : "offre en quantité limitée"}</strong>
+        <span>Quantité limitée : <strong>{(e?.parPharmacie ?? l.parPharmacie) ? `${e?.parPharmacie ?? l.parPharmacie} par pharmacie` : "offre en quantité limitée"}</strong>
           {e?.deja > 0 ? ` · déjà commandé ${e.deja}` : ""}{e ? <> · {e.motif === "total" ? "disponible" : "reste"} <strong>{e.reste}</strong></> : null}</span>
       </div>
       {o && (
