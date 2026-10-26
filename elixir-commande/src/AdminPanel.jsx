@@ -628,12 +628,14 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const removeProductFromPromo = (promoId, prodId) => savePromos(promos.map(p => p.id===promoId ? {...p, products:(p.products||[]).filter(pr=>pr.id!==prodId)} : p));
   const updatePromoField = (id, field, val) => savePromos(promos.map(p => p.id===id ? {...p, [field]:val} : p));
   // Quantités déjà commandées des produits limités (menus actifs) : à l'ouverture de l'onglet Promos, puis 1,5 s après chaque
-  // changement (le serveur lit la version publiée)
+  // changement, une fois la publication en cours terminée (le serveur lit la version publiée)
   useEffect(() => {
     if (tab !== "promos" || !promos.some(ps => ps.active && (ps.products || []).some(pr => pr.maxPharmacie || pr.maxTotal))) return;
     let fini = false;
     const t = setTimeout(async () => {
       try {
+        await fileConfig.current.admin_promos;   // publication en cours (ne rejette jamais)
+        if (fini) return;
         const r = await adminFetch("/.netlify/functions/promo-limites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: true }) });
         const j = r.ok ? await r.json() : null;
         if (!fini && j) setLimitesCommandees(j.limites || {});
@@ -1399,13 +1401,14 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                           {prod.cip&&<span style={{marginLeft:8}}><CipCopy cip={prod.cip}/></span>}
                           {prod.note&&<span style={{fontSize:11,color:T.warn,marginLeft:6,background:T.warnBg,borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
                           {(prod.maxPharmacie || prod.maxTotal) && (() => {
-                            // limites (docs/limites-promo.md) et quantité déjà commandée (menus actifs : lue par promo-limites)
-                            const lu = ps.active && Number.isFinite(limitesCommandees?.[prod.cip]?.dejaTotal) ? limitesCommandees[prod.cip] : null;
-                            const plein = lu && prod.maxTotal && lu.dejaTotal >= prod.maxTotal;
+                            // limites (docs/limites-promo.md) et quantité déjà commandée (menus actifs : lue par promo-limites), comptée
+                            // depuis l'ajout du produit à CE menu (parMenu : un même CIP limité dans deux menus)
+                            const lu = ps.active ? limitesCommandees?.[prod.cip] : null, n = lu?.parMenu?.[ps.name] ?? lu?.dejaTotal;
+                            const vu = Number.isFinite(n) ? n : null, plein = vu != null && prod.maxTotal && vu >= prod.maxTotal;
                             return (
                               <span title="Limites de quantité : toutes commandes additionnées depuis l'ajout du produit au menu" style={{fontSize:11,marginLeft:6,borderRadius:4,padding:"1px 5px",background:plein?T.dangerBg:T.surface2,color:plein?T.danger:T.inkSoft,fontWeight:600}}>
                                 🔒 {[prod.maxPharmacie && `max ${prod.maxPharmacie}/pharmacie`, prod.maxTotal && `${prod.maxTotal} au total`].filter(Boolean).join(" · ")}
-                                {lu ? ` · commandé : ${lu.dejaTotal}${prod.maxTotal ? `/${prod.maxTotal}` : ""}` : ""}
+                                {vu != null ? ` · commandé : ${vu}${prod.maxTotal ? `/${prod.maxTotal}` : ""}` : ""}
                               </span>
                             );
                           })()}

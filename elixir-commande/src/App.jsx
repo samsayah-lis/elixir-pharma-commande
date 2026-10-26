@@ -1417,36 +1417,46 @@ export default function App() {
   // ── Limites de quantité des menus promo et précommandes (26/10/2026, docs/limites-promo.md) ──
   // Module chargé dès qu'un menu actif a un produit limité (échec : rien, order-save contrôle quand même).
   // Limites des menus actifs (admin_promos, déjà chargé) ; ce que la pharmacie affichée peut encore commander, lu par promo-limites
-  // (ses commandes et, pour un max total, celles de toutes les pharmacies) : à l'affichage d'un menu ou d'un panier qui contient un
-  // produit limité (au plus une fois par minute ; échec : nouvel essai 30 s plus tard), à l'ouverture du panier et juste après un
-  // envoi. Sans réponse : les limites seules (au-delà, refusé quoi qu'il soit déjà commandé). Le panier refuse l'envoi au-delà ;
-  // order-save aussi (400, rien d'écrit), avec les chiffres du moment.
-  const avecLimites = useMemo(() => promoSections.some(ps => ps.active && (ps.products || []).some(p => p.maxPharmacie || p.maxTotal)), [promoSections]);
+  // (ses commandes et, pour un max total, celles de toutes les pharmacies) : à l'affichage d'un menu, de résultats de recherche ou
+  // d'un panier qui contient un produit limité (au plus une fois par minute ; échec : nouvel essai 30 s plus tard), à l'ouverture
+  // du panier ; après un envoi, une fois le panier vidé, et après un envoi refusé, sans le cache du serveur. Sans réponse : les
+  // limites seules (au-delà, refusé quoi qu'il soit déjà commandé). Le panier refuse l'envoi au-delà ; order-save aussi (400, rien
+  // d'écrit), avec les chiffres du moment.
   const [modLimites, setModLimites] = useState(null);
-  useEffect(() => { if (avecLimites && !modLimites) chargerLimites().then(setModLimites, () => {}); }, [avecLimites, modLimites]);
+  useEffect(() => {
+    if (!modLimites && promoSections.some(ps => ps.active && (ps.products || []).some(p => p.maxPharmacie || p.maxTotal))) chargerLimites().then(setModLimites, () => {});
+  }, [promoSections, modLimites]);
   const limitesPromo = useMemo(() => modLimites ? modLimites.limitesActives(promoSections) : {}, [modLimites, promoSections]);
   const sigLimites = useMemo(() => JSON.stringify(limitesPromo), [limitesPromo]);
   const [limitesEtat, setLimitesEtat] = useState(null);   // { cle, limites: { <CIP>: { reste, motif, deja } } }
   const cleLimites = `${cleQuota}|${sigLimites}`, limitesLues = useRef({});   // dernière lecture demandée : { cle, at }
+  const [essaiLimites, setEssaiLimites] = useState(0);   // nouvel essai après un échec
+  // force : true (sans attendre la minute), "frais" (et sans le cache du serveur)
   const lireLimitesPromo = useCallback(async (force) => {
     const lu = limitesLues.current;
     if (!identifie || sigLimites === "{}" || (!force && lu.cle === cleLimites && Date.now() - lu.at < 60e3)) return;
     const moi = limitesLues.current = { cle: cleLimites, at: Date.now() };
-    const r = await appelAuthentifie("/.netlify/functions/promo-limites", { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(actingFor ? { cip: pharmacyCip, email: pharmacyEmail } : {}), ...delai(12000) }).catch(() => null);
+    const r = await appelAuthentifie("/.netlify/functions/promo-limites", { method: "POST",   // corps JSON lu tel quel par la fonction
+      body: JSON.stringify({ ...(actingFor && { cip: pharmacyCip, email: pharmacyEmail }), frais: force === "frais" }), ...delai(12000) }).catch(() => null);
     const j = r?.ok ? await r.json().catch(() => null) : null;
     // réponse de la dernière lecture demandée seulement (autre pharmacie en saisie Elixir, envoi entre-temps : ignorée)
-    if (!j) moi.at -= 30e3;
+    if (!j) { moi.at -= 30e3; setTimeout(() => setEssaiLimites(n => n + 1), 30e3); }
     else if (limitesLues.current === moi) setLimitesEtat({ cle: moi.cle, limites: j.limites || {} });
   }, [identifie, sigLimites, cleLimites, appelAuthentifie, actingFor, pharmacyCip, pharmacyEmail]);
-  const limitesEnVue = useMemo(() => sigLimites !== "{}" && (cartItems.some(i => limitesPromo[i.cip])
-    || (CATALOG_WITH_ADMIN[activeTab]?.products || []).some(p => limitesPromo[p.cip])), [sigLimites, limitesPromo, cartItems, CATALOG_WITH_ADMIN, activeTab]);
-  useEffect(() => { if (limitesEnVue) lireLimitesPromo(); }, [limitesEnVue, lireLimitesPromo]);
+  const limitesEnVue = useMemo(() => cartItems.some(i => limitesPromo[i.cip])
+    || (CATALOG_WITH_ADMIN[activeTab]?.products || []).some(p => limitesPromo[p.cip]) || globalResults.some(p => limitesPromo[p.cip]),
+  [limitesPromo, cartItems, CATALOG_WITH_ADMIN, activeTab, globalResults]);
+  useEffect(() => { if (limitesEnVue) lireLimitesPromo(); }, [limitesEnVue, lireLimitesPromo, essaiLimites]);
   useEffect(() => { if (cartOpen && limitesEnVue) lireLimitesPromo(true); }, [cartOpen]);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {   // commande enregistrée : chiffres d'avant l'envoi oubliés, relus
-    if (sendStatus !== "success") return;
-    limitesLues.current = {}; setLimitesEtat(null);
-    if (limitesEnVue) lireLimitesPromo(true);
+  const envoiPrecedent = useRef(sendStatus);
+  useEffect(() => {
+    const avant = envoiPrecedent.current;
+    envoiPrecedent.current = sendStatus;
+    // commande enregistrée : chiffres d'avant l'envoi oubliés et cachés (le panier, vidé 3 s plus tard, contient encore la commande :
+    // relus maintenant, ils la compteraient deux fois) ; relus sans le cache une fois le panier vidé, ou après un envoi refusé
+    // (retour à null depuis « success », « sending » ou « error »)
+    if (sendStatus === "success") { limitesLues.current = {}; setLimitesEtat(null); }
+    else if (!sendStatus && avant && limitesEnVue) lireLimitesPromo("frais");
   }, [sendStatus]);   // eslint-disable-line react-hooks/exhaustive-deps
   const limitesVues = limitesEtat?.cle === cleLimites ? limitesEtat.limites : null;
   const limitesCheck = useMemo(() => modLimites ? modLimites.depassementsLimites(cartItems, limitesPromo, limitesVues) : { panier: {}, over: [] },

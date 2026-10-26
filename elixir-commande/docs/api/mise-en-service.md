@@ -383,8 +383,10 @@ sur papier existe : signature d'un PDF, puis référence saisie dans l'admin.
 1. **Articles livrés sous plusieurs références (fauteuils)** : refusés par l'API en V1 (« à commander sur le site »).
    À ouvrir si une pharmacie le demande.
 2. **Menus promo et précommandes** :
-   - aujourd'hui, ces produits se commandent par l'API **au prix de la liste**, jamais au prix du menu ;
-   - seules les campagnes (U-Labs, campagnes actives) sont refusées.
+   - aujourd'hui, ces produits se commandent par l'API **au prix de la liste**, jamais au prix du menu, sauf ceux en
+     quantité limitée d'un menu actif (max par pharmacie ou max total, docs/limites-promo.md) : refusés, « à commander sur
+     le site », qui applique la limite ;
+   - sont aussi refusées les campagnes (U-Labs, campagnes actives).
 
    À confirmer.
 3. **Catalogue.** Il ne signale pas encore les produits refusés à la commande (justificatif, campagnes, fauteuils,

@@ -178,13 +178,19 @@ export const handler = async (event) => {
 
   // Limites des menus promo et précommandes (26/10/2026, docs/limites-promo.md) : au-delà de ce que la pharmacie (ou l'ensemble
   // des pharmacies, max total) peut encore commander → 400, rien d'écrit, le site garde le panier ; le même numéro renvoyé après
-  // une réponse perdue n'est pas compté contre lui-même (sauf) ; commandes illisibles → 503 (réessayer)
+  // une réponse perdue n'est pas compté contre lui-même (sauf) ; commandes illisibles → 503 (réessayer). Contrôlée de nouveau
+  // juste après l'écriture (plus bas) quand elle contient un produit limité.
+  const phLimites = pharmacie(row.pharmacy_cip, row.pharmacy_email);
+  const refusLimites = (refus) => json(400, { success: false, error: refus.message, limites: refus.over });
+  const limitesIllisibles = () => json(503, { success: false, error: "Vérification des quantités limitées impossible : réessayez dans un instant" });
+  let avecLimite = false;
   try {
-    const refus = await controleLimites({ items: row.items, ph: pharmacie(row.pharmacy_cip, row.pharmacy_email), sauf: orderId });
-    if (refus) return json(400, { success: false, error: refus.message, limites: refus.over });
+    const c = await controleLimites({ items: row.items, ph: phLimites, sauf: orderId });
+    if (c.refus) return refusLimites(c.refus);
+    avecLimite = c.limite;
   } catch (e) {
     console.error("[order-save] limites :", e.message);
-    return json(503, { success: false, error: "Vérification des quantités limitées impossible : réessayez dans un instant" });
+    return limitesIllisibles();
   }
 
   try {
@@ -214,6 +220,20 @@ export const handler = async (event) => {
       }
       console.error("[order-save] Supabase error:", err);
       return json(500, { success: false, error: err });
+    }
+
+    // Limites : nouveau contrôle, la commande écrite (sauf : elle-même), pour compter celles parties en même temps (autre
+    // pharmacie, ou la même par des envois simultanés) : au-delà → commande retirée, 400 (illisible : retirée, 503). Retrait
+    // impossible → 503 : le même numéro renvoyé retrouve la commande ({ deja }), jamais de doublon.
+    if (avecLimite) {
+      let refus = null, illisible = false;
+      try { refus = (await controleLimites({ items: row.items, ph: phLimites, sauf: orderId })).refus; }
+      catch (e) { illisible = true; console.error("[order-save] limites après écriture :", e.message); }
+      if (refus || illisible) {
+        const retiree = await fetch(`${SUPABASE_URL}/rest/v1/elixir_orders?id=eq.${orderId}`, { method: "DELETE", headers: SB }).then(r => r.ok, () => false);
+        if (!retiree) console.error(`[order-save] limites : commande ${orderId} au-delà, retrait impossible`);
+        return refus && retiree ? refusLimites(refus) : limitesIllisibles();
+      }
     }
 
 

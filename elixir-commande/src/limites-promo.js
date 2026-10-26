@@ -3,9 +3,11 @@
 //  • maxPharmacie : boîtes qu'une pharmacie peut commander au plus, toutes ses commandes additionnées ;
 //  • maxTotal : boîtes commandées au plus par l'ensemble des pharmacies (allocation du laboratoire).
 // Menus actifs seulement. Comptées par CIP depuis l'ajout du produit au menu (son identifiant est sa date d'ajout), quel que
-// soit le menu ou le canal de la commande (site, saisie Elixir, API) ; une commande supprimée dans l'admin ne compte plus,
-// une ligne retirée par l'API (rupture, annulation : api_motif) non plus. Un CIP limité dans deux menus actifs : la plus basse
-// de chaque limite. JS pur, partagé par le site (pastille, panier), l'admin (saisie) et le serveur (_promo-limites.js).
+// soit le menu ou le canal de la commande (site, saisie Elixir, API). Ne comptent pas : une commande supprimée dans l'admin, une
+// commande non vérifiée de la quarantaine d'order-save (source « a_verifier »), une ligne retirée par l'API (rupture, annulation :
+// handled_at + api_motif, jamais envoyée). Une ligne traitée par l'admin (« Traiter sans envoi » : handled_at seul) compte.
+// Un CIP limité dans deux menus actifs : chaque menu garde sa règle, comptée depuis l'ajout du produit à CE menu ; la plus
+// restrictive l'emporte. JS pur, partagé par le site (pastille, panier), l'admin (saisie) et le serveur (_promo-limites.js).
 
 // limite saisie → entier ≥ 1, sinon null (pas de limite)
 export const entierLimite = (v) => {
@@ -19,7 +21,9 @@ const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? "s" : ""}`;
 // Début du comptage d'un produit : sa date d'ajout au menu (identifiant), sinon la création du menu
 export const depuisProduit = (promo, prod) => dateMs(prod?.id) ?? dateMs(promo?.id) ?? 0;
 
-// admin_promos → { <CIP>: { cip, nom, menu, parPharmacie, total, depuis } } (produits limités des menus actifs)
+// admin_promos → { <CIP>: { cip, nom, menu, parPharmacie, total, depuis, regles } } (produits limités des menus actifs) ;
+// regles : une par menu (menu, parPharmacie, total, depuis) ; parPharmacie, total : les plus basses (affichage, panier pas encore
+// lu) ; depuis : la plus ancienne (fenêtre de lecture des commandes)
 export function limitesActives(promos) {
   const out = {};
   for (const ps of Array.isArray(promos) ? promos : []) {
@@ -27,9 +31,9 @@ export function limitesActives(promos) {
     for (const p of Array.isArray(ps.products) ? ps.products : []) {
       const cip = String(p?.cip ?? "").trim(), parPharmacie = entierLimite(p?.maxPharmacie), total = entierLimite(p?.maxTotal);
       if (!/^\d{7,13}$/.test(cip) || (!parPharmacie && !total)) continue;
-      const l = { cip, nom: String(p.name || cip), menu: String(ps.name || ""), parPharmacie, total, depuis: depuisProduit(ps, p) };
-      const a = out[cip];
-      out[cip] = a ? { ...a, parPharmacie: minNul(a.parPharmacie, parPharmacie), total: minNul(a.total, total), depuis: Math.min(a.depuis, l.depuis) } : l;
+      const r = { menu: String(ps.name || ""), parPharmacie, total, depuis: depuisProduit(ps, p) }, a = out[cip];
+      out[cip] = a ? { ...a, parPharmacie: minNul(a.parPharmacie, parPharmacie), total: minNul(a.total, total), depuis: Math.min(a.depuis, r.depuis), regles: [...a.regles, r] }
+        : { cip, nom: String(p.name || cip), ...r, regles: [r] };
     }
   }
   return out;
@@ -49,11 +53,14 @@ export function quantitesCommandees(commandes, limites, dePharmacie = null, sauf
   const out = {};
   for (const cip of Object.keys(limites)) out[cip] = { pharmacie: 0, total: 0 };
   for (const o of commandes || []) {
-    if (!o || (sauf != null && String(o.id) === String(sauf))) continue;
+    // quarantaine d'order-save (page d'avant le correctif du 19/10, sans jeton) : données non vérifiées, comme pour le contingentement
+    if (!o || o.source === "a_verifier" || (sauf != null && String(o.id) === String(sauf))) continue;
     const t = Date.parse(o.date), mienne = !!dePharmacie?.(o);
     for (const it of lignesCommande(o.items)) {
       const l = limites[String(it?.cip ?? "")];
-      if (!l || it.api_motif || !(t >= l.depuis)) continue;
+      // ligne retirée par l'API : handled_at ET api_motif (marquerLignes), jamais envoyée ; un api_motif seul, venu de la page, ne
+      // retire rien (le relais l'enverrait)
+      if (!l || (it.api_motif && it.handled_at && !it.synced_at) || !(t >= l.depuis)) continue;
       const q = Math.max(0, parseInt(it.qty) || 0);
       out[l.cip].total += q;
       if (mienne) out[l.cip].pharmacie += q;
@@ -70,15 +77,30 @@ export function resteLimite(l, deja) {
   return { reste: minNul(rp, rt), motif: rt != null && (rp == null || rt < rp) ? "total" : "pharmacie", deja: deja?.pharmacie || 0 };
 }
 
+// État d'un CIP limité : la plus restrictive des règles de ses menus, chacune comptée depuis l'ajout du produit à son menu →
+// { reste, motif, deja, parPharmacie (de la règle qui bloque), dejaTotal, parMenu: { <menu>: déjà commandé, toutes pharmacies } }.
+// dePharmacie absent : totaux seuls (reste au total).
+export function etatLimite(commandes, l, dePharmacie = null, sauf = null) {
+  let pire = null;
+  const parMenu = {};
+  for (const r of l.regles || [l]) {
+    const d = quantitesCommandees(commandes, { [l.cip]: { ...r, cip: l.cip } }, dePharmacie, sauf)[l.cip];
+    const e = { ...resteLimite(r, dePharmacie ? d : { pharmacie: 0, total: d.total }), parPharmacie: r.parPharmacie, dejaTotal: d.total };
+    parMenu[r.menu] = d.total;
+    if (!pire || e.reste < pire.reste) pire = e;
+  }
+  return { ...pire, parMenu };
+}
+
 // Lignes (panier, commande) au-delà de ce qui reste → { panier: { <CIP>: quantité }, over: [{ cip, nom, demande, reste, motif,
-// deja, parPharmacie }] }. Plusieurs lignes d'un même CIP sont additionnées. etat : { <CIP>: resteLimite } lu par promo-limites ;
+// deja, parPharmacie }] }. Plusieurs lignes d'un même CIP sont additionnées. etat : { <CIP>: etatLimite } lu par promo-limites ;
 // absent (pas encore lu, panne) : limites seules, rien de déjà commandé (une commande au-delà de la limite est toujours refusée)
 export function depassementsLimites(lignes, limites, etat) {
   const panier = {}, over = [];
   for (const i of lignes || []) if (i?.cip && limites[i.cip]) panier[i.cip] = (panier[i.cip] || 0) + Math.max(0, parseInt(i.qty) || 0);
   for (const [cip, n] of Object.entries(panier)) {
     const l = limites[cip], e = etat?.[cip] || resteLimite(l, null);
-    if (e.reste != null && n > e.reste) over.push({ cip, nom: l.nom, demande: n, reste: e.reste, motif: e.motif, deja: e.deja || 0, parPharmacie: l.parPharmacie });
+    if (e.reste != null && n > e.reste) over.push({ cip, nom: l.nom, demande: n, reste: e.reste, motif: e.motif, deja: e.deja || 0, parPharmacie: e.parPharmacie ?? l.parPharmacie });
   }
   return { panier, over };
 }
