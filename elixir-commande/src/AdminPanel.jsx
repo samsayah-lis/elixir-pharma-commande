@@ -20,6 +20,7 @@ import AdminAlertesRetour from "./components/AdminAlertesRetour.jsx";
 import AdminNotifications from "./components/AdminNotifications.jsx";
 import { NotificationsEnvoyees } from "./components/AdminMessages.jsx";
 import { envoisEnCours } from "./components/photo-manuelle.js";
+import { entierLimite } from "./limites-promo.js";
 import { T, R, tone, alpha, adm } from "./theme.js";
 import { Icone, CroixElixir } from "./icons.jsx";
 
@@ -283,9 +284,11 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   const [promoForm, setPromoForm] = useState({ name:"", description:"", icon:"🏷️", color:"#7c3aed", accentColor:"#a855f7", endDate:"", withPhotos:false });
   const [editingPromoId, setEditingPromoId] = useState(null);
   const [addingProductToPromo, setAddingProductToPromo] = useState(null); // promoId
-  const PRODUIT_VIDE = { name:"", cip:"", pv:"", pct:"", pn:"", note:"", image_url:"" };
+  const PRODUIT_VIDE = { name:"", cip:"", pv:"", pct:"", pn:"", note:"", image_url:"", maxPharmacie:"", maxTotal:"" };
   const [promoProductForm, setPromoProductForm] = useState(PRODUIT_VIDE);
   const [editingPromoProduct, setEditingPromoProduct] = useState(null);   // { promoId, prodId } : modification d'un produit existant
+  // Limites de quantité des menus promo (docs/limites-promo.md) : quantités déjà commandées par CIP limité (promo-limites, admin)
+  const [limitesCommandees, setLimitesCommandees] = useState(null);   // { <CIP>: { parPharmacie, total, dejaTotal } } | null
   // Excel import
   const [search, setSearch]       = useState("");
   const [filterSection, setFilterSection] = useState("all");
@@ -591,8 +594,13 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     if (!promoProductForm.name.trim() || isNaN(pn)) return alert("Nom et prix net requis");
     const img = String(promoProductForm.image_url || "").trim();
     if (img && !/^https:\/\/\S+$/.test(img)) return alert("Photo : adresse https://… de l'image");
+    // limites de quantité (facultatives) : entier ≥ 1, comptées par CIP (docs/limites-promo.md)
+    const maxPharmacie = entierLimite(promoProductForm.maxPharmacie), maxTotal = entierLimite(promoProductForm.maxTotal);
+    if (String(promoProductForm.maxPharmacie ?? "").trim() && !maxPharmacie) return alert("Max par pharmacie : nombre entier de boîtes (1 ou plus), ou vide pour aucune limite");
+    if (String(promoProductForm.maxTotal ?? "").trim() && !maxTotal) return alert("Max total : nombre entier de boîtes (1 ou plus), ou vide pour aucune limite");
+    if ((maxPharmacie || maxTotal) && !/^\d{7,13}$/.test(String(promoProductForm.cip || "").trim())) return alert("Limites de quantité : CIP requis (les commandes sont comptées par CIP)");
     const champs = { name: promoProductForm.name.trim(), cip: String(promoProductForm.cip || "").trim() || null, pv: parseFloat(String(promoProductForm.pv).replace(",", ".")) || null,
-      pct: String(promoProductForm.pct || "").trim() || null, pn, note: String(promoProductForm.note || "").trim() || null, image_url: img || null };
+      pct: String(promoProductForm.pct || "").trim() || null, pn, note: String(promoProductForm.note || "").trim() || null, image_url: img || null, maxPharmacie, maxTotal };
     if (editingPromoProduct?.promoId === promoId) {
       // modification sur place (même position : les paniers en cours restent valables)
       savePromos(promos.map(p => p.id===promoId ? {...p, products:(p.products||[]).map(pr => pr.id===editingPromoProduct.prodId ? { ...pr, ...champs } : pr)} : p));
@@ -606,7 +614,8 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     setAddingProductToPromo(null);
   };
   const editerProduitPromo = (promoId, prod) => {
-    setPromoProductForm({ name: prod.name || "", cip: prod.cip || "", pv: prod.pv ?? "", pct: prod.pct || "", pn: prod.pn ?? "", note: prod.note || "", image_url: prod.image_url || "" });
+    setPromoProductForm({ name: prod.name || "", cip: prod.cip || "", pv: prod.pv ?? "", pct: prod.pct || "", pn: prod.pn ?? "", note: prod.note || "", image_url: prod.image_url || "",
+      maxPharmacie: prod.maxPharmacie ?? "", maxTotal: prod.maxTotal ?? "" });
     setEditingPromoProduct({ promoId, prodId: prod.id });
     setAddingProductToPromo(promoId);
   };
@@ -618,6 +627,22 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   };
   const removeProductFromPromo = (promoId, prodId) => savePromos(promos.map(p => p.id===promoId ? {...p, products:(p.products||[]).filter(pr=>pr.id!==prodId)} : p));
   const updatePromoField = (id, field, val) => savePromos(promos.map(p => p.id===id ? {...p, [field]:val} : p));
+  // Quantités déjà commandées des produits limités (menus actifs) : à l'ouverture de l'onglet Promos, puis 1,5 s après chaque
+  // changement, une fois la publication en cours terminée (le serveur lit la version publiée)
+  useEffect(() => {
+    if (tab !== "promos" || !promos.some(ps => ps.active && (ps.products || []).some(pr => pr.maxPharmacie || pr.maxTotal))) return;
+    let fini = false;
+    const t = setTimeout(async () => {
+      try {
+        await fileConfig.current.admin_promos;   // publication en cours (ne rejette jamais)
+        if (fini) return;
+        const r = await adminFetch("/.netlify/functions/promo-limites", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ admin: true }) });
+        const j = r.ok ? await r.json() : null;
+        if (!fini && j) setLimitesCommandees(j.limites || {});
+      } catch { /* quantités non affichées : les limites s'appliquent quand même */ }
+    }, limitesCommandees ? 1500 : 0);
+    return () => { fini = true; clearTimeout(t); };
+  }, [tab, promos]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── IMPORT helpers ──
 
@@ -1337,6 +1362,20 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                         <input value={promoProductForm.note} onChange={e=>setPromoProductForm(f=>({...f,note:e.target.value}))} placeholder="Stock limité" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
                       </div>
                     </div>
+                    {/* limites de quantité (docs/limites-promo.md) : comptées par CIP depuis l'ajout du produit au menu */}
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 2fr",gap:8,marginBottom:8,alignItems:"end"}}>
+                      <div>
+                        <label style={{...LS,fontSize:11}}>Max par pharmacie</label>
+                        <input type="number" min="1" step="1" value={promoProductForm.maxPharmacie} onChange={e=>setPromoProductForm(f=>({...f,maxPharmacie:e.target.value}))} placeholder="illimité" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
+                      </div>
+                      <div>
+                        <label style={{...LS,fontSize:11}}>Max total (toutes pharmacies)</label>
+                        <input type="number" min="1" step="1" value={promoProductForm.maxTotal} onChange={e=>setPromoProductForm(f=>({...f,maxTotal:e.target.value}))} placeholder="illimité" style={{...IS,fontSize:12,padding:"6px 10px"}}/>
+                      </div>
+                      <div style={{fontSize:11,color:T.inkMute,lineHeight:1.4,paddingBottom:4}}>
+                        Boîtes, toutes commandes additionnées depuis l'ajout du produit au menu (site, saisie Elixir, API). Facultatif ; CIP requis.
+                      </div>
+                    </div>
                     <div style={{display:"flex",gap:8,alignItems:"flex-end",marginBottom:8}}>
                       <div style={{flex:1}}>
                         <label style={{...LS,fontSize:11}}>Photo (adresse https:// de l'image, facultatif)</label>
@@ -1361,6 +1400,18 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
                           <span style={{fontWeight:600,fontSize:12,color:T.petrol}}>{prod.name}</span>
                           {prod.cip&&<span style={{marginLeft:8}}><CipCopy cip={prod.cip}/></span>}
                           {prod.note&&<span style={{fontSize:11,color:T.warn,marginLeft:6,background:T.warnBg,borderRadius:4,padding:"1px 5px"}}>{prod.note}</span>}
+                          {(prod.maxPharmacie || prod.maxTotal) && (() => {
+                            // limites (docs/limites-promo.md) et quantité déjà commandée (menus actifs : lue par promo-limites), comptée
+                            // depuis l'ajout du produit à CE menu (parMenu : un même CIP limité dans deux menus)
+                            const lu = ps.active ? limitesCommandees?.[prod.cip] : null, n = lu?.parMenu?.[ps.name] ?? lu?.dejaTotal;
+                            const vu = Number.isFinite(n) ? n : null, plein = vu != null && prod.maxTotal && vu >= prod.maxTotal;
+                            return (
+                              <span title="Limites de quantité : toutes commandes additionnées depuis l'ajout du produit au menu" style={{fontSize:11,marginLeft:6,borderRadius:4,padding:"1px 5px",background:plein?T.dangerBg:T.surface2,color:plein?T.danger:T.inkSoft,fontWeight:600}}>
+                                🔒 {[prod.maxPharmacie && `max ${prod.maxPharmacie}/pharmacie`, prod.maxTotal && `${prod.maxTotal} au total`].filter(Boolean).join(" · ")}
+                                {vu != null ? ` · commandé : ${vu}${prod.maxTotal ? `/${prod.maxTotal}` : ""}` : ""}
+                              </span>
+                            );
+                          })()}
                         </div>
                         <div style={{display:"flex",alignItems:"center",gap:10}}>
                           <span style={{fontSize:12,fontWeight:700,color:T.ok}}>{prod.pn?.toFixed(2)} €</span>

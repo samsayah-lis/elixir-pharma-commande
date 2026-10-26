@@ -20,6 +20,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { orderSaveAdmis } from "./ecart-order-save.mjs";
 
 const RACINE = new URL("..", import.meta.url).pathname;
 const sortie = await build({
@@ -272,8 +273,10 @@ async function envoyer(etat) {
 // ── 5. Ce que la règle ne touche pas ──
 {
   const diff = (f) => { try { return execFileSync("git", ["diff", "--name-only", LOT0_REF, "--", f], { cwd: RACINE, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch { return "?"; } };
-  if (PROD) eq("envoi PharmaML, enregistrement, catalogue, restock-alert, RPC Odoo : fichiers inchangés depuis la production", ["netlify/functions/submit-order.js", "netlify/functions/order-save.js",
+  // order-save.js : seul écart admis, les limites des menus promo (26/10/2026, scripts/ecart-order-save.mjs), lignes ajoutées
+  if (PROD) eq("envoi PharmaML, enregistrement, catalogue, restock-alert, RPC Odoo : fichiers inchangés depuis la production", ["netlify/functions/submit-order.js",
     "netlify/functions/odoo-catalog.js", "netlify/functions/restock-alert.js", "netlify/functions/_odoo-rpc.js", "netlify/functions/odoo.js", "netlify/functions/pml-relais.js"].map(diff).filter(Boolean), []);
+  if (PROD) eq("order-save.js : inchangé depuis la production, limites des menus promo exceptées", orderSaveAdmis(LOT0_REF, RACINE), true);
   if (PROD) {
     const d = execFileSync("git", ["diff", "-U0", LOT0_REF, "--", "netlify/functions/_relais.js"], { cwd: RACINE, encoding: "utf8" }).split("\n").filter(l => /^[+-][^+-]/.test(l));
     eq("_relais.js : seule la ligne d'empreinte change (« :per »), avec son commentaire", [d.filter(l => l.startsWith("-")).length, d.filter(l => l.startsWith("+") && l.includes("const sig = ")).length, d.some(l => l.includes(':per"'))], [2, 1, true]);

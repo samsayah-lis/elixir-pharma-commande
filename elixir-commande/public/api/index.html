@@ -297,7 +297,7 @@ Content-Type: application/json
         <li>chaque ligne :
           <ul>
             <li>absente du catalogue : refusée, <code>produit_inconnu</code> ;</li>
-            <li>produit que seul le site sait servir : refusé, <code>produit_non_commandable</code> (« à commander sur le site ») — article livré sous plusieurs références (fauteuils), produit d'une campagne, produit exclu par Elixir Pharma ;</li>
+            <li>produit que seul le site sait servir : refusé, <code>produit_non_commandable</code> (« à commander sur le site ») — article livré sous plusieurs références (fauteuils), produit d'une campagne, produit en quantité limitée (précommande), produit exclu par Elixir Pharma ;</li>
             <li>produit sur justificatif laboratoire : refusé, <code>produit_sur_justificatif</code> (page dédiée du site) ;</li>
             <li>contingent : quantité ramenée au reste (<code>motif: contingentement</code>), refusée à 0 ;</li>
             <li>rupture : retirée (<code>etat: rupture</code>) ou gardée (<code>motif: en_attente_stock</code>) selon <code>si_rupture</code> ;</li>
@@ -484,8 +484,8 @@ Content-Type: application/json
     <section id="hors-v1" aria-labelledby="t-hors-v1">
       <h2 id="t-hors-v1">Ce qui n'est pas dans la V1</h2>
       <ul>
-        <li>Les offres du site et leurs prix : menus promotionnels, précommandes, péremption courte, commandes groupées. Un produit présent dans un menu se commande par l'API au prix de votre liste, jamais au prix du menu : pour profiter de l'offre, commandez sur le site.</li>
-        <li>Les produits des campagnes (dont U-Labs), les produits sur justificatif laboratoire et les articles livrés sous plusieurs références (fauteuils) : seulement sur le site (ligne refusée par l'API, avec le motif).</li>
+        <li>Les offres du site et leurs prix : menus promotionnels, précommandes, péremption courte, commandes groupées. Un produit présent dans un menu se commande par l'API au prix de votre liste, jamais au prix du menu (sauf s'il est en quantité limitée, voir ci-dessous) : pour profiter de l'offre, commandez sur le site.</li>
+        <li>Les produits des campagnes (dont U-Labs), les produits en quantité limitée d'un menu (précommandes), les produits sur justificatif laboratoire et les articles livrés sous plusieurs références (fauteuils) : seulement sur le site (ligne refusée par l'API, avec le motif).</li>
         <li>La liste des commandes passées depuis votre logiciel d'officine (elles restent visibles dans vos factures et bons de livraison).</li>
         <li>La modification d'une commande : annulez-la pendant le délai, puis repassez-la.</li>
         <li>Les quantités de stock exactes (niveaux seulement), les règlements et l'encours.</li>

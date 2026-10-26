@@ -26,6 +26,7 @@ import { DELAI_ODOO_MS, listerPieces, pdfPiece, listerLivraisons, livraisonsDeLa
 import { blPdf, nomFichierBl } from "./_chat-bl.js";
 import { lireConfig as lireConfigJustif, indexProduits } from "./_lab-justif.js";
 import { CLE_OUTILS, FAUTEUILS, cipsFauteuils } from "./_accueil-outils.js";
+import { lireLimites } from "./_promo-limites.js";
 import { validCip } from "./_pharmacies.js";
 import { resteContingents, cipsContingentes, formerContingents } from "./_api-contingent.js";
 import { listerCommandesApi, detailCommandeApi, ORDRE_SITE, ORDRE_TEST } from "./_api-suivi.js";
@@ -143,25 +144,29 @@ export function creerServicesLecture({ stock, odoo, horloge = () => Date.now(), 
     caches.justif = { at: t, v };
     return v;
   }
-  // Produits que le site seul sait commander (hors API en V1) → Map(CIP → « multi_cip » | « campagne ») ; cache 10 min ;
-  // illisible → lève (jamais « commandable » par défaut) :
+  // Produits que le site seul sait commander (hors API en V1) → Map(CIP → « multi_cip » | « campagne » | « quantite_limitee ») ;
+  // cache 10 min ; illisible → lève (jamais « commandable » par défaut) :
   //  • articles livrés sous plusieurs CIP (fauteuils : le site répartit la quantité entre les CIP, le plus ancien d'abord) —
   //    correspondance de la fonction planifiée de l'accueil (kv « accueil:outils »), plus les CIP de repli ;
   //  • produits des campagnes (section U-Labs et sections des campagnes actives : gratuités et quantités engagées propres
-  //    à la campagne). Mêmes sources que les exclusions de la péremption (_peremption.js, exclusionsSite).
+  //    à la campagne). Mêmes sources que les exclusions de la péremption (_peremption.js, exclusionsSite) ;
+  //  • produits à quantité limitée d'un menu promo actif (précommandes, docs/limites-promo.md) : le site applique la limite
+  //    par pharmacie et le max total, l'API ne les contrôle pas.
   async function produitsHorsApi() {
     const t = horloge();
     if (caches.horsApi && t - caches.horsApi.at < QUOTA_MS) return caches.horsApi.v;
     const lireJson = (x, d) => { if (x && typeof x === "object") return x; try { return JSON.parse(x); } catch { return d; } };
-    const [plan, campagnes] = await Promise.all([
+    const [plan, campagnes, limites] = await Promise.all([
       stock.sbLecture(`kv_store?key=eq.${encodeURIComponent(CLE_OUTILS)}&select=value&limit=1`).then(r => lireJson(r?.[0]?.value, null)),
       stock.sbLecture("elixir_campaigns?active=eq.true&select=id&limit=200"),
+      lireLimites(stock.sbLecture),
     ]);
     const sections = [...new Set(["ulabs", ...(Array.isArray(campagnes) ? campagnes : []).map(c => String(c?.id ?? ""))])].filter(s => /^[\w.-]{1,60}$/.test(s));
     const enCampagne = (await stock.sbLecture(`elixir_products?section=in.${encodeURIComponent(`(${sections.map(s => `"${s}"`).join(",")})`)}&select=cip&limit=5000`)) || [];
     const v = new Map();
     for (const c of cipsFauteuils(Object.keys(FAUTEUILS), plan)) v.set(String(c), "multi_cip");
     for (const p of enCampagne) if (p?.cip && !v.has(String(p.cip))) v.set(String(p.cip), "campagne");
+    for (const cip of Object.keys(limites)) if (!v.has(cip)) v.set(cip, "quantite_limitee");
     caches.horsApi = { at: t, v };
     return v;
   }

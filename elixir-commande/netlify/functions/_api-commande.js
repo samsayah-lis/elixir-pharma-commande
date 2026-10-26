@@ -42,6 +42,7 @@ export const TACHES_LIBEREES = new Set(["refusee", "expiree", "annulee", "non_en
 export const HORS_API = {
   multi_cip: "Article livré sous plusieurs références : à commander sur le site (outil dédié), qui répartit la quantité entre elles.",
   campagne: "Produit d'une campagne du site : à commander sur le site, page de la campagne.",
+  quantite_limitee: "Produit en quantité limitée (précommande ou offre du site) : à commander sur le site, qui applique la limite.",
 };
 const r2 = (x) => Math.round(Number(x) * 100) / 100;
 const m2o = (v) => (Array.isArray(v) ? v[0] : Number(v) || 0);

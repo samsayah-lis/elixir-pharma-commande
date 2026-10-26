@@ -281,7 +281,9 @@ const FICHIERS_AUTORISES = {
   "netlify/functions/gp-pharmacy.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire : 401 reconnexion)",
   "netlify/functions/gp-upload.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire : analyses LGO et quota au nom du jeton)",
   "netlify/functions/quota-status.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, adresses comparées en eq au lieu de ilike)",
-  "netlify/functions/order-save.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, identité du jeton, contrôle { verifier } avant envoi, quarantaine bornée des pages d'avant le correctif, entered_by pour la saisie Elixir seulement, lignes « justificatif » contrôlées ; relecture finale : même numéro renvoyé → { deja } si même commande, 409 sinon ; quarantaine avec justificatif nettoyé ; Supabase Auth en panne → 503)",
+  // order-save : correctif du 19/10/2026 (désormais dans master), puis limites des menus promo (26/10/2026, docs/limites-promo.md) :
+  // modification figée par son empreinte
+  "netlify/functions/order-save.js": { empreinte: "d8b19a0fa5a0", motif: "second correctif de sécurité du 19/10/2026 (jeton obligatoire, identité du jeton, contrôle { verifier } avant envoi, quarantaine bornée des pages d'avant le correctif, entered_by pour la saisie Elixir seulement, lignes « justificatif » contrôlées ; relecture finale : même numéro renvoyé → { deja } si même commande, 409 sinon ; quarantaine avec justificatif nettoyé ; Supabase Auth en panne → 503) ; limites des menus promo et précommandes (26/10/2026) : controleLimites de _promo-limites.js avant l'écriture — au-delà du max par pharmacie ou du max total, 400 et rien d'écrit ; commandes illisibles, 503 ; même numéro renvoyé non compté contre lui-même ; nouveau contrôle juste après l'écriture (envois simultanés), commande retirée au-delà" },
   "netlify/functions/ml-recommend.js": "second correctif de sécurité du 19/10/2026 (suggestions au CIP du jeton, segments et ruptures réservés à l'admin)",
   "netlify/functions/group-order.js": "second correctif de sécurité du 19/10/2026 (jeton obligatoire, autres pharmacies anonymes ; relecture finale : Supabase Auth en panne → 503)",
   "netlify/functions/pharmacy-otp-send.js": "second correctif de sécurité du 19/10/2026 (limite durable par connexion et par adresse × connexion, IPv6 par /64 ; code non envoyé non compté ; relecture finale : connexion demandeuse du code enregistrée)",
@@ -345,7 +347,11 @@ const FICHIERS_AUTORISES = {
 // complétés (_api-commande.js, _api-parcours.js) ; _chat-perimetre.js complété (option verifiees de commandesSite, défaut
 // inchangé) ; _relais.js : deux lignes ajoutées dans envoiAuto (FICHIERS_AUTORISES, empreinte). order-save.js, submit-order.js,
 // pml-relais.js, quota-status.js et _quota.js inchangés.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+)\.js$/;
+// Limites de quantité des menus promo et précommandes (26/10/2026, docs/limites-promo.md) : fonctions NOUVELLES promo-limites.js
+// (lecture seule : ce que la pharmacie peut encore commander, totaux pour l'onglet Promos) et _promo-limites.js (lecture des
+// limites et des commandes, contrôle) ; seule fonction existante modifiée : order-save.js (refus au-delà des limites,
+// FICHIERS_AUTORISES, empreinte). Règles et textes partagés avec le site : src/limites-promo.js.
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+|_?promo-limites)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;

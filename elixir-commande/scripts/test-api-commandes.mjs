@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { orderSaveAdmis } from "./ecart-order-save.mjs";
 
 process.env.SUPABASE_URL = "https://supabase.test";
 process.env.SUPABASE_KEY = "cle-anon-test";
@@ -799,8 +800,11 @@ h = routeur();
 {
   // produits fictifs : un fauteuil livré sous un nouveau CIP (correspondance de l'accueil), un produit U-Labs, un produit
   // d'une campagne active, un produit d'une campagne terminée (commandable)
-  const FAUT = "3400000000097", ULABS = "3400000000103", CAMP = "3400000000110", FINIE = "3400000000127";
-  db.tables.odoo_catalog.push(...[FAUT, ULABS, CAMP, FINIE].map((cip, i) => ({ cip, barcode: cip, name: `PRODUIT EXEMPLE H${i}`, in_stock: true, available: 10, updated_at: iso() })));
+  // et un produit à quantité limitée d'un menu promo actif (précommande, docs/limites-promo.md)
+  const FAUT = "3400000000097", ULABS = "3400000000103", CAMP = "3400000000110", FINIE = "3400000000127", LIMITE = "3400000000134";
+  db.tables.odoo_catalog.push(...[FAUT, ULABS, CAMP, FINIE, LIMITE].map((cip, i) => ({ cip, barcode: cip, name: `PRODUIT EXEMPLE H${i}`, in_stock: true, available: 10, updated_at: iso() })));
+  db.tables.ec_config.push({ key: "admin_promos", value: JSON.stringify([{ id: 1790000000000, name: "Précommande d'exemple", active: true,
+    products: [{ id: 1790000000001, name: "PRODUIT EXEMPLE H4", cip: LIMITE, pn: 10, maxPharmacie: 3 }] }]) });
   db.tables.kv_store.push({ key: "accueil:outils", value: JSON.stringify({ at: iso(), fauteuils: { BR1538207: [FAUT] } }), updated_at: iso() });
   db.tables.elixir_campaigns.push({ id: "campagne_exemple", active: true }, { id: "campagne_finie", active: false });
   db.tables.elixir_products.push({ cip: ULABS, section: "ulabs" }, { cip: CAMP, section: "campagne_exemple" }, { cip: FINIE, section: "campagne_finie" });
@@ -809,6 +813,8 @@ h = routeur();
   eq("hors API : multi-CIP, U-Labs, campagne active refusés ; campagne terminée et produit ordinaire passent l'exclusion",
     l.map(x => x.motif), ["produit_non_commandable", "produit_non_commandable", "produit_non_commandable", "prix_indisponible", null]);
   vrai("…détails : « à commander sur le site »", /plusieurs références/.test(l[0].detail) && /campagne/.test(l[1].detail) && /campagne/.test(l[2].detail));
+  const lim = corpsDe(await simuler(routeur(), K.bLive, [[LIMITE, 1]])).lignes[0];
+  eq("hors API : produit à quantité limitée d'un menu promo actif refusé (le site applique la limite)", [lim.motif, /quantité limitée/.test(lim.detail)], ["produit_non_commandable", true]);
   const n = db.tables.api_commandes.length;
   r = await commander(routeur(), K.bLive, [[FAUT, 1]]);
   eq("commande d'un seul produit hors API → 422 aucune_ligne_acceptee, réponse enregistrée (rejouable)", [r.statusCode, corpsDe(r).code, db.tables.api_commandes.length - n], [422, "aucune_ligne_acceptee", 1]);
@@ -850,9 +856,11 @@ h = routeur();
   const ref = git("rev-parse", "--verify", `${BASE}^{commit}`);
   if (!ref) console.log(`· ${BASE} absent de git : comparaisons avec la production sautées`);
   else {
-    for (const f of ["order-save.js", "submit-order.js", "pml-relais.js", "quota-status.js", "_quota.js", "order-update.js", "order-list.js"]) {
+    for (const f of ["submit-order.js", "pml-relais.js", "quota-status.js", "_quota.js", "order-update.js", "order-list.js"]) {
       eq(`${f} : identique à la production (${BASE})`, git("diff", "--name-only", BASE, "--", `netlify/functions/${f}`)?.trim(), "");
     }
+    // seul écart admis : les limites des menus promo (26/10/2026, scripts/ecart-order-save.mjs), lignes ajoutées après l'API
+    eq(`order-save.js : identique à la production (${BASE}), limites des menus promo exceptées`, orderSaveAdmis(BASE, APP), true);
     const d = (git("diff", "-U0", BASE, "--", "netlify/functions/_relais.js") || "").split("\n").filter(l => /^[+-][^+-]/.test(l));
     eq("_relais.js : deux lignes AJOUTÉES (commentaire + source « api » par user.api), aucune retirée", [d.filter(l => l.startsWith("-")).length, d.filter(l => l.startsWith("+")).length,
       d.some(l => /o\.source === "api" && user\?\.api === true/.test(l))], [0, 2, true]);

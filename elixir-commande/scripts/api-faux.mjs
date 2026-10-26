@@ -6,7 +6,8 @@
 // api_prix_listes.liste_id, api_prix (liste_id, cip) → 409 23505) ; phase 2 : tables de lecture odoo_catalog, elixir_orders,
 // elixir_pharmacies, kv_store (remplies par les tests ou le banc) ; phase 3 : unicité de api_commandes (fiche, environnement,
 // Idempotency-Key ; reference_client hors refusées), elixir_orders.id, kv_store.key ; ec_notifications ; rpc/decrement_stock
-// (noté dans tables.decrements) ; DELETE avec return=representation ; elixir_campaigns et elixir_products (produits hors API) ;
+// (noté dans tables.decrements) ; DELETE avec return=representation ; elixir_campaigns, elixir_products et ec_config (produits hors
+// API : campagnes, menus promo à quantité limitée) ;
 // fonctions rpc/api_compter et rpc/api_lire_compteur (fenêtres fixes, comme le SQL ; fenêtre d'un jour = jour de Paris) ;
 // rpc/api_marquer_lignes (comme le SQL : lignes sans synced_at ni handled_at ; etat.sansMarquer = true : fonction absente,
 // 404 PGRST202 — fichier SQL pas encore rejoué) ; etat.indexReferenceAncien = true : ancien index de reference_client (hors
@@ -19,7 +20,7 @@ export function fauxPostgrestApi({ horloge = () => Date.now(), cleService = "cle
   const T0 = () => horloge();
   const iso = () => new Date(T0()).toISOString();
   const tables = { api_reglages: [{ id: 1, valeur: "{}", updated_at: iso() }], api_acces: [], api_cles: [], api_commandes: [], api_journal: [], api_evenements: [], api_compteurs: [],
-    api_prix: [], api_prix_listes: [], odoo_catalog: [], elixir_orders: [], elixir_pharmacies: [], kv_store: [], ec_notifications: [], decrements: [], elixir_campaigns: [], elixir_products: [] };
+    api_prix: [], api_prix_listes: [], odoo_catalog: [], elixir_orders: [], elixir_pharmacies: [], kv_store: [], ec_notifications: [], decrements: [], elixir_campaigns: [], elixir_products: [], ec_config: [] };
   let seq = 0;
   const appels = [];
   const DEFAUTS = {
