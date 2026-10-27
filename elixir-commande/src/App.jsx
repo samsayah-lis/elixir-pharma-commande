@@ -59,7 +59,23 @@ function MesCommandesIndisponibles({ onClose }) {
     </div>
   );
 }
-const MyOrdersPanel = React.lazy(() => import("./components/MyOrdersPanel").catch(() => ({ default: MesCommandesIndisponibles })));
+// Même import pour React.lazy et le préchargement (un seul morceau) : au repos après l'identification, ou au survol / focus du bouton
+// « Mes commandes », pour que la fenêtre d'attente ne s'affiche presque jamais (revue du 27/10/2026)
+const chargerMesCommandes = () => import("./components/MyOrdersPanel");
+const prechargerMesCommandes = () => { chargerMesCommandes().catch(() => { /* réessayé à l'ouverture */ }); };
+const MyOrdersPanel = React.lazy(() => chargerMesCommandes().catch(() => ({ default: MesCommandesIndisponibles })));
+// Fenêtre d'attente de Mes commandes (morceau en cours de téléchargement) : même voile, fermable (clic dehors, « Fermer », focus rendu)
+function MesCommandesAttente({ onClose }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Mes commandes" style={{ ...ui.overlay, zIndex: 400 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ ...ui.modal, maxWidth: 360, padding: "24px 20px", display: "grid", gap: 16, justifyItems: "center" }}>
+        <FocusFenetre />
+        <Chargement texte="Chargement de vos commandes…" />
+        <button type="button" className="ex-btn-ligne" data-focus-initial onClick={onClose} style={{ ...ui.btn("ligne", "m"), background: undefined, boxShadow: `inset 0 0 0 1.5px ${T.lineField}` }}>Fermer</button>
+      </div>
+    </div>
+  );
+}
 // « Copier les CIP » du panier (données de la pharmacie, docs/cip-copie.md) : chargé à la demande ; injoignable → rien d'affiché
 const CopieCips = React.lazy(() => import("./components/ui/CopieCips.jsx").catch(() => ({ default: () => null })));
 // Contingentement dans la ligne de l'article (docs/contingentement-ligne.md) : contexte ici, pastille chargée à la demande
@@ -1093,6 +1109,13 @@ export default function App() {
     try { const u = new URL(window.location.href); u.searchParams.delete("commandes"); window.history.replaceState(window.history.state, "", u.pathname + u.search + u.hash); } catch {}
     setShowMyOrders(true); fetchMyOrders();
   }, [onboardingDone, pharmacyCip]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // Mes commandes : morceau préchargé au repos une fois la pharmacie identifiée (fenêtre d'attente presque jamais vue)
+  useEffect(() => {
+    if (!onboardingDone) return;
+    const ric = window.requestIdleCallback || ((f) => setTimeout(f, 1500)), cic = window.cancelIdleCallback || clearTimeout;
+    const id = ric(prechargerMesCommandes, { timeout: 4000 });
+    return () => cic(id);
+  }, [onboardingDone]);
   const [ribFile, setRibFile] = useState(null);
   const [ribBase64, setRibBase64] = useState(null);
   const [onboardingError, setOnboardingError] = useState("");
@@ -2480,7 +2503,8 @@ export default function App() {
             if (added) flash(`✓ ${s.suggested_qty || 1}x ${s.name} ajouté`);
           }}>
             <div style={{ fontWeight:600, fontSize:12, color:T.ink, marginBottom:4, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{s.name}</div>
-            <div style={{ fontSize:11, color:T.inkMute, fontFamily:T.mono }}>CIP {s.cip}</div>
+            {/* CIP copié d'un clic (CipCell, docs/cip-copie.md) ; le clic sur le CIP ne remonte pas à la carte (pas d'ajout au panier) */}
+            <div style={{ fontSize:11, color:T.inkMute, display:"flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={s.cip} /></div>
             <div className="num" style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginTop:6 }}>
               <span style={{ fontSize:12, color:T.ink, fontWeight:700 }}>×{s.suggested_qty}</span>
               <span style={{ fontSize:11, color:T.warn, fontWeight:600 }}>il y a {s.days_since_last} j</span>
@@ -2663,7 +2687,8 @@ export default function App() {
                 title="Assistant Elixir" aria-label="Assistant Elixir" aria-expanded={assistantOuvert} style={btnEntete}><Icone nom="bulle" /></button>
             )}
             {pharmacyCip && pharmacyCip !== "0" && (
-              <button className="ex-icone-entete ex-cible" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
+              <button className="ex-icone-entete ex-cible" onClick={() => { setShowMyOrders(true); fetchMyOrders(); }} onMouseEnter={prechargerMesCommandes} onFocus={prechargerMesCommandes} onTouchStart={prechargerMesCommandes}
+                title="Mes commandes" aria-label="Mes commandes" style={btnEntete}><Icone nom="commandes" /></button>
             )}
             {/* panier rempli : pastille or + encre avec le compteur (seul rôle de l'or dans l'en-tête) */}
             <button data-cible-panier className={cartCount > 0 ? "ex-cible" : "ex-icone-entete ex-cible"} onClick={() => setCartOpen(!cartOpen)} aria-expanded={cartOpen}
@@ -3767,10 +3792,7 @@ export default function App() {
 
         {/* ── Mes commandes — overlay (fenêtre chargée à la demande : docs/cip-copie.md ; en attendant, la même fenêtre avec « Chargement… ») ── */}
         {showMyOrders && (
-          <React.Suspense fallback={
-            <div role="dialog" aria-modal="true" aria-label="Mes commandes" style={{ ...ui.overlay, zIndex: 400 }}>
-              <div style={{ ...ui.modal, maxWidth: 360, padding: "24px 20px" }}><Chargement texte="Chargement de vos commandes…" /></div>
-            </div>}>
+          <React.Suspense fallback={<MesCommandesAttente onClose={() => setShowMyOrders(false)} />}>
           <MyOrdersPanel
             orders={myOrders}
             loading={myOrdersLoading}
@@ -4095,7 +4117,7 @@ export default function App() {
                       style={{ ...btnSecondaire, ...(copyStatus ? (() => { const t = tone(copyStatus.startsWith("✓") ? "ok" : "danger"); return { background: t.bg, color: t.fg, boxShadow: `inset 0 0 0 1.5px ${t.border}` }; })() : {}) }}>
                       {copyStatus
                         ? <><Icone nom={copyStatus.startsWith("✓") ? "coche" : "alerte"} taille={18} />{copyStatus.replace(/^✓\s*/, "")}</>
-                        : <><Icone nom="copier" taille={18} />Copier</>}
+                        : <><Icone nom="copier" taille={18} />Copier le bon</>}
                     </button>
                   </div>
                   {/* CIP des lignes du panier, au format du logiciel de la pharmacie (un par ligne, CIP;qté, CIP ⇥ qté) : données de la

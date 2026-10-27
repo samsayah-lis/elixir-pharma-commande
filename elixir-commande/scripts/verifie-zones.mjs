@@ -586,7 +586,9 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // Copie des CIP (27/10/2026, docs/cip-copie.md) : marge de départ 53 octets (512 947 après les limites des menus promo).
 // Le lot ajoute ~1,9 Ko au bundle (CipCell cliquable en entier, message en bas, module cip-copie, CIP au panier) ; pour tenir le
 // budget sans le relever, la fenêtre « Mes commandes » (8 Ko) passe à la demande (MyOrdersPanel-*.js) et « Copier les CIP »
-// est un morceau à part (CopieCips-*.js) : 512 947 → 510 456 octets, marge 2 544. Budget inchangé.
+// est un morceau à part (CopieCips-*.js) : 512 947 → 510 456 octets, marge 2 544. Budget inchangé. Correctifs de la revue du
+// 27/10/2026 (message en bas en CSS, « Copie impossible » avant le repli, suggestions de recommande, Mes commandes préchargée
+// et fenêtre d'attente fermable) : 510 456 → 512 101 octets, marge 899.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 513_000;

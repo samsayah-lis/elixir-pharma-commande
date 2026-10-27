@@ -245,6 +245,17 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-cip--copie { background: var(--ok-bg); color: var(--ok); }
 .ex-cip--echec { background: var(--danger-bg); color: var(--danger); }
 @media print { .ex-cip { margin: 0; padding: 0; } .ex-toast-copie { display: none; } }
+/* message « CIP 3400… copié » / « Copie impossible » en bas de l'écran (ToastCopie, CipCell.jsx) : hors du flux, jamais sous le
+   doigt (pointer-events none). Centré en bas sur ordinateur ; sous 768 px, calé à gauche : la colonne de droite est celle du
+   panier flottant (60 px à right 24) et du lanceur de l'assistant (bulle de 52 px, empilée au-dessus du panier) — centré, le
+   message passait sur le rond pétrole (revue du 27/10/2026) */
+.ex-toast-copie { position: fixed; left: 50%; bottom: max(24px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 9999;
+  pointer-events: none; width: max-content; max-width: calc(100vw - 32px); }
+@media (max-width: 767px) { .ex-toast-copie { left: 16px; transform: none; max-width: calc(100vw - 16px - 96px); } }
+/* « Copier les CIP » (CopieCips.jsx) : libellé long sur ordinateur (« Copier les CIP de cette commande »), court sous 768 px
+   (« Copier les CIP » : dans la carte d'une commande la précision est redondante, elle reste dans title / aria-label) */
+@media (max-width: 767px) { .ex-copie-cips__long { display: none; } }
+@media (min-width: 768px) { .ex-copie-cips__court { display: none; } }
 
 /* ── Saisie de commande et recherche globale (lot 5) : disposition des lignes de résultats par grille, mise en pile
    sous 768 px par @media (les composants ne reçoivent pas isMobile) ; tailles des contrôles ici et non en inline ── */

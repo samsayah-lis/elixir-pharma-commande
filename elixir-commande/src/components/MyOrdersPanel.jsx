@@ -142,9 +142,10 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                   </div>
                 </div>
                 {/* CIP de la commande (toutes ses lignes, quantités commandées — servies quand elles sont connues) : données de la
-                    pharmacie, exception explicite à l'anti-copie (docs/cip-copie.md) ; formats : un par ligne, CIP;qté, CIP ⇥ qté */}
+                    pharmacie, exception explicite à l'anti-copie (docs/cip-copie.md) ; formats : un par ligne, CIP;qté, CIP ⇥ qté.
+                    Sous 768 px, « Copier les CIP » (dans la carte d'une commande, la précision est redondante ; title la garde) */}
                 {items.some(it => it.cip) && (
-                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:8 }}><CopieCips lignes={items} libelle="Copier les CIP de cette commande" compact /></div>
+                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:8, minWidth:0 }}><CopieCips lignes={items} libelle="Copier les CIP de cette commande" libelleCourt="Copier les CIP" compact /></div>
                 )}
               </li>
             );

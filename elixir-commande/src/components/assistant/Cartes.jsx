@@ -172,8 +172,9 @@ function CarteCommande({ a, outils }) {
           </tbody>
         </table>
       )}
-      {/* CIP de la commande, quantités servies : données de la pharmacie (docs/cip-copie.md) */}
-      {lignes.some((l) => l.cip) && <div className="ex-assistant__actions"><CopieCips lignes={lignes} libelle="Copier les CIP (quantités servies)" compact /></div>}
+      {/* CIP de la commande, quantités servies : données de la pharmacie (docs/cip-copie.md) ; libellé court, la précision
+          « quantités servies » est portée par title / aria-label et une ligne d'aide sous le bouton (à 375 px, le libellé long débordait) */}
+      {lignes.some((l) => l.cip) && <div className="ex-assistant__actions"><CopieCips lignes={lignes} libelle="Copier les CIP" aide="quantités servies" compact /></div>}
       {lots.length > 0 && (
         <details style={{ marginTop: 8 }}>
           <summary>Lots et péremptions ({lots.length})</summary>
