@@ -5,6 +5,7 @@ import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
+import CipCell from "./ui/CipCell.jsx";   // CIP copié d'un clic (docs/cip-copie.md)
 
 // ── Page « Commande labo sur justificatif » ─────────────────────────────
 // Produits que certains laboratoires (Takeda, Pfizer…) ne livrent à Elixir que sur justificatif d'une
@@ -213,7 +214,7 @@ export default function LabJustifOrder({ auth, identite, onAddToCart, onOrdered,
                   <div key={p.cip} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 0", borderTop: `1px solid ${T.lineSoft}` }}>
                     <div style={{ flex: "1 1 260px", minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: T.ink }}>{p.nom}</div>
-                      <div className="num" style={{ fontSize: 12, color: T.inkMute, fontFamily: T.mono }}>{p.cip}{p.maxCommande ? <span style={{ fontFamily: "inherit" }}> · {p.maxCommande} au plus par commande</span> : null}</div>
+                      <div className="num" style={{ fontSize: 12, color: T.inkMute, display: "flex", alignItems: "center", flexWrap: "wrap", gap: 4 }}>CIP <CipCell cip={p.cip} />{p.maxCommande ? <span> · {p.maxCommande} au plus par commande</span> : null}</div>
                     </div>
                     <div className="num" style={{ fontSize: 14, fontWeight: 700, color: T.ink, minWidth: 100, textAlign: "right" }}>{fmt(p.prix)}<div style={{ fontSize: 11, color: T.inkMute, fontWeight: 500 }}>prix net HT</div></div>
                     {choisi ? (

@@ -305,8 +305,10 @@ if (SHORT_AVANT) {
 async function copie(src, etat) {
   const { ctx } = application(src, etat);
   let texte = null;
+  // presse-papiers : navigator.clipboard (App de la référence de production) ou copierTexte (depuis la copie des CIP du 27/10/2026,
+  // src/cip-copie.js : même texte, repli en plus) — le texte du bon est le même par les deux chemins
   Object.assign(ctx, { pharmacyName: "PHARMACIE DU BANC", useState: (v) => [v, () => {}], setCopyStatus: () => {}, setTimeout: () => {},
-    navigator: { clipboard: { writeText: async (t) => { texte = t; } } } });
+    navigator: { clipboard: { writeText: async (t) => { texte = t; } } }, copierTexte: async (t) => { texte = t; return true; } });
   charge(expr(bloc(src, /^  const handleCopy = \(\) => \{$/)), ctx)();
   await new Promise(r => setImmediate(r));
   return texte.replace(/^Date : .*$/m, "Date : ‹masquée›");

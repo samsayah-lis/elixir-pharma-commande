@@ -7,6 +7,8 @@
 import React, { useState } from "react";
 import { T, R, ui, fmtEur } from "../../theme.js";
 import { Icone } from "../../icons.jsx";
+import CipCell from "../ui/CipCell.jsx";       // CIP copié d'un clic (docs/cip-copie.md), non sélectionnable (anti-copie § 19)
+import CopieCips from "../ui/CopieCips.jsx";   // « Copier les CIP » d'une commande, quantités servies (données de la pharmacie)
 import { dateFr, dateHeureFr, heureFr, peremptionFr, qteFr, tauxFr, pluriel, libelle, MOTIFS, SOUHAITS, ORIGINES, PIECES, lienTel } from "./format.js";
 
 const titreCarte = { display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: T.petrol, lineHeight: 1.3 };
@@ -158,7 +160,7 @@ function CarteCommande({ a, outils }) {
           <tbody>
             {lignes.map((l, i) => (
               <tr key={i}>
-                <td style={{ color: T.ink }}>{l.produit}{l.cip && <span className="num" style={{ display: "block", fontSize: 11, color: T.inkMute }}>{l.cip}</span>}</td>
+                <td style={{ color: T.ink }}>{l.produit}{l.cip && <span style={{ display: "block", fontSize: 11, color: T.inkMute, marginTop: 2 }}><CipCell cip={l.cip} /></span>}</td>
                 <td className="num">{qteFr(l.commande)}</td>
                 <td className="num">{qteFr(l.servi)}</td>
                 <td className="num" style={{ color: Number(l.non_servi) > 0 ? T.warn : undefined, fontWeight: Number(l.non_servi) > 0 ? 700 : undefined }}>
@@ -170,6 +172,8 @@ function CarteCommande({ a, outils }) {
           </tbody>
         </table>
       )}
+      {/* CIP de la commande, quantités servies : données de la pharmacie (docs/cip-copie.md) */}
+      {lignes.some((l) => l.cip) && <div className="ex-assistant__actions"><CopieCips lignes={lignes} libelle="Copier les CIP (quantités servies)" compact /></div>}
       {lots.length > 0 && (
         <details style={{ marginTop: 8 }}>
           <summary>Lots et péremptions ({lots.length})</summary>
@@ -309,7 +313,8 @@ function CarteRecap({ a, outils }) {
               <span className="num" style={{ flexShrink: 0, fontWeight: 700 }}>× {qteFr(l.quantite)}</span>
             </span>
             <span className="num" style={{ display: "block", fontSize: 12, color: T.inkSoft }}>
-              {[l.cip && `CIP ${l.cip}`, l.lot && `lot ${l.lot}`, l.peremption && `péremption ${peremptionFr(l.peremption)}`].filter(Boolean).join(" · ")}
+              {l.cip && <>CIP <CipCell cip={l.cip} />{(l.lot || l.peremption) ? " · " : ""}</>}
+              {[l.lot && `lot ${l.lot}`, l.peremption && `péremption ${peremptionFr(l.peremption)}`].filter(Boolean).join(" · ")}
             </span>
           </li>
         ))}

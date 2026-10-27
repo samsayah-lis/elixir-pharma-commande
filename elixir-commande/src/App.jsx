@@ -9,7 +9,6 @@ import LabJustifOrder from "./components/LabJustifOrder";
 import { allocate } from "./wheelchair-logic.js";
 import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
-import MyOrdersPanel from "./components/MyOrdersPanel";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
 import { loadJustifProducts, justifIssues, submitJustif, needsJustif, freshPharmacyToken, qtyByCip, rxFrais } from "./lab-justif-client.js";
@@ -25,7 +24,8 @@ import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, SqueletteCatalogue, Chargement } from "./components/ui/EtatVide.jsx";
 import BadgeStatut from "./components/ui/BadgeStatut.jsx";
-import CipCell from "./components/ui/CipCell.jsx";
+import CipCell, { ToastCopie } from "./components/ui/CipCell.jsx";
+import { copierTexte } from "./cip-copie.js";   // presse-papiers avec repli (bon de commande, CIP) : docs/cip-copie.md
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
 // Assistant Elixir (docs/assistant-conception.md § 1) : panneau chargé à la demande, seuls le bouton et l'état d'ouverture ici
 import { PanneauAssistant, GroupeAide, CoucheAssistant } from "./components/assistant/Entree.jsx";
@@ -45,6 +45,23 @@ import SqueletteAccueil, { AccueilIndisponible, salleProbable } from "./componen
 const Accueil = React.lazy(() => import("./components/accueil/Accueil.jsx").catch(() => ({ default: AccueilIndisponible })));
 // « Accès API » dans Mes commandes (API des pharmacies) : lien et panneau chargés à la demande ; échec du chargement : rien
 const LienApi = React.lazy(() => import("./components/api/LienApi.jsx").catch(() => ({ default: () => null })));
+// Mes commandes : fenêtre chargée à la demande depuis le 27/10/2026 (place gagnée dans le bundle des pharmacies pour la copie
+// des CIP, docs/cip-copie.md ; la lecture des commandes part en parallèle, fetchMyOrders). Morceau injoignable (hors ligne,
+// mise à jour entre deux) : fenêtre d'erreur, « Fermer » rend le focus au bouton « Mes commandes » (FocusFenetre)
+function MesCommandesIndisponibles({ onClose }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Mes commandes" style={{ ...ui.overlay, zIndex: 400 }} onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{ ...ui.modal, padding: "24px 20px" }}>
+        <FocusFenetre />
+        <EtatVide icone="commandes" erreur titre="Mes commandes indisponibles" texte="La fenêtre n'a pas pu se charger. Rechargez la page, puis réessayez."
+          actions={<button type="button" className="ex-btn-petrole" data-focus-initial onClick={onClose} style={ui.btn("primaire", "m")}>Fermer</button>} />
+      </div>
+    </div>
+  );
+}
+const MyOrdersPanel = React.lazy(() => import("./components/MyOrdersPanel").catch(() => ({ default: MesCommandesIndisponibles })));
+// « Copier les CIP » du panier (données de la pharmacie, docs/cip-copie.md) : chargé à la demande ; injoignable → rien d'affiché
+const CopieCips = React.lazy(() => import("./components/ui/CopieCips.jsx").catch(() => ({ default: () => null })));
 // Contingentement dans la ligne de l'article (docs/contingentement-ligne.md) : contexte ici, pastille chargée à la demande
 import { ContexteQuota, Quota, chargerPastille, tiersQuota } from "./components/quota/entree.jsx";
 // Limites de quantité des menus promo et précommandes (docs/limites-promo.md) : règles, pastille et encarts chargés à la demande,
@@ -1791,10 +1808,12 @@ export default function App() {
       `${"─".repeat(70)}`,
       `TOTAL : ${cartItems.reduce((s,i)=>s+(i.pn||0)*i.qty,0).toFixed(2)} €`,
     ].join("\n");
-    navigator.clipboard.writeText(lines).then(() => {
+    // presse-papiers par copierTexte (src/cip-copie.js) : repli textarea + execCommand quand navigator.clipboard est refusé ou absent
+    copierTexte(lines).then((ok) => {
+      if (!ok) { setCopyStatus("Erreur copie"); return; }
       setCopyStatus("✓ Copié !");
       setTimeout(() => setCopyStatus(""), 2500);
-    }).catch(() => setCopyStatus("Erreur copie"));
+    });
   };
 
   const handleRibUpload = (e) => {
@@ -2687,6 +2706,8 @@ export default function App() {
               </div>
             )}
           </div>
+          {/* « CIP 3400… copié » en bas de l'écran (CipCell, « Copier les CIP » ; région annoncée toujours présente) : docs/cip-copie.md */}
+          <ToastCopie />
 
           {/* Saisie par Elixir pour une pharmacie : orange conservé (décision de la cliente : ne pas confondre avec une promo or),
               ton « acting » de theme.js (6,88:1), boutons en pastilles */}
@@ -3744,8 +3765,12 @@ export default function App() {
             onClose={() => setNotifOuvert(false)} onReconnecter={actingFor ? null : demanderReconnexion} onEtat={setNotif} />
         )}
 
-        {/* ── Mes commandes — overlay ── */}
+        {/* ── Mes commandes — overlay (fenêtre chargée à la demande : docs/cip-copie.md ; en attendant, la même fenêtre avec « Chargement… ») ── */}
         {showMyOrders && (
+          <React.Suspense fallback={
+            <div role="dialog" aria-modal="true" aria-label="Mes commandes" style={{ ...ui.overlay, zIndex: 400 }}>
+              <div style={{ ...ui.modal, maxWidth: 360, padding: "24px 20px" }}><Chargement texte="Chargement de vos commandes…" /></div>
+            </div>}>
           <MyOrdersPanel
             orders={myOrders}
             loading={myOrdersLoading}
@@ -3790,6 +3815,7 @@ export default function App() {
               flash(`✓ ${items.length - nPer} produit(s) ajoutés au panier${nPer ? ` · péremption courte non reprise (${nPer}) : voir le menu Péremption courte` : ""}`, nPer ? 6000 : undefined);
             }}
           />
+          </React.Suspense>
         )}
 
         {/* Panier — tiroir fixe (refonte charte, lot 6 : habillage seulement). Inchangés : handleSend, condition
@@ -3850,8 +3876,10 @@ export default function App() {
                         <button className="ex-btn-discret ex-cible" onClick={() => setItemQty(item, 0)} title="Supprimer" aria-label={`Supprimer ${item.name}${suffixe} du panier`}
                           style={{ ...pasPanier, width: isMobile ? 32 : 28, height: isMobile ? 32 : 28 }}><Icone nom="fermer" taille={14} epaisseur={2.4} /></button>
                       </div>
-                      {/* Nom du produit */}
-                      <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: "2px 0 10px" }}>{item.name}</div>
+                      {/* Nom du produit, puis son CIP copié d'un clic (CipCell, docs/cip-copie.md ; article à plusieurs références : la
+                          référence servie en premier, la répartition par CIP se fait à l'envoi) */}
+                      <div style={{ fontWeight: 600, fontSize: 13, color: T.ink, lineHeight: 1.35, margin: item.cip ? "2px 0 4px" : "2px 0 10px" }}>{item.name}</div>
+                      {item.cip && <div style={{ fontSize: 12, color: T.inkMute, margin: "0 0 10px", display: "flex", alignItems: "center", gap: 4 }}>CIP <CipCell cip={item.cip} /></div>}
                       {/* Péremption courte (ligne à part, src/peremption-panier.js) : date du lot, remise de la page sur le prix de base
                           (ou remise facturée par Odoo) ; même produit sur une autre ligne → commande séparée (deux lignes d'un même CIP
                           dans une commande PharmaML : non éprouvé) */}
@@ -4070,6 +4098,11 @@ export default function App() {
                         : <><Icone nom="copier" taille={18} />Copier</>}
                     </button>
                   </div>
+                  {/* CIP des lignes du panier, au format du logiciel de la pharmacie (un par ligne, CIP;qté, CIP ⇥ qté) : données de la
+                      pharmacie, exception explicite à l'anti-copie (docs/cip-copie.md) ; composant chargé à la demande */}
+                  <React.Suspense fallback={null}>
+                    <CopieCips lignes={cartItems} style={{ ...btnSecondaire, marginTop: 8 }} />
+                  </React.Suspense>
                   <button className="ex-lien-danger" onClick={() => { setQuantities({}); setSpecialItems([]); setJustifInfo({}); }} style={{
                     ...ui.btn("lien"), display: "flex", gap: 6, margin: "12px auto 0", padding: "8px 12px", fontSize: 13, fontWeight: 600
                   }}><Icone nom="corbeille" taille={16} />Vider le panier</button>

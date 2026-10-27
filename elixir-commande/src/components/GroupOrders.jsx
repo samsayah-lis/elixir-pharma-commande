@@ -4,6 +4,7 @@ import { T, R, ui, tone, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
+import CipCell from "./ui/CipCell.jsx";   // CIP copié d'un clic (docs/cip-copie.md)
 
 // Affichage seulement (lot 8) : format français commun de src/theme.js (« 1 234,50 € », espace insécable avant € et %) ;
 // les montants enregistrés (gp-pharmacy, gp-admin) sont calculés par gp-pricing et ne passent pas par ces fonctions.
@@ -315,7 +316,7 @@ export default function GroupOrders({ pharmacyCip, pharmacyEmail, onDirtyChange,
                     <td style={{ padding: "10px 14px", position: "sticky", left: 0, background: T.surface, zIndex: 1, minWidth: 150, maxWidth: 220, boxShadow: `1px 0 0 ${T.lineSoft}` }}>
                       <div style={{ fontWeight: 600, color: T.ink }}>{l.name}</div>
                       {/* statut écrit : en stock (ok), précommande (sarcelle, décision de la cliente) */}
-                      <div style={{ fontSize: 11, color: T.inkMute }}>CIP {l.cip} · {stock ? <span style={{ color: T.ok, fontWeight: 700 }}>En stock</span> : <span style={{ color: T.teal, fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
+                      <div style={{ fontSize: 11, color: T.inkMute }}>CIP <CipCell cip={l.cip} /> · {stock ? <span style={{ color: T.ok, fontWeight: 700 }}>En stock</span> : <span style={{ color: T.teal, fontWeight: 700 }}>Précommande</span>}{Number(l.weight) > 1 ? ` · compte ×${l.weight}` : ""}</div>
                       {packLabel(l) && <div style={{ fontSize: 11, color: T.inkSoft, fontWeight: 700, display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}><Icone nom="carton" taille={12} />{packLabel(l)}</div>}
                       {l.notes && <div style={{ fontSize: 11, color: T.inkSoft }}>{l.notes}</div>}
                       {row?.free > 0 && <div style={{ fontSize: 12, color: T.ok, fontWeight: 700, marginTop: 3 }}>{row.qty} facturées + {row.free} UG = {row.received} reçues{op.tier_mode !== "individuel" && row.free > ugFor(l, row.qty).free ? " (dont part du groupe, provisoire)" : ""}</div>}

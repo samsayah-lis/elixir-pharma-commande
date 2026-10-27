@@ -8,6 +8,7 @@ import { T, R, ui, tone, fmtEur, fmtPct as fmtPctFr } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EnteteVue from "./ui/EnteteVue.jsx";
 import BadgeStatut from "./ui/BadgeStatut.jsx";
+import CipCell from "./ui/CipCell.jsx";   // CIP copié d'un clic (docs/cip-copie.md)
 import { Chargement } from "./ui/EtatVide.jsx";
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js. Le panier reçoit les prix bruts.
@@ -188,7 +189,7 @@ export default function WheelchairOrder({ onAddToCart, lineKey = "fauteuil", ico
             <div style={{ flex: 1, minWidth: 220 }}>
               <div style={{ fontWeight: 600, fontSize: 15, color: T.ink }}>{product.name}</div>
               <div className="num" style={{ fontSize: 12, color: T.inkMute, marginTop: 2 }}>
-                CIP : <span style={{ fontFamily: T.mono }}>{product.cip}</span> · largeur d'assise {sizeLabel(sizeAt(selectedIdx))}
+                CIP <CipCell cip={product.cip} /> · largeur d'assise {sizeLabel(sizeAt(selectedIdx))}
                 {Number.isFinite(stock) && stock > 0 && <> · <b style={{ color: T.ok }}>stock {stock}</b></>}
               </div>
               {manualIdx != null && result && result.lineIdx != null && manualIdx !== result.lineIdx && (

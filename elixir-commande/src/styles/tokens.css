@@ -233,6 +233,18 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .ex-ico-copier { --ico-trace: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='8.5' y='8.5' width='12' height='12' rx='2'/%3E%3Cpath d='M15.5 8.5V5.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3'/%3E%3C/svg%3E"); }
 /* contraste élevé (Windows) : les fonds sont remplacés, l'icône prend la couleur du texte des boutons */
 @media (forced-colors: active) { .ex-ico::before { forced-color-adjust: none; background-color: ButtonText; } }
+/* ── Copie du CIP (27/10/2026, docs/cip-copie.md) : numéro + icône forment un seul bouton (CipCell) ──
+   row-reverse : l'icône dessinée en ::before passe à droite du numéro (::after reste à la zone de toucher, .ex-cible) ;
+   marge verticale négative = marge interne : la ligne ne grandit pas ; pas de marge négative horizontale (le fond vert de
+   « CIP copié » recouvrait le libellé « CIP » qui précède). Tons pendant le message : ok (« CIP copié »), danger (« Copie
+   impossible ») ; ex-selectionnable prend le relais après un refus */
+.ex-cip { display: inline-flex; flex-direction: row-reverse; align-items: center; gap: 5px; margin: -2px 0; padding: 2px 5px; border: none;
+  border-radius: 6px; background: transparent; color: var(--ink-mute); font: inherit; line-height: 1.3; cursor: pointer; vertical-align: middle;
+  --ico: 12px; transition: background-color .15s var(--ease), color .15s var(--ease); }
+@media (hover: hover) { .ex-cip:hover { background: var(--surface-2); color: var(--ink); } }
+.ex-cip--copie { background: var(--ok-bg); color: var(--ok); }
+.ex-cip--echec { background: var(--danger-bg); color: var(--danger); }
+@media print { .ex-cip { margin: 0; padding: 0; } .ex-toast-copie { display: none; } }
 
 /* ── Saisie de commande et recherche globale (lot 5) : disposition des lignes de résultats par grille, mise en pile
    sous 768 px par @media (les composants ne reçoivent pas isMobile) ; tailles des contrôles ici et non en inline ── */

@@ -6,6 +6,7 @@ import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 import { offreAffichee, offrePeremption, datePeremption, plafondCourt } from "../peremption-panier.js";
 import { TierBadge } from "../tiers.jsx";
 import { Quota } from "./quota/entree.jsx";   // contingentement : pastille courte sous le nom (quantité saisie comprise ; la ligne ne change pas de hauteur)
+import CipCell from "./ui/CipCell.jsx";       // CIP copié d'un clic (docs/cip-copie.md), non sélectionnable (anti-copie § 19)
 
 // Affichage seulement (refonte charte, lot 7) : format français de src/theme.js.
 // Péremption courte, règle du 21/10/2026 (décision de Zineb, docs/peremption.md) : la page affiche de nouveau la remise
@@ -184,7 +185,8 @@ export default function ShortExpiry({ onAddToCart, icone, couleur = "#ea580c" })
 
                 return (
                   <tr key={p.cip} className="ex-tr" style={{ borderBottom: `1px solid ${T.lineSoft}` }}>
-                    <td className="ex-per-cip" style={{ padding: "10px 10px", fontSize: 12, fontFamily: T.mono, color: T.inkMute }}>{p.cip}</td>
+                    {/* CIP : tout l'élément copie (CipCell) ; sous 768 px, zone « cip » de la grille (tokens.css) */}
+                    <td className="ex-per-cip" style={{ padding: "10px 10px" }}><CipCell cip={p.cip} /></td>
                     <td className="ex-per-nom" style={{ padding: "10px 10px", fontWeight: 600, fontSize: 13, color: T.ink, maxWidth: 260 }}>{p.name}<Quota cip={p.cip} saisie={qty} forme="courte" /></td>
                     <td className="ex-per-stock" style={{ padding: "10px 10px", textAlign: "center" }}>
                       <span style={{ fontWeight: 700, fontSize: 14, color: p.available > 10 ? T.ok : p.available > 0 ? T.warn : T.danger }}>

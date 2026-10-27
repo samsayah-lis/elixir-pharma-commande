@@ -236,6 +236,13 @@ const ECARTS_AUTORISES = [
   { zone: "panier calculé, contingentement, signature du catalogue, adresse ↔ menu", lot: "contingentement dans la ligne (23/10/2026)", attente: "quotaLigne", motif: "loadQuota : réponse, refus et panne enregistrés par garde (rien pour une autre pharmacie), réponse toujours renvoyée",
     avant: "      if (!r.ok) { setQuota(null); return null; }\n      const j = await r.json();\n      setQuota(j);\n      return j;\n    } catch { setQuota(null); return null; }",
     apres: "      if (!r.ok) return garde(null);\n      return garde(await r.json());\n    } catch { return garde(null); }" },
+  // ── Copie des CIP (27/10/2026, docs/cip-copie.md ; attente « cipCopie ») : le bon de commande copié passe par copierTexte
+  // (src/cip-copie.js), le même chemin que le CIP d'une ligne et les lots de CIP — repli textarea + execCommand quand
+  // navigator.clipboard est refusé ou absent (avant : navigator.clipboard.writeText sans garde, erreur non rattrapée dans un
+  // navigateur embarqué sans presse-papiers). Texte du bon, états « ✓ Copié ! » / « Erreur copie » et délais inchangés.
+  { zone: "copie du bon de commande", lot: "copie des CIP (27/10/2026)", attente: "cipCopie", motif: "bon copié par copierTexte (repli presse-papiers) ; mêmes libellés et délais",
+    avant: "    navigator.clipboard.writeText(lines).then(() => {\n      setCopyStatus(\"✓ Copié !\");\n      setTimeout(() => setCopyStatus(\"\"), 2500);\n    }).catch(() => setCopyStatus(\"Erreur copie\"));",
+    apres: "    // presse-papiers par copierTexte (src/cip-copie.js) : repli textarea + execCommand quand navigator.clipboard est refusé ou absent\n    copierTexte(lines).then((ok) => {\n      if (!ok) { setCopyStatus(\"Erreur copie\"); return; }\n      setCopyStatus(\"✓ Copié !\");\n      setTimeout(() => setCopyStatus(\"\"), 2500);\n    });" },
 ];
 // Lots en attente de fusion dans la référence : leurs écarts ne valent que si la référence ne les contient pas encore,
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
@@ -264,6 +271,9 @@ const LOTS = {
   // contingentement dans la ligne de l'article (23/10/2026, docs/contingentement-ligne.md) : loadQuota ignore une réponse
   // arrivée pour une autre pharmacie (ECARTS_AUTORISES, attente « quotaLigne »)
   quotaLigne: { nom: "contingentement dans la ligne de l'article", repere: "src/quota-ligne.js" },
+  // copie des CIP (27/10/2026, docs/cip-copie.md) : CipCell cliquable en entier, lots de CIP du panier et de Mes commandes
+  // (ECARTS_AUTORISES « copie du bon de commande », clé cip_copie_format)
+  cipCopie: { nom: "copie des CIP (clic sur le numéro, lots du panier et de Mes commandes)", repere: "src/cip-copie.js" },
 };
 // Fichiers intouchables et clés de stockage modifiés volontairement : affichés, non comptés comme écarts. À vider
 // dès que master contient la modification. Correctif de sécurité du 19/10/2026 (order-list, restock-alert et
@@ -384,6 +394,9 @@ const CLES_AUTORISEES = {
   // src/adresse-admin.js, clé appli_admin = "1" : posée par l'appli « Elixir Admin » ouverte sur l'admin (fenêtre d'appli
   // seulement), relue par les pages ouvertes ensuite dans l'appli sur une autre adresse (retour à l'admin toujours proposé)
   appliAdmin: { 'localStorage.setItem("appli_admin", "1"': 1, 'localStorage.getItem("appli_admin"': 1 },
+  // src/cip-copie.js, clé cip_copie_format : dernier format de collage choisi pour « Copier les CIP » (lignes | pv | tab), gardé
+  // sur l'appareil ; stockage refusé → aucun format mémorisé, le menu s'ouvre à chaque fois
+  cipCopie: { "localStorage.getItem(CLE_FORMAT": 1, "localStorage.setItem(CLE_FORMAT, id": 1 },
 };
 
 // ── lecture ──
@@ -570,6 +583,10 @@ console.log("\nTableaux : en-têtes ↔ cellules (src/App.jsx)");
 // xlsx chargé à la demande (24/10/2026, choix de Zineb) : la bibliothèque Excel (426 Ko, 45 % de ce bundle) ne servait aux
 // pharmacies qu'à l'import du bon de commande des commandes groupées (GroupOrders → gp-files, chunk gp-files-*.js) :
 // 943 847 → 510 974 octets. Budget resserré de 945 000 à 513 000 (marge ~2 000, comme avant) pour rester un garde-fou.
+// Copie des CIP (27/10/2026, docs/cip-copie.md) : marge de départ 53 octets (512 947 après les limites des menus promo).
+// Le lot ajoute ~1,9 Ko au bundle (CipCell cliquable en entier, message en bas, module cip-copie, CIP au panier) ; pour tenir le
+// budget sans le relever, la fenêtre « Mes commandes » (8 Ko) passe à la demande (MyOrdersPanel-*.js) et « Copier les CIP »
+// est un morceau à part (CopieCips-*.js) : 512 947 → 510 456 octets, marge 2 544. Budget inchangé.
 console.log("\nBudget du bundle (dist/assets, octets)");
 {
   const BUDGET = 513_000;

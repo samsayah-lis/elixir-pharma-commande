@@ -5,6 +5,8 @@ import { T, R, ui, fmtEur } from "../theme.js";
 import { Icone } from "../icons.jsx";
 import EtatVide, { ActionEtat, Chargement } from "./ui/EtatVide.jsx";
 import FocusFenetre from "./ui/FocusFenetre.jsx";
+import CipCell from "./ui/CipCell.jsx";       // CIP copié d'un clic (docs/cip-copie.md), non sélectionnable (anti-copie § 19)
+import CopieCips from "./ui/CopieCips.jsx";   // « Copier les CIP de cette commande » : données de la pharmacie, trois formats
 
 // ── Mes commandes (refonte charte, lot 7 : docs/refonte-charte.md § 3) ──
 // Fenêtre paper de rayon 28 sur voile --scrim (sans flou) ; une carte blanche par commande, comme la maquette de la
@@ -95,8 +97,12 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                 {/* Lignes */}
                 <div style={{ borderTop:`1px solid ${T.lineSoft}`, paddingTop:8 }}>
                   {items.slice(0, 5).map((it, j) => (
-                    <div key={j} className="num" style={{ display:"flex", justifyContent:"space-between", fontSize:12, padding:"3px 0", color:T.inkSoft }}>
-                      <span className="ex-commande-nom" title={it.name} style={{ flex:1, minWidth:0, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
+                    <div key={j} className="num" style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", fontSize:12, padding:"3px 0", color:T.inkSoft }}>
+                      <span style={{ flex:1, minWidth:0, display:"flex", flexDirection:"column", gap:2 }}>
+                        <span className="ex-commande-nom" title={it.name} style={{ overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", color:T.ink }}>{it.name}</span>
+                        {/* CIP de la ligne : copié d'un clic (CipCell), toujours non sélectionnable */}
+                        {it.cip && <span style={{ fontSize:11, color:T.inkMute, display:"inline-flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={it.cip} /></span>}
+                      </span>
                       {/* péremption courte : mention et remise gardées dans la ligne enregistrée (src/peremption-panier.js) */}
                       {estPeremption(it) && <span style={{ flexShrink:0, marginLeft:8, fontWeight:600, color:T.warn }}>{badgePeremption(it)}</span>}
                       <span style={{ flexShrink:0, marginLeft:12, fontWeight:600 }}>×{it.qty}</span>
@@ -135,6 +141,11 @@ export default function MyOrdersPanel({ orders, loading, pharmacyName, onClose, 
                     </button>
                   </div>
                 </div>
+                {/* CIP de la commande (toutes ses lignes, quantités commandées — servies quand elles sont connues) : données de la
+                    pharmacie, exception explicite à l'anti-copie (docs/cip-copie.md) ; formats : un par ligne, CIP;qté, CIP ⇥ qté */}
+                {items.some(it => it.cip) && (
+                  <div style={{ display:"flex", justifyContent:"flex-end", marginTop:8 }}><CopieCips lignes={items} libelle="Copier les CIP de cette commande" compact /></div>
+                )}
               </li>
             );
           })}
