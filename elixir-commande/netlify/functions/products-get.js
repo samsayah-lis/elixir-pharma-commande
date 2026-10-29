@@ -1,4 +1,5 @@
 import { getCors } from "./cors.js";
+import { lireToutesLesPages } from "./_supabase-pages.js";
 // Produits du catalogue curaté, avec prix remisé auto depuis odoo_catalog (liste #5).
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_KEY;
@@ -8,14 +9,14 @@ export const handler = async (event) => {
   const cors = getCors(event);
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
 
-  const res = await fetch(
-    `${SUPABASE_URL}/rest/v1/elixir_products?active=eq.true&order=section.asc,name.asc&select=*`,
-    { headers: { ...SB, "Range": "0-4999" } }
-  );
-  if (!res.ok) {
-    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: await res.text() }) };
+  let products;
+  try {
+    products = await lireToutesLesPages(
+      `${SUPABASE_URL}/rest/v1/elixir_products?active=eq.true&order=section.asc,name.asc,cip.asc&select=*`, SB, { cle: "cip" }
+    );
+  } catch (e) {
+    return { statusCode: 500, headers: cors, body: JSON.stringify({ error: e.message }) };
   }
-  const products = await res.json();
 
   // Prix remisé Odoo (liste #5, auto-synchronisée) par CIP
   const cips = [...new Set((Array.isArray(products) ? products : []).map(p => p.cip).filter(Boolean))];
