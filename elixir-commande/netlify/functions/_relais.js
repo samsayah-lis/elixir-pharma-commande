@@ -564,7 +564,7 @@ export async function confirmerApresVerification(ref, par) {
 }
 
 // ── Surveillance (fonction planifiée) ───────────────────────────────────
-async function alerter(cle, sujet, texte, heures = ALERTE_H) {
+export async function alerter(cle, sujet, texte, heures = ALERTE_H) {
   const k = `pmlr:alerte:${cle}`;
   const der = await kvGet(k).catch(() => null);
   if (der?.at && Date.now() - Date.parse(der.at) < heures * 3600e3) return false;

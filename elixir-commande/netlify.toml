@@ -73,6 +73,10 @@
 [functions."pml-relais-cron"]
   schedule = "*/5 * * * *"
 
+# Sonde externe du portail PharmaML : santé et alertes toutes les 5 min
+[functions."pml-sonde-cron"]
+  schedule = "*/5 * * * *"
+
 # Assistant Elixir : purge des conversations (90 jours), brouillons expirés, alertes budget et pannes (≈ 4 h, heure de Paris)
 [functions."chat-purge"]
   schedule = "15 2 * * *"
