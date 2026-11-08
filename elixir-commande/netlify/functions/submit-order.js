@@ -3,9 +3,7 @@ import { rateLimit } from "./rate-limit.js";
 import { verifyTokenAsync } from "./auth.js";
 import { envoiAuto } from "./_relais.js";
 // Envoi automatique d'une commande du site vers PharmaML, appelé par la page juste après l'enregistrement.
-// PharmaML refuse tout envoi venant de Netlify (403, adresse non autorisée) : la commande est mise dans la
-// file du relais, que l'agent du Mac du bureau envoie (voir _relais.js). Cette fonction n'appelle JAMAIS
-// PharmaML, même si InfoSoft autorisait un jour Netlify : un seul émetteur, l'agent.
+// Voie agent : mise en file pour le Mac ; voie portail : appel du portail maison, jamais InfoSoft.
 // La commande est relue en base (jamais le contenu envoyé par la page) ; identité vérifiée par le jeton
 // (pharmacie : CIP du jeton = CIP de la commande ; admin : saisie Elixir). Sans jeton valide, ou si une
 // condition manque (lignes en précommande, client bloqué, double…), la commande reste à la synchro manuelle.
@@ -25,6 +23,7 @@ async function journal(entry) {
 }
 
 export const handler = async (event) => {
+  const finAvant = Date.now() + 22000;
   const cors = getCors(event);
   const json = (code, body) => ({ statusCode: code, headers: cors, body: JSON.stringify(body) });
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -52,10 +51,10 @@ export const handler = async (event) => {
   const jeton = !tok ? "absent" : !user ? "refusé (expiré ?)" : user.isAdmin ? "admin" : user.cip ? `pharmacie ${user.cip}` : `sans CIP (${user.email || "?"})`;
   const versionPage = payload.items ? "ancienne page" : "page à jour";
   try {
-    const r = await envoiAuto({ orderId, user });
-    await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null,
+    const r = await envoiAuto({ orderId, user, finAvant });
+    await journal({ via, orderId, pharmacy: payload.pharmacyName || null, outcome: r.direct?.etat === "envoyee" ? "envoyee_portail" : r.ok ? "en_file" : `manuelle:${r.code}`, reference: r.ref || null, lignes: r.lignes ?? null,
       motif: r.ok ? null : r.error, jeton, versionPage, identite: r.identite || null });
-    return json(200, r.ok ? { success: true, queued: true, reference: r.ref, lignes: r.lignes, retenues: r.retenues || 0 } : { success: false, manuelle: true, code: r.code, error: r.error });
+    return json(200, r.ok ? { success: true, queued: true, ...(r.direct?.etat === "envoyee" ? { envoye: true } : {}), reference: r.ref, lignes: r.lignes, retenues: r.retenues || 0 } : { success: false, manuelle: true, code: r.code, error: r.error });
   } catch (e) {
     console.error("[submit-order]", e);
     await journal({ via, orderId, outcome: "exception", erreur: String(e.message).slice(0, 200) });

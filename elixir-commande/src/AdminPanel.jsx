@@ -683,10 +683,10 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     const h = (d) => d ? new Date(d).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
     const msg = t.etat === "refusee" ? `Refusée par PharmaML (réf. ${t.ref}) : ${t.message || ""} — rien n'a été créé, les lignes sont de nouveau à synchroniser`
       : t.etat === "incertaine" ? `Issue inconnue (réf. ${t.ref}) : vérifiez le portail PharmaML avant toute nouvelle saisie — ${t.message || ""}`
-      : t.etat === "expiree" ? `Non prise par l'agent du Mac avant l'échéance (réf. ${t.ref}) : rien envoyé, à resynchroniser`
-      : ["annulee", "non_envoyee"].includes(t.etat) ? `Non envoyée (${t.etat === "annulee" ? "annulée" : "vérifiée absente"}, réf. ${t.ref}) ${t.message || ""}`
-      : t.etat === "prise" ? `📤 Envoi en cours par l'agent du Mac (réf. ${t.ref}) : ne pas ressaisir avant son compte rendu`
-      : `📡 En file (réf. ${t.ref}) : en attente de l'agent du Mac jusqu'à ${h(t.priseAvant)} — non prise d'ici là, elle reviendra à la synchro manuelle (rien envoyé)`;
+      : t.etat === "expiree" ? `Non envoyée avant l'échéance (réf. ${t.ref}) : rien envoyé, à resynchroniser`
+      : ["annulee", "non_envoyee"].includes(t.etat) ? `Non envoyée (${t.etat === "annulee" ? "annulée" : "rien n'est parti"}, réf. ${t.ref}) ${t.message || ""}`
+      : t.etat === "prise" ? `📤 Envoi en cours ${t.voie === "portail" ? "au portail PharmaML" : "par l'agent du Mac"} (réf. ${t.ref}) : ne pas ressaisir avant son compte rendu`
+      : `📡 En file (réf. ${t.ref}) : en attente d'envoi jusqu'à ${h(t.priseAvant)} — non envoyée d'ici là, elle reviendra à la synchro manuelle (rien envoyé)`;
     setSyncStatus(s => ({ ...s, [orderId]: msg }));
     // encore en file : suivi en arrière-plan (30 min au plus) pour afficher l'issue sans actualiser
     if (["a_envoyer", "prise"].includes(t.etat) && !enFond.current.has(t.ref)) {

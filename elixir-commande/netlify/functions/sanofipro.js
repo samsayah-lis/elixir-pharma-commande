@@ -18,7 +18,8 @@ import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { kvGet, kvSet, kvGetBrut, kvSetSi, kvList, avecVerrou } from "./_lab-justif.js";
 import { lireConfig, validerConfig, CLE, PORTAIL_SP, VERROU, REF_OK } from "./_sanofipro.js";
-import { mettreEnFile } from "./_relais.js";
+import { testerPortail } from "./_portail-pml.js";
+import { mettreEnFile, lireConfig as lireConfigRelais } from "./_relais.js";
 
 const SITE_HOSTS = ["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"];
 const siteBase = (event) => { const h = String(event?.headers?.host || "").toLowerCase();
@@ -40,7 +41,7 @@ export const handler = async (event) => {
   try {
     if (b.action === "etat") {
       const [config, dernier, lst] = await Promise.all([lireConfig(), kvGet("sp:dernier_passage"), kvList("sp:ord:", 300)]);
-      return json(200, { config, dernier, portail: PORTAIL_SP, identifiants: !!(process.env.SANOFIPRO_EMAIL && process.env.SANOFIPRO_PASSWORD),
+      return json(200, { config, dernier, voie: (await lireConfigRelais()).voie, portail: PORTAIL_SP, identifiants: !!(process.env.SANOFIPRO_EMAIL && process.env.SANOFIPRO_PASSWORD),
         commandes: lst.map(r => ({ ...r.value, updated_at: r.updated_at })) });
     }
     if (b.action === "config_save") {
@@ -49,6 +50,7 @@ export const handler = async (event) => {
       return json(200, { config: await lireConfig() });
     }
     if (b.action === "test_pharmaml") {
+      if ((await lireConfigRelais()).voie === "portail") return json(200, await testerPortail());
       // essai par le relais : l'agent du Mac envoie une liste vide (PharmaML refuse Netlify, 403) ; suivi par pml-relais « etat »
       const ref = `TEST-${Date.now()}`;
       const r = await mettreEnFile({ ref, source: "test", corps: [], creePar: `admin:${qui}`, priseMs: 90e3 });

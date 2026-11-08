@@ -188,7 +188,7 @@ export default function AdminLabJustif({ adminFetch, flash, syncStatus = {}, onS
         <button onClick={enregistrer} disabled={!dirty || !!busy} style={{ ...btn(T.petrol), opacity: !dirty || busy ? 0.5 : 1 }}>{busy === "save" ? "Enregistrement…" : "💾 Enregistrer les réglages"}</button>
         {dirty && <span style={{ fontSize: 12, color: T.warn, fontWeight: 700 }}>Réglages modifiés non enregistrés</span>}
         <div style={{ flex: 1 }} />
-        <button onClick={() => act("portail", { action: "test_portail" }, (j) => flash?.(`✓ Portail PharmaML joignable (${j.commandesDuJour} commande(s) aujourd'hui)`))} disabled={!!busy} style={btn(T.surface2, T.petrol)}>🔌 Tester le portail PharmaML</button>
+        <button onClick={() => act("portail", { action: "test_portail" }, (j) => flash?.(Object.entries(j.sources || {}).map(([s, r]) => `${s === "infosoft" ? "InfoSoft" : "Portail maison"} : ${typeof r === "number" ? `${r} commande(s) aujourd’hui` : `⚠ ${r.erreur}`}`).join(" · ")))} disabled={!!busy} style={btn(T.surface2, T.petrol)}>🔌 Tester les sources PharmaML</button>
         <button onClick={() => act("run", { action: "run" }, (j) => { flash?.((j.journal || []).join(" · ")); plusTard(20000); })} disabled={!!busy} style={btn(T.surface2, T.petrol)}>{busy === "run" ? "Lancement…" : "🔄 Contrôler maintenant"}</button>
       </div>
 

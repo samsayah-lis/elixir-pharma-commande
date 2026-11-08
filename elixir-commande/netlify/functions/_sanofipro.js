@@ -27,8 +27,8 @@
 // Stockage kv_store : sp:config, sp:ord:<réf>, sp:ids (documents vus par référence), sp:lock,
 // sp:dernier_passage, sp:dernier_complet, sp:alerte_tech, sp:alerte_arret.
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
-import { sb, kvGet, kvGetBrut, kvSet, kvSetSi, kvList, kvCreate, fichePharmacie, esc, dateLongue, jourParis, MAIL_DE, lignesProduit, parisVersDate } from "./_lab-justif.js";
-import { mettreEnFile, lireTache, annulerSiEnAttente, enVolRelais } from "./_relais.js";
+import { sb, kvGet, kvGetBrut, kvSet, kvSetSi, kvList, kvCreate, fichePharmacie, esc, dateLongue, jourParis, MAIL_DE, lignesCommandees, parisVersDate } from "./_lab-justif.js";
+import { mettreEnFile, lireTache, annulerSiEnAttente, enVolRelais, lireConfig as lireConfigRelais, envoyerDirect } from "./_relais.js";
 
 export const PORTAIL_SP = "https://sanofipro.expepharma.com";
 const API = (process.env.SANOFIPRO_API || `${PORTAIL_SP}/api`).replace(/\/$/, "");
@@ -183,19 +183,13 @@ export class PharmaML {
   }
   // lignes commandées d'une pharmacie (CIP) pour des produits (CIP13), depuis une date
   async lignes(cip, codes, termes, depuis) {
-    const out = [];
-    for (const terme of termes) for (const l of await lignesProduit(terme, depuis, new Date())) {
-      if (String(l.Identifiant) !== String(cip) || !codes.includes(String(l.CodeProduit))) continue;
-      if (parisVersDate(l.DateCommande).getTime() < depuis.getTime()) continue;
-      if (!out.some(x => x.ReferenceCommande === l.ReferenceCommande && x.CodeProduit === l.CodeProduit && x.DateCommande === l.DateCommande)) out.push(l);
-    }
-    return out;
+    return lignesCommandees({ termes, codes, cip, du: depuis, au: new Date() });
   }
   // essai sans commande (liste vide) : PharmaML accepte-t-il un envoi venant de Netlify ?
   async essai() { return this.envoyer([]); }
 }
-// Envoi par le relais (agent du Mac du bureau ; PharmaML refuse Netlify, 403) : tâche « SP<réf> » mise en
-// file, puis attente du compte rendu de l'agent. Même contrat que PharmaML.envoyer, plus nonEnvoye :
+// Envoi par la voie courante du relais : tâche « SP<réf> » mise en
+// file, envoi direct si voie portail, puis lecture du compte rendu. Même contrat que PharmaML.envoyer, plus nonEnvoye :
 // tâche jamais prise, retirée de façon sûre (rien n'est parti : pas un refus, pas de coupe-circuit).
 export class PharmaMLRelais extends PharmaML {
   constructor({ attendre = (ms) => new Promise(r => setTimeout(r, ms)), priseMs = 75e3, resultatMs = 60e3, pasMs = 2500 } = {}) {
@@ -205,12 +199,21 @@ export class PharmaMLRelais extends PharmaML {
     const ref = String(corps?.[0]?.referenceCommande || "");
     // cause : pause (403 : plus aucun envoi), agent (jamais prise), refus_agent (corps refusé par l'agent)
     const nonEnvoye = (message, cause = "agent") => ({ ok: false, refus: true, nonEnvoye: true, cause, status: 0, message });
-    const pause = await kvGet("pmlr:pause").catch(() => null);
-    if (pause?.at) return nonEnvoye(`envois PharmaML suspendus (${pause.motif}) : rien envoyé`, "pause");
+    const voie = (await lireConfigRelais()).voie;
+    const pause = await kvGet("pmlr:pause");
+    if (pause?.at && (pause.voie || "agent") === voie) return nonEnvoye(`envois PharmaML suspendus (${pause.motif}) : rien envoyé`, "pause");
     try {
       const r = await mettreEnFile({ ref, source: "sanofi", corps, cip: corps?.[0]?.identifiantPML, creePar: "sanofi", priseMs: this.priseMs + 15e3, forcer });
       if (!r.ok && !r.tache) return nonEnvoye("relais : tâche impossible à créer");
       if (!r.ok && !["a_envoyer", "prise"].includes(r.tache.etat)) return this.issue(r.tache, true);
+      if ((await lireConfigRelais()).voie === "portail") {
+        const direct = await envoyerDirect(ref, { finAvant: Date.now() + 25000 });
+        if (["transitoire", "pause", "budget"].includes(direct.code)) {
+          const motif = direct.message || "budget insuffisant pour l'envoi au portail PharmaML";
+          const a = await annulerSiEnAttente(ref, motif, "sanofi");
+          if (a.ok) return nonEnvoye(`${motif} : tâche retirée, rien envoyé`, direct.code === "pause" ? "pause" : "agent");
+        }
+      }
     } catch (e) {
       // création peut-être faite malgré l'erreur : on relit ; seule une absence CERTAINE vaut « rien envoyé »
       const t = await lireTache(ref).catch(() => undefined);
@@ -224,15 +227,15 @@ export class PharmaMLRelais extends PharmaML {
       if (t === null) return { ok: false, refus: false, status: 0, message: "tâche du relais disparue" };
       if (t && !["a_envoyer", "prise"].includes(t.etat)) return this.issue(t, false);
       if (t?.etat === "a_envoyer" && Date.now() - debut > this.priseMs) {
-        const a = await annulerSiEnAttente(ref, "Sanofi Pro : agent du Mac sans réponse", "sanofi").catch(() => ({ ok: false }));
+        const a = await annulerSiEnAttente(ref, "Sanofi Pro : envoi au portail PharmaML sans réponse", "sanofi").catch(() => ({ ok: false }));
         if (a.ok) {
           const p = await kvGet("pmlr:pause").catch(() => null);
-          return p?.at ? nonEnvoye(`envois PharmaML suspendus (${p.motif}) : rien envoyé`, "pause") : nonEnvoye("agent PharmaML du Mac injoignable : tâche retirée, rien envoyé");
+          return p?.at && (p.voie || "agent") === (await lireConfigRelais()).voie ? nonEnvoye(`envois PharmaML suspendus (${p.motif}) : rien envoyé`, "pause") : nonEnvoye("relais vers le portail PharmaML injoignable : tâche retirée, rien envoyé");
         }
         await this.attendre(this.pasMs);            // l'agent vient sans doute de la prendre : on relit
         continue;
       }
-      if (t?.etat === "prise" && Date.now() - Date.parse(t.priseA) > this.resultatMs) return { ok: false, refus: false, status: 0, message: "prise par l'agent du Mac sans compte rendu" };
+      if (t?.etat === "prise" && Date.now() - Date.parse(t.priseA) > this.resultatMs) return { ok: false, refus: false, status: 0, message: "envoi au portail PharmaML sans compte rendu" };
       if (Date.now() - debut > this.priseMs + this.resultatMs + 30e3) return { ok: false, refus: false, status: 0, message: "relais : délai d'attente dépassé" };
       await this.attendre(this.pasMs);
     }
@@ -472,7 +475,7 @@ export const suiviEnCours = async () => etatsSuivis(new Map((await kvList("sp:or
 // À appeler sous le verrou sp:lock (VERROU_MS). Tous les écrivains de sp:ord:* (passages, actions
 // admin) passent par ce verrou : les écritures du passage n'écrasent donc jamais une décision prise
 // pendant qu'il tourne.
-// envoi par défaut : relais de l'agent du Mac (les bancs de test y branchent un faux agent)
+// Envoi par défaut : voie courante du relais.
 let relaisParDefaut = () => new PharmaMLRelais();
 export const _relaisDeTest = (f) => { relaisParDefaut = f; };
 export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(), pml = relaisParDefaut(), maintenant = () => new Date(),
@@ -565,7 +568,7 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
       // relais : tâche jamais prise par l'agent (ou jamais créée) → retirée, rien n'est parti
       if (st.pml?.envoyeA && st.pml.relais && st.etape !== "sanofi" && pml.annulerSiNonPrise && await pml.annulerSiNonPrise(st.pml.ref).catch(() => false)) {
         st.pml = { ref: st.pml.ref, relaisAnnule: new Date().toISOString() };
-        histo(st, "en_attente", "passage interrompu avant la prise par l'agent du Mac : rien envoyé"); st.etat = "en_attente"; st.motif = "passage interrompu avant l'envoi : réexamen"; delete st.etape;
+        histo(st, "en_attente", "passage interrompu avant la prise par le relais : rien envoyé"); st.etat = "en_attente"; st.motif = "passage interrompu avant l'envoi : réexamen"; delete st.etape;
         await ecrire(ref, st);
         continue;
       }
@@ -940,9 +943,9 @@ export async function passage({ budgetMs = 10 * 60e3, portail = new PortailSP(),
   }
   if (anomalies.length) journal.push(`⚠ ${anomalies.length} commande(s) non examinée(s) : ${anomalies.slice(0, 5).join(" ; ")}`);
   if (relaisInjoignable && auto) await alerteTechnique(cfg, new Error(relaisInjoignable.cause === "pause"
-      ? `${relaisInjoignable.message}. Les commandes Sanofi Pro restent en attente et repartiront après « Reprendre les envois » (admin, onglet Commandes, une fois l'adresse du bureau de nouveau autorisée par InfoSoft).`
-      : `agent PharmaML du Mac injoignable (${relaisInjoignable.message}) : les commandes Sanofi Pro restent en attente et repartiront dès son retour. Vérifiez que le Mac du bureau est allumé et l'agent lancé.`),
-    relaisInjoignable.cause === "pause" ? { cle: "sp:alerte_pause", sujet: "Sanofi Pro : envois PharmaML suspendus (403)" } : { cle: "sp:alerte_relais", sujet: "Sanofi Pro : agent PharmaML du Mac injoignable" })
+      ? `${relaisInjoignable.message}. Les commandes Sanofi Pro restent en attente et repartiront après « Reprendre les envois » (admin, onglet Commandes, après résolution du motif de pause de la voie affichée).`
+      : `relais vers le portail PharmaML injoignable (${relaisInjoignable.message}) : les commandes Sanofi Pro restent en attente et repartiront dès son retour. Vérifiez la voie courante dans le bandeau Relais PharmaML et son dernier incident.`),
+    relaisInjoignable.cause === "pause" ? { cle: "sp:alerte_pause", sujet: "Sanofi Pro : envois PharmaML suspendus" } : { cle: "sp:alerte_relais", sujet: "Sanofi Pro : relais vers le portail PharmaML injoignable" })
     .catch(e => journal.push(`⚠ Alerte technique non envoyée : ${e.message}`));
   if ((auto || etatsSuivis(etats)) && (panneControle || anomalies.length)) {
     const err = new Error([panneControle && `contrôles impossibles (Odoo ou PharmaML) : ${panneControle.message}`,

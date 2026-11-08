@@ -1,4 +1,4 @@
-// ── Relais PharmaML : API (agent du Mac + admin) ─────────────────────────
+// ── Relais PharmaML : API (agent du Mac, portail maison + admin) ─────────────────────────
 // Agent (requête signée Ed25519, en-têtes x-relais-agent / x-relais-ts / x-relais-sig) :
 //   POST { action: "prendre", instance, version, max }      → { taches: [{ ref, jeton, corps, empreinte, forcer }] }
 //   POST { action: "rendre", ref, jeton, http, texte, erreur, ms, envoyeA, empreinte, nonEnvoye, dejaTente }
@@ -10,14 +10,17 @@
 //   confirmer { ref, confirme }     → issue inconnue vérifiée PRÉSENTE dans PharmaML : lignes marquées envoyées
 //   statut                          → agent (dernier contact), pause, réglages, file, envois à vérifier
 //   config_save { autoSite, alertes } ; reprendre_envois (lève la pause après un 403) ;
-//   test                            → essai sans commande (liste vide) envoyé par l'agent du Mac
+//   voie_save { voie }             → agent (défaut) ou portail maison
+//   test (voie portail : injection vide et lecture, sans tâche) → essai sans commande (liste vide) envoyé par l'agent du Mac
 // Logique et garde-fous : _relais.js
 import { getCors } from "./cors.js";
 import { verifyAdmin } from "./auth.js";
 import { kvDel, kvGet } from "./_lab-justif.js";
+import { testerPortail } from "./_portail-pml.js";
 import * as R from "./_relais.js";
 
 export const handler = async (event) => {
+  const finAvant = Date.now() + 22000;
   const cors = getCors(event);
   const json = (code, body) => ({ statusCode: code, headers: { ...cors, "Content-Type": "application/json", "Cache-Control": "no-store" }, body: JSON.stringify(body) });
   if (event.httpMethod === "OPTIONS") return { statusCode: 200, headers: cors, body: "" };
@@ -45,7 +48,7 @@ export const handler = async (event) => {
     const qui = auth.admin?.email || "admin";
     switch (b.action) {
       case "envoyer": {
-        const r = await R.envoyerCommande({ orderId: b.orderId, idx: Array.isArray(b.idx) ? b.idx : null, par: `admin:${qui}` });
+        const r = await R.envoyerCommande({ orderId: b.orderId, idx: Array.isArray(b.idx) ? b.idx : null, par: `admin:${qui}`, finAvant });
         return json(r.ok ? 200 : 409, r);
       }
       case "etat": {
@@ -76,9 +79,11 @@ export const handler = async (event) => {
         return json(r.ok ? 200 : 409, r);
       }
       case "statut": return json(200, await R.statut());
+      case "voie_save": return json(200, { config: await R.ecrireVoie(b.voie, qui) });
       case "config_save": return json(200, { config: await R.ecrireConfig(b, qui) });
       case "reprendre_envois": await kvDel("pmlr:pause"); return json(200, { ok: true });
       case "test": {
+        if (b.voie === "portail" || (await R.lireConfig()).voie === "portail") return json(200, await testerPortail());
         const ref = `TEST-${Date.now()}`;
         const r = await R.mettreEnFile({ ref, source: "test", corps: [], creePar: `admin:${qui}`, priseMs: 90e3 });
         return json(r.ok ? 200 : 409, { ok: r.ok, ref });

@@ -15,7 +15,7 @@ import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 import {
   kvGetBrut, kvSetSi, kvCreate, frise, etatCommandeDemande, SUIVI_ETAPES, SUIVI_MANUELLES, MAIL_DE, esc,
   sb, kvGet, kvSet, kvList, lireConfig, ecrireConfig, indexProduits, fichePharmacie, construireMail,
-  enregistrerOrdonnance, RX_MIMES, RX_MAX_B64, envoyerTest, testPortail, CONFIG_DEFAUT,
+  enregistrerOrdonnance, RX_MIMES, RX_MAX_B64, envoyerTest, testSources, CONFIG_DEFAUT,
 } from "./_lab-justif.js";
 
 const SITE_HOSTS = ["commandes-elixir.netlify.app", "elixir-commande.expepharma.com"];
@@ -407,7 +407,7 @@ async function admin(b, event, user) {
       return { name: f.name, mime: f.mime, data_base64: f.data_base64 };
     }
     case "test_mail": return await envoyerTest(cfg, b.lab, b.adresse || user?.email);
-    case "test_portail": return { commandesDuJour: await testPortail() };
+    case "test_portail": { const sources = await testSources(); return { commandesDuJour: sources.infosoft, sources }; }
     case "run": {
       const lance = await lancerEnvois(event, { detecter: true });
       return { journal: [lance ? "Contrôle lancé en arrière-plan : actualisez la liste dans une minute" : "Lancement impossible : le passage planifié (10 min) s'en chargera"] };

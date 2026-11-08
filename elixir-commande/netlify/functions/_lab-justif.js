@@ -15,6 +15,7 @@
 // Anti-doublon : verrou (lj:lock, écriture conditionnelle), origine du bon [LJ-<id>] (clé
 // d'unicité dans Odoo), identifiant du mail enregistré AVANT l'envoi.
 import crypto from "node:crypto";
+import { sources, lireCommandes, lignesFormatInfosoft } from "./_portail-pml.js";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 import { pickCip, validCip } from "./_pharmacies.js";
 
@@ -516,9 +517,57 @@ export async function lignesProduit(terme, du, au) {
       dateDebut: jourPortail(du), dateFin: jourPortail(au), "order[0][column]": "0", "order[0][dir]": "asc" });
     cols.forEach((c, k) => { u.set(`columns[${k}][data]`, c); u.set(`columns[${k}][searchable]`, "true"); u.set(`columns[${k}][orderable]`, "true"); });
     const j = JSON.parse(await portail("/liste/articles/commandesParClients?" + u));
-    out.push(...(j.data || []));
+    if (!Array.isArray(j.data) || !Number.isFinite(Number(j.recordsFiltered))) throw new Error("lecture InfoSoft invalide");
+    out.push(...j.data);
     start += (j.data || []).length;
     if (!(j.data || []).length || start >= j.recordsFiltered) break;
+  }
+  return out;
+}
+
+// Lecture exhaustive : une source configurée indisponible interdit de conclure à une absence.
+export async function lignesCommandees({ termes, codes, cip = null, du, au }) {
+  const actifs = sources(), out = [], connus = new Set(codes.map(String));
+  const garder = l => connus.has(String(l.CodeProduit)) && (cip == null || String(l.Identifiant) === String(cip))
+    && parisVersDate(l.DateCommande) >= new Date(du) && parisVersDate(l.DateCommande) <= new Date(au);
+  if (actifs.includes("infosoft")) {
+    const vues = new Set();
+    for (const terme of new Set(termes)) for (const l of await lignesProduit(terme, du, au)) {
+      const cle = JSON.stringify(l);
+      if (garder(l) && !vues.has(cle)) { vues.add(cle); out.push({ ...l, source: "infosoft" }); }
+    }
+  }
+  if (actifs.includes("portail")) {
+    // L'API accepte au plus 100 codes ; une commande peut apparaître dans plusieurs lots.
+    const commandes = new Map();
+    for (let i = 0; i < codes.length; i += 100) {
+      const r = await lireCommandes({ produits: codes.slice(i, i + 100), officines: cip ? [cip] : undefined, depuis: du, jusquA: au, statut: "recue,repondue" });
+      if (!r.complet) throw new Error("lecture portail incomplète");
+      for (const c of r.commandes) commandes.set(c.id, c);
+    }
+    const infos = [...out];
+    for (const c of commandes.values()) for (const l of lignesFormatInfosoft(c)) {
+      if (!garder(l)) continue;
+      if (infos.some(x => String(x.Identifiant) === String(l.Identifiant) && String(x.ReferenceCommande) === String(l.ReferenceCommande)
+        && String(x.CodeProduit) === String(l.CodeProduit) && Math.abs(parisVersDate(x.DateCommande) - parisVersDate(l.DateCommande)) < 30 * 60000)) continue;
+      out.push(l);
+    }
+  }
+  return out;
+}
+export async function testSources() {
+  const out = {};
+  for (const source of sources()) {
+    try {
+      if (source === "infosoft") out.infosoft = await testPortail();
+      else {
+        const maintenant = new Date();
+        const debut = parisVersDate(`${jourParis(maintenant)} 00:00:00`);
+        const r = await lireCommandes({ depuis: debut, jusquA: maintenant });
+        if (!r.complet) throw new Error("lecture portail incomplète");
+        out.portail = r.commandes.length;
+      }
+    } catch (e) { out[source] = { erreur: e.message }; }
   }
   return out;
 }
@@ -530,6 +579,20 @@ export async function lignesProduit(terme, du, au) {
 // qu'Elixir n'a plus de stock du produit ; sinon « à vérifier » (servie sur le stock ? manquant ?).
 // NB : la colonne « Disponible » du portail est un code de réponse PharmaML, pas un stock.
 const cleDemande = (lab, g) => `p-${g.ID_Adherent}-${String(g.ReferenceCommande || "")}-${String(g.DateCommande).replace(/\D/g, "")}-${lab.key}`.replace(/[^\w.-]/g, "_").slice(0, 110);
+// Toutes les demandes, même au-delà de la limite habituelle d'affichage de kvList.
+async function demandesDetection() {
+  const out = [];
+  for (let offset = 0; ; offset += 1000) {
+    const rows = await sb(`kv_store?key=like.lj%3Areq%3A*&select=value&order=key.asc&limit=1000&offset=${offset}`);
+    if (!Array.isArray(rows)) throw new Error("lecture des demandes justificatifs invalide");
+    for (const r of rows) {
+      const v = parse(r.value);
+      if (!v) throw new Error("demande justificatif illisible");
+      out.push(v);
+    }
+    if (rows.length < 1000) return out;
+  }
+}
 export async function detecter(cfg, { budgetMs = 20000 } = {}) {
   const t0 = Date.now();
   const journal = [];
@@ -547,15 +610,10 @@ export async function detecter(cfg, { budgetMs = 20000 } = {}) {
     const debutProduit = (cip) => Math.max(depuis.getTime(), Date.parse(suivis.find(p => p.cip === cip)?.suiviDepuis || 0) || 0);
     const parCip = Object.fromEntries(suivis.map(p => [p.cip, p]));
     const termes = [...new Set(suivis.map(p => String(p.court || p.nom).split(" ")[0].toUpperCase()).filter(t => t.length >= 4))];
-    const lignes = [];
-    let complet = true;
-    for (const t of termes) {
-      if (Date.now() - t0 > budgetMs) { complet = false; break; }
-      lignes.push(...(await lignesProduit(t, depuis, maintenant)).filter(l => parCip[l.CodeProduit] && Number(l.QuantiteCommandee) > 0
-        && parisVersDate(l.DateCommande).getTime() >= debutProduit(l.CodeProduit)));
-    }
-    // lignes partielles d'un labo : abandonnées (une commande à plusieurs produits serait incomplète)
-    if (!complet) { journal.push(`Détection ${lab.nom} interrompue (temps écoulé) : reprise au prochain passage`); break; }
+    const lignes = (await lignesCommandees({ termes, codes: suivis.map(p => p.cip), du: depuis, au: maintenant }))
+      .filter(l => Number(l.QuantiteCommandee) > 0 && parisVersDate(l.DateCommande).getTime() >= debutProduit(l.CodeProduit)
+        && (l.source !== "portail" || (l.canal !== "infosoft" && l.statut === "repondue")));
+    if (Date.now() - t0 > budgetMs) { journal.push(`Détection ${lab.nom} interrompue (temps écoulé) : reprise au prochain passage`); break; }
     const groupes = new Map();       // une commande officine = (adhérent, référence, date)
     const vues = new Set();
     for (const l of lignes) {
@@ -579,9 +637,12 @@ export async function detecter(cfg, { budgetMs = 20000 } = {}) {
       if (site && ((await sb(`elixir_orders?id=eq.${site[1]}&select=id&limit=1`)) || []).length) continue;   // commande du site
       const id = cleDemande(lab, g);
       if (await kvGet(`lj:req:${id}`)) continue;
+      recentes ??= await demandesDetection();
+      if (recentes.some(o => o.lab === lab.key && String(o.pharmacie?.cip) === String(g.Identifiant)
+        && String(o.reference) === ref && Math.abs(new Date(o.dateCommande) - date) < 30 * 60000)) continue;
       const ph = await fichePharmacie({ cip: String(g.Identifiant) });
       const req = {
-        id, lab: lab.key, source: "pharmaml", reference: ref, adherent: String(g.ID_Adherent), dateCommande: date.toISOString(),
+        id, lab: lab.key, source: "pharmaml", sourceLecture: g.source, reference: ref, adherent: String(g.ID_Adherent), dateCommande: date.toISOString(),
         pharmacie: ph || { nom: String(g.RaisonSociale || "").trim(), cip: String(g.Identifiant || "") },
         lignes: g.lignes.map(({ livre, ...l }) => l), attestation: false, renouvellement: null, rx: [],
         statut: "a_envoyer", essais: 0, creeLe: new Date().toISOString(),
@@ -604,7 +665,7 @@ export async function detecter(cfg, { budgetMs = 20000 } = {}) {
         // nouvelle référence. Même pharmacie + même produit dans les N derniers jours (demande ignorée comprise).
         const jours = Number(lab.antiRelanceJours ?? 7);
         if (jours > 0) {
-          recentes ??= (await kvList("lj:req:")).map(r => r.value);
+          recentes ??= await demandesDetection();
           const proche = recentes.find(o => o.lab === lab.key && String(o.pharmacie?.odooId) === String(ph.odooId)
             && Math.abs(new Date(o.dateCommande) - date) < jours * 86400e3 && o.lignes.some(x => req.lignes.some(y => y.cip === x.cip)));
           if (proche) motifs.push(`commande proche du ${dateLongue(new Date(proche.dateCommande))} (même pharmacie, même produit) : relance automatique du logiciel ?`);

@@ -1,9 +1,4 @@
-// ── Relais PharmaML : seul l'agent du Mac du bureau peut envoyer à PharmaML ──
-// InfoSoft n'accepte commandes.php que depuis l'adresse du bureau : depuis Netlify, tout envoi reçoit
-// 403 « Forbidden » (constaté le 14/10/2026, mêmes identifiants : 200 depuis le Mac). Le site met donc
-// chaque envoi en file (une tâche par référence PharmaML) ; l'agent du Mac interroge le site, réserve
-// une tâche, l'envoie depuis le bureau, puis rend la réponse BRUTE ; le classement se fait ici.
-//
+// Relais PharmaML : agent du Mac (par défaut) ou portail maison depuis Netlify.
 // Anti-doublon (une commande envoyée deux fois = marchandise livrée deux fois) :
 //   - une tâche par référence (pmlr:tache:<réf>, création seule) ; une ligne d'une commande du site
 //     n'appartient qu'à une tâche (pmlr:ligne:<commande>:<index>, création seule, gardée après l'envoi) ;
@@ -18,6 +13,7 @@
 // kv_store : pmlr:tache:<réf>, pmlr:file:<réf> (tâches à envoyer), pmlr:ligne:<commande>:<i>,
 // pmlr:agent (dernier contact), pmlr:config, pmlr:pause, pmlr:empreinte:<cip>:<hash>, pmlr:alerte:<type>,
 // pmlr:averifier:<réf> (envois à l'issue inconnue), pmlr:avis:<commande> (envoi automatique écarté : doublon…).
+import { configurationPortail, injecter, lireOfficine, lireCommandes, lireCommande as lireCommandePortail, memeContenu, masquer } from "./_portail-pml.js";
 import { createHash, createPublicKey, randomUUID, verify as verifierSignature } from "node:crypto";
 import { odoo, COMPANY_ID } from "./_odoo-rpc.js";
 import { sb, kvGet, kvGetBrut, kvSet, kvDel, kvCreate, kvList, fichePharmacie, esc, MAIL_DE } from "./_lab-justif.js";
@@ -40,7 +36,7 @@ const ORPHELINE_MS = 5 * 60e3;                  // réservation de ligne sans t�
 const SANS_CR_MS = 15 * 60e3;                   // tâche prise sans compte rendu depuis 15 min : « à vérifier »
 const CLE_V = (ref) => `pmlr:averifier:${ref}`; // index des envois à l'issue inconnue (bandeau de l'admin)
 const DOUBLE_MS = 2 * 3600e3;                   // même pharmacie, mêmes lignes en moins de 2 h = à vérifier
-export const CONFIG_DEFAUT = { autoSite: false, depuis: null, alertes: "pharmacien@elixirpharma.fr" };
+export const CONFIG_DEFAUT = { voie: "agent", autoSite: false, depuis: null, alertes: "pharmacien@elixirpharma.fr" };
 const ALERTE_H = 2;
 
 const maintenant = () => new Date().toISOString();
@@ -54,7 +50,7 @@ const items = (o) => { let it = o?.items; if (typeof it === "string") { try { it
 async function majSi(cle, valeur, maj) {
   if (!maj) return null;
   let t = Date.now();
-  if (new Date(t).toISOString() === new Date(maj).toISOString()) t += 1;
+  if (t <= Date.parse(maj)) t = Date.parse(maj) + 1;
   const nouv = new Date(t).toISOString();
   const res = await sb(`kv_store?key=eq.${encodeURIComponent(cle)}&updated_at=eq.${encodeURIComponent(maj)}`,
     { method: "PATCH", prefer: "return=representation", body: { value: JSON.stringify(valeur), updated_at: nouv } });
@@ -101,17 +97,32 @@ export function classer({ http, texte, erreur, nonEnvoye, dejaTente }, { vide = 
 }
 
 // ── Réglages ────────────────────────────────────────────────────────────
-export async function lireConfig() { return { ...CONFIG_DEFAUT, ...((await kvGet("pmlr:config").catch(() => null)) || {}) }; }
-export async function ecrireConfig(c, par) {
-  const cur = await lireConfig();
-  const autoSite = !!c.autoSite;
-  const alertes = String(c.alertes ?? cur.alertes).trim();
-  if (!/^[^@\s,;]+@[^@\s,;]+\.[a-z]{2,}([\s,;]+[^@\s,;]+@[^@\s,;]+\.[a-z]{2,})*$/i.test(alertes)) throw Object.assign(new Error("adresse(s) d'alerte invalide(s)"), { status: 400 });
-  // activation : seules les commandes passées APRÈS sont envoyées automatiquement (jamais l'arriéré)
-  const v = { autoSite, depuis: autoSite ? (cur.autoSite && cur.depuis ? cur.depuis : maintenant()) : null, alertes, majPar: par, majA: maintenant() };
-  await kvSet("pmlr:config", v);
-  return v;
+export async function lireConfig() { return { ...CONFIG_DEFAUT, ...((await kvGet("pmlr:config")) || {}) }; }
+// Préserver les autres réglages même si deux administrateurs écrivent en même temps.
+async function modifierConfig(modifier) {
+  for (let i = 0; i < 4; i++) {
+    const b = await kvGetBrut("pmlr:config");
+    const v = modifier({ ...CONFIG_DEFAUT, ...(b?.value || {}) });
+    if (b ? await majSi("pmlr:config", v, b.maj) : await kvCreate("pmlr:config", v)) return v;
+  }
+  throw Object.assign(new Error("réglages modifiés entre-temps : réessayez"), { status: 409 });
 }
+export async function ecrireConfig(c, par) {
+  return modifierConfig(cur => {
+    const autoSite = !!c.autoSite;
+    const alertes = String(c.alertes ?? cur.alertes).trim();
+    if (!/^[^@\s,;]+@[^@\s,;]+\.[a-z]{2,}([\s,;]+[^@\s,;]+@[^@\s,;]+\.[a-z]{2,})*$/i.test(alertes)) throw Object.assign(new Error("adresse(s) d'alerte invalide(s)"), { status: 400 });
+    return { ...cur, autoSite, depuis: autoSite ? (cur.autoSite && cur.depuis ? cur.depuis : maintenant()) : null, alertes, majPar: par, majA: maintenant() };
+  });
+}
+export async function ecrireVoie(voie, par) {
+  const c = configurationPortail();
+  if (!["agent", "portail"].includes(voie) || (voie === "portail" && !(c.injection && c.lecture)))
+    throw Object.assign(new Error("voie invalide ou configuration portail incomplète (injection et lecture requises)"), { status: 400 });
+  return modifierConfig(cur => ({ ...cur, voie, voieDepuis: maintenant(), voiePar: par }));
+}
+const pausePour = (p, voie) => p?.at && (p.voie || "agent") === voie;
+const lieuVerification = t => t.voie === "portail" ? `portail maison ${configurationPortail().url}, écran Commandes, référence ${t.ref}` : `portail InfoSoft, référence ${t.ref}`;
 
 // ── Création d'une tâche ────────────────────────────────────────────────
 // t : { ref, source: site|sanofi|test, corps, cip, pharmacie?, orderId?, idx?, cips?, creePar, priseMs, forcer? }
@@ -136,6 +147,7 @@ export async function mettreEnFile(t) {
   const rearmable = LIBERES.has(cur.etat) || (t.forcer && cur.etat === "incertaine");
   if (!rearmable || cur.empreinte !== tache.empreinte && t.source === "site") return { ok: false, existe: true, tache: cur };
   const nouv = { ...cur, ...tache, tentative: (cur.tentative || 1) + 1, historique: cur.historique, precedent: { etat: cur.etat, message: cur.message || null, renduA: cur.renduA || null } };
+  for (const k of ["voie", "numeroPortail", "commandeIdPortail", "verifAuto", "verifieePar", "verifieeA", "sansCompteRendu"]) delete nouv[k];
   delete nouv.jeton; delete nouv.priseA; delete nouv.resultat; delete nouv.renduA; delete nouv.message;
   histo(nouv, "a_envoyer", `nouvel essai (était : ${cur.etat})${t.forcer ? " — reprise confirmée" : ""}`, t.creePar);
   if (!await majSi(CLE_T(t.ref), nouv, b.maj)) return { ok: false, existe: true, tache: cur };
@@ -151,13 +163,14 @@ async function retirer(ref, etat, motif, par) {
     if (!b?.value) { await kvDel(CLE_F(ref)).catch(() => {}); return { ok: true, absente: true }; }
     const t = b.value;
     if (t.etat !== "a_envoyer") return { ok: false, tache: t };
-    const nouv = { ...t, etat }; histo(nouv, etat, motif, par);
+    const nouv = { ...t, etat, message: motif }; histo(nouv, etat, motif, par);
     if (await majSi(CLE_T(ref), nouv, b.maj)) { await kvDel(CLE_F(ref)).catch(() => {}); await libererLignes(nouv); return { ok: true, tache: nouv }; }
   }
   return { ok: false, tache: await lireTache(ref) };
 }
 export const annulerSiEnAttente = (ref, motif, par) => retirer(ref, "annulee", motif, par);
-export const expirer = (ref) => retirer(ref, "expiree", "non prise par l'agent du Mac avant l'échéance : rien envoyé");
+export const expirer = async (ref) => retirer(ref, "expiree", (await lireConfig()).voie === "portail"
+  ? "non envoyée au portail avant l'échéance (portail injoignable ?) : rien envoyé" : "non prise par l'agent du Mac avant l'échéance : rien envoyé");
 
 // lignes d'une commande du site rendues (rien n'est parti) : la synchro manuelle peut les reprendre
 async function libererLignes(t) {
@@ -183,9 +196,11 @@ export function verifierAgent(event, corpsBrut) {
 
 export async function prendre({ agent, instance, version, max = 3 }) {
   await kvSet("pmlr:agent", { vuA: maintenant(), agent, instance: String(instance || "").slice(0, 40), version: Number(version) || 0 }).catch(() => {});
+  if ((await lireConfig()).voie === "portail") return { taches: [], voie: "portail" };
   if (!(Number(version) >= VERSION_MIN_AGENT)) return { taches: [], arret: `version de l'agent trop ancienne (${version}) : installez la v${VERSION_MIN_AGENT}` };
   // pause (403) : plus aucun envoi, sauf les essais à vide (pour vérifier que l'adresse du bureau est de nouveau autorisée)
-  const pause = await kvGet("pmlr:pause").catch(() => null);
+  const p = await kvGet("pmlr:pause").catch(() => null);
+  const pause = pausePour(p, "agent") ? p : null;
   const file = (await kvList("pmlr:file:", 200)).sort((a, b) => String(a.value?.creeA).localeCompare(String(b.value?.creeA)));
   const out = [];
   for (const f of file) {
@@ -197,7 +212,8 @@ export async function prendre({ agent, instance, version, max = 3 }) {
       if (!t || t.etat !== "a_envoyer") { await kvDel(CLE_F(ref)).catch(() => {}); continue; }
       if (pause?.at && t.source !== "test") continue;
       if (Date.now() > Date.parse(t.priseAvant)) { await expirer(ref); continue; }
-      const nouv = { ...t, etat: "prise", priseA: maintenant(), jeton: randomUUID(), agent: `${agent}/${String(instance || "").slice(0, 12)} v${version}` };
+      if ((await lireConfig()).voie !== "agent") break;
+      const nouv = { ...t, voie: "agent", etat: "prise", priseA: maintenant(), jeton: randomUUID(), agent: `${agent}/${String(instance || "").slice(0, 12)} v${version}` };
       histo(nouv, "prise", null, nouv.agent);
       if (!await majSi(CLE_T(ref), nouv, b.maj)) continue;     // retirée ou prise entre-temps
       await kvDel(CLE_F(ref)).catch(() => {});
@@ -214,23 +230,24 @@ export async function rendre(r) {
     const t = b?.value;
     if (!t) return { ok: false, code: "inconnue" };
     if (t.jeton !== r.jeton) return { ok: false, code: "jeton" };
+    if (t.voie === "portail") r = JSON.parse(masquer(JSON.stringify(r)));
     const tardif = t.etat === "incertaine" && t.sansCompteRendu;              // passée « à vérifier » faute de compte rendu
     if (t.etat !== "prise" && !tardif) {
       // déjà rendue : idempotent ; marques d'envoi rejouées (un échec précédent ne laisse pas la commande « non envoyée »)
       if (t.etat === "envoyee" && t.source === "site") { try { await marquerCommande(t); } catch { return { ok: false, code: "reessayer" }; } }
       // compte rendu qui contredit une décision humaine (« pas dans PharmaML » alors que l'agent a bien envoyé) : DOUBLON probable
-      const c0 = classer(r, { vide: t.source === "test" });
+      const c0 = t.voie === "portail" ? await classerPortail(r, t) : classer(r, { vide: t.source === "test" });
       if (t.verifieePar && t.etat === "non_envoyee" && (c0.issue === "succes" || (c0.issue === "incertain" && r.http))) {
         await kvSet(`pmlr:contredit:${t.ref}`, { ref: t.ref, at: maintenant(), http: r.http || null, message: c0.message }).catch(() => {});
         await alerter(`contredit:${t.ref}`, `⚠ Relais PharmaML : DOUBLON probable ${t.ref}`,
-          `L'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} avait été déclaré « pas dans PharmaML » par ${t.verifieePar}, mais l'agent du Mac l'a envoyé ensuite (PharmaML : ${c0.message || `HTTP ${r.http}`}). Si ses lignes ont été renvoyées depuis (référence ${t.ref}P…), il y a DEUX commandes dans PharmaML : annulez-en une AVANT expédition.`, 24 * 365).catch(() => {});
+          `L'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} avait été déclaré « pas dans PharmaML » par ${t.verifieePar}, mais un compte rendu indique ensuite un envoi vers ${lieuVerification(t)} (PharmaML : ${c0.message || `HTTP ${r.http}`}). Si ses lignes ont été renvoyées depuis (référence ${t.ref}P…), il y a DEUX commandes dans PharmaML : annulez-en une AVANT expédition.`, 24 * 365).catch(() => {});
       }
       return { ok: true, deja: true, etat: t.etat };
     }
-    let c = classer(r, { vide: t.source === "test" });
+    let c = t.voie === "portail" ? await classerPortail(r, t) : classer(r, { vide: t.source === "test" });
     if (c.issue !== "non_envoye" && r.empreinte && r.empreinte !== t.empreinte) c = { issue: "incertain", message: "corps envoyé différent de la tâche (empreinte)" };
     const etat = { succes: "envoyee", refus: "refusee", non_envoye: "non_envoyee", incertain: "incertaine" }[c.issue];
-    const nouv = { ...t, etat, renduA: maintenant(), message: c.message || null, commandes: c.commandes ?? null, sansCompteRendu: false,
+    const nouv = { ...t, ...(c.numeroPortail != null ? { numeroPortail: c.numeroPortail, commandeIdPortail: c.commandeIdPortail } : {}), etat, renduA: maintenant(), message: c.message || null, commandes: c.commandes ?? null, sansCompteRendu: false,
       resultat: { http: r.http || null, ms: r.ms || null, texte: String(r.texte || "").slice(0, 500), erreur: r.erreur || null, envoyeA: r.envoyeA || null } };
     histo(nouv, etat, c.message);
     if (!await majSi(CLE_T(r.ref), nouv, b.maj)) continue;
@@ -254,20 +271,24 @@ async function apresRendu(t) {
   }
   // 403 = l'adresse du bureau n'est plus autorisée (changement chez le fournisseur d'accès ?) : tous les
   // envois échoueraient ; pause générale + alerte plutôt que N refus à reprendre à la main
-  if (t.etat === "refusee" && Number(t.resultat?.http) === 403) {
-    await kvSet("pmlr:pause", { at: maintenant(), motif: `PharmaML refuse les envois du bureau (HTTP 403, réf. ${t.ref}) : adresse IP du bureau changée ?` }).catch(() => {});
+  if (t.voie !== "portail" && t.etat === "refusee" && Number(t.resultat?.http) === 403) {
+    await kvSet("pmlr:pause", { voie: "agent", at: maintenant(), motif: `PharmaML refuse les envois du bureau (HTTP 403, réf. ${t.ref}) : adresse IP du bureau changée ?` }).catch(() => {});
     await alerter("pause", "Relais PharmaML en pause : envois refusés (403)",
       `PharmaML a refusé un envoi venant du Mac du bureau (HTTP 403, référence ${t.ref}). Tous les envois sont suspendus : vérifiez l'adresse IP du bureau auprès d'InfoSoft, puis « Reprendre les envois » dans l'admin (onglet Commandes). Les commandes en attente restent à synchroniser.`).catch(() => {});
+  }
+  if (t.voie === "portail" && t.etat === "refusee" && [401, 403, 404, 429].includes(Number(t.resultat?.http))) {
+    await kvSet("pmlr:pause", { voie: "portail", at: maintenant(), motif: t.message });
+    await alerter("pause:portail", "Envois directs au portail en pause", `${t.message}. Vérifiez ${lieuVerification(t)}, puis reprenez les envois.`).catch(() => {});
   }
   if (t.etat === "incertaine") await kvSet(CLE_V(t.ref), { ref: t.ref, source: t.source, at: maintenant() }).catch(() => {});
   else await kvDel(CLE_V(t.ref)).catch(() => {});
   // Sanofi Pro alerte et décide lui-même (onglet Sanofi Pro) ; ici, les commandes du site
   if (t.source === "site" && t.etat === "incertaine") await alerteIncertaine(t).catch(() => {});
   if (t.source === "site" && t.etat === "refusee" && Number(t.resultat?.http) !== 403) await alerter(`refus:${t.ref}`, `Relais PharmaML : envoi ${t.ref} refusé`,
-    `PharmaML a refusé l'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} : ${t.message}. Rien n'a été créé ; les lignes sont de nouveau à synchroniser (admin, onglet Commandes).`, 24 * 365).catch(() => {});
+    `PharmaML a refusé l'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} : ${t.message}. Vérifiez ${lieuVerification(t)}. Rien n'a été créé ; les lignes sont de nouveau à synchroniser (admin, onglet Commandes).`, 24 * 365).catch(() => {});
 }
 const alerteIncertaine = (t) => alerter(`incertaine:${t.ref}`, `Relais PharmaML : envoi ${t.ref} à vérifier`,
-  `L'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} a une issue inconnue : ${t.message}. Vérifiez sur le portail PharmaML (référence ${t.ref}) s'il est arrivé AVANT toute nouvelle saisie. Admin, onglet Commandes : « vérifié : pas dans PharmaML » rend les lignes à la synchro, « vérifié : arrivé dans PharmaML » les marque envoyées.`, 24 * 365);
+  `L'envoi ${t.ref}${t.pharmacie ? ` (${t.pharmacie})` : ""} a une issue inconnue : ${t.message}. Vérifiez sur le ${lieuVerification(t)} s'il est arrivé AVANT toute nouvelle saisie. Admin, onglet Commandes : « vérifié : pas dans PharmaML » rend les lignes à la synchro, « vérifié : arrivé dans PharmaML » les marque envoyées.`, 24 * 365);
 
 async function journalPml(t) {
   const outcome = { envoyee: "transmise", refusee: "refusee", non_envoyee: "non_envoyee", incertaine: "incertaine" }[t.etat] || t.etat;
@@ -303,8 +324,14 @@ const lireCommande = async (id) => (await sb(`elixir_orders?id=eq.${encodeURICom
 
 // tâche d'envoi pour des lignes d'une commande du site (synchro admin, ou envoi automatique)
 // → { ok:true, ref, lignes } | { ok:false, code, error, ... }
-export async function envoyerCommande({ orderId, idx = null, par, auto = false, cipVerifie = null }) {
+export async function envoyerCommande({ orderId, idx = null, par, auto = false, cipVerifie = null, finAvant = Date.now() + 20000 }) {
   if (!/^\d{6,20}$/.test(String(orderId || ""))) return { ok: false, code: "id", error: "numéro de commande invalide" };
+  const finirMiseEnFile = async (resultat) => {
+    try {
+      if ((await lireConfig()).voie === "portail") resultat.direct = await envoyerDirect(resultat.ref, { finAvant, par });
+    } catch (e) { resultat.direct = { ok: false, code: "reessayer", message: masquer(e.message) }; }
+    return resultat;
+  };
   const o = await lireCommande(orderId);
   if (!o) return { ok: false, code: "introuvable", error: "commande introuvable" };
   const its = items(o);
@@ -370,12 +397,12 @@ export async function envoyerCommande({ orderId, idx = null, par, auto = false, 
       const t = await lireTache(ref).catch(() => undefined);
       if (t && t.orderId === String(o.id) && t.empreinte === empreinte(corps)) {
         if (t.etat === "a_envoyer") await kvSet(CLE_F(ref), { ref, creeA: t.creeA }).catch(() => {});
-        return { ok: true, ref, lignes: cand.length, idx: cand, ecartees: prises };
+        return finirMiseEnFile({ ok: true, ref, lignes: cand.length, idx: cand, ecartees: prises });
       }
       if (t) await rendreLignes();   // une autre tâche porte cette référence (création seule) : la nôtre n'existe pas
       throw e;
     }
-    if (r.ok) return { ok: true, ref, lignes: cand.length, idx: cand, ecartees: prises };
+    if (r.ok) return finirMiseEnFile({ ok: true, ref, lignes: cand.length, idx: cand, ecartees: prises });
     await rendreLignes();
     dejaRefs.add(ref);
   }
@@ -411,7 +438,7 @@ async function stockLibre(cips) {
 // Envoi automatique d'une commande du site juste après son enregistrement (appelé par submit-order avec
 // le jeton de la pharmacie, ou le jeton admin pour une saisie Elixir). Lignes en stock seulement ; tout
 // le reste (et toute commande qui ne remplit pas les conditions) reste à la synchro manuelle.
-export async function envoiAuto({ orderId, user }) {
+export async function envoiAuto({ orderId, user, finAvant }) {
   const cfg = await lireConfig();
   if (!cfg.autoSite) return { ok: false, code: "inactif", error: "envoi automatique désactivé : synchro manuelle" };
   const o = await lireCommande(orderId);
@@ -471,12 +498,12 @@ export async function envoiAuto({ orderId, user }) {
     if (l >= q) { enStock.push(i); libre.set(String(it.cip), l - q); }
   }
   if (!enStock.length) return { ok: false, code: "precommande", error: "aucune ligne en stock : synchro manuelle" };
-  const r = await envoyerCommande({ orderId: o.id, idx: enStock, par: user?.isAdmin ? `auto-saisie:${user.email || "admin"}` : o.entered_by ? `auto-saisie:${o.entered_by}` : "auto", auto: true, cipVerifie: cip });
+  const r = await envoyerCommande({ orderId: o.id, idx: enStock, par: user?.isAdmin ? `auto-saisie:${user.email || "admin"}` : o.entered_by ? `auto-saisie:${o.entered_by}` : "auto", auto: true, cipVerifie: cip, finAvant });
   return r.ok ? { ...r, retenues: its.length - enStock.length, identite } : { ...r, identite };
 }
 
 // ── Lecture pour l'admin ────────────────────────────────────────────────
-export const resumeTache = (t) => t && ({ ref: t.ref, source: t.source, etat: t.etat, orderId: t.orderId || null, idx: t.idx || null, pharmacie: t.pharmacie || null,
+export const resumeTache = (t) => t && ({ voie: t.voie || null, numeroPortail: t.numeroPortail ?? null, verifAuto: t.verifAuto || null, ref: t.ref, source: t.source, etat: t.etat, orderId: t.orderId || null, idx: t.idx || null, pharmacie: t.pharmacie || null,
   creeA: t.creeA, creePar: t.creePar, priseAvant: t.priseAvant, priseA: t.priseA || null, renduA: t.renduA || null, message: t.message || null,
   http: t.resultat?.http ?? null, commandes: t.commandes ?? null, tentative: t.tentative || 1, agent: t.agent || null });
 export async function tachesDeCommandes(ids) {
@@ -495,7 +522,7 @@ export async function statut() {
     const t = await lireTache(v.value?.ref).catch(() => null);
     if (t?.etat === "incertaine" && t.source === "site") aVerifier.push(resumeTache(t));
   }
-  return { agent, pause, config: cfg, enFile: file.length, aVerifier, recentes: recentes.slice(0, 30).map(resumeTache) };
+  return { voie: cfg.voie, voieDepuis: cfg.voieDepuis || null, portail: configurationPortail(), direct: await kvGet("pmlr:direct").catch(() => null), agent, pause: pause ? { ...pause, voie: pause.voie || "agent" } : null, config: cfg, enFile: file.length, aVerifier, recentes: recentes.slice(0, 30).map(resumeTache) };
 }
 // vérification humaine faite (référence absente du portail PharmaML) : lignes rendues à la synchro manuelle
 export async function libererApresVerification(ref, par) {
@@ -503,7 +530,7 @@ export async function libererApresVerification(ref, par) {
   const t = b?.value;
   if (!t) return { ok: false, error: "tâche introuvable" };
   if (t.etat !== "incertaine") return { ok: false, error: `tâche « ${t.etat} » : rien à libérer` };
-  if (t.sansCompteRendu) {
+  if (t.sansCompteRendu && t.voie !== "portail") {
     // l'agent ne reprend une tâche qu'après avoir fini la précédente : un contact postérieur à la prise prouve que
     // cet envoi est terminé (sinon le Mac, en veille par exemple, peut encore l'envoyer à son réveil)
     const ag = await kvGet("pmlr:agent").catch(() => null);
@@ -544,7 +571,7 @@ async function alerter(cle, sujet, texte, heures = ALERTE_H) {
   const cfg = await lireConfig();
   const to = String(cfg.alertes || "").split(/[\s,;]+/).filter(Boolean).join(", ");
   const corps = `<div style="font-family:Calibri,Arial,Helvetica,sans-serif;font-size:11pt"><p>Bonjour,</p><p>${esc(texte)}</p>
-<p style="color:#64748b;font-size:9pt">Relais PharmaML (agent du Mac du bureau) — admin du site de commande, onglet « Commandes ».</p></div>`;
+<p style="color:#64748b;font-size:9pt">Relais PharmaML — admin du site de commande, onglet « Commandes ».</p></div>`;
   const id = await odoo("mail.mail", "create", [{ subject: sujet, body_html: corps, email_from: MAIL_DE, email_to: to, auto_delete: false }]);
   await odoo("mail.mail", "send", [[id]]);
   await kvSet(k, { at: maintenant() });
@@ -552,18 +579,21 @@ async function alerter(cle, sujet, texte, heures = ALERTE_H) {
 }
 const heureParis = (d = new Date()) => Number(new Intl.DateTimeFormat("fr-FR", { timeZone: "Europe/Paris", hour: "2-digit", hour12: false }).format(d));
 const jourSemaine = (d = new Date()) => new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Paris", weekday: "short" }).format(d);
-export async function surveiller() {
+export async function surveiller({ finAvant = Date.now() + 22000 } = {}) {
+  const cfg = await lireConfig();
   const journal = [];
   // 1. tâches non prises à l'échéance : expirées (rien n'est parti ; lignes rendues à la synchro manuelle)
   for (const f of await kvList("pmlr:file:", 500).catch(() => [])) {
+    if (Date.now() >= finAvant - 1000) break;
     const ref = f.key.slice("pmlr:file:".length);
     const t = await lireTache(ref).catch(() => null);
-    if (t?.etat === "a_envoyer" && Date.now() > Date.parse(t.priseAvant)) { const r = await expirer(ref); if (r.ok) journal.push(`${ref} expirée (agent injoignable)`); }
+    if (t?.etat === "a_envoyer" && Date.now() > Date.parse(t.priseAvant)) { const r = await expirer(ref); if (r.ok) journal.push(`${ref} expirée (${cfg.voie === "portail" ? "portail" : "agent"} injoignable)`); }
     else if (t && t.etat !== "a_envoyer") await kvDel(f.key).catch(() => {});
   }
   // index de file manquant (écriture perdue) : réparé
   const recentes = (await kvList("pmlr:tache:", 300).catch(() => [])).map(r => r.value).filter(Boolean);
   for (const t of recentes.filter(t => t.etat === "a_envoyer")) {
+    if (Date.now() >= finAvant - 1000) break;
     if (Date.now() > Date.parse(t.priseAvant)) { await expirer(t.ref); continue; }
     if (await kvGet(CLE_F(t.ref)).catch(() => null)) continue;
     // tâche sans index (écriture perdue) : remise en file seulement si ses lignes lui sont toujours réservées
@@ -572,14 +602,24 @@ export async function surveiller() {
     if (siennes) await kvSet(CLE_F(t.ref), { ref: t.ref, creeA: t.creeA }).catch(() => {});
     else { await expirer(t.ref); journal.push(`${t.ref} : lignes réservées ailleurs, tâche retirée`); }
   }
+  // voie portail : la file part d'abord (les relectures et les alertes qui suivent peuvent être lentes)
+  if (cfg.voie === "portail") {
+    for (const t of recentes.filter(x => x.etat === "a_envoyer").sort((a, b) => String(a.creeA).localeCompare(String(b.creeA)))) {
+      if (finAvant - Date.now() < 17000) break;
+      await envoyerDirect(t.ref, { finAvant }).catch(() => {});
+    }
+  }
   // marques d'envoi des commandes du site rejouées (échec passager lors du compte rendu)
-  for (const t of recentes.filter(t => t.etat === "envoyee" && t.source === "site" && Date.now() - Date.parse(t.renduA) < 24 * 3600e3)) await marquerCommande(t).catch(() => {});
+  for (const t of recentes.filter(t => t.etat === "envoyee" && t.source === "site" && Date.now() - Date.parse(t.renduA) < 24 * 3600e3)) {
+    if (Date.now() >= finAvant - 1000) break;
+    await marquerCommande(t).catch(() => {});
+  }
   // 2. agent muet (tâches en attente, ou heures ouvrées) / tâches qui attendent / prises sans compte rendu
   const agent = await kvGet("pmlr:agent").catch(() => null);
   const silenceMin = agent?.vuA ? (Date.now() - Date.parse(agent.vuA)) / 60e3 : Infinity;
   const enAttente = recentes.filter(t => t.etat === "a_envoyer");
   const ouvre = jourSemaine() !== "Sun" && heureParis() >= 7 && heureParis() < 20;
-  if (silenceMin > 10 && (enAttente.length || ouvre)) {
+  if (cfg.voie === "agent" && silenceMin > 10 && (enAttente.length || ouvre)) {
     const ok = await alerter("agent", "Relais PharmaML : l'agent du Mac ne répond plus",
       `L'agent PharmaML du Mac du bureau n'a pas contacté le site depuis ${Number.isFinite(silenceMin) ? `${Math.round(silenceMin)} min` : "son installation"}${enAttente.length ? ` ; ${enAttente.length} envoi(s) attendent` : ""}. Vérifiez que le Mac est allumé et connecté. Sans agent, aucune commande ne part vers PharmaML ; les envois non pris dans les délais reviennent à la synchro manuelle.`).catch(() => false);
     if (ok) journal.push("alerte : agent muet");
@@ -587,20 +627,144 @@ export async function surveiller() {
   // prise sans compte rendu (réponse perdue, agent arrêté au milieu d'un envoi) : issue inconnue, vérification humaine
   // (lignes gardées bloquées ; un compte rendu tardif de l'agent reste accepté)
   for (const t0 of recentes.filter(t => t.etat === "prise" && Date.now() - Date.parse(t.priseA) > SANS_CR_MS)) {
+    if (Date.now() >= finAvant - 1000) break;
     const b = await kvGetBrut(CLE_T(t0.ref)).catch(() => null);
     const t = b?.value;
     if (t?.etat !== "prise") continue;
-    const nouv = { ...t, etat: "incertaine", sansCompteRendu: true, renduA: maintenant(), message: "prise par l'agent du Mac sans compte rendu (réponse perdue ou agent interrompu) : vérifiez PharmaML" };
+    const nouv = { ...t, etat: "incertaine", sansCompteRendu: true, renduA: maintenant(), message: `prise sans compte rendu : vérifiez ${lieuVerification(t)}` };
     histo(nouv, "incertaine", nouv.message);
     if (await majSi(CLE_T(t.ref), nouv, b.maj)) { await apresRendu(nouv).catch(() => {}); journal.push(`${t.ref} : sans compte rendu → à vérifier`); }
   }
   // alertes non parties (Odoo injoignable…) : réessayées (une seule fois réussie par envoi ; pause : rappel toutes les 2 h)
   for (const v of await kvList("pmlr:averifier:", 200).catch(() => [])) {
+    if (Date.now() >= finAvant - 1000) break;
     const t = await lireTache(v.value?.ref).catch(() => null);
     if (t?.etat === "incertaine" && t.source === "site") await alerteIncertaine(t).catch(() => {});
   }
   const pause = await kvGet("pmlr:pause").catch(() => null);
-  if (pause?.at) await alerter("pause", "Relais PharmaML en pause : envois refusés (403)",
+  if (pause?.at && (pause.voie || "agent") === "agent") await alerter("pause", "Relais PharmaML en pause : envois refusés (403)",
     `${pause.motif}. Tous les envois sont suspendus depuis le ${new Date(pause.at).toLocaleString("fr-FR", { timeZone: "Europe/Paris" })} : vérifiez l'adresse IP du bureau auprès d'InfoSoft (« 🔌 Tester » dans l'admin), puis « Reprendre les envois » (onglet Commandes).`).catch(() => {});
+  if (pausePour(pause, "portail")) await alerter("pause:portail", "Envois directs au portail en pause",
+    `${pause.motif}. Vérifiez ${configurationPortail().url}, écran Commandes, puis reprenez les envois.`).catch(() => {});
+  if (cfg.voie === "portail") {
+    const attendent = [];
+    for (const t of enAttente) {
+      if (Date.now() - Date.parse(t.creeA) > 600000 && Date.now() < Date.parse(t.priseAvant) && (await lireTache(t.ref))?.etat === "a_envoyer") attendent.push(t.ref);
+    }
+    if (attendent.length) {
+      const motif = await kvGet("pmlr:direct");
+      await alerter("direct", "Envois directs au portail en attente", `Vérifiez ${configurationPortail().url}, écran Commandes. Références : ${attendent.join(", ")}. Dernier motif : ${motif?.erreur || "pause ou budget insuffisant"}`).catch(() => {});
+    }
+  }
+  await verifierIncertainesPortail({ finAvant });
   return { journal, agent, enFile: enAttente.length };
+}
+
+const incertainPortail = () => ({ issue: "incertain", message: "la commande a peut-être été créée : vérification automatique au portail toutes les 5 min, sinon vérification humaine" });
+export async function classerPortail(r, t) {
+  if (r.nonEnvoye) return { issue: "non_envoye", message: masquer(r.nonEnvoye).slice(0, 500) };
+  if (r.erreur || !r.http) return incertainPortail();
+  let j; try { j = JSON.parse(r.texte); } catch { return incertainPortail(); }
+  if (!j || typeof j !== "object" || Array.isArray(j)) return incertainPortail();
+  const resultat = j.resultats?.[0];
+  const numeros = x => ({ numeroPortail: x?.numero, commandeIdPortail: x?.commande_id || x?.id });
+  if (r.http === 200 && j.status === "ok") {
+    if (j.commandes >= 1 && resultat?.statut === "creee") return { issue: "succes", message: `reçue par le portail, n° ${resultat.numero}`, commandes: j.commandes, ...numeros(resultat) };
+    if (j.commandes === 0 && j.doublons >= 1) {
+      try {
+        if (!resultat?.commande_id) return incertainPortail();
+        const p = await lireCommandePortail(resultat.commande_id, { timeoutMs: Math.max(1, Math.min(8000, (r.finAvant || Date.now() + 8000) - Date.now())) });
+        if (!p) return incertainPortail();
+        // La lecture par UUID doit aussi correspondre à l'officine de la tâche.
+        if (String(p.officine?.id_officine) !== String(t.corps[0].identifiantPML)) return incertainPortail();
+        return memeContenu(p, t.corps[0])
+          ? { issue: "succes", message: `déjà reçue par le portail, n° ${p.numero}, même contenu`, commandes: 0, ...numeros(p) }
+          : { issue: "incertain", message: `référence déjà utilisée au portail (n° ${p.numero}) avec un autre contenu` };
+      } catch { return incertainPortail(); }
+    }
+  }
+  if (r.http === 200 && j.status === "error") return j.commandes === 0
+    ? { issue: "refus", message: masquer(j.errors?.[0]?.message || j.message || "commande refusée").slice(0, 500) } : incertainPortail();
+  const motifs = { 401: "identifiants refusés", 403: "identifiants refusés (403)", 404: "hôte inconnu du portail", 429: "trop de tentatives" };
+  if (motifs[r.http]) return { issue: "refus", message: motifs[r.http] };
+  if (r.http === 400) return { issue: "refus", message: masquer(j.message || "format invalide").slice(0, 500) };
+  return incertainPortail();
+}
+function validerDirect(t) {
+  const c = t.corps;
+  if (!Array.isArray(c) || c.length !== 1) return "une seule commande requise";
+  if (c[0]?.referenceCommande !== t.ref) return "référence différente";
+  if (!/^\d{7}$/.test(c[0]?.identifiantPML)) return "identifiantPML invalide";
+  const ls = c[0].lignes;
+  if (!Array.isArray(ls) || ls.length < 1 || ls.length > 300) return "1 à 300 lignes requises";
+  if (ls.some(l => !l || typeof l.CIP !== "string" || l.CIP.length > 20 || !Number.isInteger(l.quantiteCommandee) || l.quantiteCommandee < 0 || l.quantiteCommandee > 9999 || typeof l.prix !== "number" || !Number.isFinite(l.prix) || l.prix < 0)) return "ligne invalide (CIP, quantité ou prix)";
+  if (empreinte(c) !== t.empreinte) return "empreinte différente";
+  return null;
+}
+export async function envoyerDirect(ref, { finAvant = Date.now() + 20000, par } = {}) {
+  if ((await lireConfig()).voie !== "portail") return { ok: false, code: "voie" };
+  const pause = await kvGet("pmlr:pause");
+  if (pausePour(pause, "portail")) return { ok: false, code: "pause", message: pause.motif };
+  const b = await kvGetBrut(CLE_T(ref)), t = b?.value;
+  if (t?.etat !== "a_envoyer") return { ok: false, code: "etat", etat: t?.etat || null };
+  if (Date.now() > Date.parse(t.priseAvant)) { await expirer(ref); return { ok: false, code: "etat", etat: "expiree" }; }
+  if (t.source === "test") { await retirer(ref, "annulee", "essai agent retiré : utilisez le test portail sans commande", par); return { ok: false, code: "etat", etat: "annulee" }; }
+  if (finAvant - Date.now() < 17000) return { ok: false, code: "budget" };
+  const cip = t.corps?.[0]?.identifiantPML;
+  let motif;
+  try {
+    const o = await lireOfficine(cip, { timeoutMs: Math.min(5000, finAvant - Date.now()) });
+    if (!o.trouvee) motif = `officine ${cip} absente du portail`;
+    else if (o.officine.statut !== "active") motif = `officine ${cip} au statut « ${o.officine.statut} » sur le portail`;
+    else if (!o.officine.ref_erp || !String(o.officine.ref_erp).trim()) motif = `officine ${cip} sans rattachement Odoo sur le portail`;
+    if (motif) motif += " : le pont ne l'écrirait pas dans Odoo, rien envoyé";
+  } catch (e) {
+    const message = masquer(e.message);
+    await kvSet("pmlr:direct", { at: maintenant(), erreur: message });
+    return { ok: false, code: "transitoire", message };
+  }
+  if (finAvant - Date.now() < 17000) return { ok: false, code: "budget" };
+  // Relire la voie et la pause après le contrôle distant. La CAS de la tâche départage toute course.
+  if ((await lireConfig()).voie !== "portail") return { ok: false, code: "voie" };
+  const p = await kvGet("pmlr:pause");
+  if (pausePour(p, "portail")) return { ok: false, code: "pause", message: p.motif };
+  if (Date.now() > Date.parse(t.priseAvant)) { await expirer(ref); return { ok: false, code: "etat", etat: "expiree" }; }
+  if (finAvant - Date.now() < 17000) return { ok: false, code: "budget" };
+  const nouv = { ...t, etat: "prise", jeton: randomUUID(), priseA: maintenant(), agent: "netlify/portail", voie: "portail" };
+  histo(nouv, "prise", null, par || nouv.agent);
+  if (!await majSi(CLE_T(ref), nouv, b.maj)) return { ok: false, code: "concurrence" };
+  await kvDel(CLE_F(ref)).catch(() => {});
+  const invalide = validerDirect(nouv);
+  const nonEnvoye = motif || (invalide ? `refusée avant envoi : ${invalide}` : null);
+  const reponse = nonEnvoye ? { nonEnvoye } : await injecter(t.corps, { timeoutMs: Math.max(1, Math.min(15000, finAvant - Date.now() - 2000)) });
+  const r = await rendre({ ref, jeton: nouv.jeton, ...reponse, empreinte: t.empreinte, finAvant });
+  if (motif && t.source === "site") await alerter(`officine:${cip}`, "Envoi au portail impossible : officine", `${motif}. Vérifiez ${lieuVerification(nouv)}.`, 24).catch(() => {});
+  if (!r.ok) return { ok: false, code: "reessayer" };
+  const fin = await lireTache(ref);
+  return { ok: true, etat: fin.etat, message: fin.message, numero: fin.numeroPortail ?? null };
+}
+export async function verifierIncertainesPortail({ finAvant = Date.now() + 20000 } = {}) {
+  for (const ligne of await kvList("pmlr:tache:", 500)) {
+    if (finAvant - Date.now() < 2000) break;
+    const t = ligne.value;
+    if (t.etat !== "incertaine" || t.voie !== "portail" || t.source === "test" || Date.now() - Date.parse(t.renduA) < 120000) continue;
+    let resultat;
+    try {
+      resultat = await lireCommandes({ officines: [t.corps[0].identifiantPML], depuis: new Date(Date.parse(t.priseA) - 600000), statut: "tous", statutErp: "tous", limite: 100, timeoutMs: Math.min(8000, finAvant - Date.now() - 1000) });
+    } catch { continue; }
+    const correspondantes = resultat.commandes.filter(c => c.ref_cde_client === t.ref && String(c.officine?.id_officine) === String(t.corps[0].identifiantPML));
+    const p = correspondantes[0];
+    const b = await kvGetBrut(CLE_T(t.ref));
+    if (b?.value?.etat !== "incertaine" || b.value.jeton !== t.jeton) continue;
+    // Plusieurs références identiques (années différentes) : aucune confirmation sur lecture ambiguë.
+    const meme = resultat.complet && correspondantes.length === 1 && memeContenu(p, t.corps[0]);
+    const nouv = { ...b.value, verifAuto: { at: maintenant(), resultat: p ? meme ? "presente" : "different" : resultat.complet ? "absente" : "incomplete" } };
+    if (p && meme) {
+      Object.assign(nouv, { etat: "envoyee", renduA: maintenant(), verifieePar: "portail (lecture automatique)", verifieeA: maintenant(), sansCompteRendu: false, numeroPortail: p.numero, commandeIdPortail: p.id, message: `vérifiée présente au portail, n° ${p.numero}, même contenu` });
+      histo(nouv, "envoyee", nouv.message, nouv.verifieePar);
+    } else if (p) nouv.message = `référence déjà utilisée au portail (n° ${p.numero}) avec un autre contenu ou plusieurs commandes`;
+    if (!await majSi(CLE_T(t.ref), nouv, b.maj)) continue;
+    if (meme) await apresRendu(nouv);
+    else if (p) await alerter(`contenu:${t.ref}`, "Commande au portail : contenu différent", `${nouv.message}. Vérifiez ${lieuVerification(t)}.`, 24).catch(() => {});
+  }
 }

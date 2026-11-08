@@ -122,3 +122,9 @@
 # lecture Odoo ; rien tant qu'aucune commande réelle n'existe (interrupteur « Commandes par API » fermé).
 [functions."api-commandes-cron"]
   schedule = "*/2 * * * *"
+
+[functions."submit-order"]
+  timeout = 26
+
+[functions."pml-relais"]
+  timeout = 26
