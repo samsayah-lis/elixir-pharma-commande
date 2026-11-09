@@ -7,7 +7,7 @@ import ShortExpiry from "./components/ShortExpiry";
 import WheelchairOrder from "./components/WheelchairOrder";
 import LabJustifOrder from "./components/LabJustifOrder";
 import { allocate } from "./wheelchair-logic.js";
-import { loadGroups, codeOfCip, collapseGroups } from "./product-groups.js";
+import { loadGroups, codeOfCip } from "./product-groups.js";
 import GroupOrders from "./components/GroupOrders";
 import CompteARebours from "./components/CompteARebours";
 import JustifCartBlock from "./components/JustifCartBlock";
@@ -23,7 +23,6 @@ import { T, R, tone, ui, alpha, fmtEur, fmtPct as fmtPctFr } from "./theme.js";
 import { Icone, CroixElixir, ICONES_RAYON } from "./icons.jsx";
 import EnteteVue, { CompteurVue } from "./components/ui/EnteteVue.jsx";
 import EtatVide, { ActionEtat, SqueletteCatalogue, Chargement } from "./components/ui/EtatVide.jsx";
-import BadgeStatut from "./components/ui/BadgeStatut.jsx";
 import CipCell, { ToastCopie } from "./components/ui/CipCell.jsx";
 import { copierTexte } from "./cip-copie.js";   // presse-papiers avec repli (bon de commande, CIP) : docs/cip-copie.md
 import FocusFenetre from "./components/ui/FocusFenetre.jsx";
@@ -530,37 +529,10 @@ export default function App() {
 
   const [globalSearch, setGlobalSearch] = useState("");
   const [globalResults, setGlobalResults] = useState([]);
-  const [globalSearching, setGlobalSearching] = useState(false);
-  const globalSearchRef = useRef(null);
-
-  // ── Search tracking (ML) ──────────────────────────────────────────────
-  const trackSearch = useCallback((query, results_count, clicked_cip, added_to_cart) => {
-    if (!query || query.length < 2) return;
-    fetch("/.netlify/functions/search-track", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query, pharmacy_cip: pharmacyCip || null, results_count, clicked_cip, added_to_cart }),
-    }).catch(() => {});
-  }, [pharmacyCip]);
-
-  // Debounced Odoo search
+  // Les résultats sont fournis par la Saisie intégrée ; effacement quand elle se ferme.
   useEffect(() => {
-    if (globalSearch.trim().length < 2) { setGlobalResults([]); setGlobalSearching(false); return; }
-    clearTimeout(globalSearchRef.current);
-    setGlobalSearching(true);   // lot 8 : « Recherche… » dès la frappe, plus de « 0 produit » pendant le délai de 350 ms
-    globalSearchRef.current = setTimeout(async () => {
-      setGlobalSearching(true);
-      try {
-        const res = await fetch(`/.netlify/functions/odoo-catalog?q=${encodeURIComponent(globalSearch.trim())}&limit=50`);
-        const data = await res.json();
-        const results = collapseGroups(Array.isArray(data) ? data : data.products || [], await loadGroups());
-        setGlobalResults(results);
-        // Track search (fire-and-forget)
-        trackSearch(globalSearch.trim(), results.length, null, false);
-      } catch { setGlobalResults([]); }
-      setGlobalSearching(false);
-    }, 350);
-    return () => clearTimeout(globalSearchRef.current);
-  }, [globalSearch, trackSearch]);
+    if (globalSearch.trim().length < 2) setGlobalResults([]);
+  }, [globalSearch]);
   const [sendStatus, setSendStatus] = useState(null);
   const [showAdmin, setShowAdmin] = useState(() => window.location.hash === "#admin");
   useEffect(() => {
@@ -2755,91 +2727,19 @@ export default function App() {
           {/* Suggestions de recommande (ML) : en tête de chaque vue ; sur l'accueil, sous la vitrine et les offres (Accueil.jsx) */}
           {activeTab !== "accueil" && blocSuggestions}
 
-          {/* ── GLOBAL SEARCH RESULTS (Odoo) ── */}
+          {/* ── Recherche de l'en-tête : mêmes lignes et ajout que la Saisie de commande ── */}
           {globalSearch.trim().length >= 2 && (
-            <div style={{ marginBottom: 24 }}>
-              {/* titre posé sur le fond de page (cream) : encre ; était #f0f0f0, pensé pour l'ancien fond noir */}
-              <div style={{ fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
-                <Icone nom="recherche" taille={18} style={{ color: T.teal }} /> Résultats pour « {globalSearch} »
-                {globalSearching && <span style={{ fontSize:12, color:T.inkSoft, fontWeight:500, display:"inline-flex", alignItems:"center", gap:8 }}><span className="ex-roue" aria-hidden="true" />Recherche…</span>}
-                {!globalSearching && <span className="num" style={{ ...ui.badge("neutral"), fontSize:12, fontWeight:500, padding:"2px 10px" }}>
-                  {globalResults.length} produit{globalResults.length > 1 ? "s" : ""} · stock Odoo temps réel
-                </span>}
-              </div>
-              {/* lot 8 : première recherche en cours → lignes squelettes (plus de carte vide) ; aucun résultat → état vide */}
-              {globalSearching && globalResults.length === 0 ? (
-                <SqueletteCatalogue mobile={isMobile} lignes={4} entete={false} texte="Recherche en cours…" />
-              ) : !globalSearching && globalResults.length === 0 ? (
-                <EtatVide cadre compact icone="recherche" titre={<>Aucun produit trouvé pour « {globalSearch} »</>}
-                  texte="Vérifiez l’orthographe ou cherchez par code CIP / EAN." />
-              ) : (
-                /* Résultats (lot 5) : carte blanche, lignes .ex-tr (zébrure, survol, rupture) disposées par .ex-resultat
-                   (sous 768 px : nom sur toute la largeur, puis prix et « + Panier ») ; statut toujours écrit */
-                <div style={{ background:T.surface, border:`1px solid ${T.line}`, borderRadius:R.m, overflow:"hidden", boxShadow:T.shadow1 }}>
-                  {globalResults.map((p, i) => {
-                    const jr = !p.in_stock ? justifProducts[p.cip] : null;   // sur commande labo (justificatif) : commandable
-                    return (
-                    <div key={p.cip || i} className="ex-tr ex-resultat" data-rupture={p.in_stock || jr ? undefined : ""}>
-                      {/* Info : nom, statut, CIP */}
-                      <div className="ex-resultat-info">
-                        <div className="ex-resultat-nom" title={p.name} style={{ fontWeight:600, fontSize:13, color:T.ink, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.name}</div>
-                        <div style={{ display:"flex", alignItems:"center", flexWrap:"wrap", gap:"3px 10px", marginTop:4 }}>
-                          <BadgeStatut statut={p.in_stock ? "stock" : jr ? "commande" : "rupture"}
-                            title={jr ? `Commandé au laboratoire ${jr.labNom} sur justificatif de votre commande` : undefined} />
-                          {/* CIP avec bouton de copie (CipCell : le CIP n'est plus sélectionnable, anti-copie § 19 ; revue § 20) */}
-                          <span style={{ fontSize:12, color:T.inkMute, display:"inline-flex", alignItems:"center", gap:4 }}>CIP <CipCell cip={p.cip} />{p.available > 0 ? ` · ${p.available} dispo` : ""}</span>
-                        </div>
-                        <Quota cip={p.cip} forme="moyenne" />{/* contingentement (src/components/quota/) */}
-                        {limiteLigne(p.cip)}{/* limite de quantité (menus promo, précommandes) */}
-                      </div>
-
-                      {/* Prix HT : barré --ink-mute, remise en badge or + encre, prix net encre 700 (affichage français) */}
-                      <div className="ex-resultat-prix">
-                        {p.discounted_price && p.discount_pct > 0 ? (<>
-                          <div style={{ fontSize:11, lineHeight:1.6 }}>
-                            <span className="num" style={{ color:T.inkMute, textDecoration:"line-through" }}>{fmtEur(parseFloat(p.list_price))}</span>{" "}
-                            <span className="num" style={{ ...ui.badge("promo"), padding:"0 6px" }}>{fmtPctFr(p.discount_pct)}</span>
-                          </div>
-                          <div className="num" style={{ fontSize:15, fontWeight:700, color:T.ink }}>{fmtEur(parseFloat(p.discounted_price))}</div>
-                        </>) : (
-                          <div className="num" style={{ fontSize:15, fontWeight:700, color:T.ink }}>{p.list_price ? fmtEur(parseFloat(p.list_price)) : "—"}</div>
-                        )}
-                      </div>
-
-                      {/* Add to cart : pastille pétrole (survol sarcelle, classe ex-btn-petrole ; 44 px sous 768 px,
-                          ex-tactile) ; gestionnaire inchangé */}
-                      <button className="ex-btn-petrole ex-resultat-action ex-tactile" aria-label={`Ajouter ${p.name} au panier`} onClick={() => {
-                        const pn = p.discounted_price || p.list_price;
-                        if (!pn) return;
-                        // Cherche dans le catalogue existant
-                        let added = false;
-                        Object.entries(CATALOG_WITH_ADMIN).forEach(([catKey, c]) => {
-                          if (added) return;
-                          const idx = (c.products || []).findIndex(cp => cp.cip === p.cip);
-                          if (idx >= 0) {
-                            setQuantities(prev => ({ ...prev, [`${catKey}-${idx}`]: (parseInt(prev[`${catKey}-${idx}`]) || 0) + 1 }));
-                            added = true;
-                          }
-                        });
-                        if (!added && justifProducts[p.cip]) {   // sur commande labo (justificatif) : ligne hors catalogue
-                          addItemToCart({ cip: p.cip, name: p.name, qty: 1, pn, pv: p.list_price, tiers: p.price_tiers || null });
-                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, true);
-                        } else if (added) {
-                          flash(`✓ ${p.name} ajouté au panier`);
-                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, true);
-                        } else {
-                          flash(`⚠ ${p.name} n'est pas dans le catalogue. Utilisez la Saisie de commande.`);
-                          trackSearch(globalSearch.trim(), globalResults.length, p.cip, false);
-                        }
-                      }} style={{ ...ui.btn("primaire", "s"), background: undefined, color: undefined, gap: 4, padding: "0 14px", flexShrink: 0 }}>
-                        <Icone nom="plus" taille={14} epaisseur={2.6} />Panier
-                      </button>
-                    </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
+            <OrderEntry integre requete={globalSearch.trim()} limiteLigne={limiteLigne} onResultats={setGlobalResults}
+              justifProducts={justifProducts}
+              pharmacyCip={pharmacyCip}
+              pharmacyName={pharmacyName}
+              pharmacyEmail={pharmacyEmail}
+              onAddToCart={ajouterDepuisSaisie}
+              regleQuantite={regleSaisie}
+              panierSaisie={panierSaisie}
+              arrondiQuantite={arrondiSaisie}
+              fetchAuth={appelAuthentifie}
+            />
           )}
 
           {/* ── PAGE D'ACCUEIL « La Tête de gondole » (docs/accueil.md) : chunk à la demande, squelette en attendant.
@@ -2878,21 +2778,23 @@ export default function App() {
 
           {/* ── SPECIAL VIEWS : Saisie de commande & Péremption courte ── */}
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "orderEntry" && (
-            <OrderEntry
-              key={initialProductQuery}
-              justifProducts={justifProducts}
-              pharmacyCip={pharmacyCip}
-              pharmacyName={pharmacyName}
-              pharmacyEmail={pharmacyEmail}
-              onAddToCart={ajouterDepuisSaisie}
-              regleQuantite={regleSaisie}
-              panierSaisie={panierSaisie}
-              arrondiQuantite={arrondiSaisie}
-              fetchAuth={appelAuthentifie}
-              initialQuery={initialProductQuery}
-              icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
-              couleur={CATALOG_WITH_ADMIN[activeTab].accent}
-            />
+            <div style={{ display: globalSearch.trim().length >= 2 ? "none" : undefined }}>
+              <OrderEntry
+                key={initialProductQuery}
+                justifProducts={justifProducts}
+                pharmacyCip={pharmacyCip}
+                pharmacyName={pharmacyName}
+                pharmacyEmail={pharmacyEmail}
+                onAddToCart={ajouterDepuisSaisie}
+                regleQuantite={regleSaisie}
+                panierSaisie={panierSaisie}
+                arrondiQuantite={arrondiSaisie}
+                fetchAuth={appelAuthentifie}
+                initialQuery={initialProductQuery}
+                icone={iconeMenu(activeTab, CATALOG_WITH_ADMIN[activeTab], 24)}
+                couleur={CATALOG_WITH_ADMIN[activeTab].accent}
+              />
+            </div>
           )}
 
           {CATALOG_WITH_ADMIN[activeTab]?.specialView === "groupPurchases" && (

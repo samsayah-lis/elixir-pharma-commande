@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useContext } from "react";
+import React, { useState, useEffect, useContext } from "react";
 
 import { applyTiers, TierBadge, jaugePaliers } from "../tiers.jsx";
 import JaugePaliers from "./JaugePaliers.jsx";
@@ -23,12 +23,13 @@ const fmtPct = (n) => n > 0 ? fmtPctFr(n, { vide: "" }) : "";
 // (src/styles/tokens.css, « Saisie de commande ») : sous 768 px, la ligne passe en pile par @media — le composant
 // ne reçoit pas isMobile. Atomes en bas de fichier.
 
-export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, panierSaisie, arrondiQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur }) {
-  const [query, setQuery] = useState(initialQuery || "");
+export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, onAddToCart, regleQuantite, panierSaisie, arrondiQuantite, fetchAuth = fetch, initialQuery, justifProducts = {}, icone, couleur, requete, integre = false, limiteLigne, onResultats }) {
+  const [queryInterne, setQuery] = useState(initialQuery || "");
+  const query = requete !== undefined ? requete : queryInterne;
   const cq = useContext(ContexteQuota);   // contingentement : paliers au-delà du reste retirés de la jauge et du badge
   const [results, setResults] = useState([]);
   // lot 8 : ouverture par ?cip= / ?produit= → « Recherche… » dès le premier affichage (et non « 0 résultat »)
-  const [searching, setSearching] = useState(() => (initialQuery || "").trim().length >= 2);
+  const [searching, setSearching] = useState(() => query.trim().length >= 2);
   const [catalogInfo, setCatalogInfo] = useState(null);
   const [infoLue, setInfoLue] = useState(false);   // lot 8 : compte du catalogue reçu (ou en échec) — affichage seulement
   const [quantities, setQuantities] = useState({});
@@ -41,16 +42,17 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const [retours, setRetours] = useState([]);   // [{ cip, cipAffiche, nom }]
   const [retourErreur, setRetourErreur] = useState("");   // masquage refusé par le serveur
   const [stockOnly, setStockOnly] = useState(false);
-  const debounceRef = useRef(null);
 
   // ── Chargement initial : count + alerts ───────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const countRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
-        if (countRes.ok && !cancelled) setCatalogInfo(await countRes.json());
-        if (!cancelled) setInfoLue(true);
+        if (!integre) {
+          const countRes = await fetch("/.netlify/functions/odoo-catalog?count=1");
+          if (countRes.ok && !cancelled) setCatalogInfo(await countRes.json());
+          if (!cancelled) setInfoLue(true);
+        }
         if (pharmacyCip) {
           try {
             // ?pharmacy_cip ne sert qu'à l'admin : pour une pharmacie, le serveur prend le CIP de son jeton
@@ -68,14 +70,14 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
       } catch (e) { console.warn("[init]", e.message); if (!cancelled) setInfoLue(true); }
     })();
     return () => { cancelled = true; };
-  }, [pharmacyCip]);
+  }, [pharmacyCip, integre]);
 
   // ── Recherche côté serveur (prix remisés inclus dans la réponse) ──────
   useEffect(() => {
-    if (query.trim().length < 2) { setResults([]); return; }
-    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim().length < 2) { setResults([]); setSearching(false); return; }
+    let cancelled = false;
     setSearching(true);   // lot 8 : « Recherche… » dès la frappe, plus de « 0 résultat » pendant le délai de 350 ms
-    debounceRef.current = setTimeout(async () => {
+    const delai = setTimeout(async () => {
       setSearching(true);
       try {
         const url = `/.netlify/functions/odoo-catalog?q=${encodeURIComponent(query.trim())}&limit=100${stockOnly ? "&stock_only=1" : ""}`;
@@ -83,17 +85,23 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         // articles sous plusieurs CIP (même code fournisseur) : une seule ligne, la référence servie en premier
-        setResults(collapseGroups(Array.isArray(data.products) ? data.products : [], await loadGroups()));
+        const produits = collapseGroups(Array.isArray(data.products) ? data.products : [], await loadGroups());
+        if (cancelled) return;
+        setResults(produits);
         // Track search (fire-and-forget)
         const r = Array.isArray(data.products) ? data.products : [];
         fetch("/.netlify/functions/search-track", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ query: query.trim(), pharmacy_cip: pharmacyCip || null, results_count: r.length }),
         }).catch(() => {});
-      } catch (e) { setResults([]); }
-      finally { setSearching(false); }
+      } catch (e) { if (!cancelled) setResults([]); }
+      finally { if (!cancelled) setSearching(false); }
     }, 350);
+    return () => { cancelled = true; clearTimeout(delai); };
   }, [query, stockOnly]);
+
+  // Les limites des menus promo suivent les mêmes résultats que les lignes affichées.
+  useEffect(() => { onResultats?.(results); }, [results, onResultats]);
 
   // ── Alerte retour en stock ────────────────────────────────────────────
   const toggleAlert = async (product) => {
@@ -136,7 +144,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
   const retoursBandeau = enRecherche ? retours.filter(r => !results.some(p => p.cip === r.cip || p.cip === r.cipAffiche)) : retours;
 
   // Bandeau « De retour en stock » (ton info, suite de « Alerte activée » ; nom → recherche du CIP ; croix → mention retirée)
-  const bandeauRetours = retoursBandeau.length > 0 && (
+  const bandeauRetours = !integre && retoursBandeau.length > 0 && (
     <section aria-label="Produits de retour en stock" style={{ ...ui.encart("info"), display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px", marginBottom: 14 }}>
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 700 }}><Icone nom="cloche" taille={15} />De retour en stock</span>
       <span style={{ color: T.inkSoft }}>{retoursBandeau.length > 1 ? "Les produits que vous attendiez sont disponibles :" : "Le produit que vous attendiez est disponible :"}</span>
@@ -175,10 +183,10 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
     ? new Date(catalogInfo.updated_at).toLocaleString("fr-FR", {day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : null;
 
   return (
-    <div>
+    <div style={integre ? { marginBottom: 24 } : undefined}>
       {/* En-tête de vue (lot 5) au lieu du bandeau en dégradé ; à droite, l'étendue du catalogue Odoo synchronisé
           (références et boîtes en stock lues par odoo-catalog?count=1 ; décision de Zineb, 16/10 : les boîtes plutôt que les références en stock) */}
-      <EnteteVue
+      {!integre && <EnteteVue
         icone={icone || <Icone nom="crayon" taille={24} />}
         couleur={couleur}
         titre="Saisie de commande"
@@ -186,11 +194,11 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         aside={!infoLue ? <CompteurVue chargement libelle="références" />
           : hasProducts && <CompteurVue valeur={Number(catalogInfo.total).toLocaleString("fr-FR")} libelle="références"
           detail={catalogInfo.in_stock_boxes != null ? `${Number(catalogInfo.in_stock_boxes).toLocaleString("fr-FR")} boîtes en stock` : null} />}
-      />
+      />}
 
       {/* Recherche en pastille de 48 px : anneau de focus global (tokens.css), plus de bordure recolorée en JS ;
           autoFocus et pré-remplissage ?cip= / ?produit= (initialQuery) inchangés */}
-      <div style={{ position: "relative", marginBottom: 12 }}>
+      {!integre && <div style={{ position: "relative", marginBottom: 12 }}>
         <Icone nom="recherche" taille={20} style={{ position: "absolute", left: 18, top: "50%", transform: "translateY(-50%)", color: T.inkMute, pointerEvents: "none" }} />
         <input value={query} onChange={e => setQuery(e.target.value)}
           placeholder="Saisissez un code CIP (ex : 3400930…) ou un nom de produit…" autoFocus
@@ -200,7 +208,17 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         {query && <button className="ex-btn-discret ex-cible" onClick={() => setQuery("")} aria-label="Effacer la recherche" title="Effacer la recherche"
           style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", width: 32, height: 32, padding: 0, border: "none",
             borderRadius: R.pill, cursor: "pointer", display: "inline-flex", alignItems: "center", justifyContent: "center" }}><Icone nom="fermer" taille={16} /></button>}
-      </div>
+      </div>}
+
+      {integre && (
+        <div style={{ fontWeight: 700, fontSize: 16, color: T.ink, marginBottom: 12, display:"flex", alignItems:"center", gap:10, flexWrap:"wrap" }}>
+          <Icone nom="recherche" taille={18} style={{ color: T.teal }} /> Résultats pour « {query} »
+          <span role="status">
+            {searching ? <span style={{ fontSize:12, color:T.inkSoft, fontWeight:500, display:"inline-flex", alignItems:"center", gap:8 }}><span className="ex-roue" aria-hidden="true" />Recherche…</span>
+              : <span className="num" style={{ ...ui.badge("neutral"), fontSize:12, fontWeight:500, padding:"2px 10px" }}>{results.length} produit{results.length > 1 ? "s" : ""}</span>}
+          </span>
+        </div>
+      )}
 
       {/* Filtre en pastille (comme les filtres du catalogue : aria-pressed, classe ex-filtre) et nombre de résultats */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "8px 16px", flexWrap: "wrap", marginBottom: 14 }}>
@@ -208,7 +226,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
         <button className="ex-filtre" aria-pressed={stockOnly} onClick={() => setStockOnly(!stockOnly)} style={filtreStyle}>
           <Icone nom={stockOnly ? "coche" : "carton"} taille={14} />En stock seulement
         </button>
-        {query.length >= 2 && (
+        {!integre && query.length >= 2 && (
           <div className="num" role="status" style={{ fontSize: 13, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 8 }}>
             {searching ? <><span className="ex-roue" aria-hidden="true" />Recherche…</> : `${results.length} résultat${results.length > 1 ? "s" : ""} pour « ${query} »`}
           </div>
@@ -222,12 +240,12 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
 
       {/* États vides (lot 8 : composant commun EtatVide). « Catalogue non synchronisé » seulement une fois le compte lu :
           pendant sa lecture, la consigne de recherche (avant le lot, le message s'affichait le temps de la réponse) */}
-      {infoLue && !hasProducts && (
+      {!integre && infoLue && !hasProducts && (
         <EtatVide cadre icone="carton" titre="Catalogue non synchronisé"
           texte="Un administrateur doit lancer la synchronisation depuis le panneau admin." />
       )}
 
-      {(!infoLue || hasProducts) && query.length < 2 && (
+      {!integre && (!infoLue || hasProducts) && query.length < 2 && (
         <EtatVide icone="recherche" titre="Saisissez au moins 2 caractères" texte="Code CIP, EAN, ou début de nom" />
       )}
 
@@ -294,6 +312,7 @@ export default function OrderEntry({ pharmacyCip, pharmacyName, pharmacyEmail, o
                           tabulation pour garder l'enchaînement « − », quantité, « + » au clavier (lots 5 et E3) */}
                       <span style={{ fontSize: 12, color: T.inkMute, display: "inline-flex", alignItems: "center", gap: 4 }}>CIP <CipCell cip={p.cip} tabulable={false} /></span>
                     </div>
+                    {limiteLigne?.(p.cip)}
                     {jr && (
                       <div style={{ fontSize: 12, color: T.teal, marginTop: 6, lineHeight: 1.45 }}>
                         Commandé au laboratoire {jr.labNom} avec votre commande comme justificatif{jr.delai ? ` (${jr.delai})` : ""}.
