@@ -1,3 +1,4 @@
+// Exemple (depuis elixir-commande) : CRM_REFERENCE_PLAN10M="/chemin/vers/plan-10m-outil" node scripts/test-crm-indicateurs.mjs
 // Parité entièrement hors ligne. Seuls ces deux scripts externes sont exécutés ;
 // --cibles explicite interdit le repli vers les réglages réels du dossier de référence.
 import assert from "node:assert/strict";
@@ -6,11 +7,13 @@ import { creerHandlerIndicateurs, lireDonneesOdoo, lancerIndicateurs } from "../
 import { creerHandlerCron } from "../netlify/functions/crm-indicateurs-cron.js";
 import { creerStockCrm } from "../netlify/functions/_crm-stock.js";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { calculerIndicateurs, arrondir, decalerJour } from "../netlify/functions/_crm-indicateurs.js";
-const reference = "/Users/samsayah/Downloads/pharmaexport 2/plan-10m-outil";
+const reference = process.env.CRM_REFERENCE_PLAN10M;
+const disponible = reference && statSync(reference, { throwIfNoEntry: false })?.isDirectory();
+if (!disponible) console.log(`parité non vérifiée : CRM_REFERENCE_PLAN10M ${reference ? "dossier introuvable" : "absent"}`);
 const temporaire = mkdtempSync(join(tmpdir(), "crm-indicateurs-test-"));
 const cibles = { fond_de_rayon: 4321, specialites_cheres: 2345, glp1: 1234, seuil_demande_isolee: 9876, origine: "Cibles fictives de test" };
 writeFileSync(join(temporaire, "cibles.json"), JSON.stringify(cibles));
@@ -39,9 +42,25 @@ function parite(donnees, attendu, date) {
   for (const k of ["controle", "indicateurs", "params", "periode", "precedente"]) comparer(r[k], attendu[k], k);
   return r;
 }
-let donnees, calcul;
+// Jeu inventé de repli : les tests locaux restent exécutables sans les scripts Python.
+function donneesLocales() {
+  const d = { lignes: [], partners: [], produits: [], taxes: [], sol: [], so: [], mois: [], meta: {} };
+  for (let id = 1; id <= 32; id++) {
+    const nom = `pharmacie-fictive-${id}`;
+    d.partners.push({ id, name: nom, cip: String(2000000 + id), zip: id === 30 ? "33000" : "75000", city: "Ville fictive", commercial_partner_id: [id, nom] });
+    d.produits.push({ id, default_code: `FICT${String(id).padStart(4, "0")}`, list_price: id, taxes_id: [] });
+    d.lignes.push([id === 2 ? "2026-10-01" : "2026-11-22", id, 1, "produit fictif", 1, 10, 1, "out_invoice", id]);
+    d.mois.push([id, "mois fictif", 10, 1, "2026-10-01"]);
+    d.so.push([id, "2026-11-22 12:00:00", id, "FICTIF", `FICTIF-${id}`]);
+    // Deux lignes le même jour : manque maximal de trois, service cumulé de quatre.
+    d.sol.push([id, 1, "produit fictif", 2, 5, 2, 1, 0, 2, id], [id, 1, "produit fictif", 2, 5, 2, 1, 0, 2, id]);
+  }
+  for (let id = 2; id <= 32; id++) d.sol.push([7, id, "produit fictif", 1, 5, 1, id, 0, id, 7]);
+  return d;
+}
+let donnees = donneesLocales(), calcul = calculerIndicateurs(donnees, { date: "2026-11-22", cibles });
 try {
-  for (const date of ["2026-11-22", "2027-01-15"]) await test(`parité exacte champ par champ ${date}`, () => {
+  if (disponible) for (const date of ["2026-11-22", "2027-01-15"]) await test(`parité exacte champ par champ ${date}`, () => {
     const dossier = join(temporaire, date);
     execFileSync("python3", ["-I", join(reference, "tests/fabrique_donnees.py"), dossier, "--date", date]);
     const d = lire(dossier), r = parite(d, python(dossier, date), date);
@@ -65,7 +84,7 @@ try {
     assert.equal(r.pharmacies.find(p => p.id === 30).territoire, "Oui"); assert.equal(r.controle.ca, calcul.controle.ca);
   });
   await test("arrondi Python binaire et au pair", () => { assert.equal(arrondir(2.675, 2), 2.67); assert.equal(arrondir(2.5), 2); assert.equal(arrondir(3.5), 4); assert.equal(arrondir(-2.5), -2); });
-  await test("parité des cas limites : plafond, médiane, génériques et regroupements", () => {
+  if (disponible) await test("parité des cas limites : plafond, médiane, génériques et regroupements", () => {
     const d = structuredClone(donnees), dossier = join(temporaire, "2026-11-22");
     d.sol.push([1, 1, "DCI FICTIVE TEVA", 0, 999, 0, 2.675, 0, 0, d.so[0][0]]);
     d.produits[0].manufacturer_id = [1, "BAYER HEALTHCARE SAS"];
@@ -77,7 +96,7 @@ try {
     assert.equal(r.pharmacies.find(p => p.id === 1).non_servis.find(p => p.produit_id === 1).quantite, 200);
     assert.ok(r.laboratoires.some(p => p.nom === "BAYER"));
   });
-  await test("parité : fiches commerciales, arrondis de prix, maximum entre jours", () => {
+  if (disponible) await test("parité : fiches commerciales, arrondis de prix, maximum entre jours", () => {
     const d = structuredClone(donnees), dossier = join(temporaire, "2026-11-22");
     d.partners.push({ ...d.partners[0], id: 101, cip: "2000101", commercial_partner_id: [1, "pharmacie-fictive-01"] });
     d.lignes.push(["2026-11-22", 101, 1, "produit fictif", 3, 8.025, 0.5, "out_invoice", 999]);

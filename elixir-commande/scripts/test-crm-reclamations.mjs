@@ -1,10 +1,17 @@
+// Exemple (depuis elixir-commande) : CRM_REFERENCE_ENTREPOT="/chemin/vers/outil-entrepot" node scripts/test-crm-reclamations.mjs
 // Contrat externe lu/importé seulement ici. Aucun appel réseau, données inventées.
 import assert from 'node:assert/strict';
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { creerReclamationsCrm,urlEntrepot } from '../netlify/functions/_crm-reclamations.js';
 import { nombreOuvertes } from '../src/crm/logique.js';
 import { creerBancCrm } from './banc/crm-banc.mjs';
 globalThis.fetch=()=>{throw new Error('Réseau interdit');};
-const {default:contrat}=await import('/Users/samsayah/Downloads/elixir-prep-crm-wt/netlify/functions/lib/chatbot-intake.js');
+const reference=process.env.CRM_REFERENCE_ENTREPOT;
+const disponible=reference && statSync(reference,{throwIfNoEntry:false})?.isDirectory();
+if(!disponible) console.log(`signature de référence non vérifiée : CRM_REFERENCE_ENTREPOT ${reference?'dossier introuvable':'absent'}`);
+const contrat=disponible?(await import(pathToFileURL(resolve(reference,'netlify/functions/lib/chatbot-intake.js')).href)).default:null;
 let ok=0,ko=0;
 async function test(nom,fn){try{await fn();ok++;}catch(e){ko++;console.error('✗',nom,e);}}
 const secret='secret-invente-pour-le-test-du-contrat-uniquement',date=new Date('2026-11-22T10:00:00Z');
@@ -14,7 +21,7 @@ const deps={entrepotUrl:'https://entrepot.exemple.test',reclamationsSecret:secre
 await test('Signature identique au signer de l’entrepôt, corps brut et en-têtes',async()=>{
   const lire=creerReclamationsCrm({...deps,fetch:async(url,o)=>{
     assert.equal(url,'https://entrepot.exemple.test/.netlify/functions/crm-reclamations');assert.equal(o.method,'POST');const h=new Headers(o.headers);
-    assert.equal(h.get('X-Elixir-Signature'),contrat.signer(secret,h.get('X-Elixir-Horodatage'),Buffer.from(o.body)));
+    if(contrat) assert.equal(h.get('X-Elixir-Signature'),contrat.signer(secret,h.get('X-Elixir-Horodatage'),Buffer.from(o.body)));
     assert.equal(h.get('X-Elixir-Horodatage'),String(date.getTime()/1000));assert.equal(h.has('Origin'),false);assert.equal(h.get('Content-Type'),'application/json');assert.deepEqual(JSON.parse(o.body),{partner_ids:[11,12]});assert.equal(o.redirect,'error');return deps.fetch();
   }});assert.equal((await lire({odoo_id:11})).etat,'disponible');
 });
