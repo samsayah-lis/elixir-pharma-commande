@@ -200,9 +200,10 @@ export const appareilPublic = (r, endpointActuel = null) => ({
 
 // ── Charge utile (lue par public/sw.js) ──
 // { v, categorie, titre, corps, url (chemin du site), tag, id, ts } ; ≤ 3 000 octets (limite des services push : 4 Ko chiffrés)
-export function charge({ categorie = null, titre, corps, url, tag, id } = {}, ts = Date.now()) {
+// Option serveur réservée aux alertes admin : seul le chemin exact /admin est ajouté.
+export function charge({ categorie = null, titre, corps, url, tag, id } = {}, ts = Date.now(), { admin = false } = {}) {
   const c = { v: 1, categorie: categorie || null, titre: couper(texteNet(titre), 80) || "Elixir Pharma", corps: couper(texteNet(corps), 240),
-    url: lienValide(url) || "/" };
+    url: admin === true && url === "/admin" ? "/admin" : lienValide(url) || "/" };
   const t = etiquette(tag, 64);
   if (t) c.tag = t;
   if (id) c.id = String(id).slice(0, 64);
@@ -410,6 +411,7 @@ export function creerStockPush(deps = {}) {
       for (const t of tranches(liste)) out.push(...await tout(`${base}&pharmacy_cip=in.${listeIn(t)}&select=${COLS}&order=id.asc`));
       return out;
     },
+    admins() { return tout(`push_abonnements?role=eq.admin&select=${COLS}&order=id.asc`); },
     tous() { return tout(`push_abonnements?select=${COLS}&order=id.asc`); },
     // appareils (rôle pharmacie) de plusieurs CIP : recherche de l'admin, joignabilité
     async deCips(cips) {
