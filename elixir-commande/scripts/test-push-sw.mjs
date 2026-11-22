@@ -180,6 +180,15 @@ const notif = (url) => { const n = { fermee: false, data: { url }, close() { n.f
   eq("aucune fenêtre : test de l'admin → /admin ; test d'une pharmacie → son lien", t.ouvertes.slice(2), [`${ORIGINE}/admin`, `${ORIGINE}/?notifications=1`]);
 }
 
+// Alerte signée : le lien /admin survit à l'affichage puis au clic.
+{
+  const { t, evenement } = bac({ fenetres: [] });
+  await evenement("push", { data: donnees({ titre: "Elixir Admin : alerte", corps: "Question", url: "/admin", tag: "groupe" }) });
+  const n = t.notifications.at(-1);
+  await evenement("notificationclick", { notification: { ...n.options, close() {} } });
+  eq("alerte admin : affichage puis clic ouvre /admin", [n.options.data.url, t.ouvertes], [`${ORIGINE}/admin`, [`${ORIGINE}/admin`]]);
+}
+
 // ── pushsubscriptionchange ──
 const cle = webpush.generateVAPIDKeys().publicKey;   // clé publique d'essai, en mémoire
 const sub = (endpoint, auth) => ({ toJSON: () => ({ endpoint, keys: { p256dh: "BPxx", auth } }) });

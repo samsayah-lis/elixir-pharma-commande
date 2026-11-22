@@ -1,4 +1,5 @@
 import { getCors } from "./cors.js";
+import { lireToutesLesPages } from "./_supabase-pages.js";
 // Stock des produits du catalogue curaté, lu depuis odoo_catalog
 // (auto-synchronisé toutes les 3 h) — remplace l'ancienne table morte elixir_stocks.
 const SUPABASE_URL = process.env.SUPABASE_URL;
@@ -12,11 +13,9 @@ export const handler = async (event) => {
     const asked = String(event.queryStringParameters?.cips || "").split(",").map(c => c.trim()).filter(c => /^\d{7,14}$/.test(c)).slice(0, 300);
     let cips = asked;
     if (!asked.length) {
-      const pr = await fetch(
-        `${SUPABASE_URL}/rest/v1/elixir_products?active=eq.true&select=cip`,
-        { headers: { ...SB, "Range": "0-9999" } }
+      const prods = await lireToutesLesPages(
+        `${SUPABASE_URL}/rest/v1/elixir_products?active=eq.true&order=cip.asc&select=cip`, SB, { cle: "cip" }
       );
-      const prods = await pr.json();
       cips = [...new Set((Array.isArray(prods) ? prods : []).map(p => p.cip).filter(Boolean))];
     }
     if (cips.length === 0) {

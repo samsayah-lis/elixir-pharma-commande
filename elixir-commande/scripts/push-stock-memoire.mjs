@@ -48,6 +48,7 @@ export function stockMemoire({ reglages = { ouverture: "toutes" }, lignes = [], 
         return copie(db.ab.filter((l) => l.role === "pharmacie" && (l.categories || []).includes(categorie) && (!cips || cips.includes(l.pharmacy_cip))));
       },
       async deCips(cips) { return copie(db.ab.filter((l) => l.role === "pharmacie" && cips.includes(l.pharmacy_cip))); },
+      async admins() { trace("admins"); return copie(db.ab.filter((l) => l.role === "admin")); },
       async tous() { return copie(db.ab); },
     },
     reglages: { async lire() { return copie(db.reglages); }, async ecrire(v) { db.reglages = R.fusionnerReglages(v); return copie(db.reglages); } },

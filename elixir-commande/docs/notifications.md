@@ -524,3 +524,38 @@ Faite avec la version en ligne `b1dbd3e` ; détail complet dans l'historique git
 - `sql/push-schema.sql` dans Supabase.
 - Ouverture « Fermée », puis « Pilote » avec une ou deux pharmacies volontaires, puis « Toutes » **seulement après l'étape « Bloc 1 » du plan de fermeture de Supabase**.
 - Test sur votre téléphone, à l'époque : iPhone → Safari sur `…/#admin` (ancienne adresse, périmée) → Partager → « Sur l'écran d'accueil » (« Elixir Admin ») → 📲 Notifications → « Recevoir les notifications sur cet appareil » → « M'envoyer un test ». Depuis la mise en ligne de l'adresse `/admin` (§ 3 : commande 1, ou celle de l'étape c), l'installation se fait depuis `https://elixir-commande.expepharma.com/admin` (§ 3 f) ; une icône ajoutée depuis `…/#admin` est à supprimer, puis à rajouter ainsi.
+
+## Alertes admin signées (push-alerte-admin)
+
+Le veilleur appelle `POST /.netlify/functions/push-alerte-admin` avec un JSON de 2 Ko maximum :
+`{ "titre": "Elixir Admin : alerte", "corps": "Une question est à traiter dans le groupe.", "tag": "question-groupe" }`.
+`corps` est obligatoire (1 à 240 caractères, non blanc), `titre` facultatif (1 à 80 caractères, défaut « Elixir Admin : alerte »),
+`tag` facultatif (1 à 32 caractères parmi `A-Za-z0-9_-`). Tout autre champ, notamment `url`, est refusé.
+Un même tag remplace la notification encore affichée et le message encore en attente chez le service push.
+Seuls les appareils `role = admin` reçoivent l'alerte ; le clic ouvre `/admin`. Urgence haute, validité 6 heures,
+sans restriction horaire côté site : le veilleur gère les horaires.
+
+Configurer `PUSH_ALERTE_ADMIN_SECRET` côté Netlify et veilleur (secret partagé d'au moins 32 caractères), ainsi que la
+configuration VAPID et Supabase habituelle. Ne jamais placer ce secret dans le navigateur ni dans un argument de commande.
+`X-Elixir-Horodatage` contient les secondes Unix (tolérance ±5 minutes) ; `X-Elixir-Signature` contient
+`sha256=<HMAC-SHA256 hex de "<horodatage>.<JSON brut envoyé>">`. Exemple de calcul uniquement, secret **FICTIF** :
+
+```js
+import { createHmac } from "node:crypto";
+const secret = "FICTIF-ne-pas-utiliser-en-production-0123456789";
+const body = JSON.stringify({ corps: "Une question est à traiter.", tag: "question-groupe" });
+const horodatage = String(Math.floor(Date.now() / 1000));
+const signature = "sha256=" + createHmac("sha256", secret).update(`${horodatage}.${body}`).digest("hex");
+// Envoyer exactement body, avec X-Elixir-Horodatage et X-Elixir-Signature ci-dessus.
+```
+
+Le script `scripts/alerte-admin-exemple.mjs` lit `PUSH_ALERTE_ADMIN_SECRET` et `ELIXIR_SITE_URL` dans l'environnement,
+signe puis envoie. Il ne faut le lancer que pour un envoi voulu.
+
+Réponse : `200 { ok: true, envoyes, echecs, retires }`, ou sans appareil admin
+`200 { ok: true, envoyes: 0, aucun: true }`. Un aperçu Netlify répond `200 { apercu: true }` sans envoi.
+Erreurs : `405 methode`, `413 trop_long`, `400 json|requete`, `401 horodatage|signature`,
+`503 configuration` (secret ou configuration push manquants), `503 indisponible` (stock indisponible).
+Limites par instance : 120 requêtes/minute/IP avant signature, 30 requêtes signées/heure globalement ;
+`429 quota` fournit `Retry-After` en secondes. Aucun mécanisme d'idempotence : rejouer peut notifier à nouveau.
+Le journal contient uniquement `evt: "push_alerte_admin"`, `code`, `envoyes`, `echecs` ; aucune donnée de message ou d'appareil.
