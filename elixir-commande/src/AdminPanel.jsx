@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import * as XLSX from "xlsx";
+import { deconnecterAdmin } from "./admin-session.js";
 import { estPeremption, badgePeremption, datePeremption, consigneOdoo, remiseLigne } from "./peremption-panier.js";
 // Onglet « Péremptions » (« Odoo facture la remise », docs/peremption-odoo.md) : chargé à la demande, à l'ouverture de l'onglet
 const PeremptionsAdmin = React.lazy(() => import("./components/PeremptionsAdmin.jsx"));
@@ -114,7 +115,7 @@ function BadgeApi({ e, connu }) {
   return t0(verifier ? "danger" : "info", `🔌 API${suite}`, `Commande passée par l'API des pharmacies${e.cle ? ` (clé ${e.cle})` : ""}${e.reference_client ? ` · référence ${e.reference_client}` : ""}${e.envoi_resultat ? ` · ${e.envoi_resultat}` : ""}. ${suiteTitre}`);
 }
 
-export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy }) {
+export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy, onBeforeLogout }) {
   const [authed, setAuthed]     = useState(() => !!localStorage.getItem("admin_token"));
 
   // Helper : fetch avec JWT Supabase + auto-refresh
@@ -164,6 +165,16 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
     }
     return res;
   }, []);
+  const handleLogout = () => deconnecterAdmin({
+    localStorage,
+    verifierModifications: () => {
+      if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return false;
+      return quitterAssistant("Quitter l'administration ?") && quitterVedettes("Quitter l'administration ?");
+    },
+    confirmer: message => window.confirm(message),
+    quitterCommande: onBeforeLogout,
+    afficherConnexion: () => { setAuthed(false); setPwd(""); setAdminEmail(""); setPwdError(""); },
+  });
   const [pwd, setPwd]           = useState("");
   const [adminEmail, setAdminEmail] = useState("pharmacien@elixirpharma.fr");
   const [pwdError, setPwdError] = useState("");
@@ -1188,6 +1199,9 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
           </button>}
           <button className="ex-admin-btn-sombre" onClick={()=>{ if (gpDirtyRef.current && !window.confirm("Des modifications de commande groupée ne sont pas enregistrées. Quitter l'administration ?")) return; if (!quitterAssistant("Quitter l'administration ?") || !quitterVedettes("Quitter l'administration ?")) return; onClose(); }} title="Retour au catalogue" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
             <Icone nom="retour" taille={15} /> <span className="ex-admin-libelle">Retour au catalogue</span>
+          </button>
+          <button className="ex-admin-btn-sombre" onClick={handleLogout} title="Se déconnecter de l'administration" aria-label="Se déconnecter de l'administration" style={{border:"none",borderRadius:R.pill,padding:"7px 14px",fontWeight:700,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",gap:6,whiteSpace:"nowrap"}}>
+            <Icone nom="deconnexion" taille={15} /> <span className="ex-admin-libelle">Se déconnecter</span>
           </button>
         </div>
       </div>

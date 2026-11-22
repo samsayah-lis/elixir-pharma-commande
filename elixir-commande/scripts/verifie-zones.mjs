@@ -248,6 +248,7 @@ const ECARTS_AUTORISES = [
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
 // contre origin/master (correctifs en ligne, assistant pas encore fusionné). À vider dès que la référence contient le lot.
 const LOTS = {
+  deconnexionAdmin: { nom: "déconnexion volontaire de l’administration", repere: "src/admin-session.js" },
   crmEcrans: { nom: "CRM (écrans)", repere: "src/crm/CrmApp.jsx" },
   securite: { nom: "correctifs de sécurité du 19/10/2026", repere: "scripts/test-securite-2.mjs" },
   assistant: { nom: "Assistant Elixir", repere: "src/assistant-client.js" },
@@ -372,6 +373,8 @@ const FICHIERS_AUTORISES = {
 const AJOUTS_AUTORISES = /^netlify\/functions\/(_crm-[a-z-]+|crm(-login|-(indicateurs|annuaire)-(background|cron))?|_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+|_?promo-limites|_portail-pml|_sonde-pml|pml-sonde-cron)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
+  // Déconnexion confirmée : seuls les deux jetons admin sont effacés ; session pharmacie et configuration conservées.
+  deconnexionAdmin: { 'localStorage.removeItem("admin_token"': 1, 'localStorage.removeItem("admin_refresh_token"': 1 },
   // Session autonome et vues par identifiant utilisateur ; code chargé uniquement à l'ouverture du CRM.
   crmEcrans: { 'sessionStorage.getItem("crm_session"': 1, 'sessionStorage.setItem("crm_session", JSON.stringify(s': 1,
     'sessionStorage.removeItem("crm_session"': 1, 'localStorage.getItem(`crm_vues_${id}`': 1,

@@ -1020,12 +1020,13 @@ export default function App() {
     setShowPharmacyPicker(false); setShowAdmin(false); if (window.location.hash === "#admin") history.replaceState(null, "", adresseHorsAdmin(window.location));
   };
   const stopActing = () => {
-    if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return;
+    if ((cartItems || []).length && !window.confirm(`Le panier préparé pour ${actingFor?.name} (${cartItems.length} ligne(s)) sera abandonné. Revenir à votre session ?`)) return false;
     try { const [kq, ks, kj] = cartKeys(actingFor); sessionStorage.removeItem(kq); sessionStorage.removeItem(ks); sessionStorage.removeItem(kj); sessionStorage.removeItem("acting_for"); } catch {}
     const [q, sp, lj] = readCart(null);   // panier de votre session, tel que vous l'aviez laissé
     setActingFor(null); setQuantities(q); setSpecialItems(sp); setJustifInfo(lj);
     setPharmacyName(localStorage.getItem("session_name") || ""); setPharmacyEmail(localStorage.getItem("session_email") || ""); setPharmacyCip(localStorage.getItem("session_cip") || "");
     setIsClient(null);
+    return true;
   };
   // ── Assistant Elixir (docs/assistant-conception.md § 1) : bouton affiché seulement si le serveur le dit disponible pour
   // cette identité (action « etat », lue une fois par identité) ; tiroir exclusif avec le panier ──
@@ -4095,6 +4096,7 @@ export default function App() {
           </div>}>
           <AdminPanel
             sectionMeta={SECTION_META}
+            onBeforeLogout={() => !actingFor || stopActing()}
             onOrderForPharmacy={() => setShowPharmacyPicker(true)}
             onClose={() => {
               quitterAdresseAdmin(() => setShowAdmin(false));   // /admin → « / » (navigateur : page rechargée ; appli « Elixir Admin » : même page) ; #admin de Ctrl+Maj+A → « # » vidé
