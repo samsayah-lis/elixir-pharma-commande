@@ -1,3 +1,4 @@
+import { creerCacheCrm, initialiserCacheCrm } from "./_crm-cache.js";
 // Synchronisation nocturne, lecture Odoo seule. Aucun appel lors de l'import du module.
 import { odoo } from "./_odoo-rpc.js";
 import { isCronAuthorized } from "./auth.js";
@@ -70,8 +71,9 @@ export async function lireDonneesOdoo({ date, ex = odoo, verifierDelai = () => {
 
 export function creerHandlerIndicateurs(deps = {}) {
   const maintenant = deps.maintenant || (() => new Date()), horloge = deps.horloge || (() => Date.now());
-  const stock = deps.stock || creerStockCrm(deps);
+  const stock = deps.stock || creerStockCrm({ ...deps, invalidationCache:false });
   return async event => {
+    initialiserCacheCrm(event);
     const reponse = (statusCode, data) => ({ statusCode, headers: { "Cache-Control": "no-store" }, body: JSON.stringify(data) });
     if (!(deps.autoriser || isCronAuthorized)(event)) return reponse(403, { error: "Secret de synchronisation requis." });
     if (event.httpMethod !== "POST") return reponse(405, { error: "Méthode POST requise." });
@@ -115,7 +117,7 @@ export function creerHandlerIndicateurs(deps = {}) {
       if (passage) await stock.echouerSynchro(passage.id, compteurs).catch(() => {});
       // Ne jamais renvoyer ni journaliser les erreurs Odoo brutes (données métier possibles).
       return reponse(503, { error: "Synchronisation indisponible ; consulter l’état du passage." });
-    }
+    } finally { if (passage) await creerCacheCrm(deps).invalider(); }
   };
 }
 export const handler = creerHandlerIndicateurs();

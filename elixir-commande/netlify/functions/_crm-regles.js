@@ -11,6 +11,7 @@ const identique = (a, b) => !!a && !!b && courriel(a) === courriel(b);
 export function peut(u, action, ressource, r) {
   if (!ROLES.includes(u?.role)) return false;
   const admin = u.role === "admin", commercial = u.role === "commercial", service = u.role === "service_client";
+  if (["tableau", "accueil"].includes(ressource)) return action === "synthese";
   if (ressource === "import_suivi") return admin && ["apercu", "appliquer"].includes(action);
   if (ressource === "annuaire") return admin && ["etat", "relancer"].includes(action);
   if (ressource === "rapprochements") return admin && ["lister", "valider", "rejeter", "defaire"].includes(action);
@@ -39,8 +40,8 @@ export function peut(u, action, ressource, r) {
 }
 export function droits(u) {
   // Les valeurs « propres » et « prospects » sont des conditions, jamais des autorisations globales.
-  return Object.fromEntries(["comptes", "contacts", "activites", "opportunites", "equipe", "reglages", "journal", "marge", "ca", "indicateurs", "annuaire", "rapprochements", "import_suivi"].map(r => [r,
-    Object.fromEntries(["apercu", "appliquer", "defaire", "valider", "rejeter", "chercher", "lire", "lister", "creer", "modifier", "terminer", "attribuer", "archiver", "enregistrer", "compte", "global", "relancer", "etat"].map(a => [a,
+  return Object.fromEntries(["tableau", "accueil", "comptes", "contacts", "activites", "opportunites", "equipe", "reglages", "journal", "marge", "ca", "indicateurs", "annuaire", "rapprochements", "import_suivi"].map(r => [r,
+    Object.fromEntries(["synthese", "apercu", "appliquer", "defaire", "valider", "rejeter", "chercher", "lire", "lister", "creer", "modifier", "terminer", "attribuer", "archiver", "enregistrer", "compte", "global", "relancer", "etat"].map(a => [a,
       peut(u, a, r) || (u.role === "commercial" && r === "comptes" && ["creer", "modifier"].includes(a) ? "prospects" :
         ["commercial", "service_client"].includes(u.role) && r === "activites" && ["modifier", "terminer"].includes(a) ? "propres" :
           u.role === "commercial" && r === "opportunites" && ["creer", "modifier"].includes(a) ? "propres" : false)]))]));
@@ -114,6 +115,8 @@ export function valider(schema, valeur) {
 }
 export const filtresSchema = z.strictObject({ page: z.number().int().min(1).max(100000).default(1), limite: z.number().int().min(1).max(100).default(50),
   tri: z.string().regex(/^[a-z_]+$/).default("updated_at"), sens: z.enum(["asc", "desc"]).default("desc"),
+  vue_tableau: z.boolean().optional(), fonction: nom.optional(), type: nom.optional(), retard: z.boolean().optional(),
+  echeance_debut: z.iso.date().optional(), echeance_fin: z.iso.date().optional(),
   source: z.enum(["saisie", "odoo", "annuaire"]).optional(),
   recherche: z.string().trim().min(1).max(100).optional(), statut: nom.optional(), commercial_email: email.optional(),
   departement: dep.optional(), archive: z.boolean().optional(), compte_id: uuid.optional(), assigne_email: email.optional(),

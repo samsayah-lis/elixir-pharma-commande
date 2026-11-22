@@ -1,3 +1,5 @@
+import { creerCacheCrm, initialiserCacheCrm } from "./_crm-cache.js";
+import { jourParis } from "./_crm-synthese.js";
 import { creerReclamationsCrm, urlEntrepot } from './_crm-reclamations.js';
 import { creerStockAnnuaire } from "./_crm-annuaire-stock.js";
 import { lancerAnnuaire } from "./crm-annuaire-background.js";
@@ -9,14 +11,14 @@ import { rateLimit } from "./rate-limit.js";
 import { verifierCrm, reponseCrm } from "./_crm-acces.js";
 import { creerStockCrm, erreurCrm } from "./_crm-stock.js";
 import { peut, droits, masquer, schemasCreation, schemasModification, valider, uuid, version, email, CHAMPS_CRM_COMPTE } from "./_crm-regles.js";
-const actions = ["import_suivi.apercu", "import_suivi.appliquer", "rapprochements.defaire","comptes.reclamations", "annuaire.etat", "annuaire.relancer", "rapprochements.lister", "rapprochements.valider", "rapprochements.rejeter", "moi", "comptes.commandes", "comptes.factures", "indicateurs.compte", "indicateurs.global", "indicateurs.relancer", "indicateurs.etat", ...["lister", "lire", "creer", "modifier", "attribuer", "archiver"].map(a => `comptes.${a}`),
+const actions = ["tableau.synthese", "accueil.synthese","import_suivi.apercu", "import_suivi.appliquer", "rapprochements.defaire","comptes.reclamations", "annuaire.etat", "annuaire.relancer", "rapprochements.lister", "rapprochements.valider", "rapprochements.rejeter", "moi", "comptes.commandes", "comptes.factures", "indicateurs.compte", "indicateurs.global", "indicateurs.relancer", "indicateurs.etat", ...["lister", "lire", "creer", "modifier", "attribuer", "archiver"].map(a => `comptes.${a}`),
   ...["lister", "creer", "modifier"].flatMap(a => [`contacts.${a}`, `activites.${a}`, `opportunites.${a}`]),
   "activites.terminer", "equipe.chercher", "equipe.lister", "equipe.enregistrer", "reglages.lire", "reglages.enregistrer", "journal.lister"];
 const enveloppe = z.strictObject({ action: z.enum(actions), id: uuid.optional(), version: version.optional(),
   donnees: z.record(z.string(), z.unknown()).optional(), filtres: z.record(z.string(), z.unknown()).optional() });
 const exiger = condition => { if (!condition) throw erreurCrm(403, "Droit refusé."); };
 export function creerHandlerCrm(deps = {}) {
-  const stock = creerStockCrm(deps);
+  const stock = creerStockCrm(deps), cache = creerCacheCrm(deps);
   const annuaire = creerStockAnnuaire(deps);
   const reclamations = creerReclamationsCrm(deps);
   const documents = creerDocumentsCrm(deps);
@@ -54,6 +56,7 @@ export function creerHandlerCrm(deps = {}) {
     } catch { throw erreurCrm(503, "Recherche Auth momentanément indisponible."); }
   }
   return async event => {
+    initialiserCacheCrm(event);
     const rep = (s, d) => reponseCrm(event, s, d);
     if (event.httpMethod === "OPTIONS") return rep(200);
     if (event.httpMethod !== "POST") return rep(405, { error: "Méthode POST requise." });
@@ -69,6 +72,14 @@ export function creerHandlerCrm(deps = {}) {
       const b = valider(enveloppe, brut);
       if (b.action === "moi") return rep(200, { utilisateur: u, droits: droits(u), entrepot_url: urlEntrepot(deps) });
       const [r, a] = b.action.split(".");
+      if (["tableau", "accueil"].includes(r)) {
+        exiger(peut(u, a, r));
+        const jour=jourParis(maintenant());
+        const data=r==="tableau" ? await cache.lire("tableau",{jour},()=>stock.synthese(r,u.email)) :
+          await Promise.all([cache.lire("alertes",{jour,email:u.email},async()=>(await stock.synthese(r,u.email)).alertes),stock.taches(u.email)])
+            .then(([alertes,taches])=>({alertes,taches}));
+        return rep(200, { donnees: masquer(u, data) });
+      }
       if (r === "import_suivi") {
         exiger(peut(u,a,r));
         const d=valider(z.strictObject({nom_fichier:z.string().min(1).max(200),fichier:z.string().max(6990508)}),b.donnees);
@@ -91,7 +102,8 @@ export function creerHandlerCrm(deps = {}) {
           return rep(200, { donnees: await annuaire.rapprochements(f) });
         }
         const d = valider(z.strictObject(["valider","defaire"].includes(a) ? { version_compte:version } : {}), b.donnees || {});
-        return rep(200, { donnees: await annuaire.decider(valider(uuid,b.id), valider(version,b.version), a, d.version_compte, u) });
+        const decision=await annuaire.decider(valider(uuid,b.id), valider(version,b.version), a, d.version_compte, u);
+        await cache.invalider();return rep(200, { donnees:decision });
       }
       if (r === "equipe" && a === "chercher") {
         exiger(peut(u, a, r));

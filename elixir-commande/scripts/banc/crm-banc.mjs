@@ -1,3 +1,4 @@
+import { creerCacheCrm } from '../../netlify/functions/_crm-cache.js';
 // Développement seulement : données et montants inventés, aucun accès à un service.
 import { createHmac, randomUUID } from 'node:crypto';
 const json = (d, status = 200, headers = {}) => new Response(JSON.stringify(d), { status, headers });
@@ -71,7 +72,20 @@ function rpcAnnuaire(t,nom,p,h,maintenant) {
     e.version++;e.updated_at=date;return json(publicEtat(e));
   }catch(err){for(const k of Object.keys(t))t[k]=copie[k];return json({code:err.code||'XX000'},409);}
 }
-export async function creerBancCrm({ date = new Date() } = {}) {
+export function creerBlobsMemoire() {
+  const entrees=new Map();let version=0;
+  const etat={panne:false},verifier=()=>{if(etat.panne)throw new Error('Blobs fictif indisponible');};
+  return {entrees,etat,
+    async get(k){verifier();return structuredClone(entrees.get(k)?.data ?? null);},
+    async getWithMetadata(k){verifier();return structuredClone(entrees.get(k) || null);},
+    async setJSON(k,data,opts={}){
+      verifier();const r=entrees.get(k);
+      if(opts.onlyIfNew && r || opts.onlyIfMatch && r?.etag!==opts.onlyIfMatch)return {modified:false};
+      const etag=String(++version);entrees.set(k,{data:structuredClone(data),etag});return {modified:true,etag};
+    },
+  };
+}
+export async function creerBancCrm({ date = new Date(), volume = process.env.BANC_CRM_VOLUME } = {}) {
   // Import différé : le build ne charge ni les fonctions serveur ni leurs minuteries.
   const [{ creerHandlerCrm }, { creerHandlerLogin }] = await Promise.all([import('../../netlify/functions/crm.js'), import('../../netlify/functions/crm-login.js')]);
   date = new Date(date);
@@ -114,6 +128,19 @@ export async function creerBancCrm({ date = new Date() } = {}) {
   const periodes=[...new Set(tables.crm_indicateurs.map(i=>i.periode_fin))];
   for(const periode_fin of periodes){const lignes=tables.crm_indicateurs.filter(i=>i.periode_fin===periode_fin).map(i=>i.donnees),ca=lignes.reduce((s,p)=>s+p.ca,0),ns=lignes.reduce((s,p)=>s+p.ns_fond+p.ns_cher+p.ns_glp,0);tables.crm_indicateurs.push({odoo_id:0,periode_fin,calcule_le:periode_fin+'T05:00:00Z',donnees:{indicateurs:{date:periode_fin,ca,ca_jour_ouvre:ca/21,pharmacies_actives:lignes.filter(p=>p.ca>0).length,part_servie:.83,non_servi:ns},marge:ca*.17,ca_avec_cout:ca,marge_taux:.17,controle:{ca,ns_total:ns},periode:[jour(-29).slice(0,10),periode_fin],produits:[],laboratoires:[]}});}
   tables.crm_journal.push(...['comptes','contacts','activites','opportunites','equipe','reglages'].map((objet,n)=>({id:identifiant(8000+n),objet,objet_id:tables[`crm_${objet}`][0].id,action:`${objet}.creer`,acteur_email:'admin@banc.test',created_at:jour(-n),avant:null,apres:structuredClone(tables[`crm_${objet}`][0])})));
+  if (volume === 'grand') {
+    // Uniquement des copies fictives : même distribution de cas que le petit banc.
+    const base = structuredClone(tables);
+    for (let n=60;n<3000;n++) {
+      const c=structuredClone(base.crm_comptes[n%60]),client=n%7===0;
+      Object.assign(c,{id:identifiant(100000+n),nom:`Pharmacie fictive grand ${n}`,cip:`990${String(n).padStart(4,'0')}`,odoo_id:client?100000+n:null,statut:client?'client':'prospect',source:client?'odoo':'annuaire',archive:n%97===0});
+      tables.crm_comptes.push(c);
+      if(client) for(const i of base.crm_indicateurs.filter(i=>i.odoo_id===[1,3,5,7][n%4])) tables.crm_indicateurs.push({...structuredClone(i),odoo_id:c.odoo_id});
+    }
+    for (let n=60;n<8000;n++) tables.crm_contacts.push({...structuredClone(base.crm_contacts[n%60]),id:identifiant(200000+n),compte_id:tables.crm_comptes[n%3000].id,nom:`Contact fictif grand ${n}`});
+    for (let n=60;n<2000;n++) tables.crm_activites.push({...structuredClone(base.crm_activites[n%60]),id:identifiant(300000+n),compte_id:tables.crm_comptes[n%3000].id});
+    for (let n=60;n<600;n++) tables.crm_opportunites.push({...structuredClone(base.crm_opportunites[n%60]),id:identifiant(400000+n),compte_id:tables.crm_comptes[n%3000].id});
+  }
   const { creerHandlerAnnuaire, JEU_ANNUAIRE }=await import('../../netlify/functions/crm-annuaire-background.js');
   const annuaire={texte:[enteteAnnuaireFictive,...Array.from({length:20},(_,i)=>ligneAnnuaireFictive(i+1))].join('\n')+'\n',etag:'"extraction-fictive-1"',tailleBloc:113};
   Object.assign(tables.crm_comptes[0],{siret:'99000000000001'});
@@ -121,13 +148,19 @@ export async function creerBancCrm({ date = new Date() } = {}) {
   Object.assign(tables.crm_comptes[1],{adresse:'2 rue des exemples fictifs',code_postal:'75000'});
   Object.assign(tables.crm_comptes[3],{finess:'990000002',siret:'99000000000002',source:'annuaire'});
   function correspond(row, p) {
-    const comparer = (k,op,v) => op === 'eq' ? String(row[k]) === v : op === 'in' ? v.slice(1,-1).split(',').includes(String(row[k])) : op === 'ilike' ? String(row[k] || '').toLowerCase().includes(v.replaceAll('*','').toLowerCase()) : op === 'gte' ? row[k] >= Number(v) : op === 'lte' ? row[k] <= (Number.isNaN(Number(v)) ? v : Number(v)) : false;
+    const valeur = k => k==='compte_recherche' ? tables.crm_comptes.find(c=>c.id===row.compte_id && c.nom.toLowerCase().includes((p.get('compte_recherche.nom') || '').replace(/^ilike\.\*/, '').replace(/\*$/, '').toLowerCase())) : row[k];
+    const comparer = (k,op,v) => {
+      const x=valeur(k),borne=Number.isNaN(Number(v))?v:Number(v);
+      return op==='not' && v==='is.null' ? x!=null : op==='eq' ? String(x)===v : op==='in' ? v.slice(1,-1).split(',').includes(String(x)) : op==='ilike' ? String(x || '').toLowerCase().includes(v.replaceAll('*','').toLowerCase()) : x!=null && (op==='gte' ? x>=borne : op==='lte' ? x<=borne : op==='lt' ? x<borne : false);
+    };
     const terme = s => { const [k,op,...v] = s.split('.'); return comparer(k,op,v.join('.')); };
-    return [...p].every(([k,v]) => ['select','order','offset','limit'].includes(k) || (k === 'or' ? v.slice(1,-1).split(',').some(terme) : k === 'and' ? v.slice(1,-1).split(',').every(terme) : terme(`${k}.${v}`)));
+    return [...p].every(([k,v]) => ['select','order','offset','limit','compte_recherche.nom'].includes(k) || (k === 'or' ? v.slice(1,-1).split(',').some(terme) : k === 'and' ? v.slice(1,-1).split(',').every(terme) : terme(`${k}.${v}`)));
   }
   const jeton = nom => `crm-banc-${nom}`;
   const parJeton = t => utilisateurs[t?.replace(/^crm-banc-/,'')] || (['essai-jeton-admin','essai-jeton'].includes(t) ? utilisateurs.admin : null);
+  const appels = [];
   async function fauxFetch(url, opts = {}) {
+    appels.push({url,method:opts.method || "GET"});
     const u = new URL(url), method = opts.method || 'GET', body = opts.body ? JSON.parse(opts.body) : {};
     if(u.hostname==='entrepot-fictif.test'){
       const h=new Headers(opts.headers),horodatage=h.get('X-Elixir-Horodatage');
@@ -161,7 +194,7 @@ export async function creerBancCrm({ date = new Date() } = {}) {
     }
     if(u.pathname==='/.netlify/functions/crm-indicateurs-background'){
       if(opts.headers['x-cron-secret']!=='cron-fictif')return json({},403);
-      tables.crm_synchros.push({id:randomUUID(),debut:date.toISOString(),fin:date.toISOString(),statut:'termine',compteurs:{instantanes:46},erreur:null,created_at:date.toISOString(),updated_at:date.toISOString(),version:1});return json({},202);
+      tables.crm_synchros.push({id:randomUUID(),debut:date.toISOString(),fin:date.toISOString(),statut:'termine',compteurs:{instantanes:46},erreur:null,created_at:date.toISOString(),updated_at:date.toISOString(),version:1});await creerCacheCrm(deps).invalider();return json({},202);
     }
     if (u.pathname === '/auth/v1/user') { const user = parJeton(opts.headers.Authorization?.slice(7)); return json(user || {},user ? 200 : 401); }
     if (u.pathname === '/auth/v1/token') { const nom = Object.keys(utilisateurs).find(k => utilisateurs[k].email === body.email); return nom ? json({ user:utilisateurs[nom],access_token:jeton(nom),refresh_token:`crm-refresh-${nom}`,expires_in:3600 }) : json({},401); }
@@ -169,15 +202,18 @@ export async function creerBancCrm({ date = new Date() } = {}) {
     const t = u.pathname.slice('/rest/v1/'.length), p = u.searchParams;
     let rows = tables[t];
     if (t === 'crm_comptes_indicateurs') rows = tables.crm_comptes.map(c => {
-      const i = tables.crm_indicateurs.filter(r => r.odoo_id === c.odoo_id).sort((a,b) => b.periode_fin.localeCompare(a.periode_fin))[0]?.donnees;
-      return { ...c,indicateurs:i || null,ca:i?.ca ?? null,evolution:i?.prev ? (i.ca/i.prev-1)*100 : null,profil:i?.profil ?? null,action_proposee:i?.action ?? null,non_servi:i ? i.ns_fond+i.ns_cher+i.ns_glp : null };
+      const dernier = tables.crm_indicateurs.filter(r => r.odoo_id === c.odoo_id).sort((a,b) => b.periode_fin.localeCompare(a.periode_fin))[0],i=dernier?.donnees;
+      return { ...c,periode_fin:dernier?.periode_fin || null,indicateurs:i || null,ca:i?.ca ?? null,evolution:i?.prev ? (i.ca/i.prev-1)*100 : null,profil:i?.profil ?? null,action_proposee:i?.action ?? null,non_servi:i ? i.ns_fond+i.ns_cher+i.ns_glp : null };
     });
     if (!rows) return json({},503);
     if (method === 'GET') {
       const result = rows.filter(r => correspond(r,p));
-      result.sort((a,b) => { for (const o of (p.get('order') || '').split(',')) { const [k,sens] = o.split('.'); const av=a[k],bv=b[k]; const cmp=av == null ? bv == null ? 0 : 1 : bv == null ? -1 : typeof av === 'number' ? av-bv : String(av).localeCompare(String(bv)); if(cmp) return cmp*(sens==='desc'?-1:1); } return 0; });
+      result.sort((a,b) => { for (const o of (p.get('order') || '').split(',')) { const [k,sens] = o.split('.'); const valeur=r=>k==="crm_comptes(nom)" ? tables.crm_comptes.find(c=>c.id===r.compte_id)?.nom : r[k]; const av=valeur(a),bv=valeur(b); const cmp=av == null ? bv == null ? 0 : 1 : bv == null ? -1 : typeof av === 'number' ? av-bv : String(av).localeCompare(String(bv)); if(cmp) return cmp*(sens==='desc'?-1:1); } return 0; });
       const offset = Number(p.get('offset') || 0), select = p.get('select');
-      const resultats = result.slice(offset,offset+Number(p.get('limit') || 1000)).map(r => select && select !== '*' ? Object.fromEntries(select.split(',').map(k => [k,r[k]])) : r);
+      const resultats = result.slice(offset,offset+Number(p.get('limit') || 1000)).map(r => select && !select.split(',').includes('*') ? Object.fromEntries(select.split(',').map(k => {
+        const [alias,champ]=k.includes(':')?k.split(':'):[k,k],chemin=champ.split('->');
+        return [alias,chemin.reduce((v,k)=>v?.[k],r)];
+      })) : r);
       return json(resultats,200,{ 'content-range':`*/${result.length}` });
     }
     if (!['POST','PATCH'].includes(method)) return json({},405);
@@ -199,10 +235,11 @@ export async function creerBancCrm({ date = new Date() } = {}) {
     const n = args[0].find(x => x[0] === 'partner_id.commercial_partner_id')?.[2];
     return [{ id:n*10,name:`FACT-FICTIVE-${n}`,invoice_date:'2026-11-10',move_type:'out_invoice',amount_untaxed:150+n,is_move_sent:true },{ id:n*10+1,name:`AVOIR-FICTIF-${n}`,invoice_date:'2026-11-12',move_type:'out_refund',amount_untaxed:12,is_move_sent:false }];
   }
-  const deps = { entrepotUrl:'https://entrepot-fictif.test',reclamationsSecret:'secret-de-banc-reclamations-invente-uniquement',siteUrl:'https://site-fictif.test',cronSecret:'cron-fictif',fetch:fauxFetch,url:'https://supabase-fictif.test',cle:'serveur-fictif',authCle:'auth-fictive',adminEmail:'',maintenant,odoo:fauxOdoo,rateLimit:() => null };
+  const cacheMagasin=creerBlobsMemoire();
+  const deps = { cacheMagasin, entrepotUrl:'https://entrepot-fictif.test',reclamationsSecret:'secret-de-banc-reclamations-invente-uniquement',siteUrl:'https://site-fictif.test',cronSecret:'cron-fictif',fetch:fauxFetch,url:'https://supabase-fictif.test',cle:'serveur-fictif',authCle:'auth-fictive',adminEmail:'',maintenant,odoo:fauxOdoo,rateLimit:() => null };
   const handlerAnnuaire=creerHandlerAnnuaire({...deps,autoriser:e=>e.headers?.['x-cron-secret']==='cron-fictif'});
   const handlers = { crm:creerHandlerCrm(deps),'crm-login':creerHandlerLogin(deps) };
-  return { tables,utilisateurs,deps,annuaire,handlerAnnuaire,async repondre({ fn,methode='POST',corps,entetes={} }) {
+  return { tables,utilisateurs,deps,annuaire,handlerAnnuaire,appels,cacheMagasin,async repondre({ fn,methode='POST',corps,entetes={} }) {
     if (fn === 'admin-refresh') {
       let body; try { body = typeof corps === 'string' ? JSON.parse(corps) : corps; } catch { return null; }
       const nom = body?.refresh_token?.replace(/^crm-refresh-/,'');

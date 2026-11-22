@@ -1,3 +1,4 @@
+import { creerCacheCrm, initialiserCacheCrm } from "./_crm-cache.js";
 // Aucune lecture au chargement du module. Entrées externes exclusivement publiques, en flux.
 import { isCronAuthorized } from './auth.js';
 import { creerStockCrm, erreurCrm } from './_crm-stock.js';
@@ -14,6 +15,7 @@ export async function lancerAnnuaire(deps={}) {
 export function creerHandlerAnnuaire(deps={}) {
   const http=deps.fetch || fetch,horloge=deps.horloge || (()=>Date.now()),stock=deps.annuaireStock || creerStockAnnuaire(deps),crm=deps.stock || creerStockCrm(deps);
   return async event=>{
+    initialiserCacheCrm(event);
     const rep=(statusCode,d)=>({statusCode,headers:{'Cache-Control':'no-store'},body:JSON.stringify(d)});
     if(event.httpMethod!=='POST')return rep(405,{error:'Méthode POST requise.'});
     if(!(deps.autoriser || isCronAuthorized)(event))return rep(403,{error:'Accès refusé.'});
@@ -73,7 +75,7 @@ export function creerHandlerAnnuaire(deps={}) {
       const interrompu=e.pause || resteTemps()<15000;
       if(etat?.passage)try{await stock.arreter(etat.passage,interrompu?'pause':'erreur');}catch{/* Le bail expirera si la base n'est plus joignable. */}
       return rep(interrompu?200:503,interrompu?{pause:true}:{error:'Import annuaire interrompu. Consultez son état puis relancez pour reprendre.'});
-    }
+    } finally { if(etat?.passage)await creerCacheCrm(deps).invalider(); }
   };
 }
 export const handler=creerHandlerAnnuaire();

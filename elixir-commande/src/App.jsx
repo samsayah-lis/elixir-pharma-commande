@@ -370,6 +370,16 @@ function LienMenu({ menu }) {
 }
 
 export default function App() {
+  const [crm, setCrm] = useState(() => /^#crm(?:\/|$)/.test(window.location.hash));
+  useEffect(() => {
+    const lire = () => setCrm(/^#crm(?:\/|$)/.test(window.location.hash));
+    window.addEventListener("hashchange", lire); window.addEventListener("popstate", lire);
+    return () => { window.removeEventListener("hashchange", lire); window.removeEventListener("popstate", lire); };
+  }, []);
+  if (crm) return <ErrorBoundary fallback={<button onClick={() => window.location.reload()}>CRM indisponible · Recharger</button>}><React.Suspense fallback={<p>Chargement du CRM…</p>}><CrmApp /></React.Suspense></ErrorBoundary>;
+  return <SitePharmacie />;
+}
+function SitePharmacie() {
   // Lien direct vers un produit : ?cip=... (ou ?produit=) → ouvre la Saisie de commande pré-remplie
   // (setter : « Voir dans la Saisie de commande » de l'accueil pré-remplit la Saisie avec le CIP, OrderEntry repart à neuf)
   const [initialProductQuery, setInitialProductQuery] = useState(() => {
@@ -536,10 +546,9 @@ export default function App() {
     if (globalSearch.trim().length < 2) setGlobalResults([]);
   }, [globalSearch]);
   const [sendStatus, setSendStatus] = useState(null);
-  const [showCrm, setShowCrm] = useState(() => /^#crm(?:\/|$)/.test(window.location.hash));
   const [showAdmin, setShowAdmin] = useState(() => window.location.hash === "#admin");
   useEffect(() => {
-    const onHash = () => { setShowAdmin(window.location.hash === "#admin"); setShowCrm(/^#crm(?:\/|$)/.test(window.location.hash)); };
+    const onHash = () => { setShowAdmin(window.location.hash === "#admin"); };
     window.addEventListener("hashchange", onHash);
     // retour arrière / avant entre « / » et /admin#admin (chemins différents : aucun hashchange, seulement popstate)
     window.addEventListener("popstate", onHash);
@@ -2292,7 +2301,6 @@ export default function App() {
     </>
   );
 
-  if (showCrm) return <ErrorBoundary fallback={<button onClick={() => window.location.reload()}>CRM indisponible · Recharger</button>}><React.Suspense fallback={<p>Chargement du CRM…</p>}><CrmApp /></React.Suspense></ErrorBoundary>;
 
   if (!onboardingDone && !showAdmin && !actingFor) return (
     <div style={obBg}>

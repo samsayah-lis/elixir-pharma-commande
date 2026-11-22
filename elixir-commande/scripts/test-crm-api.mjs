@@ -67,7 +67,7 @@ function fauxSupabase() {
     if (t === "crm_comptes_indicateurs") tables[t] = tables.crm_comptes.map(c => {
       const i = tables.crm_indicateurs.filter(i => i.odoo_id === c.odoo_id).sort((a, b) => b.periode_fin.localeCompare(a.periode_fin))[0];
       const d = i?.donnees;
-      return { ...c, indicateurs: d || null, ca: d?.ca ?? null, evolution: d?.prev > 0 ? (d.ca / d.prev - 1) * 100 : null,
+      return { ...c, periode_fin:i?.periode_fin || null, indicateurs: d || null, ca: d?.ca ?? null, evolution: d?.prev > 0 ? (d.ca / d.prev - 1) * 100 : null,
         profil: d?.profil ?? null, action_proposee: d?.action ?? null, non_servi: d ? d.ns_fond + d.ns_cher + d.ns_glp : null };
     });
     assert.ok(tables[t], `Table inconnue ${t}`);
@@ -81,7 +81,10 @@ function fauxSupabase() {
         return 0;
       });
       const offset = Number(p.get("offset") || 0);
-      return json(lignes.slice(offset, offset + Number(p.get("limit") || 1000)), 200, { "content-range": `*/${total}` });
+      return json(lignes.slice(offset, offset + Number(p.get("limit") || 1000)).map(r=>{
+        const aliases=Object.fromEntries((p.get("select") || "").split(",").filter(k=>k.includes(":")).map(k=>{const [alias,chemin]=k.split(":");return [alias,chemin.split("->").reduce((v,k)=>v?.[k],r)];}));
+        return {...r,...aliases};
+      }), 200, { "content-range": `*/${total}` });
     }
     assert.ok(["POST", "PATCH"].includes(method));
     if (etat.auditPanne) return json({}, 500); // Échec du trigger : rollback de la transaction.
@@ -452,6 +455,57 @@ await test("Rôle CRM explicite prioritaire sur ADMIN_EMAIL, également à la co
     const connexion=await creerHandlerLogin(d)(event(null,{email:db.users[role].email,password:"mot-de-passe-fictif"}));
     assert.equal(JSON.parse(connexion.body).role,role);
   }
+});
+
+await test("synthèses et listes enrichies : quatre rôles, marge admin seulement, accès anonyme refusé", async () => {
+  const {creerBancCrm}=await import('./banc/crm-banc.mjs');
+  const b=await creerBancCrm({date:maintenant(),volume:'grand'});
+  const requete=async(role,action,filtres={})=>{
+    const r=await b.repondre({fn:'crm',corps:{action,filtres},entetes:role?{authorization:`Bearer crm-banc-${role}`}:{}});
+    return {status:r.statut,...JSON.parse(r.texte)};
+  };
+  for(const role of ['admin','commercial','service','lecture']){
+    for(const action of ['tableau.synthese','accueil.synthese','contacts.lister','activites.lister','opportunites.lister']){
+      const r=await requete(role,action);assert.equal(r.status,200);
+      if(action==='tableau.synthese')assert.equal(JSON.stringify(r).includes('"marge"'),role==='admin');
+    }
+  }
+  for(const role of [null,'nouveau']) for(const action of ['tableau.synthese','accueil.synthese']){
+    assert.equal((await requete(role,action)).status,role?403:401);
+  }
+  for(const role of ['commercial','service','lecture']){
+    const a=(await requete(role,'accueil.synthese')).donnees;
+    for(const groupe of Object.values(a.taches))assert.ok(groupe.lignes.every(l=>l.assigne_email===b.utilisateurs[role].email));
+  }
+  const contacts=(await requete('admin','contacts.lister',{recherche:'grand 79',tri:'nom',sens:'asc',limite:25})).donnees;
+  assert.equal(contacts.lignes.length,25);assert.ok(contacts.total>25);
+  assert.ok(contacts.lignes.every(c=>c.nom.includes('grand 79')||c.compte_nom.includes('grand 79')));
+  const parCompte=(await requete('admin','contacts.lister',{recherche:'Pharmacie fictive grand 2999',tri:'compte'})).donnees;
+  assert.ok(parCompte.total>0);assert.ok(parCompte.lignes.every(c=>c.compte_nom==='Pharmacie fictive grand 2999'));
+  b.tables.crm_contacts[0].fonction='preparateur';
+  const parFonction=(await requete('admin','contacts.lister',{recherche:'Préparateur'})).donnees;
+  assert.equal(parFonction.total,1);assert.equal(parFonction.lignes[0].fonction,'preparateur');
+  const page2=(await requete('admin','contacts.lister',{recherche:'grand 79',tri:'nom',sens:'asc',limite:25,page:2})).donnees;
+  assert.ok(page2.lignes.every(c=>!contacts.lignes.some(p=>p.id===c.id)));
+  const filtres={type:'tache',statut:'a_faire',assigne_email:'commercial@banc.test',retard:true,recherche:'démonstration'};
+  const a=(await requete('admin','activites.lister',filtres)).donnees;
+  assert.ok(a.total>0);
+  assert.ok(a.lignes.every(a=>a.type==='tache'&&a.statut==='a_faire'&&a.assigne_email===filtres.assigne_email&&a.echeance<maintenant().toISOString()));
+  for(const f of [{echeance_debut:'2026-02-30'},{page:0},{limite:1001},{vue_tableau:true}]){
+    assert.equal((await requete('admin','activites.lister',f)).status,400);
+  }
+});
+await test("agenda : bornes de semaine en heure de Paris, changements d’heure et échéance absente", async () => {
+  const {creerBancCrm}=await import('./banc/crm-banc.mjs');
+  const {minuitParis}=await import('../netlify/functions/_crm-synthese.js');
+  assert.equal(minuitParis('2026-03-23'),'2026-03-22T23:00:00.000Z');
+  assert.equal(minuitParis('2026-03-29',1),'2026-03-29T22:00:00.000Z');
+  assert.equal(minuitParis('2026-10-25',1),'2026-10-25T23:00:00.000Z');
+  const b=await creerBancCrm({date:maintenant()});
+  const base=b.tables.crm_activites[0];
+  b.tables.crm_activites=[null,'2026-03-22T22:59:59Z','2026-03-22T23:00:00Z','2026-03-29T21:59:59Z','2026-03-29T22:00:00Z'].map(echeance=>({...base,id:randomUUID(),echeance}));
+  const r=await b.repondre({fn:'crm',entetes:{authorization:'Bearer crm-banc-lecture'},corps:{action:'activites.lister',filtres:{echeance_debut:'2026-03-23',echeance_fin:'2026-03-29'}}});
+  assert.equal(r.statut,200);assert.deepEqual(JSON.parse(r.texte).donnees.lignes.map(a=>a.echeance).sort(),['2026-03-22T23:00:00Z','2026-03-29T21:59:59Z']);
 });
 console.log(`CRM API : ${ok} ok, ${ko} ko`);
 // rate-limit.js possède un intervalle de ménage ; quitter après toutes les assertions.

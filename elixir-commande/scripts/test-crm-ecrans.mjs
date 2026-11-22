@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { jourParis,semaine,mesEcheances,estEnRetard,alertesComptes,pipeline,repartition,activiteEquipe,agenda,contactsFiltres } from '../src/crm/logique.js';
 import { creerBancCrm } from './banc/crm-banc.mjs';
-import { creerClient, peutAfficher, csvPage, lireToutes } from '../src/crm/client.js';
+import { creerClient, peutAfficher, csvPage, lireToutes, chargerEcran } from '../src/crm/client.js';
 globalThis.fetch = () => { throw new Error('Réseau interdit'); };
 let ok = 0, ko = 0;
 async function test(nom, fn) { try { await fn(); ok++; } catch (e) { ko++; console.error('✗',nom,e); } }
@@ -155,6 +155,62 @@ await test('banc : ajout membre Auth, changement du rôle, réglages, relance, j
   assert.equal((await client.appel('indicateurs.global')).donnees.objectif_mensuel_global,54321);
   assert.equal((await client.appel('indicateurs.relancer')).lance,true);assert.ok((await client.appel('indicateurs.etat')).donnees);
   const j=(await client.appel('journal.lister',{filtres:{objet:'equipe'}})).donnees;assert.ok(j.lignes.some(j=>j.objet_id===m.id));assert.ok(j.lignes.every(j=>j.objet==='equipe'));
+});
+
+await test('grand volume : cinq écrans, un appel chacun et parité avec les listes complètes', async () => {
+  const date=new Date('2026-11-22T10:00:00Z'),grand=await creerBancCrm({date,volume:'grand'});
+  assert.equal(grand.tables.crm_comptes.length,3000);
+  assert.equal(grand.tables.crm_contacts.length,8000);
+  assert.equal(grand.tables.crm_activites.length,2000);
+  let nombre=0;
+  const appel=async(action,extra={})=>{
+    nombre++;
+    const r=await grand.repondre({fn:'crm',corps:{action,...extra},entetes:{authorization:'Bearer crm-banc-admin'}});
+    assert.equal(r.statut,200,r.texte);return JSON.parse(r.texte);
+  };
+  const compter=async(fn)=>{const avant=nombre,resultat=await fn();return {resultat,nombre:nombre-avant};};
+  const comptes=await compter(async()=>[...await lireToutes(appel,'comptes'),...await lireToutes(appel,'comptes',{archive:true})]);
+  const contacts=await compter(()=>lireToutes(appel,'contacts'));
+  const activites=await compter(()=>lireToutes(appel,'activites'));
+  const opportunites=await compter(()=>lireToutes(appel,'opportunites'));
+  const global=(await appel('indicateurs.global')).donnees;
+  const ancien={tableau:comptes.nombre+activites.nombre+opportunites.nombre+1,accueil:comptes.nombre+activites.nombre,
+    contacts:comptes.nombre+contacts.nombre,activites:comptes.nombre+activites.nombre,opportunites:comptes.nombre+opportunites.nombre};
+  const nouveaux={};
+  grand.appels.length=0;
+  for(const ecran of Object.keys(ancien)){
+    const filtres=ecran==='opportunites'?{vue_tableau:true}:{page:1,limite:25};
+    const {resultat,nombre:n}=await compter(()=>chargerEcran(appel,ecran,filtres));
+    assert.equal(n,1);nouveaux[ecran]=resultat;
+    console.log(`  ${ecran} : ${ancien[ecran]} → ${n} appel API (grand volume)`);
+  }
+  const lectures=grand.appels.map(a=>new URL(a.url)).filter(u=>u.pathname.endsWith('/crm_comptes_indicateurs'));
+  assert.ok(lectures.length>2);
+  assert.ok(lectures.every(u=>u.searchParams.get('limit')==='1000'));
+  assert.ok(lectures.some(u=>u.searchParams.get('offset')==='2000'));
+  assert.ok(lectures.every(u=>!u.searchParams.get('select').split(',').includes('*')));
+  const statuts=new Map();
+  for(const c of comptes.resultat.filter(c=>!c.archive))statuts.set(c.statut,(statuts.get(c.statut)||0)+1);
+  assert.deepEqual(nouveaux.tableau,{
+    repartitions:{profil:repartition(comptes.resultat,'profil'),action:repartition(comptes.resultat,'action'),statut:[...statuts].sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0]))},
+    pipeline:pipeline(opportunites.resultat).map(({lignes,...col})=>({...col,nombre:lignes.length})),
+    equipe:activiteEquipe(activites.resultat,date),global,
+  });
+  const email=grand.utilisateurs.admin.email,noms=new Map(comptes.resultat.map(c=>[c.id,c.nom]));
+  const bornes=(groupes,comptes)=>Object.fromEntries(Object.entries(groupes).map(([k,l])=>[k,{total:l.length,lignes:l.slice(0,50).map(x=>comptes?{id:x.id,compte_id:x.id,compte_nom:x.nom}:{...x,compte_nom:noms.get(x.compte_id)})}]));
+  assert.deepEqual(nouveaux.accueil,{taches:bornes(mesEcheances(activites.resultat,email,date),false),alertes:bornes(alertesComptes(comptes.resultat,email,date),true)});
+  assert.ok(Object.values(nouveaux.accueil.alertes).some(g=>g.total>50));
+  assert.equal(nouveaux.contacts.contacts.length,25);
+  assert.equal(nouveaux.contacts.total,8000);
+  assert.equal(nouveaux.activites.total,2000);
+  assert.equal(nouveaux.opportunites.opportunites.length,210);
+  assert.equal(nouveaux.opportunites.total,opportunites.resultat.length);
+  for(const col of nouveaux.opportunites.colonnes){
+    const attendu=pipeline(opportunites.resultat).find(c=>c.etape===col.etape);
+    assert.equal(col.nombre,attendu.lignes.length);assert.equal(col.total,attendu.total);assert.equal(col.pondere,attendu.pondere);
+    assert.ok(col.lignes.length<=30);
+  }
+  for(const ecran of ['contacts','activites','opportunites']) for(const l of nouveaux[ecran][ecran]) assert.equal(l.compte_nom,noms.get(l.compte_id));
 });
 console.log(`CRM écrans / banc : ${ok} ok, ${ko} ko`);
 process.exit(ko?1:0);

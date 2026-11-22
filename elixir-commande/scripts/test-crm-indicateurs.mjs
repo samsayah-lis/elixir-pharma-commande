@@ -2,6 +2,7 @@
 // Parité entièrement hors ligne. Seuls ces deux scripts externes sont exécutés ;
 // --cibles explicite interdit le repli vers les réglages réels du dossier de référence.
 import assert from "node:assert/strict";
+import { creerBlobsMemoire } from "./banc/crm-banc.mjs";
 import { randomUUID } from "node:crypto";
 import { creerHandlerIndicateurs, lireDonneesOdoo, lancerIndicateurs } from "../netlify/functions/crm-indicateurs-background.js";
 import { creerHandlerCron } from "../netlify/functions/crm-indicateurs-cron.js";
@@ -199,7 +200,7 @@ function fauxStock() {
     for (const r of rows) { const avant = structuredClone(r); Object.assign(r, b); if (t === "crm_comptes") tables.crm_journal.push({ avant, apres: structuredClone(r) }); }
     return response(rows);
   }
-  const deps = { fetch, url: "https://supabase.exemple.test", cle: "cle-serveur-fictive", maintenant: () => new Date(now) };
+  const deps = { cacheMagasin:creerBlobsMemoire(), fetch, url: "https://supabase.exemple.test", cle: "cle-serveur-fictive", maintenant: () => new Date(now) };
   return { tables, etat, appels, deps, stock: creerStockCrm(deps), avancer: ms => { now = new Date(now.getTime() + ms); } };
 }
 const secretAvant = process.env.CRON_SECRET;
@@ -247,6 +248,7 @@ try {
     for (const odoo_id of [0, 1]) for (let i = 0; i < 30; i++) db.tables.crm_indicateurs.push({ odoo_id, periode_fin: decalerJour("2026-11-21", -i), donnees: {} });
     const h = creerHandlerIndicateurs({ ...db.deps, odoo: od.ex });
     const res = await h(event); assert.equal(res.statusCode, 200, res.body);
+    assert.equal([...db.deps.cacheMagasin.entrees].find(([k])=>k.endsWith("/generation"))[1].data.numero,1);
     const c = db.tables.crm_comptes.find(c => c.odoo_id === 1);
     assert.equal(c.nom, d.partners[0].name); assert.equal(c.adresse, "rue fictive"); assert.equal(c.telephone, "+33100000000"); assert.equal(c.source, "saisie");
     for (const [k, v] of Object.entries(crm)) assert.deepEqual(c[k], v, k);
