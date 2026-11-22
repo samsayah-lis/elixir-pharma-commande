@@ -1,3 +1,4 @@
+import { repondreCrm } from "./crm-banc.mjs";
 // ── Banc d'essai local : plugin Vite, actif seulement en développement (« npm run dev ») ──
 // Répond lui-même à /.netlify/functions/* : rien n'est jamais relayé vers la production.
 //  • GET  : données figées de dev-fixtures/get/ (npm run banc:capture), sinon données calculées à partir
@@ -829,6 +830,8 @@ export default function bancEssai() {
           const { fn } = decoupe(url);
           const brut = await litCorps(req);
           let corps; try { corps = brut ? JSON.parse(brut) : null; } catch { corps = brut; }
+          const crm = await repondreCrm({ fn, methode, corps: brut, entetes: req.headers });
+          if (crm) return envoie(crm.statut, JSON.parse(crm.texte || "null"), crm.source);
           const fichier = journalise({ methode, url, fn, corps, entetes: req.headers });
           if (fn === "peremption") {
             const rp = await repondrePeremption({ methode, url, corps });

@@ -33,6 +33,8 @@ import { authAssistant, etatAssistant } from "./assistant-client.js";
 import { CarteNotifications, PanneauNotifications, EntreeMenuNotifications, demarrerNotifications, oublierAppareilNotifications } from "./notifications/entree.jsx";
 // Adresse de l'admin (/admin, appli « Elixir Admin » de l'iPhone) : quitter l'admin, revenir à l'admin (src/adresse-admin.js)
 import { CHEMIN_ADMIN, adresseHorsAdmin, quitterAdresseAdmin, APPLI_ADMIN } from "./adresse-admin.js";
+// CRM : écrans, styles et session chargés uniquement à l’ouverture.
+const CrmApp = React.lazy(() => import("./crm/CrmApp.jsx"));
 // Admin (#admin) chargé à la demande, avec ses outils et la bibliothèque xlsx qu'il est seul à utiliser : hors du bundle
 // des pharmacies (budget du bundle, docs/refonte-charte.md § 7 ; docs/labo-otc.md). Échec du chargement (connexion,
 // ou nouvelle version mise en ligne pendant que la page était ouverte) : message et rechargement, admin non déconnecté
@@ -534,9 +536,10 @@ export default function App() {
     if (globalSearch.trim().length < 2) setGlobalResults([]);
   }, [globalSearch]);
   const [sendStatus, setSendStatus] = useState(null);
+  const [showCrm, setShowCrm] = useState(() => /^#crm(?:\/|$)/.test(window.location.hash));
   const [showAdmin, setShowAdmin] = useState(() => window.location.hash === "#admin");
   useEffect(() => {
-    const onHash = () => setShowAdmin(window.location.hash === "#admin");
+    const onHash = () => { setShowAdmin(window.location.hash === "#admin"); setShowCrm(/^#crm(?:\/|$)/.test(window.location.hash)); };
     window.addEventListener("hashchange", onHash);
     // retour arrière / avant entre « / » et /admin#admin (chemins différents : aucun hashchange, seulement popstate)
     window.addEventListener("popstate", onHash);
@@ -2287,6 +2290,8 @@ export default function App() {
       <div style={{ fontSize:12, lineHeight:1.5, color:T.inkMute, textAlign:"center", marginTop:20, paddingTop:16, borderTop:`1px solid ${T.lineSoft}` }}>Elixir Pharma · pharmacien@elixirpharma.fr · <span style={{ whiteSpace:"nowrap" }}>01 86 04 39 95</span></div>
     </>
   );
+
+  if (showCrm) return <ErrorBoundary fallback={<button onClick={() => window.location.reload()}>CRM indisponible · Recharger</button>}><React.Suspense fallback={<p>Chargement du CRM…</p>}><CrmApp /></React.Suspense></ErrorBoundary>;
 
   if (!onboardingDone && !showAdmin && !actingFor) return (
     <div style={obBg}>

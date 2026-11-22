@@ -248,6 +248,7 @@ const ECARTS_AUTORISES = [
 // repéré par un fichier propre au lot. Ainsi la vérification passe contre master (local, d'avant les correctifs) comme
 // contre origin/master (correctifs en ligne, assistant pas encore fusionné). À vider dès que la référence contient le lot.
 const LOTS = {
+  crmEcrans: { nom: "CRM (écrans)", repere: "src/crm/CrmApp.jsx" },
   securite: { nom: "correctifs de sécurité du 19/10/2026", repere: "scripts/test-securite-2.mjs" },
   assistant: { nom: "Assistant Elixir", repere: "src/assistant-client.js" },
   // suite du même projet, demandée par Zineb le 19/10/2026 après la mise en ligne de l'assistant (origin/master contient
@@ -368,9 +369,13 @@ const FICHIERS_AUTORISES = {
 // (lecture seule : ce que la pharmacie peut encore commander, totaux pour l'onglet Promos) et _promo-limites.js (lecture des
 // limites et des commandes, contrôle) ; seule fonction existante modifiée : order-save.js (refus au-delà des limites,
 // FICHIERS_AUTORISES, empreinte). Règles et textes partagés avec le site : src/limites-promo.js.
-const AJOUTS_AUTORISES = /^netlify\/functions\/(_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+|_?promo-limites|_portail-pml|_sonde-pml|pml-sonde-cron)\.js$/;
+const AJOUTS_AUTORISES = /^netlify\/functions\/(_crm-[a-z-]+|crm(-login|-(indicateurs|annuaire)-(background|cron))?|_chat-[a-z-]+|chat(-[a-z]+)*|accueil-offres(-refresh)?|_accueil-[a-z-]+|restock-notify(-cron)?|_restock|_push(-[a-z-]+)?|push-(abonnement|admin|envoi-background|menage|evenement|programmes)|peremption(-cron)?|_peremption|products-sections|quota-liste|api-(v1|admin|compte|cron|prix-background)|api-(commandes-cron|envoi-background)|_api-[a-z-]+|_?promo-limites|_portail-pml|_sonde-pml|pml-sonde-cron)\.js$/;
 // clé → écart de nombre d'appels admis, par lot (ajoutés tant que la référence ne contient pas le lot : LOTS)
 const CLES_AUTORISEES = {
+  // Session autonome et vues par identifiant utilisateur ; code chargé uniquement à l'ouverture du CRM.
+  crmEcrans: { 'sessionStorage.getItem("crm_session"': 1, 'sessionStorage.setItem("crm_session", JSON.stringify(s': 1,
+    'sessionStorage.removeItem("crm_session"': 1, 'localStorage.getItem(`crm_vues_${id}`': 1,
+    'localStorage.setItem(`crm_vues_${id}`, JSON.stringify(valeur': 1 },
   // appelAuthentifie : renouvellement du jeton pharmacie, et du jeton admin en saisie (échange : src/jetons.js) ;
   // second correctif : contingentement, envoi de la commande, commande U-Labs, accès et écran des commandes groupées lisent
   // désormais le jeton par appelAuthentifie, plus directement — 5 lectures du jeton admin et 3 du jeton pharmacie en moins ;
@@ -513,7 +518,7 @@ for (const d of DOSSIERS) {
   const liste = fichiersDe(d);
   const bons = liste.filter(f => verifieFichier(f, true)).length;
   const admis = assistant.ajoutes + assistant.modifies;
-  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue, contingentement, API des pharmacies)` : ""}`);
+  if (bons === liste.length) ok(`${d}/** — ${liste.length - admis} fichiers identiques${admis ? `, admis : ${assistant.ajoutes} ajouté(s) et ${assistant.modifies} modifié(s) (Assistant Elixir, page d'accueil, alertes retour, notifications, Péremption courte, sections du catalogue, contingentement, API des pharmacies, CRM et Annuaire Santé)` : ""}`);
 }
 
 // 3. clés de stockage

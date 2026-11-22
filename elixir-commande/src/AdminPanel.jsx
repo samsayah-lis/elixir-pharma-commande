@@ -3,6 +3,7 @@ import * as XLSX from "xlsx";
 import { estPeremption, badgePeremption, datePeremption, consigneOdoo, remiseLigne } from "./peremption-panier.js";
 // Onglet « Péremptions » (« Odoo facture la remise », docs/peremption-odoo.md) : chargé à la demande, à l'ouverture de l'onglet
 const PeremptionsAdmin = React.lazy(() => import("./components/PeremptionsAdmin.jsx"));
+const CrmApp = React.lazy(() => import("./crm/CrmApp.jsx"));
 // Onglet « 🔌 API » (API des pharmacies, /api/v1) : chargé à la demande, à l'ouverture de l'onglet
 const AdminApi = React.lazy(() => import("./components/AdminApi.jsx"));
 import AdminSearchML from "./components/AdminSearchML";
@@ -1145,6 +1146,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
   );
 
   const TABS = [
+    {k:"crm", label:"📇 CRM", icon:"📇"},
     {k:"add",      label:"➕ Ajouter",    icon:"➕"},
     {k:"edit",     label:"✏️ Modifier",   icon:"✏️"},
     {k:"promos",   label:"🎯 Promos",     icon:"🎯", badge: promos.length||null},
@@ -1783,6 +1785,7 @@ export default function AdminPanel({ onClose, sectionMeta, onOrderForPharmacy })
         {tab==="assistant"&&(
           <AdminAssistant adminFetch={adminFetch} flash={flash} onDirtyChange={onAssistantDirty} />
         )}
+        {tab==="crm"&&<React.Suspense fallback={<p>Chargement du CRM…</p>}><CrmApp adminFetch={adminFetch} /></React.Suspense>}
         {tab==="api"&&(
           <React.Suspense fallback={<div style={{padding:40,textAlign:"center",color:T.inkMute}}>Chargement de l'onglet API…</div>}>
             <AdminApi adminFetch={adminFetch} flash={flash} onVoirCommande={(numero) => {

@@ -132,3 +132,11 @@
 
 [functions."pml-relais"]
   timeout = 26
+
+# CRM : 04:30 heure de Paris, été comme hiver (le code filtre les deux créneaux UTC).
+[functions."crm-indicateurs-cron"]
+  schedule = "30 2,3 * * *"
+
+# Annuaire Santé : le 1er du mois à 05:00 Paris (filtre été/hiver dans la fonction).
+[functions."crm-annuaire-cron"]
+  schedule = "0 3,4 1 * *"
