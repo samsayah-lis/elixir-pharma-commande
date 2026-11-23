@@ -72,9 +72,10 @@ Transmission à un conseiller
 - Proposez-la, et faites-la si la pharmacie accepte : si elle la demande, si elle est mécontente, après deux échecs, si aucun outil ne convient, pour un règlement, un prix ou une condition commerciale, pour un document sans PDF, pour une commande à vérifier, pour un problème de compte ou d'accès.
 - Demandez si la pharmacie préfère un rappel par téléphone ou une réponse par e-mail, sauf urgence qualité. Rédigez un résumé factuel de deux à cinq phrases : la demande, les références citées, ce qui a été vérifié.
 - Annoncez seulement le numéro et le délai renvoyés par le système.
-- Si le système indique que l'accès de ce compte est limité, proposez uniquement la transmission à un conseiller, sans en donner la raison.`;
+- Si le système indique que l'accès de ce compte est limité, proposez uniquement la transmission à un conseiller, sans en donner la raison.
+- Demande d'accès à Digipharmacie (création, identifiants, mot de passe oublié) : vous ne gérez pas ces accès. Ne demandez ni identifiant ni mot de passe, et n'en donnez jamais. Demandez seulement le nom de la personne qui doit recevoir l'accès, puis transmettez à un conseiller (catégorie « compte »).`;
 
-export const PROMPT_VERSION = `2026-10-22.2-${createHash("sha256").update(SYSTEME).digest("hex").slice(0, 8)}`;
+export const PROMPT_VERSION = `2026-11-21.1-${createHash("sha256").update(SYSTEME).digest("hex").slice(0, 8)}`;
 
 // Contexte serveur ajouté après chaque message de la pharmacie (texte libre du serveur, jamais de la pharmacie).
 // premier : premier message de la conversation (identité et coordonnées une seule fois, elles restent dans l'historique).

@@ -20,14 +20,17 @@ import { ouvrir, nouvelle, envoyer, decider, attendreReponse, telecharger, litMe
 import { heureFr, nomFichier, libelleCommande } from "./assistant/format.js";
 
 const LONGUEUR_MAX = 2000, SEUIL_COMPTEUR = 1800;
-// pastilles d'accueil : libellé affiché → phrase envoyée
+// pastilles d'accueil : libellé affiché → phrase envoyée (retour et réclamation séparés le 21/11/2026, demande de Zineb)
 const PASTILLES = [
+  ["Faire une réclamation", "Je voudrais faire une réclamation."],
+  ["Faire un retour", "Je voudrais faire une demande de retour."],
+  ["Bon de livraison", "Je voudrais un bon de livraison."],
   ["Duplicata d'une facture", "Je voudrais le duplicata d'une facture."],
   ["Relevé de facturation", "Je voudrais un relevé de facturation."],
   ["Où en est ma commande ?", "Où en est ma commande ?"],
-  ["Bon de livraison", "Je voudrais un bon de livraison."],
-  ["Demande de retour ou réclamation", "Je voudrais faire une demande de retour ou une réclamation."],
 ];
+// simple transmission à l'équipe : proposée aussi aux comptes limités (« conseiller seul »)
+const DIGIPHARMACIE = ["Accès Digipharmacie", "Je voudrais demander mes accès Digipharmacie."];
 const CONSEILLER = ["Parler à un conseiller", "Je voudrais parler à un conseiller."];
 const TEXTE_RECONNEXION = "Pour protéger vos documents, l'assistant demande une connexion par code reçu par e-mail.";
 const masque = { position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)", whiteSpace: "nowrap" };
@@ -423,6 +426,7 @@ function Conversation({ identite, auth, mobile, pharmacyName, acting, contexte, 
               {!conseillerSeul && PASTILLES.map(([lib, phrase]) => (
                 <button key={lib} type="button" className="ex-filtre" style={pastille} disabled={occupe} onClick={() => envoyerTexte(phrase)}>{lib}</button>
               ))}
+              <button type="button" className="ex-filtre" style={pastille} disabled={occupe} onClick={() => envoyerTexte(DIGIPHARMACIE[1])}>{DIGIPHARMACIE[0]}</button>
               <button type="button" className="ex-btn-ligne" style={pastilleLigne} disabled={occupe} onClick={() => envoyerTexte(CONSEILLER[1])}>
                 <Icone nom="bulle" taille={15} />{CONSEILLER[0]}
               </button>
